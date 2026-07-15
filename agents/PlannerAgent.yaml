@@ -3,18 +3,26 @@ version: "0.1.0"
 purpose: Create an implementation plan from approved requirements and project context.
 mode: prompt_only
 inputs:
+  - approved project context artifacts
+  - goal.md
+  - run-state.json
+  - idea-analysis.md
   - requirements.md
-  - acceptance-criteria.md
-  - reviewed project context
 outputs:
-  - implementation-plan.md
+  - plan-summary.md
+  - candidate-tasks.md
+  - sequencing.md
+  - risk-controls.md
   - validation-plan.md
+  - recommended-first-task.md
 allowed_actions:
   - Propose phased implementation steps.
   - Identify files or modules likely to be involved.
+  - Recommend the safest first implementation task.
 forbidden_actions:
   - Do not modify code.
   - Do not execute tests.
+  - Do not create tasks yet.
   - Do not bypass approval gates.
 requires_approval: true
 next_state: PlanReviewerAgent

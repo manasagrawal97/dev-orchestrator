@@ -111,11 +111,13 @@ Show run status:
 devo run status <runId> --project MyProject
 ```
 
-Generate run-level IdeaAnalystAgent and RequirementsAgent prompts:
+Generate run-level prompts:
 
 ```powershell
 devo agent prompt IdeaAnalystAgent --project MyProject --run <runId>
 devo agent prompt RequirementsAgent --project MyProject --run <runId>
+devo agent prompt PlannerAgent --project MyProject --run <runId>
+devo agent prompt PlanReviewerAgent --project MyProject --run <runId>
 ```
 
 Import run-level agent outputs:
@@ -123,6 +125,8 @@ Import run-level agent outputs:
 ```powershell
 devo agent import-output IdeaAnalystAgent --project MyProject --run <runId> --file E:\path\to\idea-output.md
 devo agent import-output RequirementsAgent --project MyProject --run <runId> --file E:\path\to\requirements-output.md
+devo agent import-output PlannerAgent --project MyProject --run <runId> --file E:\path\to\planner-output.md
+devo agent import-output PlanReviewerAgent --project MyProject --run <runId> --file E:\path\to\plan-review-output.md
 ```
 
 Show run artifacts and generated prompts:
@@ -188,7 +192,7 @@ workspace/runs/<projectName>/<runId>/
 
 Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
 
-This version creates runs and supports prompt-only IdeaAnalystAgent and RequirementsAgent workflow. It does not implement planning prompts, task workflow, validation runners, AI model calls, Codex integration, or a web UI.
+This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, and PlanReviewerAgent workflow. It does not implement task workflow, validation runners, AI model calls, Codex integration, or a web UI.
 
 ## Run-Level Agent Workflow
 
@@ -196,7 +200,17 @@ Run-level agents are still prompt-only. After a run is created, generate the Ide
 
 Next, generate the RequirementsAgent prompt with `devo agent prompt RequirementsAgent --project MyProject --run <runId>`. The prompt includes approved project context, the run goal, run state, and imported idea analysis when available. Import the requirements output with `devo agent import-output RequirementsAgent --project MyProject --run <runId> --file <file>`. This stores `artifacts/requirements.md` and moves the run to `REQUIREMENTS_DRAFTED`.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. This version does not implement PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, validation runners, implementation prompts, AI model calls, Codex integration, or a web UI.
+After requirements are drafted, generate the PlannerAgent prompt with `devo agent prompt PlannerAgent --project MyProject --run <runId>`. The prompt includes approved project context, `goal.md`, `run-state.json`, idea analysis, and requirements. Import the planner output with `devo agent import-output PlannerAgent --project MyProject --run <runId> --file <file>`. This stores `artifacts/plan.md` and moves the run to `PLAN_DRAFTED`.
+
+Then generate the PlanReviewerAgent prompt with `devo agent prompt PlanReviewerAgent --project MyProject --run <runId>`. It includes the same evidence plus `artifacts/plan.md`. Import the review output with `devo agent import-output PlanReviewerAgent --project MyProject --run <runId> --file <file>`. This stores `artifacts/plan-review.md` and moves the run to `PLAN_REVIEWED`.
+
+The run-level status flow is:
+
+```text
+RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED
+```
+
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. This version does not implement TaskDecomposerAgent, validation runners, implementation prompts, AI model calls, Codex integration, or a web UI.
 
 ## Development
 

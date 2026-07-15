@@ -11,14 +11,18 @@ from .context import get_discovery_draft_text
 from .projects import get_workspace_root
 from .runs import (
     IDEA_ANALYST_AGENT_NAME,
+    PLANNER_AGENT_NAME,
+    PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
     get_run_artifact_text,
     load_run,
     require_context_approved,
+    require_run_artifact,
+    require_run_status_at_least,
     run_path,
 )
 from .scanner import load_registered_project
-from .schemas import AgentDefinition, GeneratedPromptMetadata, ProjectScanResult, RunArtifactType, RunState
+from .schemas import AgentDefinition, GeneratedPromptMetadata, ProjectScanResult, RunArtifactType, RunState, RunStatus
 
 DISCOVERY_AGENT_NAME = "ProjectContextDiscoveryAgent"
 REVIEWER_AGENT_NAME = "ProjectContextReviewerAgent"
@@ -26,6 +30,8 @@ DISCOVERY_TEMPLATE_NAME = "project_context_discovery.md"
 REVIEWER_TEMPLATE_NAME = "project_context_reviewer.md"
 IDEA_ANALYST_TEMPLATE_NAME = "idea_analyst.md"
 REQUIREMENTS_TEMPLATE_NAME = "requirements_agent.md"
+PLANNER_TEMPLATE_NAME = "planner.md"
+PLAN_REVIEWER_TEMPLATE_NAME = "plan_reviewer.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
@@ -142,6 +148,27 @@ def generate_run_agent_prompt(
     elif agent.name == REQUIREMENTS_AGENT_NAME:
         template_name = REQUIREMENTS_TEMPLATE_NAME
         output_name = "requirements-agent.prompt.md"
+    elif agent.name == PLANNER_AGENT_NAME:
+        require_run_status_at_least(
+            run_state,
+            RunStatus.REQUIREMENTS_DRAFTED,
+            "PlannerAgent requires RequirementsAgent output before planning.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.REQUIREMENTS,
+            "PlannerAgent requires RequirementsAgent output before planning.",
+        )
+        template_name = PLANNER_TEMPLATE_NAME
+        output_name = "planner.prompt.md"
+    elif agent.name == PLAN_REVIEWER_AGENT_NAME:
+        require_run_artifact(
+            run_state,
+            RunArtifactType.PLAN,
+            "PlanReviewerAgent requires PlannerAgent output before review.",
+        )
+        template_name = PLAN_REVIEWER_TEMPLATE_NAME
+        output_name = "plan-reviewer.prompt.md"
     else:
         msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -238,6 +265,10 @@ def _render_run_agent_prompt(
     template = Template(template_text)
     idea_analysis = get_run_artifact_text(run_state, RunArtifactType.IDEA_ANALYSIS)
     idea_analysis_status = "available" if idea_analysis else "missing"
+    requirements = get_run_artifact_text(run_state, RunArtifactType.REQUIREMENTS)
+    requirements_status = "available" if requirements else "missing"
+    plan = get_run_artifact_text(run_state, RunArtifactType.PLAN)
+    plan_status = "available" if plan else "missing"
     return template.safe_substitute(
         agent_name=agent.name,
         agent_version=agent.version,
@@ -252,6 +283,10 @@ def _render_run_agent_prompt(
         approved_context=_build_approved_context_text(run_state),
         idea_analysis_status=idea_analysis_status,
         idea_analysis=idea_analysis or "MISSING: IdeaAnalystAgent output has not been imported yet.",
+        requirements_status=requirements_status,
+        requirements=requirements or "MISSING: RequirementsAgent output has not been imported yet.",
+        plan_status=plan_status,
+        plan=plan or "MISSING: PlannerAgent output has not been imported yet.",
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),
         expected_outputs=_markdown_list(agent.outputs),

@@ -22,8 +22,20 @@ from .schemas import (
 
 IDEA_ANALYST_AGENT_NAME = "IdeaAnalystAgent"
 REQUIREMENTS_AGENT_NAME = "RequirementsAgent"
+PLANNER_AGENT_NAME = "PlannerAgent"
+PLAN_REVIEWER_AGENT_NAME = "PlanReviewerAgent"
 IDEA_ANALYSIS_ARTIFACT_NAME = "idea-analysis.md"
 REQUIREMENTS_ARTIFACT_NAME = "requirements.md"
+PLAN_ARTIFACT_NAME = "plan.md"
+PLAN_REVIEW_ARTIFACT_NAME = "plan-review.md"
+
+RUN_STATUS_ORDER = {
+    RunStatus.RUN_CREATED: 0,
+    RunStatus.IDEA_ANALYSIS_DRAFTED: 1,
+    RunStatus.REQUIREMENTS_DRAFTED: 2,
+    RunStatus.PLAN_DRAFTED: 3,
+    RunStatus.PLAN_REVIEWED: 4,
+}
 
 RUN_SUBDIRECTORIES = (
     "artifacts",
@@ -124,6 +136,29 @@ def import_run_agent_output(
         artifact_type = RunArtifactType.REQUIREMENTS
         artifact_name = REQUIREMENTS_ARTIFACT_NAME
         next_status = RunStatus.REQUIREMENTS_DRAFTED
+    elif agent_name == PLANNER_AGENT_NAME:
+        require_run_status_at_least(
+            run_state,
+            RunStatus.REQUIREMENTS_DRAFTED,
+            "PlannerAgent requires RequirementsAgent output before planning.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.REQUIREMENTS,
+            "PlannerAgent requires RequirementsAgent output before planning.",
+        )
+        artifact_type = RunArtifactType.PLAN
+        artifact_name = PLAN_ARTIFACT_NAME
+        next_status = RunStatus.PLAN_DRAFTED
+    elif agent_name == PLAN_REVIEWER_AGENT_NAME:
+        require_run_artifact(
+            run_state,
+            RunArtifactType.PLAN,
+            "PlanReviewerAgent requires PlannerAgent output before review.",
+        )
+        artifact_type = RunArtifactType.PLAN_REVIEW
+        artifact_name = PLAN_REVIEW_ARTIFACT_NAME
+        next_status = RunStatus.PLAN_REVIEWED
     else:
         msg = f"Run-level import is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -192,6 +227,18 @@ def find_run_artifact(run_state: RunState, artifact_type: RunArtifactType) -> Ru
     return None
 
 
+def require_run_artifact(run_state: RunState, artifact_type: RunArtifactType, message: str) -> RunArtifact:
+    artifact = find_run_artifact(run_state, artifact_type)
+    if not artifact:
+        raise ValueError(message)
+    return artifact
+
+
+def require_run_status_at_least(run_state: RunState, minimum_status: RunStatus, message: str) -> None:
+    if RUN_STATUS_ORDER[run_state.status] < RUN_STATUS_ORDER[minimum_status]:
+        raise ValueError(message)
+
+
 def get_run_artifact_text(run_state: RunState, artifact_type: RunArtifactType, max_chars: int = 20_000) -> str | None:
     artifact = find_run_artifact(run_state, artifact_type)
     if not artifact or not artifact.artifact_path.exists():
@@ -212,6 +259,8 @@ def get_run_artifacts_summary(
         "run_state_path": str(directory / "run-state.json"),
         "idea_analysis_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.IDEA_ANALYSIS),
         "requirements_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.REQUIREMENTS),
+        "plan_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN),
+        "plan_review_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN_REVIEW),
         "prompt_paths": [str(path) for path in sorted((directory / "prompts").glob("*.md"))],
     }
 

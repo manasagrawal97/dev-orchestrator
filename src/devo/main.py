@@ -19,6 +19,8 @@ from .context import approve_context, get_context_status, import_agent_output
 from .projects import get_workspace_root, list_projects, register_project
 from .runs import (
     IDEA_ANALYST_AGENT_NAME,
+    PLANNER_AGENT_NAME,
+    PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
     create_run,
     get_run_artifacts_summary,
@@ -175,7 +177,7 @@ def generate_agent_prompt(
         generator = generate_project_context_discovery_prompt
     elif agent.name == REVIEWER_AGENT_NAME:
         generator = generate_project_context_reviewer_prompt
-    elif agent.name in {IDEA_ANALYST_AGENT_NAME, REQUIREMENTS_AGENT_NAME}:
+    elif agent.name in {IDEA_ANALYST_AGENT_NAME, REQUIREMENTS_AGENT_NAME, PLANNER_AGENT_NAME, PLAN_REVIEWER_AGENT_NAME}:
         if not run_id:
             raise typer.BadParameter(f"{agent.name} prompt generation requires --run.", param_hint="--run")
         try:
@@ -197,7 +199,8 @@ def generate_agent_prompt(
             (
                 "Prompt generation is only supported for "
                 f"{DISCOVERY_AGENT_NAME}, {REVIEWER_AGENT_NAME}, "
-                f"{IDEA_ANALYST_AGENT_NAME}, and {REQUIREMENTS_AGENT_NAME}."
+                f"{IDEA_ANALYST_AGENT_NAME}, {REQUIREMENTS_AGENT_NAME}, "
+                f"{PLANNER_AGENT_NAME}, and {PLAN_REVIEWER_AGENT_NAME}."
             ),
             param_hint="agentName",
         )
@@ -227,7 +230,7 @@ def import_output(
     """Import manual prompt output for a supported agent."""
     try:
         agent = load_agent_definition(agent_name)
-        if agent.name in {IDEA_ANALYST_AGENT_NAME, REQUIREMENTS_AGENT_NAME}:
+        if agent.name in {IDEA_ANALYST_AGENT_NAME, REQUIREMENTS_AGENT_NAME, PLANNER_AGENT_NAME, PLAN_REVIEWER_AGENT_NAME}:
             if not run_id:
                 raise ValueError(f"{agent.name} import requires --run.")
             record = import_run_agent_output(
@@ -330,6 +333,8 @@ def show_run_artifacts(
     console.print(f"  run-state.json: {summary['run_state_path']}")
     console.print(f"  idea-analysis: {summary['idea_analysis_artifact_path'] or 'none'}")
     console.print(f"  requirements: {summary['requirements_artifact_path'] or 'none'}")
+    console.print(f"  plan: {summary['plan_artifact_path'] or 'none'}")
+    console.print(f"  plan-review: {summary['plan_review_artifact_path'] or 'none'}")
     prompt_paths = summary["prompt_paths"]
     if prompt_paths:
         console.print("  prompts:")

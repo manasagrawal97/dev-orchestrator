@@ -152,11 +152,15 @@ class RunStatus(StrEnum):
     RUN_CREATED = "RUN_CREATED"
     IDEA_ANALYSIS_DRAFTED = "IDEA_ANALYSIS_DRAFTED"
     REQUIREMENTS_DRAFTED = "REQUIREMENTS_DRAFTED"
+    PLAN_DRAFTED = "PLAN_DRAFTED"
+    PLAN_REVIEWED = "PLAN_REVIEWED"
 
 
 class RunArtifactType(StrEnum):
     IDEA_ANALYSIS = "idea_analysis"
     REQUIREMENTS = "requirements"
+    PLAN = "plan"
+    PLAN_REVIEW = "plan_review"
 
 
 class RunArtifact(BaseModel):
