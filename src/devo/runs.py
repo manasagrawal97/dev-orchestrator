@@ -19,6 +19,9 @@ from .schemas import (
     RunArtifactType,
     RunState,
     RunStatus,
+    TaskDispositionStatus,
+    TaskLedger,
+    TaskLedgerEntry,
 )
 
 IDEA_ANALYST_AGENT_NAME = "IdeaAnalystAgent"
@@ -41,6 +44,7 @@ VALIDATION_REPORT_ARTIFACT_NAME = "validation-report.md"
 CODE_REVIEW_ARTIFACT_NAME = "code-review.md"
 FINAL_AUDIT_ARTIFACT_NAME = "final-audit.md"
 CLOSURE_RECORD_ARTIFACT_NAME = "closure-record.md"
+TASK_LEDGER_ARTIFACT_NAME = "task-ledger.json"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -586,6 +590,57 @@ def close_task(
     return updated_record
 
 
+def mark_task_disposition(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    status: str,
+    note: str | None = None,
+    covered_by_task_id: str | None = None,
+    workspace_root: Path | None = None,
+) -> TaskLedgerEntry:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    tasks_by_id = _extract_tasks_from_artifact(run_state)
+    _require_task_in_task_list(tasks_by_id, normalized_task_id)
+
+    disposition_status = _parse_task_disposition_status(status)
+    normalized_covered_by = covered_by_task_id.strip() if covered_by_task_id else None
+    note_text = note.strip() if note else None
+
+    if disposition_status == TaskDispositionStatus.COVERED_BY:
+        if not normalized_covered_by:
+            msg = "covered_by disposition requires --covered-by."
+            raise ValueError(msg)
+        _require_task_in_task_list(tasks_by_id, normalized_covered_by)
+    elif normalized_covered_by:
+        msg = "--covered-by can only be used with covered_by disposition."
+        raise ValueError(msg)
+
+    if disposition_status != TaskDispositionStatus.OPEN and not note_text:
+        msg = f"{disposition_status.value} disposition requires --note."
+        raise ValueError(msg)
+
+    updated_at = datetime.now(UTC)
+    entry = TaskLedgerEntry(
+        task_id=normalized_task_id,
+        disposition_status=disposition_status,
+        covered_by_task_id=normalized_covered_by if disposition_status == TaskDispositionStatus.COVERED_BY else None,
+        disposition_note=note_text,
+        updated_at=updated_at,
+    )
+    ledger = load_task_ledger(run_state, workspace_root=root)
+    ledger.entries[normalized_task_id] = entry
+    ledger.updated_at = updated_at
+    ledger_path = save_task_ledger(run_state, ledger, workspace_root=root)
+    run_state.task_ledger_path = ledger_path
+    run_state.updated_at = updated_at
+    save_run_state(run_state, workspace_root=root)
+    return entry
+
+
 def get_task_status(
     project_name: str,
     run_id: str,
@@ -596,22 +651,27 @@ def get_task_status(
     require_context_approved(project_name, workspace_root=root)
     run_state = load_run(project_name, run_id, workspace_root=root)
     normalized_task_id = require_task_id(task_id)
+    tasks_by_id = _extract_tasks_from_artifact(run_state)
+    task = _require_task_in_task_list(tasks_by_id, normalized_task_id)
     record = find_implementation_record(run_state, normalized_task_id)
-    if not record:
-        msg = f"Task record not found: {normalized_task_id}"
-        raise ValueError(msg)
+    ledger_entry = load_task_ledger(run_state, workspace_root=root).entries.get(normalized_task_id)
 
     return {
         "project_name": project_name,
         "run_id": run_id,
         "task_id": normalized_task_id,
+        "task_title": task["task_title"],
         "run_status": run_state.status.value,
-        "closure_status": record.closure_status or "open",
-        "closure_record_path": str(record.closure_record_path) if record.closure_record_path else None,
-        "closed_at": record.closed_at.isoformat() if record.closed_at else None,
-        "closure_note": record.closure_note,
-        "final_decision": record.final_decision,
-        "final_audit_path": str(record.final_audit_path) if record.final_audit_path else None,
+        "closure_status": record.closure_status if record and record.closure_status else "open",
+        "closure_record_path": str(record.closure_record_path) if record and record.closure_record_path else None,
+        "closed_at": record.closed_at.isoformat() if record and record.closed_at else None,
+        "closure_note": record.closure_note if record else None,
+        "final_decision": record.final_decision if record else "unknown",
+        "final_audit_path": str(record.final_audit_path) if record and record.final_audit_path else None,
+        "disposition_status": ledger_entry.disposition_status.value if ledger_entry else TaskDispositionStatus.OPEN.value,
+        "covered_by_task_id": ledger_entry.covered_by_task_id if ledger_entry else None,
+        "disposition_note": ledger_entry.disposition_note if ledger_entry else None,
+        "disposition_updated_at": ledger_entry.updated_at.isoformat() if ledger_entry else None,
     }
 
 
@@ -624,6 +684,7 @@ def list_run_tasks(
     require_context_approved(project_name, workspace_root=root)
     run_state = load_run(project_name, run_id, workspace_root=root)
     tasks_by_id = _extract_tasks_from_artifact(run_state)
+    ledger = load_task_ledger(run_state, workspace_root=root)
 
     for record in run_state.implementation_records:
         task = tasks_by_id.setdefault(
@@ -642,11 +703,26 @@ def list_run_tasks(
             }
         )
 
+    for task_id, entry in ledger.entries.items():
+        task = tasks_by_id.setdefault(task_id, {"task_id": task_id, "task_title": "unknown"})
+        task.update(
+            {
+                "disposition_status": entry.disposition_status.value,
+                "covered_by_task_id": entry.covered_by_task_id,
+                "disposition_note": entry.disposition_note,
+                "disposition_updated_at": entry.updated_at.isoformat(),
+            }
+        )
+
     for task in tasks_by_id.values():
         task.setdefault("closure_status", "open")
         task.setdefault("final_decision", "unknown")
         task.setdefault("closure_record_path", None)
         task.setdefault("closed_at", None)
+        task.setdefault("disposition_status", TaskDispositionStatus.OPEN.value)
+        task.setdefault("covered_by_task_id", None)
+        task.setdefault("disposition_note", None)
+        task.setdefault("disposition_updated_at", None)
 
     return [tasks_by_id[task_id] for task_id in sorted(tasks_by_id)]
 
@@ -804,6 +880,7 @@ def get_run_artifacts_summary(
         "plan_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN),
         "plan_review_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN_REVIEW),
         "tasks_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.TASKS),
+        "task_ledger_path": str(_task_ledger_path(root, project_name, run_id)) if _task_ledger_path(root, project_name, run_id).exists() else None,
         "implementation_artifact_paths": [
             {
                 "task_id": record.task_id,
@@ -922,6 +999,44 @@ def _implementation_artifact_dir(workspace_root: Path, project_name: str, run_id
     return _run_dir(workspace_root, project_name, run_id) / "artifacts" / "implementation" / task_id
 
 
+def load_task_ledger(run_state: RunState, workspace_root: Path | None = None) -> TaskLedger:
+    root = workspace_root or get_workspace_root()
+    ledger_path = _task_ledger_path(root, run_state.project_name, run_state.run_id)
+    if not ledger_path.exists():
+        return TaskLedger(project_name=run_state.project_name, run_id=run_state.run_id)
+    data = json.loads(ledger_path.read_text(encoding="utf-8"))
+    return TaskLedger.model_validate(data)
+
+
+def save_task_ledger(run_state: RunState, ledger: TaskLedger, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    ledger_path = _task_ledger_path(root, run_state.project_name, run_state.run_id)
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text(ledger.model_dump_json(indent=2), encoding="utf-8")
+    return ledger_path
+
+
+def _parse_task_disposition_status(status: str) -> TaskDispositionStatus:
+    try:
+        return TaskDispositionStatus(status)
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in TaskDispositionStatus)
+        msg = f"Invalid task disposition status: {status}. Allowed: {allowed}"
+        raise ValueError(msg) from exc
+
+
+def _require_task_in_task_list(tasks_by_id: dict[str, dict[str, object]], task_id: str) -> dict[str, object]:
+    task = tasks_by_id.get(task_id)
+    if not task:
+        msg = f"Task id not found in tasks.md: {task_id}"
+        raise ValueError(msg)
+    return task
+
+
+def _task_ledger_path(workspace_root: Path, project_name: str, run_id: str) -> Path:
+    return _run_dir(workspace_root, project_name, run_id) / "artifacts" / TASK_LEDGER_ARTIFACT_NAME
+
+
 def _extract_tasks_from_artifact(run_state: RunState) -> dict[str, dict[str, object]]:
     tasks_text = get_run_artifact_text(run_state, RunArtifactType.TASKS) or ""
     tasks: dict[str, dict[str, object]] = {}
@@ -934,6 +1049,11 @@ def _extract_tasks_from_artifact(run_state: RunState) -> dict[str, dict[str, obj
             "task_id": task_id,
             "task_title": title_match.group(1).strip().strip("`") if title_match else "unknown",
         }
+
+    fallback = re.compile(r"(?im)^\s*-\s*task id:\s*`?([A-Za-z0-9_.-]+)`?")
+    for match in fallback.finditer(tasks_text):
+        task_id = match.group(1)
+        tasks.setdefault(task_id, {"task_id": task_id, "task_title": "unknown"})
     return tasks
 
 

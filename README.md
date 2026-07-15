@@ -179,6 +179,14 @@ devo task status --project MyProject --run <runId> --task <taskId>
 devo task list --project MyProject --run <runId>
 ```
 
+Mark task disposition when the original task list is stale or one implementation covers multiple task entries:
+
+```powershell
+devo task mark --project MyProject --run <runId> --task T001 --status covered_by --covered-by T002 --note "Covered by the implementation and validation recorded for T002."
+devo task mark --project MyProject --run <runId> --task T004 --status not_needed --note "No separate documentation change was needed."
+devo task mark --project MyProject --run <runId> --task T003 --status open
+```
+
 Show run artifacts and generated prompts:
 
 ```powershell
@@ -278,7 +286,9 @@ FinalAuditorAgent output should include `audit-summary.md`, `lifecycle-check.md`
 
 After final audit, close a task with `devo task close --project MyProject --run <runId> --task <taskId>`. Closure is allowed only when the final decision is `close_task` or `close_with_notes`; `needs_follow_up`, `blocked`, and `unknown` block closure. This stores `artifacts/implementation/<taskId>/closure-record.md`, records closure metadata in `run-state.json`, and moves the run to `TASK_CLOSED`. Add `--note "<closure note>"` to record explicit closure context. Inspect one task with `devo task status --project MyProject --run <runId> --task <taskId>`, or list all run tasks with `devo task list --project MyProject --run <runId>`.
 
-Task closure creates a durable ledger entry so already-completed work can be avoided by manual selection and by later automatic task-selection workflows. This version does not implement automatic next-task selection yet.
+Formal task closure records that a selected task completed the implementation, validation, review, and final audit lifecycle. Task disposition is separate bookkeeping for reconciliation: use `devo task mark` to mark task-list entries as `covered_by`, `superseded`, `not_needed`, `closed_manually`, or reset them to `open`. Disposition writes `artifacts/task-ledger.json`, does not change the run status, does not replace closure records, and does not pretend a task completed the formal lifecycle. When a task has both a formal closure and a disposition, task status prefers the closure status while still showing disposition details.
+
+Task closure and task disposition create durable ledger entries so already-completed, covered, or unnecessary work can be avoided by manual selection and by later automatic task-selection workflows. This version does not implement automatic next-task selection yet.
 
 The run-level status flow is:
 
@@ -286,9 +296,9 @@ The run-level status flow is:
 RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY -> IMPLEMENTATION_REPORTED -> VALIDATION_REVIEWED -> CODE_REVIEWED -> FINAL_AUDITED -> TASK_CLOSED
 ```
 
-`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs, completion reports, validation reports, code review reports, final audit reports, and closure records grouped by task id, plus every generated prompt.
+`devo task status` and `devo task list` show both formal closure state and disposition state. `devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, `task-ledger.json` when present, implementation briefs, completion reports, validation reports, code review reports, final audit reports, and closure records grouped by task id, plus every generated prompt.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. This version does not implement automatic next-task selection, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. This version does not implement automatic next-task selection, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
 
 ## Development
 

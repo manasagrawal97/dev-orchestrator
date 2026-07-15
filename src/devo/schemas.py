@@ -175,6 +175,33 @@ class RunArtifactType(StrEnum):
     FINAL_AUDIT = "final_audit"
 
 
+class TaskDispositionStatus(StrEnum):
+    OPEN = "open"
+    COVERED_BY = "covered_by"
+    SUPERSEDED = "superseded"
+    NOT_NEEDED = "not_needed"
+    CLOSED_MANUALLY = "closed_manually"
+
+
+class TaskLedgerEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    disposition_status: TaskDispositionStatus = TaskDispositionStatus.OPEN
+    covered_by_task_id: str | None = None
+    disposition_note: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class TaskLedger(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    run_id: str
+    entries: dict[str, TaskLedgerEntry] = Field(default_factory=dict)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class RunArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -246,6 +273,7 @@ class RunState(BaseModel):
     implementation_brief_path: Path | None = None
     implementation_ready_at: datetime | None = None
     implementation_records: list[ImplementationRecord] = Field(default_factory=list)
+    task_ledger_path: Path | None = None
 
 
 class CurrentSelection(BaseModel):

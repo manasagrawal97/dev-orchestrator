@@ -38,6 +38,7 @@ from .runs import (
     import_implementation_completion_report,
     import_run_agent_output,
     list_run_tasks,
+    mark_task_disposition,
     list_runs,
     load_run,
     run_path,
@@ -394,6 +395,7 @@ def show_run_artifacts(
     console.print(f"  plan: {_named_path(summary['plan_artifact_path'])}")
     console.print(f"  plan-review: {_named_path(summary['plan_review_artifact_path'])}")
     console.print(f"  tasks: {_named_path(summary['tasks_artifact_path'])}")
+    console.print(f"  task-ledger.json: {_named_path(summary['task_ledger_path'])}")
     implementation_paths = summary["implementation_artifact_paths"]
     if implementation_paths:
         console.print("  implementation:")
@@ -559,6 +561,37 @@ def show_audit_status(
     console.print(f"  Final decision: {status['final_decision']}")
 
 
+@task_app.command("mark")
+def mark_run_task(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+    status: str = typer.Option(..., "--status", help="Disposition status."),
+    note: str | None = typer.Option(None, "--note", help="Disposition note."),
+    covered_by_task_id: str | None = typer.Option(None, "--covered-by", help="Task ID that covers this task."),
+) -> None:
+    """Mark task disposition in the run ledger."""
+    try:
+        entry = mark_task_disposition(
+            project_name=project_name,
+            run_id=run_id,
+            task_id=task_id,
+            status=status,
+            note=note,
+            covered_by_task_id=covered_by_task_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    console.print(f"[green]Marked task[/green] {entry.task_id}")
+    console.print(f"Project: {project_name}")
+    console.print(f"Run: {run_id}")
+    console.print(f"Disposition status: {entry.disposition_status.value}")
+    console.print(f"Covered by: {entry.covered_by_task_id or 'none'}")
+    console.print(f"Note: {entry.disposition_note or 'none'}")
+    console.print(f"Updated at: {entry.updated_at.isoformat()}")
+
+
 @task_app.command("close")
 def close_run_task(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
@@ -599,6 +632,10 @@ def show_task_status(
     console.print(f"  Run: {status['run_id']}")
     console.print(f"  Run status: {status['run_status']}")
     console.print(f"  Closure status: {status['closure_status']}")
+    console.print(f"  Disposition status: {status['disposition_status']}")
+    console.print(f"  Covered by: {status['covered_by_task_id'] or 'none'}")
+    console.print(f"  Disposition note: {status['disposition_note'] or 'none'}")
+    console.print(f"  Disposition updated at: {status['disposition_updated_at'] or 'none'}")
     console.print(f"  Closure record: {_named_path(status['closure_record_path'])}")
     console.print(f"  Closed at: {status['closed_at'] or 'none'}")
     console.print(f"  Closure note: {status['closure_note'] or 'none'}")
@@ -624,6 +661,10 @@ def list_tasks_for_run(
     for task in tasks:
         console.print(f"[bold]{task['task_id']}[/bold] {task['task_title']}")
         console.print(f"  Closure status: {task['closure_status']}")
+        console.print(f"  Disposition status: {task['disposition_status']}")
+        console.print(f"  Covered by: {task['covered_by_task_id'] or 'none'}")
         console.print(f"  Final decision: {task['final_decision']}")
+        if task["disposition_note"]:
+            console.print(f"  Disposition note: {task['disposition_note']}")
         if task["closure_record_path"]:
             console.print(f"  Closure record: {_named_path(task['closure_record_path'])}")
