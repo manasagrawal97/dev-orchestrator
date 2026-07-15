@@ -16,10 +16,13 @@ from .runs import (
     PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
     TASK_DECOMPOSER_AGENT_NAME,
+    VALIDATOR_AGENT_NAME,
     extract_task_excerpt,
+    find_implementation_record,
     get_run_artifact_text,
     load_run,
     require_context_approved,
+    require_implementation_completion,
     require_run_artifact,
     require_run_status_at_least,
     require_task_id,
@@ -38,11 +41,13 @@ PLANNER_TEMPLATE_NAME = "planner.md"
 PLAN_REVIEWER_TEMPLATE_NAME = "plan_reviewer.md"
 TASK_DECOMPOSER_TEMPLATE_NAME = "task_decomposer.md"
 IMPLEMENTATION_COORDINATOR_TEMPLATE_NAME = "implementation_coordinator.md"
+VALIDATOR_TEMPLATE_NAME = "validator.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
 MAX_COMMITS = 10
 MAX_CONTEXT_ARTIFACT_CHARS = 12_000
+MAX_IMPLEMENTATION_ARTIFACT_CHARS = 12_000
 
 
 def list_agent_definitions(agents_dir: Path | None = None) -> list[AgentDefinition]:
@@ -213,6 +218,16 @@ def generate_run_agent_prompt(
             raise ValueError(msg)
         template_name = IMPLEMENTATION_COORDINATOR_TEMPLATE_NAME
         output_name = f"implementation-coordinator-{normalized_task_id}.prompt.md"
+    elif agent.name == VALIDATOR_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.IMPLEMENTATION_REPORTED,
+            "ValidatorAgent requires reported implementation completion before validation review.",
+        )
+        require_implementation_completion(run_state, normalized_task_id)
+        template_name = VALIDATOR_TEMPLATE_NAME
+        output_name = f"validator-{normalized_task_id}.prompt.md"
     else:
         msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -321,6 +336,15 @@ def _render_run_agent_prompt(
     tasks_status = "available" if tasks else "missing"
     normalized_task_id = (selected_task_id or "").strip()
     selected_task_excerpt = extract_task_excerpt(tasks or "", normalized_task_id) if normalized_task_id else None
+    implementation_record = find_implementation_record(run_state, normalized_task_id) if normalized_task_id else None
+    implementation_brief = _read_optional_path(
+        implementation_record.implementation_brief_path if implementation_record else None,
+        MAX_IMPLEMENTATION_ARTIFACT_CHARS,
+    )
+    completion_report = _read_optional_path(
+        implementation_record.completion_report_path if implementation_record else None,
+        MAX_IMPLEMENTATION_ARTIFACT_CHARS,
+    )
     return template.safe_substitute(
         agent_name=agent.name,
         agent_version=agent.version,
@@ -345,6 +369,11 @@ def _render_run_agent_prompt(
         tasks=tasks or "MISSING: TaskDecomposerAgent output has not been imported yet.",
         selected_task_id=normalized_task_id or "MISSING: no task id was provided.",
         selected_task_excerpt=selected_task_excerpt or "MISSING: selected task was not found in tasks.md.",
+        implementation_brief_status="available" if implementation_brief else "missing",
+        implementation_brief=implementation_brief or "MISSING: implementation brief has not been imported for this task.",
+        completion_report_status="available" if completion_report else "missing",
+        completion_report=completion_report or "MISSING: implementation completion report has not been imported for this task.",
+        agent_definition=yaml.safe_dump(agent.model_dump(mode="json"), sort_keys=False),
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),
         expected_outputs=_markdown_list(agent.outputs),
@@ -426,6 +455,12 @@ def _read_run_file(run_state: RunState, file_name: str) -> str:
     if not path.exists():
         return f"MISSING: {file_name}"
     return path.read_text(encoding="utf-8")
+
+
+def _read_optional_path(path: Path | None, max_chars: int) -> str | None:
+    if not path or not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")[:max_chars]
 
 
 def _agents_dir() -> Path:

@@ -157,6 +157,7 @@ class RunStatus(StrEnum):
     TASKS_DRAFTED = "TASKS_DRAFTED"
     IMPLEMENTATION_READY = "IMPLEMENTATION_READY"
     IMPLEMENTATION_REPORTED = "IMPLEMENTATION_REPORTED"
+    VALIDATION_REVIEWED = "VALIDATION_REVIEWED"
 
 
 class RunArtifactType(StrEnum):
@@ -166,6 +167,7 @@ class RunArtifactType(StrEnum):
     PLAN_REVIEW = "plan_review"
     TASKS = "tasks"
     IMPLEMENTATION_BRIEF = "implementation_brief"
+    VALIDATION_REPORT = "validation_report"
 
 
 class RunArtifact(BaseModel):
@@ -208,6 +210,9 @@ class ImplementationRecord(BaseModel):
     reported_at: datetime | None = None
     validation_summary: str = "unknown"
     commit_hash: str = "unknown"
+    validation_report_path: Path | None = None
+    validated_at: datetime | None = None
+    validation_decision: str = "unknown"
 
 
 class RunState(BaseModel):

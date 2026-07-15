@@ -27,6 +27,7 @@ PLANNER_AGENT_NAME = "PlannerAgent"
 PLAN_REVIEWER_AGENT_NAME = "PlanReviewerAgent"
 TASK_DECOMPOSER_AGENT_NAME = "TaskDecomposerAgent"
 IMPLEMENTATION_COORDINATOR_AGENT_NAME = "ImplementationCoordinatorAgent"
+VALIDATOR_AGENT_NAME = "ValidatorAgent"
 IDEA_ANALYSIS_ARTIFACT_NAME = "idea-analysis.md"
 REQUIREMENTS_ARTIFACT_NAME = "requirements.md"
 PLAN_ARTIFACT_NAME = "plan.md"
@@ -34,6 +35,7 @@ PLAN_REVIEW_ARTIFACT_NAME = "plan-review.md"
 TASKS_ARTIFACT_NAME = "tasks.md"
 IMPLEMENTATION_BRIEF_ARTIFACT_NAME = "implementation-brief.md"
 COMPLETION_REPORT_ARTIFACT_NAME = "completion-report.md"
+VALIDATION_REPORT_ARTIFACT_NAME = "validation-report.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -44,6 +46,7 @@ RUN_STATUS_ORDER = {
     RunStatus.TASKS_DRAFTED: 5,
     RunStatus.IMPLEMENTATION_READY: 6,
     RunStatus.IMPLEMENTATION_REPORTED: 7,
+    RunStatus.VALIDATION_REVIEWED: 8,
 }
 
 RUN_SUBDIRECTORIES = (
@@ -204,11 +207,22 @@ def import_run_agent_output(
         artifact_type = RunArtifactType.IMPLEMENTATION_BRIEF
         artifact_name = IMPLEMENTATION_BRIEF_ARTIFACT_NAME
         next_status = RunStatus.IMPLEMENTATION_READY
+    elif agent_name == VALIDATOR_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.IMPLEMENTATION_REPORTED,
+            "ValidatorAgent requires reported implementation completion before validation review.",
+        )
+        require_implementation_completion(run_state, normalized_task_id)
+        artifact_type = RunArtifactType.VALIDATION_REPORT
+        artifact_name = VALIDATION_REPORT_ARTIFACT_NAME
+        next_status = RunStatus.VALIDATION_REVIEWED
     else:
         msg = f"Run-level import is not supported for agent: {agent_name}"
         raise ValueError(msg)
 
-    if agent_name == IMPLEMENTATION_COORDINATOR_AGENT_NAME:
+    if agent_name in {IMPLEMENTATION_COORDINATOR_AGENT_NAME, VALIDATOR_AGENT_NAME}:
         artifact_path = _implementation_artifact_dir(root, project_name, run_id, normalized_task_id) / artifact_name
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
     else:
@@ -245,6 +259,29 @@ def import_run_agent_output(
         run_state.current_task_id = normalized_task_id
         run_state.implementation_brief_path = artifact_path
         run_state.implementation_ready_at = imported_at
+    elif agent_name == VALIDATOR_AGENT_NAME:
+        run_state.artifacts = [
+            existing
+            for existing in run_state.artifacts
+            if not (
+                existing.artifact_type == artifact_type
+                and existing.artifact_path.parent.name == normalized_task_id
+            )
+        ]
+        validated_at = datetime.now(UTC)
+        report_text = source_path.read_text(encoding="utf-8")
+        run_state.implementation_records = [
+            existing.model_copy(
+                update={
+                    "validation_report_path": artifact_path,
+                    "validated_at": validated_at,
+                    "validation_decision": _extract_validation_decision(report_text),
+                }
+            )
+            if existing.task_id == normalized_task_id
+            else existing
+            for existing in run_state.implementation_records
+        ]
     else:
         run_state.artifacts = [
             existing for existing in run_state.artifacts if existing.artifact_type != artifact_type
@@ -338,6 +375,31 @@ def get_implementation_status(
     }
 
 
+def get_validation_status(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    record = require_implementation_completion(run_state, normalized_task_id)
+
+    return {
+        "project_name": project_name,
+        "run_id": run_id,
+        "task_id": normalized_task_id,
+        "run_status": run_state.status.value,
+        "implementation_brief_path": str(record.implementation_brief_path),
+        "completion_report_path": str(record.completion_report_path),
+        "validation_report_path": str(record.validation_report_path) if record.validation_report_path else None,
+        "validated_at": record.validated_at.isoformat() if record.validated_at else None,
+        "validation_decision": record.validation_decision,
+    }
+
+
 def save_current_selection(
     project_name: str,
     run_id: str | None = None,
@@ -416,6 +478,17 @@ def require_task_excerpt(run_state: RunState, task_id: str) -> str:
     return excerpt
 
 
+def require_implementation_completion(run_state: RunState, task_id: str) -> ImplementationRecord:
+    record = find_implementation_record(run_state, task_id)
+    if not record or not record.implementation_brief_path.exists():
+        msg = f"Implementation brief not found for task: {task_id}"
+        raise ValueError(msg)
+    if not record.completion_report_path or not record.completion_report_path.exists():
+        msg = f"Completion report not found for task: {task_id}"
+        raise ValueError(msg)
+    return record
+
+
 def extract_task_excerpt(tasks_text: str, task_id: str) -> str | None:
     pattern = re.compile(
         rf"(?ims)^##\s+Task\s+{re.escape(task_id)}\b.*?(?=^##\s+Task\s+\S+\b|^---\s*$|\Z)"
@@ -461,6 +534,7 @@ def get_run_artifacts_summary(
                 "task_id": record.task_id,
                 "implementation_brief_path": str(record.implementation_brief_path),
                 "completion_report_path": str(record.completion_report_path) if record.completion_report_path else None,
+                "validation_report_path": str(record.validation_report_path) if record.validation_report_path else None,
             }
             for record in run_state.implementation_records
         ],
@@ -558,4 +632,21 @@ def _extract_commit_hash(report_text: str) -> str:
     any_hash = re.search(r"\b[0-9a-f]{40}\b", report_text, flags=re.IGNORECASE)
     if any_hash:
         return any_hash.group(0)
+    return "unknown"
+
+
+def _extract_validation_decision(report_text: str) -> str:
+    allowed = ("passed_with_notes", "needs_more_evidence", "passed", "failed")
+    section = re.search(r"(?ims)^#+\s*validation-decision\.md\s*\n+(.+?)(?=^#+\s|\Z)", report_text)
+    candidates = [section.group(1)] if section else []
+    inline = re.search(r"(?im)^\s*(?:[-*]\s*)?validation decision\s*:\s*(.+)$", report_text)
+    if inline:
+        candidates.append(inline.group(1))
+    candidates.append(report_text)
+
+    for candidate in candidates:
+        normalized = candidate.strip().lower()
+        for decision in allowed:
+            if re.search(rf"\b{re.escape(decision)}\b", normalized):
+                return decision
     return "unknown"

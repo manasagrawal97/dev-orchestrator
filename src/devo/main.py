@@ -24,9 +24,11 @@ from .runs import (
     PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
     TASK_DECOMPOSER_AGENT_NAME,
+    VALIDATOR_AGENT_NAME,
     create_run,
     get_implementation_status,
     get_run_artifacts_summary,
+    get_validation_status,
     import_implementation_completion_report,
     import_run_agent_output,
     list_runs,
@@ -41,10 +43,12 @@ project_app = typer.Typer(help="Manage registered projects.")
 agent_app = typer.Typer(help="Inspect agent definitions and generate prompts.")
 run_app = typer.Typer(help="Manage development runs.")
 implementation_app = typer.Typer(help="Record implementation completion evidence.")
+validation_app = typer.Typer(help="Inspect validation review evidence.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
 app.add_typer(implementation_app, name="implementation")
+app.add_typer(validation_app, name="validation")
 
 console = Console()
 
@@ -191,6 +195,7 @@ def generate_agent_prompt(
         PLAN_REVIEWER_AGENT_NAME,
         TASK_DECOMPOSER_AGENT_NAME,
         IMPLEMENTATION_COORDINATOR_AGENT_NAME,
+        VALIDATOR_AGENT_NAME,
     }:
         if not run_id:
             raise typer.BadParameter(f"{agent.name} prompt generation requires --run.", param_hint="--run")
@@ -216,7 +221,8 @@ def generate_agent_prompt(
                 f"{DISCOVERY_AGENT_NAME}, {REVIEWER_AGENT_NAME}, "
                 f"{IDEA_ANALYST_AGENT_NAME}, {REQUIREMENTS_AGENT_NAME}, "
                 f"{PLANNER_AGENT_NAME}, {PLAN_REVIEWER_AGENT_NAME}, "
-                f"{TASK_DECOMPOSER_AGENT_NAME}, and {IMPLEMENTATION_COORDINATOR_AGENT_NAME}."
+                f"{TASK_DECOMPOSER_AGENT_NAME}, {IMPLEMENTATION_COORDINATOR_AGENT_NAME}, "
+                f"and {VALIDATOR_AGENT_NAME}."
             ),
             param_hint="agentName",
         )
@@ -254,6 +260,7 @@ def import_output(
             PLAN_REVIEWER_AGENT_NAME,
             TASK_DECOMPOSER_AGENT_NAME,
             IMPLEMENTATION_COORDINATOR_AGENT_NAME,
+            VALIDATOR_AGENT_NAME,
         }:
             if not run_id:
                 raise ValueError(f"{agent.name} import requires --run.")
@@ -370,6 +377,8 @@ def show_run_artifacts(
             console.print(f"    - {record['task_id']}: {record['implementation_brief_path']}")
             if record["completion_report_path"]:
                 console.print(f"      completion: {record['completion_report_path']}")
+            if record["validation_report_path"]:
+                console.print(f"      validation: {record['validation_report_path']}")
     else:
         console.print("  implementation: none")
     prompt_paths = summary["prompt_paths"]
@@ -446,3 +455,26 @@ def show_implementation_status(
     console.print(f"  Reported at: {status['reported_at'] or 'none'}")
     console.print(f"  Validation summary: {status['validation_summary']}")
     console.print(f"  Commit hash: {status['commit_hash']}")
+
+
+@validation_app.command("status")
+def show_validation_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+) -> None:
+    """Show validation review evidence for a selected task."""
+    try:
+        status = get_validation_status(project_name=project_name, run_id=run_id, task_id=task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    console.print(f"[bold]{status['task_id']}[/bold]")
+    console.print(f"  Project: {status['project_name']}")
+    console.print(f"  Run: {status['run_id']}")
+    console.print(f"  Run status: {status['run_status']}")
+    console.print(f"  Implementation brief: {status['implementation_brief_path']}")
+    console.print(f"  Completion report: {status['completion_report_path']}")
+    console.print(f"  Validation report: {status['validation_report_path'] or 'none'}")
+    console.print(f"  Validated at: {status['validated_at'] or 'none'}")
+    console.print(f"  Validation decision: {status['validation_decision']}")

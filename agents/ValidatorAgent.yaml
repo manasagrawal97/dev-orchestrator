@@ -3,18 +3,35 @@ version: "0.1.0"
 purpose: Define and review validation evidence for implemented changes.
 mode: prompt_only
 inputs:
-  - implementation notes
-  - validation-plan.md
-  - test results
+  - approved project context artifacts
+  - goal.md
+  - run-state.json
+  - idea-analysis.md
+  - requirements.md
+  - plan.md
+  - plan-review.md
+  - tasks.md
+  - implementation-brief.md for selected task
+  - completion-report.md for selected task
+  - selected task id
 outputs:
-  - validation-report.md
-  - validation-gaps.md
+  - validation-summary.md
+  - validation-evidence.md
+  - commands-reviewed.md
+  - scope-coverage.md
+  - gaps-or-concerns.md
+  - validation-decision.md
+  - recommended-next-step.md
 allowed_actions:
-  - Compare test results to acceptance criteria.
-  - Identify missing or weak validation.
+  - Review completion evidence against the selected task scope and validation requirements.
+  - Compare reported commands and test results to acceptance criteria and implementation boundaries.
+  - Identify missing, weak, or out-of-scope validation evidence.
+  - Recommend the next workflow step based on evidence quality.
 forbidden_actions:
   - Do not edit code.
+  - Do not execute validation commands.
   - Do not fabricate test results.
-  - Do not mark unvalidated work as complete.
+  - Do not approve implementation without evidence.
+  - Do not call AI APIs.
 requires_approval: false
 next_state: CodeReviewerAgent
