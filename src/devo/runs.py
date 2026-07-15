@@ -40,6 +40,7 @@ COMPLETION_REPORT_ARTIFACT_NAME = "completion-report.md"
 VALIDATION_REPORT_ARTIFACT_NAME = "validation-report.md"
 CODE_REVIEW_ARTIFACT_NAME = "code-review.md"
 FINAL_AUDIT_ARTIFACT_NAME = "final-audit.md"
+CLOSURE_RECORD_ARTIFACT_NAME = "closure-record.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -53,6 +54,12 @@ RUN_STATUS_ORDER = {
     RunStatus.VALIDATION_REVIEWED: 8,
     RunStatus.CODE_REVIEWED: 9,
     RunStatus.FINAL_AUDITED: 10,
+    RunStatus.TASK_CLOSED: 11,
+}
+
+TASK_CLOSING_FINAL_DECISIONS = {
+    "close_task": "closed",
+    "close_with_notes": "closed_with_notes",
 }
 
 RUN_SUBDIRECTORIES = (
@@ -532,6 +539,118 @@ def get_audit_status(
     }
 
 
+def close_task(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    note: str | None = None,
+    workspace_root: Path | None = None,
+) -> ImplementationRecord:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    require_run_status_at_least(
+        run_state,
+        RunStatus.FINAL_AUDITED,
+        "Task closure requires final audit evidence before closing.",
+    )
+    record = require_final_audit(run_state, normalized_task_id)
+    final_decision = record.final_decision
+    closure_status = TASK_CLOSING_FINAL_DECISIONS.get(final_decision)
+    if not closure_status:
+        msg = f"Task cannot be closed with final decision: {final_decision}"
+        raise ValueError(msg)
+
+    closed_at = datetime.now(UTC)
+    closure_record_path = record.implementation_brief_path.parent / CLOSURE_RECORD_ARTIFACT_NAME
+    closure_record_path.write_text(
+        _render_closure_record(record, closed_at=closed_at, closure_status=closure_status, note=note),
+        encoding="utf-8",
+    )
+    updated_record = record.model_copy(
+        update={
+            "closure_record_path": closure_record_path,
+            "closed_at": closed_at,
+            "closure_status": closure_status,
+            "closure_note": note,
+        }
+    )
+    run_state.implementation_records = [
+        updated_record if existing.task_id == normalized_task_id else existing
+        for existing in run_state.implementation_records
+    ]
+    run_state.status = RunStatus.TASK_CLOSED
+    run_state.updated_at = closed_at
+    save_run_state(run_state, workspace_root=root)
+    return updated_record
+
+
+def get_task_status(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    record = find_implementation_record(run_state, normalized_task_id)
+    if not record:
+        msg = f"Task record not found: {normalized_task_id}"
+        raise ValueError(msg)
+
+    return {
+        "project_name": project_name,
+        "run_id": run_id,
+        "task_id": normalized_task_id,
+        "run_status": run_state.status.value,
+        "closure_status": record.closure_status or "open",
+        "closure_record_path": str(record.closure_record_path) if record.closure_record_path else None,
+        "closed_at": record.closed_at.isoformat() if record.closed_at else None,
+        "closure_note": record.closure_note,
+        "final_decision": record.final_decision,
+        "final_audit_path": str(record.final_audit_path) if record.final_audit_path else None,
+    }
+
+
+def list_run_tasks(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> list[dict[str, object]]:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    tasks_by_id = _extract_tasks_from_artifact(run_state)
+
+    for record in run_state.implementation_records:
+        task = tasks_by_id.setdefault(
+            record.task_id,
+            {
+                "task_id": record.task_id,
+                "task_title": "unknown",
+            },
+        )
+        task.update(
+            {
+                "closure_status": record.closure_status or "open",
+                "final_decision": record.final_decision,
+                "closure_record_path": str(record.closure_record_path) if record.closure_record_path else None,
+                "closed_at": record.closed_at.isoformat() if record.closed_at else None,
+            }
+        )
+
+    for task in tasks_by_id.values():
+        task.setdefault("closure_status", "open")
+        task.setdefault("final_decision", "unknown")
+        task.setdefault("closure_record_path", None)
+        task.setdefault("closed_at", None)
+
+    return [tasks_by_id[task_id] for task_id in sorted(tasks_by_id)]
+
+
 def save_current_selection(
     project_name: str,
     run_id: str | None = None,
@@ -637,6 +756,14 @@ def require_code_review(run_state: RunState, task_id: str) -> ImplementationReco
     return record
 
 
+def require_final_audit(run_state: RunState, task_id: str) -> ImplementationRecord:
+    record = require_code_review(run_state, task_id)
+    if not record.final_audit_path or not record.final_audit_path.exists():
+        msg = f"Final audit report not found for task: {task_id}"
+        raise ValueError(msg)
+    return record
+
+
 def extract_task_excerpt(tasks_text: str, task_id: str) -> str | None:
     pattern = re.compile(
         rf"(?ims)^##\s+Task\s+{re.escape(task_id)}\b.*?(?=^##\s+Task\s+\S+\b|^---\s*$|\Z)"
@@ -685,6 +812,7 @@ def get_run_artifacts_summary(
                 "validation_report_path": str(record.validation_report_path) if record.validation_report_path else None,
                 "code_review_path": str(record.code_review_path) if record.code_review_path else None,
                 "final_audit_path": str(record.final_audit_path) if record.final_audit_path else None,
+                "closure_record_path": str(record.closure_record_path) if record.closure_record_path else None,
             }
             for record in run_state.implementation_records
         ],
@@ -738,6 +866,38 @@ def _render_goal_markdown(run_state: RunState) -> str:
     )
 
 
+def _render_closure_record(
+    record: ImplementationRecord,
+    closed_at: datetime,
+    closure_status: str,
+    note: str | None,
+) -> str:
+    lines = [
+        "# closure-record.md",
+        "",
+        f"- task id: {record.task_id}",
+        f"- closed_at: {closed_at.isoformat()}",
+        f"- final decision: {record.final_decision}",
+        f"- closure status: {closure_status}",
+    ]
+    if note:
+        lines.append(f"- note: {note}")
+    lines.extend(
+        [
+            "",
+            "## References",
+            "",
+            f"- implementation brief: {record.implementation_brief_path}",
+            f"- completion report: {record.completion_report_path}",
+            f"- validation report: {record.validation_report_path}",
+            f"- code review: {record.code_review_path}",
+            f"- final audit: {record.final_audit_path}",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _unique_run_id(workspace_root: Path, project_name: str, goal: str, created_at: datetime) -> str:
     base = f"{created_at:%Y-%m-%d-%H%M%S}-{_slugify(goal)}"
     candidate = base
@@ -760,6 +920,21 @@ def _run_dir(workspace_root: Path, project_name: str, run_id: str) -> Path:
 
 def _implementation_artifact_dir(workspace_root: Path, project_name: str, run_id: str, task_id: str) -> Path:
     return _run_dir(workspace_root, project_name, run_id) / "artifacts" / "implementation" / task_id
+
+
+def _extract_tasks_from_artifact(run_state: RunState) -> dict[str, dict[str, object]]:
+    tasks_text = get_run_artifact_text(run_state, RunArtifactType.TASKS) or ""
+    tasks: dict[str, dict[str, object]] = {}
+    pattern = re.compile(r"(?ims)^##\s+Task\s+(\S+)\b(.*?)(?=^##\s+Task\s+\S+\b|^---\s*$|\Z)")
+    for match in pattern.finditer(tasks_text):
+        task_id = match.group(1).strip("`")
+        body = match.group(2)
+        title_match = re.search(r"(?im)^\s*-\s*task title:\s*(.+)$", body)
+        tasks[task_id] = {
+            "task_id": task_id,
+            "task_title": title_match.group(1).strip().strip("`") if title_match else "unknown",
+        }
+    return tasks
 
 
 def _extract_validation_summary(report_text: str) -> str:

@@ -27,14 +27,17 @@ from .runs import (
     REQUIREMENTS_AGENT_NAME,
     TASK_DECOMPOSER_AGENT_NAME,
     VALIDATOR_AGENT_NAME,
+    close_task,
     create_run,
     get_audit_status,
     get_implementation_status,
     get_review_status,
     get_run_artifacts_summary,
+    get_task_status,
     get_validation_status,
     import_implementation_completion_report,
     import_run_agent_output,
+    list_run_tasks,
     list_runs,
     load_run,
     run_path,
@@ -50,6 +53,7 @@ implementation_app = typer.Typer(help="Record implementation completion evidence
 validation_app = typer.Typer(help="Inspect validation review evidence.")
 review_app = typer.Typer(help="Inspect code review evidence.")
 audit_app = typer.Typer(help="Inspect final audit evidence.")
+task_app = typer.Typer(help="Manage run tasks.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -57,8 +61,16 @@ app.add_typer(implementation_app, name="implementation")
 app.add_typer(validation_app, name="validation")
 app.add_typer(review_app, name="review")
 app.add_typer(audit_app, name="audit")
+app.add_typer(task_app, name="task")
 
 console = Console()
+
+
+def _named_path(path: object | None) -> str:
+    if not path:
+        return "none"
+    path_text = str(path)
+    return f"{Path(path_text).name} ({path_text})"
 
 
 @app.callback()
@@ -359,8 +371,8 @@ def show_run_status(
     console.print(f"  Status: {run_state.status.value}")
     console.print(f"  Goal: {run_state.goal}")
     console.print(f"  Created at: {run_state.created_at.isoformat()}")
-    console.print(f"  Context state: {run_state.context_snapshot.context_state_path}")
-    console.print(f"  Approval record: {run_state.context_snapshot.approval_record_path}")
+    console.print(f"  Context state: {_named_path(run_state.context_snapshot.context_state_path)}")
+    console.print(f"  Approval record: {_named_path(run_state.context_snapshot.approval_record_path)}")
 
 
 @run_app.command("artifacts")
@@ -375,33 +387,35 @@ def show_run_artifacts(
         raise typer.BadParameter(str(exc), param_hint="runId") from exc
 
     console.print(f"[bold]{run_id}[/bold]")
-    console.print(f"  goal.md: {summary['goal_path']}")
-    console.print(f"  run-state.json: {summary['run_state_path']}")
-    console.print(f"  idea-analysis: {summary['idea_analysis_artifact_path'] or 'none'}")
-    console.print(f"  requirements: {summary['requirements_artifact_path'] or 'none'}")
-    console.print(f"  plan: {summary['plan_artifact_path'] or 'none'}")
-    console.print(f"  plan-review: {summary['plan_review_artifact_path'] or 'none'}")
-    console.print(f"  tasks: {summary['tasks_artifact_path'] or 'none'}")
+    console.print(f"  goal.md: {_named_path(summary['goal_path'])}")
+    console.print(f"  run-state.json: {_named_path(summary['run_state_path'])}")
+    console.print(f"  idea-analysis: {_named_path(summary['idea_analysis_artifact_path'])}")
+    console.print(f"  requirements: {_named_path(summary['requirements_artifact_path'])}")
+    console.print(f"  plan: {_named_path(summary['plan_artifact_path'])}")
+    console.print(f"  plan-review: {_named_path(summary['plan_review_artifact_path'])}")
+    console.print(f"  tasks: {_named_path(summary['tasks_artifact_path'])}")
     implementation_paths = summary["implementation_artifact_paths"]
     if implementation_paths:
         console.print("  implementation:")
         for record in implementation_paths:
-            console.print(f"    - {record['task_id']}: {record['implementation_brief_path']}")
+            console.print(f"    - {record['task_id']}: {_named_path(record['implementation_brief_path'])}")
             if record["completion_report_path"]:
-                console.print(f"      completion: {record['completion_report_path']}")
+                console.print(f"      completion: {_named_path(record['completion_report_path'])}")
             if record["validation_report_path"]:
-                console.print(f"      validation: {record['validation_report_path']}")
+                console.print(f"      validation: {_named_path(record['validation_report_path'])}")
             if record["code_review_path"]:
-                console.print(f"      code review: {record['code_review_path']}")
+                console.print(f"      code review: {_named_path(record['code_review_path'])}")
             if record["final_audit_path"]:
-                console.print(f"      final audit: {record['final_audit_path']}")
+                console.print(f"      final audit: {_named_path(record['final_audit_path'])}")
+            if record["closure_record_path"]:
+                console.print(f"      closure: {_named_path(record['closure_record_path'])}")
     else:
         console.print("  implementation: none")
     prompt_paths = summary["prompt_paths"]
     if prompt_paths:
         console.print("  prompts:")
         for prompt_path in prompt_paths:
-            console.print(f"    - {prompt_path}")
+            console.print(f"    - {_named_path(prompt_path)}")
     else:
         console.print("  prompts: none")
 
@@ -445,7 +459,7 @@ def report_implementation_completion(
     console.print(f"[green]Imported implementation report[/green] for {record.task_id}")
     console.print(f"Project: {project_name}")
     console.print(f"Run: {run_id}")
-    console.print(f"Report: {record.completion_report_path}")
+    console.print(f"Report: {_named_path(record.completion_report_path)}")
     console.print(f"Validation summary: {record.validation_summary}")
     console.print(f"Commit hash: {record.commit_hash}")
 
@@ -466,8 +480,8 @@ def show_implementation_status(
     console.print(f"  Project: {status['project_name']}")
     console.print(f"  Run: {status['run_id']}")
     console.print(f"  Run status: {status['run_status']}")
-    console.print(f"  Implementation brief: {status['implementation_brief_path']}")
-    console.print(f"  Completion report: {status['completion_report_path'] or 'none'}")
+    console.print(f"  Implementation brief: {_named_path(status['implementation_brief_path'])}")
+    console.print(f"  Completion report: {_named_path(status['completion_report_path'])}")
     console.print(f"  Reported at: {status['reported_at'] or 'none'}")
     console.print(f"  Validation summary: {status['validation_summary']}")
     console.print(f"  Commit hash: {status['commit_hash']}")
@@ -489,9 +503,9 @@ def show_validation_status(
     console.print(f"  Project: {status['project_name']}")
     console.print(f"  Run: {status['run_id']}")
     console.print(f"  Run status: {status['run_status']}")
-    console.print(f"  Implementation brief: {status['implementation_brief_path']}")
-    console.print(f"  Completion report: {status['completion_report_path']}")
-    console.print(f"  Validation report: {status['validation_report_path'] or 'none'}")
+    console.print(f"  Implementation brief: {_named_path(status['implementation_brief_path'])}")
+    console.print(f"  Completion report: {_named_path(status['completion_report_path'])}")
+    console.print(f"  Validation report: {_named_path(status['validation_report_path'])}")
     console.print(f"  Validated at: {status['validated_at'] or 'none'}")
     console.print(f"  Validation decision: {status['validation_decision']}")
 
@@ -512,10 +526,10 @@ def show_review_status(
     console.print(f"  Project: {status['project_name']}")
     console.print(f"  Run: {status['run_id']}")
     console.print(f"  Run status: {status['run_status']}")
-    console.print(f"  Implementation brief: {status['implementation_brief_path']}")
-    console.print(f"  Completion report: {status['completion_report_path']}")
-    console.print(f"  Validation report: {status['validation_report_path']}")
-    console.print(f"  Code review: {status['code_review_path'] or 'none'}")
+    console.print(f"  Implementation brief: {_named_path(status['implementation_brief_path'])}")
+    console.print(f"  Completion report: {_named_path(status['completion_report_path'])}")
+    console.print(f"  Validation report: {_named_path(status['validation_report_path'])}")
+    console.print(f"  Code review: {_named_path(status['code_review_path'])}")
     console.print(f"  Reviewed at: {status['reviewed_at'] or 'none'}")
     console.print(f"  Review decision: {status['review_decision']}")
 
@@ -536,10 +550,80 @@ def show_audit_status(
     console.print(f"  Project: {status['project_name']}")
     console.print(f"  Run: {status['run_id']}")
     console.print(f"  Run status: {status['run_status']}")
-    console.print(f"  Implementation brief: {status['implementation_brief_path']}")
-    console.print(f"  Completion report: {status['completion_report_path']}")
-    console.print(f"  Validation report: {status['validation_report_path']}")
-    console.print(f"  Code review: {status['code_review_path']}")
-    console.print(f"  Final audit: {status['final_audit_path'] or 'none'}")
+    console.print(f"  Implementation brief: {_named_path(status['implementation_brief_path'])}")
+    console.print(f"  Completion report: {_named_path(status['completion_report_path'])}")
+    console.print(f"  Validation report: {_named_path(status['validation_report_path'])}")
+    console.print(f"  Code review: {_named_path(status['code_review_path'])}")
+    console.print(f"  Final audit: {_named_path(status['final_audit_path'])}")
     console.print(f"  Audited at: {status['audited_at'] or 'none'}")
     console.print(f"  Final decision: {status['final_decision']}")
+
+
+@task_app.command("close")
+def close_run_task(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+    note: str | None = typer.Option(None, "--note", help="Optional closure note."),
+) -> None:
+    """Close a final-audited task."""
+    try:
+        record = close_task(project_name=project_name, run_id=run_id, task_id=task_id, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    console.print(f"[green]Closed task[/green] {record.task_id}")
+    console.print(f"Project: {project_name}")
+    console.print(f"Run: {run_id}")
+    console.print(f"Closure status: {record.closure_status}")
+    console.print(f"Final decision: {record.final_decision}")
+    if record.closure_note:
+        console.print(f"Note: {record.closure_note}")
+    console.print(f"Stored in: {_named_path(record.closure_record_path)}")
+
+
+@task_app.command("status")
+def show_task_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+) -> None:
+    """Show task closure status."""
+    try:
+        status = get_task_status(project_name=project_name, run_id=run_id, task_id=task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    console.print(f"[bold]{status['task_id']}[/bold]")
+    console.print(f"  Project: {status['project_name']}")
+    console.print(f"  Run: {status['run_id']}")
+    console.print(f"  Run status: {status['run_status']}")
+    console.print(f"  Closure status: {status['closure_status']}")
+    console.print(f"  Closure record: {_named_path(status['closure_record_path'])}")
+    console.print(f"  Closed at: {status['closed_at'] or 'none'}")
+    console.print(f"  Closure note: {status['closure_note'] or 'none'}")
+    console.print(f"  Final decision: {status['final_decision']}")
+    console.print(f"  Final audit: {_named_path(status['final_audit_path'])}")
+
+
+@task_app.command("list")
+def list_tasks_for_run(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """List tasks in a run with closure status."""
+    try:
+        tasks = list_run_tasks(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    if not tasks:
+        console.print("[yellow]No tasks found.[/yellow]")
+        return
+
+    for task in tasks:
+        console.print(f"[bold]{task['task_id']}[/bold] {task['task_title']}")
+        console.print(f"  Closure status: {task['closure_status']}")
+        console.print(f"  Final decision: {task['final_decision']}")
+        if task["closure_record_path"]:
+            console.print(f"  Closure record: {_named_path(task['closure_record_path'])}")

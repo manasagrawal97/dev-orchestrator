@@ -160,6 +160,7 @@ class RunStatus(StrEnum):
     VALIDATION_REVIEWED = "VALIDATION_REVIEWED"
     CODE_REVIEWED = "CODE_REVIEWED"
     FINAL_AUDITED = "FINAL_AUDITED"
+    TASK_CLOSED = "TASK_CLOSED"
 
 
 class RunArtifactType(StrEnum):
@@ -223,6 +224,10 @@ class ImplementationRecord(BaseModel):
     final_audit_path: Path | None = None
     audited_at: datetime | None = None
     final_decision: str = "unknown"
+    closure_record_path: Path | None = None
+    closed_at: datetime | None = None
+    closure_status: str | None = None
+    closure_note: str | None = None
 
 
 class RunState(BaseModel):
