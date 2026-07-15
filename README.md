@@ -119,6 +119,7 @@ devo agent prompt RequirementsAgent --project MyProject --run <runId>
 devo agent prompt PlannerAgent --project MyProject --run <runId>
 devo agent prompt PlanReviewerAgent --project MyProject --run <runId>
 devo agent prompt TaskDecomposerAgent --project MyProject --run <runId>
+devo agent prompt ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId>
 ```
 
 Import run-level agent outputs:
@@ -129,6 +130,7 @@ devo agent import-output RequirementsAgent --project MyProject --run <runId> --f
 devo agent import-output PlannerAgent --project MyProject --run <runId> --file E:\path\to\planner-output.md
 devo agent import-output PlanReviewerAgent --project MyProject --run <runId> --file E:\path\to\plan-review-output.md
 devo agent import-output TaskDecomposerAgent --project MyProject --run <runId> --file E:\path\to\task-decomposer-output.md
+devo agent import-output ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\implementation-output.md
 ```
 
 Show run artifacts and generated prompts:
@@ -194,7 +196,7 @@ workspace/runs/<projectName>/<runId>/
 
 Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
 
-This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, and TaskDecomposerAgent workflow. It does not implement implementation coordination, validation runners, AI model calls, Codex integration, or a web UI.
+This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, and ImplementationCoordinatorAgent workflow. It does not execute implementations, run validators, call AI models, integrate Codex, or provide a web UI.
 
 ## Run-Level Agent Workflow
 
@@ -210,15 +212,19 @@ After a plan has been reviewed, generate the TaskDecomposerAgent prompt with `de
 
 TaskDecomposerAgent output should include `task-list.md`, `task-dependency-map.md`, `first-safe-task.md`, `task-risk-notes.md`, `validation-requirements.md`, and `implementation-boundaries.md`. Each task should include its id, title, objective, scope, out-of-scope notes, likely files or areas when known, validation required, risk level, dependencies, and recommended executor.
 
+After tasks are drafted, generate an ImplementationCoordinatorAgent prompt for one selected task with `devo agent prompt ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId>`. The prompt includes the approved context, run artifacts, `artifacts/tasks.md`, the selected task id, and an extracted selected-task excerpt. It prepares implementation instructions only; it does not execute implementation. Import the output with `devo agent import-output ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId> --file <file>`. This stores `artifacts/implementation/<taskId>/implementation-brief.md`, records the current task in `run-state.json`, and moves the run to `IMPLEMENTATION_READY`.
+
+ImplementationCoordinatorAgent output should include `implementation-brief.md`, `selected-task.md`, `scope-boundaries.md`, `files-and-areas.md`, `validation-commands.md`, `safety-checks.md`, `codex-execution-prompt.md`, and `completion-report-template.md`.
+
 The run-level status flow is:
 
 ```text
-RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED
+RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY
 ```
 
-`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, and `tasks`, plus every generated prompt.
+`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs grouped by task id, plus every generated prompt.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. This version does not implement ImplementationCoordinatorAgent, validation runners, implementation prompts, AI model calls, Codex integration, or a web UI.
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. This version does not implement actual Codex execution, validators, code review, fix, final audit, AI model calls, or a web UI.
 
 ## Development
 

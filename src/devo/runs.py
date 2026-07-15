@@ -13,6 +13,7 @@ from .schemas import (
     ContextSnapshot,
     ContextStatus,
     CurrentSelection,
+    ImplementationRecord,
     RunAgentImportRecord,
     RunArtifact,
     RunArtifactType,
@@ -25,11 +26,13 @@ REQUIREMENTS_AGENT_NAME = "RequirementsAgent"
 PLANNER_AGENT_NAME = "PlannerAgent"
 PLAN_REVIEWER_AGENT_NAME = "PlanReviewerAgent"
 TASK_DECOMPOSER_AGENT_NAME = "TaskDecomposerAgent"
+IMPLEMENTATION_COORDINATOR_AGENT_NAME = "ImplementationCoordinatorAgent"
 IDEA_ANALYSIS_ARTIFACT_NAME = "idea-analysis.md"
 REQUIREMENTS_ARTIFACT_NAME = "requirements.md"
 PLAN_ARTIFACT_NAME = "plan.md"
 PLAN_REVIEW_ARTIFACT_NAME = "plan-review.md"
 TASKS_ARTIFACT_NAME = "tasks.md"
+IMPLEMENTATION_BRIEF_ARTIFACT_NAME = "implementation-brief.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -38,6 +41,7 @@ RUN_STATUS_ORDER = {
     RunStatus.PLAN_DRAFTED: 3,
     RunStatus.PLAN_REVIEWED: 4,
     RunStatus.TASKS_DRAFTED: 5,
+    RunStatus.IMPLEMENTATION_READY: 6,
 }
 
 RUN_SUBDIRECTORIES = (
@@ -114,6 +118,7 @@ def import_run_agent_output(
     project_name: str,
     run_id: str,
     source_file: Path,
+    task_id: str | None = None,
     allow_missing_idea_analysis: bool = False,
     workspace_root: Path | None = None,
 ) -> RunAgentImportRecord:
@@ -181,11 +186,31 @@ def import_run_agent_output(
         artifact_type = RunArtifactType.TASKS
         artifact_name = TASKS_ARTIFACT_NAME
         next_status = RunStatus.TASKS_DRAFTED
+    elif agent_name == IMPLEMENTATION_COORDINATOR_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.TASKS_DRAFTED,
+            "ImplementationCoordinatorAgent requires drafted tasks before implementation coordination.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.TASKS,
+            "ImplementationCoordinatorAgent requires TaskDecomposerAgent output before implementation coordination.",
+        )
+        require_task_excerpt(run_state, normalized_task_id)
+        artifact_type = RunArtifactType.IMPLEMENTATION_BRIEF
+        artifact_name = IMPLEMENTATION_BRIEF_ARTIFACT_NAME
+        next_status = RunStatus.IMPLEMENTATION_READY
     else:
         msg = f"Run-level import is not supported for agent: {agent_name}"
         raise ValueError(msg)
 
-    artifact_path = _run_dir(root, project_name, run_id) / "artifacts" / artifact_name
+    if agent_name == IMPLEMENTATION_COORDINATOR_AGENT_NAME:
+        artifact_path = _implementation_artifact_dir(root, project_name, run_id, normalized_task_id) / artifact_name
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        artifact_path = _run_dir(root, project_name, run_id) / "artifacts" / artifact_name
     shutil.copyfile(source_path, artifact_path)
     artifact = RunArtifact(
         artifact_type=artifact_type,
@@ -193,9 +218,35 @@ def import_run_agent_output(
         source_file_path=source_path,
         artifact_path=artifact_path,
     )
-    run_state.artifacts = [
-        existing for existing in run_state.artifacts if existing.artifact_type != artifact_type
-    ]
+    if agent_name == IMPLEMENTATION_COORDINATOR_AGENT_NAME:
+        run_state.artifacts = [
+            existing
+            for existing in run_state.artifacts
+            if not (
+                existing.artifact_type == artifact_type
+                and existing.artifact_path.parent.name == normalized_task_id
+            )
+        ]
+        imported_at = datetime.now(UTC)
+        run_state.implementation_records = [
+            existing for existing in run_state.implementation_records if existing.task_id != normalized_task_id
+        ]
+        run_state.implementation_records.append(
+            ImplementationRecord(
+                task_id=normalized_task_id,
+                agent_name=agent_name,
+                source_file_path=source_path,
+                implementation_brief_path=artifact_path,
+                imported_at=imported_at,
+            )
+        )
+        run_state.current_task_id = normalized_task_id
+        run_state.implementation_brief_path = artifact_path
+        run_state.implementation_ready_at = imported_at
+    else:
+        run_state.artifacts = [
+            existing for existing in run_state.artifacts if existing.artifact_type != artifact_type
+        ]
     run_state.artifacts.append(artifact)
     run_state.status = next_status
     run_state.updated_at = datetime.now(UTC)
@@ -261,6 +312,43 @@ def require_run_status_at_least(run_state: RunState, minimum_status: RunStatus, 
         raise ValueError(message)
 
 
+def require_task_id(task_id: str | None) -> str:
+    normalized = (task_id or "").strip()
+    if not normalized:
+        msg = "ImplementationCoordinatorAgent requires --task."
+        raise ValueError(msg)
+    return normalized
+
+
+def require_task_excerpt(run_state: RunState, task_id: str) -> str:
+    tasks_text = get_run_artifact_text(run_state, RunArtifactType.TASKS)
+    if not tasks_text:
+        msg = "ImplementationCoordinatorAgent requires TaskDecomposerAgent output before implementation coordination."
+        raise ValueError(msg)
+    excerpt = extract_task_excerpt(tasks_text, task_id)
+    if not excerpt:
+        msg = f"Task id not found in tasks.md: {task_id}"
+        raise ValueError(msg)
+    return excerpt
+
+
+def extract_task_excerpt(tasks_text: str, task_id: str) -> str | None:
+    pattern = re.compile(
+        rf"(?ims)^##\s+Task\s+{re.escape(task_id)}\b.*?(?=^##\s+Task\s+\S+\b|^---\s*$|\Z)"
+    )
+    match = pattern.search(tasks_text)
+    if match:
+        return match.group(0).strip()
+
+    fallback = re.compile(
+        rf"(?ims)^.*(?:task id:\s*`?{re.escape(task_id)}`?).*?(?=^##\s+Task\s+\S+\b|^---\s*$|\Z)"
+    )
+    match = fallback.search(tasks_text)
+    if match:
+        return match.group(0).strip()
+    return None
+
+
 def get_run_artifact_text(run_state: RunState, artifact_type: RunArtifactType, max_chars: int = 20_000) -> str | None:
     artifact = find_run_artifact(run_state, artifact_type)
     if not artifact or not artifact.artifact_path.exists():
@@ -284,6 +372,13 @@ def get_run_artifacts_summary(
         "plan_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN),
         "plan_review_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN_REVIEW),
         "tasks_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.TASKS),
+        "implementation_artifact_paths": [
+            {
+                "task_id": record.task_id,
+                "implementation_brief_path": str(record.implementation_brief_path),
+            }
+            for record in run_state.implementation_records
+        ],
         "prompt_paths": [str(path) for path in sorted((directory / "prompts").glob("*.md"))],
     }
 
@@ -352,3 +447,7 @@ def _slugify(text: str) -> str:
 
 def _run_dir(workspace_root: Path, project_name: str, run_id: str) -> Path:
     return workspace_root / "runs" / project_name / run_id
+
+
+def _implementation_artifact_dir(workspace_root: Path, project_name: str, run_id: str, task_id: str) -> Path:
+    return _run_dir(workspace_root, project_name, run_id) / "artifacts" / "implementation" / task_id

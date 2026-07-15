@@ -155,6 +155,7 @@ class RunStatus(StrEnum):
     PLAN_DRAFTED = "PLAN_DRAFTED"
     PLAN_REVIEWED = "PLAN_REVIEWED"
     TASKS_DRAFTED = "TASKS_DRAFTED"
+    IMPLEMENTATION_READY = "IMPLEMENTATION_READY"
 
 
 class RunArtifactType(StrEnum):
@@ -163,6 +164,7 @@ class RunArtifactType(StrEnum):
     PLAN = "plan"
     PLAN_REVIEW = "plan_review"
     TASKS = "tasks"
+    IMPLEMENTATION_BRIEF = "implementation_brief"
 
 
 class RunArtifact(BaseModel):
@@ -193,6 +195,16 @@ class ContextSnapshot(BaseModel):
     approved_artifact_paths: list[Path] = Field(default_factory=list)
 
 
+class ImplementationRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    agent_name: str
+    source_file_path: Path
+    implementation_brief_path: Path
+    imported_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class RunState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -205,6 +217,10 @@ class RunState(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     context_snapshot: ContextSnapshot
     artifacts: list[RunArtifact] = Field(default_factory=list)
+    current_task_id: str | None = None
+    implementation_brief_path: Path | None = None
+    implementation_ready_at: datetime | None = None
+    implementation_records: list[ImplementationRecord] = Field(default_factory=list)
 
 
 class CurrentSelection(BaseModel):

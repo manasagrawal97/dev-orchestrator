@@ -19,6 +19,7 @@ from .context import approve_context, get_context_status, import_agent_output
 from .projects import get_workspace_root, list_projects, register_project
 from .runs import (
     IDEA_ANALYST_AGENT_NAME,
+    IMPLEMENTATION_COORDINATOR_AGENT_NAME,
     PLANNER_AGENT_NAME,
     PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
@@ -167,6 +168,7 @@ def generate_agent_prompt(
     agent_name: str = typer.Argument(..., help="Agent name to generate a prompt for."),
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
     run_id: str | None = typer.Option(None, "--run", help="Run ID for run-level agents."),
+    task_id: str | None = typer.Option(None, "--task", help="Task ID for implementation coordination."),
 ) -> None:
     """Generate a ready-to-paste prompt for a supported agent."""
     try:
@@ -184,6 +186,7 @@ def generate_agent_prompt(
         PLANNER_AGENT_NAME,
         PLAN_REVIEWER_AGENT_NAME,
         TASK_DECOMPOSER_AGENT_NAME,
+        IMPLEMENTATION_COORDINATOR_AGENT_NAME,
     }:
         if not run_id:
             raise typer.BadParameter(f"{agent.name} prompt generation requires --run.", param_hint="--run")
@@ -192,6 +195,7 @@ def generate_agent_prompt(
                 agent_name=agent.name,
                 project_name=project_name,
                 run_id=run_id,
+                task_id=task_id,
             )
         except ValueError as exc:
             raise typer.BadParameter(str(exc), param_hint="--run") from exc
@@ -208,7 +212,7 @@ def generate_agent_prompt(
                 f"{DISCOVERY_AGENT_NAME}, {REVIEWER_AGENT_NAME}, "
                 f"{IDEA_ANALYST_AGENT_NAME}, {REQUIREMENTS_AGENT_NAME}, "
                 f"{PLANNER_AGENT_NAME}, {PLAN_REVIEWER_AGENT_NAME}, "
-                f"and {TASK_DECOMPOSER_AGENT_NAME}."
+                f"{TASK_DECOMPOSER_AGENT_NAME}, and {IMPLEMENTATION_COORDINATOR_AGENT_NAME}."
             ),
             param_hint="agentName",
         )
@@ -228,6 +232,7 @@ def import_output(
     agent_name: str = typer.Argument(..., help="Agent name that produced the output."),
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
     run_id: str | None = typer.Option(None, "--run", help="Run ID for run-level agent output."),
+    task_id: str | None = typer.Option(None, "--task", help="Task ID for implementation coordination output."),
     file_path: Path = typer.Option(..., "--file", help="Markdown output file to import."),
     allow_missing_idea_analysis: bool = typer.Option(
         False,
@@ -244,6 +249,7 @@ def import_output(
             PLANNER_AGENT_NAME,
             PLAN_REVIEWER_AGENT_NAME,
             TASK_DECOMPOSER_AGENT_NAME,
+            IMPLEMENTATION_COORDINATOR_AGENT_NAME,
         }:
             if not run_id:
                 raise ValueError(f"{agent.name} import requires --run.")
@@ -252,11 +258,14 @@ def import_output(
                 project_name=project_name,
                 run_id=run_id,
                 source_file=file_path,
+                task_id=task_id,
                 allow_missing_idea_analysis=allow_missing_idea_analysis,
             )
             console.print(f"[green]Imported output[/green] for {record.agent_name}")
             console.print(f"Project: {project_name}")
             console.print(f"Run: {run_id}")
+            if task_id:
+                console.print(f"Task: {task_id}")
             console.print(f"Status: {record.status_after_import.value}")
             console.print(f"Source: {record.artifact.source_file_path}")
             console.print(f"Stored in: {record.artifact.artifact_path}")
@@ -350,6 +359,13 @@ def show_run_artifacts(
     console.print(f"  plan: {summary['plan_artifact_path'] or 'none'}")
     console.print(f"  plan-review: {summary['plan_review_artifact_path'] or 'none'}")
     console.print(f"  tasks: {summary['tasks_artifact_path'] or 'none'}")
+    implementation_paths = summary["implementation_artifact_paths"]
+    if implementation_paths:
+        console.print("  implementation:")
+        for record in implementation_paths:
+            console.print(f"    - {record['task_id']}: {record['implementation_brief_path']}")
+    else:
+        console.print("  implementation: none")
     prompt_paths = summary["prompt_paths"]
     if prompt_paths:
         console.print("  prompts:")

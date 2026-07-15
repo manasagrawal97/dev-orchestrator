@@ -1,19 +1,36 @@
 name: ImplementationCoordinatorAgent
 version: "0.1.0"
-purpose: Coordinate implementation task order and handoff expectations.
+purpose: Prepare a focused implementation brief for one selected reviewed task.
 mode: prompt_only
 inputs:
+  - approved project context artifacts
+  - goal.md
+  - run-state.json
+  - idea-analysis.md
+  - requirements.md
+  - plan.md
+  - plan-review.md
   - task-list.md
-  - task-dependencies.md
+  - task-dependency-map.md
+  - selected task id
+  - selected task excerpt
 outputs:
-  - implementation-coordination.md
-  - execution-checklist.md
+  - implementation-brief.md
+  - selected-task.md
+  - scope-boundaries.md
+  - files-and-areas.md
+  - validation-commands.md
+  - safety-checks.md
+  - codex-execution-prompt.md
+  - completion-report-template.md
 allowed_actions:
-  - Sequence work and identify coordination checkpoints.
-  - Track intended validation after implementation.
+  - Prepare focused implementation instructions for one selected task.
+  - Identify scope boundaries, validation needs, and reporting requirements.
+  - Draft a ready-to-use Codex or human execution prompt without executing it.
 forbidden_actions:
   - Do not directly modify code.
   - Do not call tools or AI APIs.
   - Do not push changes.
+  - Do not execute implementation.
 requires_approval: true
 next_state: ValidatorAgent

@@ -11,15 +11,18 @@ from .context import get_discovery_draft_text
 from .projects import get_workspace_root
 from .runs import (
     IDEA_ANALYST_AGENT_NAME,
+    IMPLEMENTATION_COORDINATOR_AGENT_NAME,
     PLANNER_AGENT_NAME,
     PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
     TASK_DECOMPOSER_AGENT_NAME,
+    extract_task_excerpt,
     get_run_artifact_text,
     load_run,
     require_context_approved,
     require_run_artifact,
     require_run_status_at_least,
+    require_task_id,
     run_path,
 )
 from .scanner import load_registered_project
@@ -34,6 +37,7 @@ REQUIREMENTS_TEMPLATE_NAME = "requirements_agent.md"
 PLANNER_TEMPLATE_NAME = "planner.md"
 PLAN_REVIEWER_TEMPLATE_NAME = "plan_reviewer.md"
 TASK_DECOMPOSER_TEMPLATE_NAME = "task_decomposer.md"
+IMPLEMENTATION_COORDINATOR_TEMPLATE_NAME = "implementation_coordinator.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
@@ -134,6 +138,7 @@ def generate_run_agent_prompt(
     agent_name: str,
     project_name: str,
     run_id: str,
+    task_id: str | None = None,
     workspace_root: Path | None = None,
     agents_dir: Path | None = None,
     prompts_dir: Path | None = None,
@@ -189,6 +194,25 @@ def generate_run_agent_prompt(
         )
         template_name = TASK_DECOMPOSER_TEMPLATE_NAME
         output_name = "task-decomposer.prompt.md"
+    elif agent.name == IMPLEMENTATION_COORDINATOR_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.TASKS_DRAFTED,
+            "ImplementationCoordinatorAgent requires drafted tasks before implementation coordination.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.TASKS,
+            "ImplementationCoordinatorAgent requires TaskDecomposerAgent output before implementation coordination.",
+        )
+        tasks_text = get_run_artifact_text(run_state, RunArtifactType.TASKS)
+        task_excerpt = extract_task_excerpt(tasks_text or "", normalized_task_id)
+        if not task_excerpt:
+            msg = f"Task id not found in tasks.md: {normalized_task_id}"
+            raise ValueError(msg)
+        template_name = IMPLEMENTATION_COORDINATOR_TEMPLATE_NAME
+        output_name = f"implementation-coordinator-{normalized_task_id}.prompt.md"
     else:
         msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -199,6 +223,7 @@ def generate_run_agent_prompt(
         agent=agent,
         project_path=str(registration.path),
         run_state=run_state,
+        selected_task_id=task_id,
     )
 
     output_file = run_path(project_name, run_id, workspace_root=root) / "prompts" / output_name
@@ -281,6 +306,7 @@ def _render_run_agent_prompt(
     agent: AgentDefinition,
     project_path: str,
     run_state: RunState,
+    selected_task_id: str | None = None,
 ) -> str:
     template = Template(template_text)
     idea_analysis = get_run_artifact_text(run_state, RunArtifactType.IDEA_ANALYSIS)
@@ -291,6 +317,10 @@ def _render_run_agent_prompt(
     plan_status = "available" if plan else "missing"
     plan_review = get_run_artifact_text(run_state, RunArtifactType.PLAN_REVIEW)
     plan_review_status = "available" if plan_review else "missing"
+    tasks = get_run_artifact_text(run_state, RunArtifactType.TASKS)
+    tasks_status = "available" if tasks else "missing"
+    normalized_task_id = (selected_task_id or "").strip()
+    selected_task_excerpt = extract_task_excerpt(tasks or "", normalized_task_id) if normalized_task_id else None
     return template.safe_substitute(
         agent_name=agent.name,
         agent_version=agent.version,
@@ -311,6 +341,10 @@ def _render_run_agent_prompt(
         plan=plan or "MISSING: PlannerAgent output has not been imported yet.",
         plan_review_status=plan_review_status,
         plan_review=plan_review or "MISSING: PlanReviewerAgent output has not been imported yet.",
+        tasks_status=tasks_status,
+        tasks=tasks or "MISSING: TaskDecomposerAgent output has not been imported yet.",
+        selected_task_id=normalized_task_id or "MISSING: no task id was provided.",
+        selected_task_excerpt=selected_task_excerpt or "MISSING: selected task was not found in tasks.md.",
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),
         expected_outputs=_markdown_list(agent.outputs),
