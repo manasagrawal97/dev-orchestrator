@@ -150,6 +150,33 @@ class ApprovalRecord(BaseModel):
 
 class RunStatus(StrEnum):
     RUN_CREATED = "RUN_CREATED"
+    IDEA_ANALYSIS_DRAFTED = "IDEA_ANALYSIS_DRAFTED"
+    REQUIREMENTS_DRAFTED = "REQUIREMENTS_DRAFTED"
+
+
+class RunArtifactType(StrEnum):
+    IDEA_ANALYSIS = "idea_analysis"
+    REQUIREMENTS = "requirements"
+
+
+class RunArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_type: RunArtifactType
+    agent_name: str
+    source_file_path: Path
+    artifact_path: Path
+    imported_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RunAgentImportRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    run_id: str
+    agent_name: str
+    artifact: RunArtifact
+    status_after_import: RunStatus
 
 
 class ContextSnapshot(BaseModel):
@@ -169,7 +196,9 @@ class RunState(BaseModel):
     goal: str
     status: RunStatus = RunStatus.RUN_CREATED
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     context_snapshot: ContextSnapshot
+    artifacts: list[RunArtifact] = Field(default_factory=list)
 
 
 class CurrentSelection(BaseModel):

@@ -8,6 +8,10 @@ inputs:
 outputs:
   - requirements.md
   - acceptance-criteria.md
+  - out-of-scope.md
+  - risks.md
+  - validation-needs.md
+  - implementation-readiness.md
 allowed_actions:
   - Draft requirements and acceptance criteria.
   - Flag unresolved requirements questions.

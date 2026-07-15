@@ -111,6 +111,26 @@ Show run status:
 devo run status <runId> --project MyProject
 ```
 
+Generate run-level IdeaAnalystAgent and RequirementsAgent prompts:
+
+```powershell
+devo agent prompt IdeaAnalystAgent --project MyProject --run <runId>
+devo agent prompt RequirementsAgent --project MyProject --run <runId>
+```
+
+Import run-level agent outputs:
+
+```powershell
+devo agent import-output IdeaAnalystAgent --project MyProject --run <runId> --file E:\path\to\idea-output.md
+devo agent import-output RequirementsAgent --project MyProject --run <runId> --file E:\path\to\requirements-output.md
+```
+
+Show run artifacts and generated prompts:
+
+```powershell
+devo run artifacts <runId> --project MyProject
+```
+
 Select an active project or run:
 
 ```powershell
@@ -168,7 +188,15 @@ workspace/runs/<projectName>/<runId>/
 
 Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
 
-This version only creates and tracks runs. It does not implement requirements prompts, planning prompts, task workflow, validation runners, AI model calls, Codex integration, or a web UI.
+This version creates runs and supports prompt-only IdeaAnalystAgent and RequirementsAgent workflow. It does not implement planning prompts, task workflow, validation runners, AI model calls, Codex integration, or a web UI.
+
+## Run-Level Agent Workflow
+
+Run-level agents are still prompt-only. After a run is created, generate the IdeaAnalystAgent prompt with `devo agent prompt IdeaAnalystAgent --project MyProject --run <runId>`. Import the resulting Markdown with `devo agent import-output IdeaAnalystAgent --project MyProject --run <runId> --file <file>`. This stores `artifacts/idea-analysis.md` and moves the run to `IDEA_ANALYSIS_DRAFTED`.
+
+Next, generate the RequirementsAgent prompt with `devo agent prompt RequirementsAgent --project MyProject --run <runId>`. The prompt includes approved project context, the run goal, run state, and imported idea analysis when available. Import the requirements output with `devo agent import-output RequirementsAgent --project MyProject --run <runId> --file <file>`. This stores `artifacts/requirements.md` and moves the run to `REQUIREMENTS_DRAFTED`.
+
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. This version does not implement PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, validation runners, implementation prompts, AI model calls, Codex integration, or a web UI.
 
 ## Development
 

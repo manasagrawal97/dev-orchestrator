@@ -8,6 +8,7 @@ from rich.console import Console
 from .agents import (
     DISCOVERY_AGENT_NAME,
     REVIEWER_AGENT_NAME,
+    generate_run_agent_prompt,
     generate_project_context_discovery_prompt,
     generate_project_context_reviewer_prompt,
     list_agent_definitions,
@@ -16,7 +17,17 @@ from .agents import (
 )
 from .context import approve_context, get_context_status, import_agent_output
 from .projects import get_workspace_root, list_projects, register_project
-from .runs import create_run, list_runs, load_run, run_path, save_current_selection
+from .runs import (
+    IDEA_ANALYST_AGENT_NAME,
+    REQUIREMENTS_AGENT_NAME,
+    create_run,
+    get_run_artifacts_summary,
+    import_run_agent_output,
+    list_runs,
+    load_run,
+    run_path,
+    save_current_selection,
+)
 from .scanner import scan_registered_project
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -152,6 +163,7 @@ def show_agent(agent_name: str = typer.Argument(..., help="Agent definition name
 def generate_agent_prompt(
     agent_name: str = typer.Argument(..., help="Agent name to generate a prompt for."),
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID for run-level agents."),
 ) -> None:
     """Generate a ready-to-paste prompt for a supported agent."""
     try:
@@ -163,9 +175,30 @@ def generate_agent_prompt(
         generator = generate_project_context_discovery_prompt
     elif agent.name == REVIEWER_AGENT_NAME:
         generator = generate_project_context_reviewer_prompt
+    elif agent.name in {IDEA_ANALYST_AGENT_NAME, REQUIREMENTS_AGENT_NAME}:
+        if not run_id:
+            raise typer.BadParameter(f"{agent.name} prompt generation requires --run.", param_hint="--run")
+        try:
+            metadata = generate_run_agent_prompt(
+                agent_name=agent.name,
+                project_name=project_name,
+                run_id=run_id,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+        console.print(f"[green]Generated prompt[/green] for {metadata.agent_name}")
+        console.print(f"Project: {metadata.project_name}")
+        console.print(f"Run: {run_id}")
+        console.print(f"Stored in: {metadata.prompt_path}")
+        return
     else:
         raise typer.BadParameter(
-            f"Prompt generation is only supported for {DISCOVERY_AGENT_NAME} and {REVIEWER_AGENT_NAME}.",
+            (
+                "Prompt generation is only supported for "
+                f"{DISCOVERY_AGENT_NAME}, {REVIEWER_AGENT_NAME}, "
+                f"{IDEA_ANALYST_AGENT_NAME}, and {REQUIREMENTS_AGENT_NAME}."
+            ),
             param_hint="agentName",
         )
 
@@ -183,12 +216,36 @@ def generate_agent_prompt(
 def import_output(
     agent_name: str = typer.Argument(..., help="Agent name that produced the output."),
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID for run-level agent output."),
     file_path: Path = typer.Option(..., "--file", help="Markdown output file to import."),
+    allow_missing_idea_analysis: bool = typer.Option(
+        False,
+        "--allow-missing-idea-analysis",
+        help="Allow RequirementsAgent import without IdeaAnalystAgent output.",
+    ),
 ) -> None:
     """Import manual prompt output for a supported agent."""
     try:
-        load_agent_definition(agent_name)
-        artifact = import_agent_output(agent_name=agent_name, project_name=project_name, source_file=file_path)
+        agent = load_agent_definition(agent_name)
+        if agent.name in {IDEA_ANALYST_AGENT_NAME, REQUIREMENTS_AGENT_NAME}:
+            if not run_id:
+                raise ValueError(f"{agent.name} import requires --run.")
+            record = import_run_agent_output(
+                agent_name=agent.name,
+                project_name=project_name,
+                run_id=run_id,
+                source_file=file_path,
+                allow_missing_idea_analysis=allow_missing_idea_analysis,
+            )
+            console.print(f"[green]Imported output[/green] for {record.agent_name}")
+            console.print(f"Project: {project_name}")
+            console.print(f"Run: {run_id}")
+            console.print(f"Status: {record.status_after_import.value}")
+            console.print(f"Source: {record.artifact.source_file_path}")
+            console.print(f"Stored in: {record.artifact.artifact_path}")
+            return
+
+        artifact = import_agent_output(agent_name=agent.name, project_name=project_name, source_file=file_path)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="agentName") from exc
 
@@ -255,6 +312,31 @@ def show_run_status(
     console.print(f"  Created at: {run_state.created_at.isoformat()}")
     console.print(f"  Context state: {run_state.context_snapshot.context_state_path}")
     console.print(f"  Approval record: {run_state.context_snapshot.approval_record_path}")
+
+
+@run_app.command("artifacts")
+def show_run_artifacts(
+    run_id: str = typer.Argument(..., help="Run ID."),
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+) -> None:
+    """Show run artifact and prompt paths."""
+    try:
+        summary = get_run_artifacts_summary(project_name, run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="runId") from exc
+
+    console.print(f"[bold]{run_id}[/bold]")
+    console.print(f"  goal.md: {summary['goal_path']}")
+    console.print(f"  run-state.json: {summary['run_state_path']}")
+    console.print(f"  idea-analysis: {summary['idea_analysis_artifact_path'] or 'none'}")
+    console.print(f"  requirements: {summary['requirements_artifact_path'] or 'none'}")
+    prompt_paths = summary["prompt_paths"]
+    if prompt_paths:
+        console.print("  prompts:")
+        for prompt_path in prompt_paths:
+            console.print(f"    - {prompt_path}")
+    else:
+        console.print("  prompts: none")
 
 
 @app.command("use")

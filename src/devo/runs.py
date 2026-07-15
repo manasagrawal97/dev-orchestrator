@@ -2,13 +2,28 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .context import APPROVAL_RECORD_NAME, CONTEXT_STATE_NAME, load_context_state
 from .projects import get_workspace_root
 from .scanner import load_registered_project
-from .schemas import ContextSnapshot, ContextStatus, CurrentSelection, RunState, RunStatus
+from .schemas import (
+    ContextSnapshot,
+    ContextStatus,
+    CurrentSelection,
+    RunAgentImportRecord,
+    RunArtifact,
+    RunArtifactType,
+    RunState,
+    RunStatus,
+)
+
+IDEA_ANALYST_AGENT_NAME = "IdeaAnalystAgent"
+REQUIREMENTS_AGENT_NAME = "RequirementsAgent"
+IDEA_ANALYSIS_ARTIFACT_NAME = "idea-analysis.md"
+REQUIREMENTS_ARTIFACT_NAME = "requirements.md"
 
 RUN_SUBDIRECTORIES = (
     "artifacts",
@@ -23,10 +38,7 @@ RUN_SUBDIRECTORIES = (
 def create_run(project_name: str, goal: str, workspace_root: Path | None = None) -> RunState:
     root = workspace_root or get_workspace_root()
     registration = load_registered_project(project_name, workspace_root=root)
-    state = load_context_state(project_name, workspace_root=root)
-    if state.status != ContextStatus.CONTEXT_APPROVED:
-        msg = "Project context must be approved before creating development runs."
-        raise ValueError(msg)
+    require_context_approved(project_name, workspace_root=root)
 
     created_at = datetime.now(UTC)
     run_id = _unique_run_id(root, project_name, goal, created_at)
@@ -76,6 +88,71 @@ def load_run(project_name: str, run_id: str, workspace_root: Path | None = None)
     return RunState.model_validate(data)
 
 
+def save_run_state(run_state: RunState, workspace_root: Path | None = None) -> None:
+    root = workspace_root or get_workspace_root()
+    state_file = _run_dir(root, run_state.project_name, run_state.run_id) / "run-state.json"
+    state_file.write_text(run_state.model_dump_json(indent=2), encoding="utf-8")
+
+
+def import_run_agent_output(
+    agent_name: str,
+    project_name: str,
+    run_id: str,
+    source_file: Path,
+    allow_missing_idea_analysis: bool = False,
+    workspace_root: Path | None = None,
+) -> RunAgentImportRecord:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    source_path = source_file.expanduser().resolve()
+    if not source_path.exists():
+        msg = f"Import file does not exist: {source_path}"
+        raise ValueError(msg)
+    if not source_path.is_file():
+        msg = f"Import path must be a file: {source_path}"
+        raise ValueError(msg)
+
+    if agent_name == IDEA_ANALYST_AGENT_NAME:
+        artifact_type = RunArtifactType.IDEA_ANALYSIS
+        artifact_name = IDEA_ANALYSIS_ARTIFACT_NAME
+        next_status = RunStatus.IDEA_ANALYSIS_DRAFTED
+    elif agent_name == REQUIREMENTS_AGENT_NAME:
+        if not find_run_artifact(run_state, RunArtifactType.IDEA_ANALYSIS) and not allow_missing_idea_analysis:
+            msg = "RequirementsAgent import requires IdeaAnalystAgent output. Use --allow-missing-idea-analysis to override."
+            raise ValueError(msg)
+        artifact_type = RunArtifactType.REQUIREMENTS
+        artifact_name = REQUIREMENTS_ARTIFACT_NAME
+        next_status = RunStatus.REQUIREMENTS_DRAFTED
+    else:
+        msg = f"Run-level import is not supported for agent: {agent_name}"
+        raise ValueError(msg)
+
+    artifact_path = _run_dir(root, project_name, run_id) / "artifacts" / artifact_name
+    shutil.copyfile(source_path, artifact_path)
+    artifact = RunArtifact(
+        artifact_type=artifact_type,
+        agent_name=agent_name,
+        source_file_path=source_path,
+        artifact_path=artifact_path,
+    )
+    run_state.artifacts = [
+        existing for existing in run_state.artifacts if existing.artifact_type != artifact_type
+    ]
+    run_state.artifacts.append(artifact)
+    run_state.status = next_status
+    run_state.updated_at = datetime.now(UTC)
+    save_run_state(run_state, workspace_root=root)
+
+    return RunAgentImportRecord(
+        project_name=project_name,
+        run_id=run_id,
+        agent_name=agent_name,
+        artifact=artifact,
+        status_after_import=next_status,
+    )
+
+
 def save_current_selection(
     project_name: str,
     run_id: str | None = None,
@@ -100,6 +177,45 @@ def save_current_selection(
     return selection
 
 
+def require_context_approved(project_name: str, workspace_root: Path | None = None) -> None:
+    root = workspace_root or get_workspace_root()
+    state = load_context_state(project_name, workspace_root=root)
+    if state.status != ContextStatus.CONTEXT_APPROVED:
+        msg = "Project context must be approved before creating development runs."
+        raise ValueError(msg)
+
+
+def find_run_artifact(run_state: RunState, artifact_type: RunArtifactType) -> RunArtifact | None:
+    for artifact in run_state.artifacts:
+        if artifact.artifact_type == artifact_type:
+            return artifact
+    return None
+
+
+def get_run_artifact_text(run_state: RunState, artifact_type: RunArtifactType, max_chars: int = 20_000) -> str | None:
+    artifact = find_run_artifact(run_state, artifact_type)
+    if not artifact or not artifact.artifact_path.exists():
+        return None
+    return artifact.artifact_path.read_text(encoding="utf-8")[:max_chars]
+
+
+def get_run_artifacts_summary(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
+    root = workspace_root or get_workspace_root()
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    directory = _run_dir(root, project_name, run_id)
+    return {
+        "goal_path": str(directory / "goal.md"),
+        "run_state_path": str(directory / "run-state.json"),
+        "idea_analysis_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.IDEA_ANALYSIS),
+        "requirements_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.REQUIREMENTS),
+        "prompt_paths": [str(path) for path in sorted((directory / "prompts").glob("*.md"))],
+    }
+
+
 def run_path(project_name: str, run_id: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return _run_dir(root, project_name, run_id)
@@ -119,6 +235,13 @@ def _build_context_snapshot(workspace_root: Path, project_name: str) -> ContextS
         approval_record_path=approval_file,
         approved_artifact_paths=approved_artifact_paths,
     )
+
+
+def _artifact_path_or_none(run_state: RunState, artifact_type: RunArtifactType) -> str | None:
+    artifact = find_run_artifact(run_state, artifact_type)
+    if not artifact:
+        return None
+    return str(artifact.artifact_path)
 
 
 def _render_goal_markdown(run_state: RunState) -> str:

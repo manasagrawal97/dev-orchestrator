@@ -9,17 +9,28 @@ import yaml
 
 from .context import get_discovery_draft_text
 from .projects import get_workspace_root
+from .runs import (
+    IDEA_ANALYST_AGENT_NAME,
+    REQUIREMENTS_AGENT_NAME,
+    get_run_artifact_text,
+    load_run,
+    require_context_approved,
+    run_path,
+)
 from .scanner import load_registered_project
-from .schemas import AgentDefinition, GeneratedPromptMetadata, ProjectScanResult
+from .schemas import AgentDefinition, GeneratedPromptMetadata, ProjectScanResult, RunArtifactType, RunState
 
 DISCOVERY_AGENT_NAME = "ProjectContextDiscoveryAgent"
 REVIEWER_AGENT_NAME = "ProjectContextReviewerAgent"
 DISCOVERY_TEMPLATE_NAME = "project_context_discovery.md"
 REVIEWER_TEMPLATE_NAME = "project_context_reviewer.md"
+IDEA_ANALYST_TEMPLATE_NAME = "idea_analyst.md"
+REQUIREMENTS_TEMPLATE_NAME = "requirements_agent.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
 MAX_COMMITS = 10
+MAX_CONTEXT_ARTIFACT_CHARS = 12_000
 
 
 def list_agent_definitions(agents_dir: Path | None = None) -> list[AgentDefinition]:
@@ -111,6 +122,48 @@ def generate_project_context_reviewer_prompt(
     )
 
 
+def generate_run_agent_prompt(
+    agent_name: str,
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+    agents_dir: Path | None = None,
+    prompts_dir: Path | None = None,
+) -> GeneratedPromptMetadata:
+    root = workspace_root or get_workspace_root()
+    registration = load_registered_project(project_name, workspace_root=root)
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    agent = load_agent_definition(agent_name, agents_dir=agents_dir)
+
+    if agent.name == IDEA_ANALYST_AGENT_NAME:
+        template_name = IDEA_ANALYST_TEMPLATE_NAME
+        output_name = "idea-analyst.prompt.md"
+    elif agent.name == REQUIREMENTS_AGENT_NAME:
+        template_name = REQUIREMENTS_TEMPLATE_NAME
+        output_name = "requirements-agent.prompt.md"
+    else:
+        msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
+        raise ValueError(msg)
+
+    template_text = _load_prompt_template(template_name, prompts_dir=prompts_dir)
+    prompt = _render_run_agent_prompt(
+        template_text=template_text,
+        agent=agent,
+        project_path=str(registration.path),
+        run_state=run_state,
+    )
+
+    output_file = run_path(project_name, run_id, workspace_root=root) / "prompts" / output_name
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(prompt, encoding="utf-8")
+    return GeneratedPromptMetadata(
+        agent_name=agent.name,
+        project_name=project_name,
+        prompt_path=output_file,
+    )
+
+
 def _load_scan_result(project_name: str, workspace_root: Path) -> ProjectScanResult:
     scan_file = workspace_root / "projects" / project_name / "scan-result.json"
     if not scan_file.exists():
@@ -176,6 +229,35 @@ def _render_project_context_reviewer_prompt(
     )
 
 
+def _render_run_agent_prompt(
+    template_text: str,
+    agent: AgentDefinition,
+    project_path: str,
+    run_state: RunState,
+) -> str:
+    template = Template(template_text)
+    idea_analysis = get_run_artifact_text(run_state, RunArtifactType.IDEA_ANALYSIS)
+    idea_analysis_status = "available" if idea_analysis else "missing"
+    return template.safe_substitute(
+        agent_name=agent.name,
+        agent_version=agent.version,
+        agent_purpose=agent.purpose,
+        project_name=run_state.project_name,
+        project_path=project_path,
+        run_id=run_state.run_id,
+        run_status=run_state.status.value,
+        goal=run_state.goal,
+        goal_markdown=_read_run_file(run_state, "goal.md"),
+        run_state_summary=json.dumps(_build_run_state_summary(run_state), indent=2, default=str),
+        approved_context=_build_approved_context_text(run_state),
+        idea_analysis_status=idea_analysis_status,
+        idea_analysis=idea_analysis or "MISSING: IdeaAnalystAgent output has not been imported yet.",
+        allowed_actions=_markdown_list(agent.allowed_actions),
+        forbidden_actions=_markdown_list(agent.forbidden_actions),
+        expected_outputs=_markdown_list(agent.outputs),
+    )
+
+
 def _build_scan_summary(scan_result: ProjectScanResult) -> dict[str, Any]:
     categories = scan_result.categories.model_dump(mode="json")
     detected_categories = {
@@ -217,6 +299,40 @@ def _markdown_list(items: list[str]) -> str:
     if not items:
         return "- none"
     return "\n".join(f"- {item}" for item in items)
+
+
+def _build_run_state_summary(run_state: RunState) -> dict[str, Any]:
+    return {
+        "project_name": run_state.project_name,
+        "project_path": str(run_state.project_path),
+        "run_id": run_state.run_id,
+        "goal": run_state.goal,
+        "status": run_state.status.value,
+        "created_at": run_state.created_at.isoformat(),
+        "updated_at": run_state.updated_at.isoformat(),
+        "context_snapshot": run_state.context_snapshot.model_dump(mode="json"),
+        "artifacts": [artifact.model_dump(mode="json") for artifact in run_state.artifacts],
+    }
+
+
+def _build_approved_context_text(run_state: RunState) -> str:
+    sections: list[str] = []
+    for artifact_path in run_state.context_snapshot.approved_artifact_paths:
+        if not artifact_path.exists():
+            sections.append(f"## Missing approved context artifact\n\n{artifact_path}")
+            continue
+        text = artifact_path.read_text(encoding="utf-8")[:MAX_CONTEXT_ARTIFACT_CHARS]
+        sections.append(f"## {artifact_path.name}\n\n{text}")
+    if not sections:
+        return "No approved context artifacts were listed in the context snapshot."
+    return "\n\n---\n\n".join(sections)
+
+
+def _read_run_file(run_state: RunState, file_name: str) -> str:
+    path = run_path(run_state.project_name, run_state.run_id) / file_name
+    if not path.exists():
+        return f"MISSING: {file_name}"
+    return path.read_text(encoding="utf-8")
 
 
 def _agents_dir() -> Path:

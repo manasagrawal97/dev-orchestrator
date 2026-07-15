@@ -6,8 +6,12 @@ inputs:
   - reviewed project context
   - user idea or goal
 outputs:
-  - idea-analysis.md
-  - feasibility-notes.md
+  - goal-analysis.md
+  - clarified-problem.md
+  - assumptions.md
+  - non-goals.md
+  - open-questions.md
+  - recommended-next-step.md
 allowed_actions:
   - Identify goals, constraints, ambiguity, and likely project impact.
   - Ask for missing product intent when needed.
