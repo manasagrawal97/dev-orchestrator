@@ -154,6 +154,7 @@ class RunStatus(StrEnum):
     REQUIREMENTS_DRAFTED = "REQUIREMENTS_DRAFTED"
     PLAN_DRAFTED = "PLAN_DRAFTED"
     PLAN_REVIEWED = "PLAN_REVIEWED"
+    TASKS_DRAFTED = "TASKS_DRAFTED"
 
 
 class RunArtifactType(StrEnum):
@@ -161,6 +162,7 @@ class RunArtifactType(StrEnum):
     REQUIREMENTS = "requirements"
     PLAN = "plan"
     PLAN_REVIEW = "plan_review"
+    TASKS = "tasks"
 
 
 class RunArtifact(BaseModel):

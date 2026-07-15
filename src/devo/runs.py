@@ -24,10 +24,12 @@ IDEA_ANALYST_AGENT_NAME = "IdeaAnalystAgent"
 REQUIREMENTS_AGENT_NAME = "RequirementsAgent"
 PLANNER_AGENT_NAME = "PlannerAgent"
 PLAN_REVIEWER_AGENT_NAME = "PlanReviewerAgent"
+TASK_DECOMPOSER_AGENT_NAME = "TaskDecomposerAgent"
 IDEA_ANALYSIS_ARTIFACT_NAME = "idea-analysis.md"
 REQUIREMENTS_ARTIFACT_NAME = "requirements.md"
 PLAN_ARTIFACT_NAME = "plan.md"
 PLAN_REVIEW_ARTIFACT_NAME = "plan-review.md"
+TASKS_ARTIFACT_NAME = "tasks.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -35,6 +37,7 @@ RUN_STATUS_ORDER = {
     RunStatus.REQUIREMENTS_DRAFTED: 2,
     RunStatus.PLAN_DRAFTED: 3,
     RunStatus.PLAN_REVIEWED: 4,
+    RunStatus.TASKS_DRAFTED: 5,
 }
 
 RUN_SUBDIRECTORIES = (
@@ -159,6 +162,25 @@ def import_run_agent_output(
         artifact_type = RunArtifactType.PLAN_REVIEW
         artifact_name = PLAN_REVIEW_ARTIFACT_NAME
         next_status = RunStatus.PLAN_REVIEWED
+    elif agent_name == TASK_DECOMPOSER_AGENT_NAME:
+        require_run_status_at_least(
+            run_state,
+            RunStatus.PLAN_REVIEWED,
+            "TaskDecomposerAgent requires a reviewed plan before task decomposition.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.PLAN,
+            "TaskDecomposerAgent requires PlannerAgent output before task decomposition.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.PLAN_REVIEW,
+            "TaskDecomposerAgent requires PlanReviewerAgent output before task decomposition.",
+        )
+        artifact_type = RunArtifactType.TASKS
+        artifact_name = TASKS_ARTIFACT_NAME
+        next_status = RunStatus.TASKS_DRAFTED
     else:
         msg = f"Run-level import is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -261,6 +283,7 @@ def get_run_artifacts_summary(
         "requirements_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.REQUIREMENTS),
         "plan_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN),
         "plan_review_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN_REVIEW),
+        "tasks_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.TASKS),
         "prompt_paths": [str(path) for path in sorted((directory / "prompts").glob("*.md"))],
     }
 

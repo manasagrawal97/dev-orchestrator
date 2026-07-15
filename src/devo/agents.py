@@ -14,6 +14,7 @@ from .runs import (
     PLANNER_AGENT_NAME,
     PLAN_REVIEWER_AGENT_NAME,
     REQUIREMENTS_AGENT_NAME,
+    TASK_DECOMPOSER_AGENT_NAME,
     get_run_artifact_text,
     load_run,
     require_context_approved,
@@ -32,6 +33,7 @@ IDEA_ANALYST_TEMPLATE_NAME = "idea_analyst.md"
 REQUIREMENTS_TEMPLATE_NAME = "requirements_agent.md"
 PLANNER_TEMPLATE_NAME = "planner.md"
 PLAN_REVIEWER_TEMPLATE_NAME = "plan_reviewer.md"
+TASK_DECOMPOSER_TEMPLATE_NAME = "task_decomposer.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
@@ -169,6 +171,24 @@ def generate_run_agent_prompt(
         )
         template_name = PLAN_REVIEWER_TEMPLATE_NAME
         output_name = "plan-reviewer.prompt.md"
+    elif agent.name == TASK_DECOMPOSER_AGENT_NAME:
+        require_run_status_at_least(
+            run_state,
+            RunStatus.PLAN_REVIEWED,
+            "TaskDecomposerAgent requires a reviewed plan before task decomposition.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.PLAN,
+            "TaskDecomposerAgent requires PlannerAgent output before task decomposition.",
+        )
+        require_run_artifact(
+            run_state,
+            RunArtifactType.PLAN_REVIEW,
+            "TaskDecomposerAgent requires PlanReviewerAgent output before task decomposition.",
+        )
+        template_name = TASK_DECOMPOSER_TEMPLATE_NAME
+        output_name = "task-decomposer.prompt.md"
     else:
         msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -269,6 +289,8 @@ def _render_run_agent_prompt(
     requirements_status = "available" if requirements else "missing"
     plan = get_run_artifact_text(run_state, RunArtifactType.PLAN)
     plan_status = "available" if plan else "missing"
+    plan_review = get_run_artifact_text(run_state, RunArtifactType.PLAN_REVIEW)
+    plan_review_status = "available" if plan_review else "missing"
     return template.safe_substitute(
         agent_name=agent.name,
         agent_version=agent.version,
@@ -287,6 +309,8 @@ def _render_run_agent_prompt(
         requirements=requirements or "MISSING: RequirementsAgent output has not been imported yet.",
         plan_status=plan_status,
         plan=plan or "MISSING: PlannerAgent output has not been imported yet.",
+        plan_review_status=plan_review_status,
+        plan_review=plan_review or "MISSING: PlanReviewerAgent output has not been imported yet.",
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),
         expected_outputs=_markdown_list(agent.outputs),
