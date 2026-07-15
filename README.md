@@ -121,6 +121,7 @@ devo agent prompt PlanReviewerAgent --project MyProject --run <runId>
 devo agent prompt TaskDecomposerAgent --project MyProject --run <runId>
 devo agent prompt ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId>
 devo agent prompt ValidatorAgent --project MyProject --run <runId> --task <taskId>
+devo agent prompt CodeReviewerAgent --project MyProject --run <runId> --task <taskId>
 ```
 
 Import run-level agent outputs:
@@ -133,6 +134,7 @@ devo agent import-output PlanReviewerAgent --project MyProject --run <runId> --f
 devo agent import-output TaskDecomposerAgent --project MyProject --run <runId> --file E:\path\to\task-decomposer-output.md
 devo agent import-output ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\implementation-output.md
 devo agent import-output ValidatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\validation-output.md
+devo agent import-output CodeReviewerAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\code-review-output.md
 ```
 
 Record implementation completion evidence after implementation is performed outside DevOrchestrator:
@@ -148,6 +150,14 @@ Review validation evidence after implementation completion is reported:
 devo agent prompt ValidatorAgent --project MyProject --run <runId> --task <taskId>
 devo agent import-output ValidatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\validation-output.md
 devo validation status --project MyProject --run <runId> --task <taskId>
+```
+
+Review implementation evidence after validation has been reviewed:
+
+```powershell
+devo agent prompt CodeReviewerAgent --project MyProject --run <runId> --task <taskId>
+devo agent import-output CodeReviewerAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\code-review-output.md
+devo review status --project MyProject --run <runId> --task <taskId>
 ```
 
 Show run artifacts and generated prompts:
@@ -213,7 +223,7 @@ workspace/runs/<projectName>/<runId>/
 
 Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
 
-This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, ImplementationCoordinatorAgent, and ValidatorAgent workflow. It does not execute implementations, run tests automatically, call AI models, integrate Codex, or provide a web UI.
+This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, ImplementationCoordinatorAgent, ValidatorAgent, and CodeReviewerAgent workflow. It does not execute implementations, run tests automatically, inspect diffs automatically, call AI models, integrate Codex, or provide a web UI.
 
 ## Run-Level Agent Workflow
 
@@ -239,15 +249,19 @@ After completion evidence is reported, generate a ValidatorAgent prompt with `de
 
 ValidatorAgent output should include `validation-summary.md`, `validation-evidence.md`, `commands-reviewed.md`, `scope-coverage.md`, `gaps-or-concerns.md`, `validation-decision.md`, and `recommended-next-step.md`. The validation decision must be exactly one of `passed`, `passed_with_notes`, `failed`, or `needs_more_evidence`. DevOrchestrator does not run tests or validation commands automatically yet; it only records and reviews reported evidence.
 
+After validation has been reviewed, generate a CodeReviewerAgent prompt with `devo agent prompt CodeReviewerAgent --project MyProject --run <runId> --task <taskId>`. The prompt includes approved context, run artifacts, the selected task, `implementation-brief.md`, `completion-report.md`, and `validation-report.md`. Import the review with `devo agent import-output CodeReviewerAgent --project MyProject --run <runId> --task <taskId> --file <file>`. This stores `artifacts/implementation/<taskId>/code-review.md`, records the review decision when extractable, and moves the run to `CODE_REVIEWED`. Inspect the recorded review with `devo review status --project MyProject --run <runId> --task <taskId>`.
+
+CodeReviewerAgent output should include `review-summary.md`, `scope-review.md`, `changed-files-review.md`, `quality-review.md`, `risk-review.md`, `test-review.md`, `findings.md`, `review-decision.md`, and `recommended-next-step.md`. The review decision must be exactly one of `approve`, `approve_with_notes`, `changes_requested`, or `blocked`. DevOrchestrator does not automatically inspect Git diffs yet, so CodeReviewerAgent must state whether it reviewed actual code/diff or only completion and validation evidence.
+
 The run-level status flow is:
 
 ```text
-RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY -> IMPLEMENTATION_REPORTED -> VALIDATION_REVIEWED
+RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY -> IMPLEMENTATION_REPORTED -> VALIDATION_REVIEWED -> CODE_REVIEWED
 ```
 
-`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs, completion reports, and validation reports grouped by task id, plus every generated prompt.
+`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs, completion reports, validation reports, and code review reports grouped by task id, plus every generated prompt.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. This version does not implement automatic validation runners, code review, fix, final audit, AI model calls, or a web UI.
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. This version does not implement automatic validation runners, automatic diff extraction, fix, final audit, AI model calls, or a web UI.
 
 ## Development
 

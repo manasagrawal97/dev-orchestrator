@@ -10,6 +10,7 @@ import yaml
 from .context import get_discovery_draft_text
 from .projects import get_workspace_root
 from .runs import (
+    CODE_REVIEWER_AGENT_NAME,
     IDEA_ANALYST_AGENT_NAME,
     IMPLEMENTATION_COORDINATOR_AGENT_NAME,
     PLANNER_AGENT_NAME,
@@ -26,6 +27,7 @@ from .runs import (
     require_run_artifact,
     require_run_status_at_least,
     require_task_id,
+    require_validation_review,
     run_path,
 )
 from .scanner import load_registered_project
@@ -42,6 +44,7 @@ PLAN_REVIEWER_TEMPLATE_NAME = "plan_reviewer.md"
 TASK_DECOMPOSER_TEMPLATE_NAME = "task_decomposer.md"
 IMPLEMENTATION_COORDINATOR_TEMPLATE_NAME = "implementation_coordinator.md"
 VALIDATOR_TEMPLATE_NAME = "validator.md"
+CODE_REVIEWER_TEMPLATE_NAME = "code_reviewer.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
@@ -228,6 +231,16 @@ def generate_run_agent_prompt(
         require_implementation_completion(run_state, normalized_task_id)
         template_name = VALIDATOR_TEMPLATE_NAME
         output_name = f"validator-{normalized_task_id}.prompt.md"
+    elif agent.name == CODE_REVIEWER_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.VALIDATION_REVIEWED,
+            "CodeReviewerAgent requires reviewed validation evidence before code review.",
+        )
+        require_validation_review(run_state, normalized_task_id)
+        template_name = CODE_REVIEWER_TEMPLATE_NAME
+        output_name = f"code-reviewer-{normalized_task_id}.prompt.md"
     else:
         msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -345,6 +358,10 @@ def _render_run_agent_prompt(
         implementation_record.completion_report_path if implementation_record else None,
         MAX_IMPLEMENTATION_ARTIFACT_CHARS,
     )
+    validation_report = _read_optional_path(
+        implementation_record.validation_report_path if implementation_record else None,
+        MAX_IMPLEMENTATION_ARTIFACT_CHARS,
+    )
     return template.safe_substitute(
         agent_name=agent.name,
         agent_version=agent.version,
@@ -373,6 +390,8 @@ def _render_run_agent_prompt(
         implementation_brief=implementation_brief or "MISSING: implementation brief has not been imported for this task.",
         completion_report_status="available" if completion_report else "missing",
         completion_report=completion_report or "MISSING: implementation completion report has not been imported for this task.",
+        validation_report_status="available" if validation_report else "missing",
+        validation_report=validation_report or "MISSING: validation report has not been imported for this task.",
         agent_definition=yaml.safe_dump(agent.model_dump(mode="json"), sort_keys=False),
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),

@@ -3,17 +3,38 @@ version: "0.1.0"
 purpose: Review implemented code changes for correctness, maintainability, and risk.
 mode: prompt_only
 inputs:
-  - changed files summary
-  - diff summary
-  - validation-report.md
+  - approved project context artifacts
+  - goal.md
+  - run-state.json
+  - idea-analysis.md
+  - requirements.md
+  - plan.md
+  - plan-review.md
+  - tasks.md
+  - implementation-brief.md for selected task
+  - completion-report.md for selected task
+  - validation-report.md for selected task
+  - selected task id
 outputs:
-  - code-review.md
-  - review-findings.md
+  - review-summary.md
+  - scope-review.md
+  - changed-files-review.md
+  - quality-review.md
+  - risk-review.md
+  - test-review.md
+  - findings.md
+  - review-decision.md
+  - recommended-next-step.md
 allowed_actions:
-  - Identify bugs, regressions, missing tests, and maintainability issues.
-  - Prioritize findings by severity.
+  - Review available implementation, completion, and validation evidence.
+  - Identify bugs, regressions, missing tests, maintainability issues, and evidence gaps.
+  - Prioritize findings by severity based only on provided evidence.
+  - State whether actual code, diffs, completion evidence, or validation evidence were reviewed.
 forbidden_actions:
   - Do not modify code.
+  - Do not execute tests.
+  - Do not inspect unprovided diffs automatically.
+  - Do not claim to have reviewed source code if source code or diff was not provided.
   - Do not approve unsafe changes.
   - Do not expose secrets from diffs or logs.
 requires_approval: false
