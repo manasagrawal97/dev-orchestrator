@@ -156,6 +156,7 @@ class RunStatus(StrEnum):
     PLAN_REVIEWED = "PLAN_REVIEWED"
     TASKS_DRAFTED = "TASKS_DRAFTED"
     IMPLEMENTATION_READY = "IMPLEMENTATION_READY"
+    IMPLEMENTATION_REPORTED = "IMPLEMENTATION_REPORTED"
 
 
 class RunArtifactType(StrEnum):
@@ -203,6 +204,10 @@ class ImplementationRecord(BaseModel):
     source_file_path: Path
     implementation_brief_path: Path
     imported_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completion_report_path: Path | None = None
+    reported_at: datetime | None = None
+    validation_summary: str = "unknown"
+    commit_hash: str = "unknown"
 
 
 class RunState(BaseModel):

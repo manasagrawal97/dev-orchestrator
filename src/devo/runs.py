@@ -33,6 +33,7 @@ PLAN_ARTIFACT_NAME = "plan.md"
 PLAN_REVIEW_ARTIFACT_NAME = "plan-review.md"
 TASKS_ARTIFACT_NAME = "tasks.md"
 IMPLEMENTATION_BRIEF_ARTIFACT_NAME = "implementation-brief.md"
+COMPLETION_REPORT_ARTIFACT_NAME = "completion-report.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -42,6 +43,7 @@ RUN_STATUS_ORDER = {
     RunStatus.PLAN_REVIEWED: 4,
     RunStatus.TASKS_DRAFTED: 5,
     RunStatus.IMPLEMENTATION_READY: 6,
+    RunStatus.IMPLEMENTATION_REPORTED: 7,
 }
 
 RUN_SUBDIRECTORIES = (
@@ -261,6 +263,81 @@ def import_run_agent_output(
     )
 
 
+def import_implementation_completion_report(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    source_file: Path,
+    workspace_root: Path | None = None,
+) -> ImplementationRecord:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    source_path = source_file.expanduser().resolve()
+    if not source_path.exists():
+        msg = f"Completion report file does not exist: {source_path}"
+        raise ValueError(msg)
+    if not source_path.is_file():
+        msg = f"Completion report path must be a file: {source_path}"
+        raise ValueError(msg)
+
+    record = find_implementation_record(run_state, normalized_task_id)
+    if not record or not record.implementation_brief_path.exists():
+        msg = f"Implementation brief not found for task: {normalized_task_id}"
+        raise ValueError(msg)
+
+    report_path = record.implementation_brief_path.parent / COMPLETION_REPORT_ARTIFACT_NAME
+    shutil.copyfile(source_path, report_path)
+    report_text = source_path.read_text(encoding="utf-8")
+    reported_at = datetime.now(UTC)
+
+    updated_record = record.model_copy(
+        update={
+            "completion_report_path": report_path,
+            "reported_at": reported_at,
+            "validation_summary": _extract_validation_summary(report_text),
+            "commit_hash": _extract_commit_hash(report_text),
+        }
+    )
+    run_state.implementation_records = [
+        updated_record if existing.task_id == normalized_task_id else existing
+        for existing in run_state.implementation_records
+    ]
+    run_state.status = RunStatus.IMPLEMENTATION_REPORTED
+    run_state.updated_at = reported_at
+    save_run_state(run_state, workspace_root=root)
+    return updated_record
+
+
+def get_implementation_status(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    record = find_implementation_record(run_state, normalized_task_id)
+    if not record or not record.implementation_brief_path.exists():
+        msg = f"Implementation brief not found for task: {normalized_task_id}"
+        raise ValueError(msg)
+
+    return {
+        "project_name": project_name,
+        "run_id": run_id,
+        "task_id": normalized_task_id,
+        "run_status": run_state.status.value,
+        "implementation_brief_path": str(record.implementation_brief_path),
+        "completion_report_path": str(record.completion_report_path) if record.completion_report_path else None,
+        "reported_at": record.reported_at.isoformat() if record.reported_at else None,
+        "validation_summary": record.validation_summary,
+        "commit_hash": record.commit_hash,
+    }
+
+
 def save_current_selection(
     project_name: str,
     run_id: str | None = None,
@@ -297,6 +374,13 @@ def find_run_artifact(run_state: RunState, artifact_type: RunArtifactType) -> Ru
     for artifact in run_state.artifacts:
         if artifact.artifact_type == artifact_type:
             return artifact
+    return None
+
+
+def find_implementation_record(run_state: RunState, task_id: str) -> ImplementationRecord | None:
+    for record in run_state.implementation_records:
+        if record.task_id == task_id:
+            return record
     return None
 
 
@@ -376,6 +460,7 @@ def get_run_artifacts_summary(
             {
                 "task_id": record.task_id,
                 "implementation_brief_path": str(record.implementation_brief_path),
+                "completion_report_path": str(record.completion_report_path) if record.completion_report_path else None,
             }
             for record in run_state.implementation_records
         ],
@@ -451,3 +536,26 @@ def _run_dir(workspace_root: Path, project_name: str, run_id: str) -> Path:
 
 def _implementation_artifact_dir(workspace_root: Path, project_name: str, run_id: str, task_id: str) -> Path:
     return _run_dir(workspace_root, project_name, run_id) / "artifacts" / "implementation" / task_id
+
+
+def _extract_validation_summary(report_text: str) -> str:
+    patterns = (
+        r"(?im)^\s*(?:[-*]\s*)?(?:validation result|test results)\s*:\s*(.+)$",
+        r"(?ims)^#+\s*(?:validation|test results)\s*\n+(.+?)(?=^#+\s|\Z)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, report_text)
+        if match:
+            summary = " ".join(match.group(1).strip().split())
+            return summary[:500] or "unknown"
+    return "unknown"
+
+
+def _extract_commit_hash(report_text: str) -> str:
+    explicit = re.search(r"(?im)^\s*(?:[-*]\s*)?(?:git commit hash|commit hash|commit)\s*:\s*`?([0-9a-f]{7,40})`?\s*$", report_text)
+    if explicit:
+        return explicit.group(1)
+    any_hash = re.search(r"\b[0-9a-f]{40}\b", report_text, flags=re.IGNORECASE)
+    if any_hash:
+        return any_hash.group(0)
+    return "unknown"

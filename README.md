@@ -133,6 +133,13 @@ devo agent import-output TaskDecomposerAgent --project MyProject --run <runId> -
 devo agent import-output ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\implementation-output.md
 ```
 
+Record implementation completion evidence after implementation is performed outside DevOrchestrator:
+
+```powershell
+devo implementation report --project MyProject --run <runId> --task <taskId> --file E:\path\to\completion-report.md
+devo implementation status --project MyProject --run <runId> --task <taskId>
+```
+
 Show run artifacts and generated prompts:
 
 ```powershell
@@ -216,15 +223,17 @@ After tasks are drafted, generate an ImplementationCoordinatorAgent prompt for o
 
 ImplementationCoordinatorAgent output should include `implementation-brief.md`, `selected-task.md`, `scope-boundaries.md`, `files-and-areas.md`, `validation-commands.md`, `safety-checks.md`, `codex-execution-prompt.md`, and `completion-report-template.md`.
 
+After implementation is performed outside DevOrchestrator by Codex or a human, record completion evidence with `devo implementation report --project MyProject --run <runId> --task <taskId> --file <file>`. The completion report is copied to `artifacts/implementation/<taskId>/completion-report.md`, and DevOrchestrator records the report path, reported timestamp, validation summary when extractable, and commit hash when extractable. Git commit hashes are optional because some tasks may be local-only or documentation-only. Inspect the recorded evidence with `devo implementation status --project MyProject --run <runId> --task <taskId>`.
+
 The run-level status flow is:
 
 ```text
-RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY
+RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY -> IMPLEMENTATION_REPORTED
 ```
 
-`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs grouped by task id, plus every generated prompt.
+`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs and completion reports grouped by task id, plus every generated prompt.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. This version does not implement actual Codex execution, validators, code review, fix, final audit, AI model calls, or a web UI.
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. This version does not implement automatic validation runners, ValidatorAgent, code review, fix, final audit, AI model calls, or a web UI.
 
 ## Development
 

@@ -25,7 +25,9 @@ from .runs import (
     REQUIREMENTS_AGENT_NAME,
     TASK_DECOMPOSER_AGENT_NAME,
     create_run,
+    get_implementation_status,
     get_run_artifacts_summary,
+    import_implementation_completion_report,
     import_run_agent_output,
     list_runs,
     load_run,
@@ -38,9 +40,11 @@ app = typer.Typer(help="DevOrchestrator local development CLI.")
 project_app = typer.Typer(help="Manage registered projects.")
 agent_app = typer.Typer(help="Inspect agent definitions and generate prompts.")
 run_app = typer.Typer(help="Manage development runs.")
+implementation_app = typer.Typer(help="Record implementation completion evidence.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
+app.add_typer(implementation_app, name="implementation")
 
 console = Console()
 
@@ -364,6 +368,8 @@ def show_run_artifacts(
         console.print("  implementation:")
         for record in implementation_paths:
             console.print(f"    - {record['task_id']}: {record['implementation_brief_path']}")
+            if record["completion_report_path"]:
+                console.print(f"      completion: {record['completion_report_path']}")
     else:
         console.print("  implementation: none")
     prompt_paths = summary["prompt_paths"]
@@ -391,3 +397,52 @@ def use_project_or_run(
         console.print(f"Run: {selection.run_id}")
         console.print(f"Run path: {selection.run_path}")
     console.print(f"Stored in: {get_workspace_root() / 'current.json'}")
+
+
+@implementation_app.command("report")
+def report_implementation_completion(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+    file_path: Path = typer.Option(..., "--file", help="Markdown completion report file."),
+) -> None:
+    """Import an implementation completion report for a selected task."""
+    try:
+        record = import_implementation_completion_report(
+            project_name=project_name,
+            run_id=run_id,
+            task_id=task_id,
+            source_file=file_path,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    console.print(f"[green]Imported implementation report[/green] for {record.task_id}")
+    console.print(f"Project: {project_name}")
+    console.print(f"Run: {run_id}")
+    console.print(f"Report: {record.completion_report_path}")
+    console.print(f"Validation summary: {record.validation_summary}")
+    console.print(f"Commit hash: {record.commit_hash}")
+
+
+@implementation_app.command("status")
+def show_implementation_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+) -> None:
+    """Show implementation readiness and completion evidence for a selected task."""
+    try:
+        status = get_implementation_status(project_name=project_name, run_id=run_id, task_id=task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    console.print(f"[bold]{status['task_id']}[/bold]")
+    console.print(f"  Project: {status['project_name']}")
+    console.print(f"  Run: {status['run_id']}")
+    console.print(f"  Run status: {status['run_status']}")
+    console.print(f"  Implementation brief: {status['implementation_brief_path']}")
+    console.print(f"  Completion report: {status['completion_report_path'] or 'none'}")
+    console.print(f"  Reported at: {status['reported_at'] or 'none'}")
+    console.print(f"  Validation summary: {status['validation_summary']}")
+    console.print(f"  Commit hash: {status['commit_hash']}")
