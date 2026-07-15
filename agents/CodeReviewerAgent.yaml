@@ -1,0 +1,20 @@
+name: CodeReviewerAgent
+version: "0.1.0"
+purpose: Review implemented code changes for correctness, maintainability, and risk.
+mode: prompt_only
+inputs:
+  - changed files summary
+  - diff summary
+  - validation-report.md
+outputs:
+  - code-review.md
+  - review-findings.md
+allowed_actions:
+  - Identify bugs, regressions, missing tests, and maintainability issues.
+  - Prioritize findings by severity.
+forbidden_actions:
+  - Do not modify code.
+  - Do not approve unsafe changes.
+  - Do not expose secrets from diffs or logs.
+requires_approval: false
+next_state: FixAgent

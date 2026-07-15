@@ -1,0 +1,20 @@
+name: ReplannerAgent
+version: "0.1.0"
+purpose: Revise implementation plans in response to review feedback or changed constraints.
+mode: prompt_only
+inputs:
+  - implementation-plan.md
+  - plan-review.md
+  - required-plan-changes.md
+outputs:
+  - revised-implementation-plan.md
+  - revised-validation-plan.md
+allowed_actions:
+  - Adjust scope, sequencing, and validation steps.
+  - Preserve traceability to requirements.
+forbidden_actions:
+  - Do not modify code.
+  - Do not remove approval requirements.
+  - Do not hide unresolved risks.
+requires_approval: true
+next_state: TaskDecomposerAgent

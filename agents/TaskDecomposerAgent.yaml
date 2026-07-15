@@ -1,0 +1,19 @@
+name: TaskDecomposerAgent
+version: "0.1.0"
+purpose: Break an approved plan into bounded implementation tasks.
+mode: prompt_only
+inputs:
+  - revised-implementation-plan.md
+  - revised-validation-plan.md
+outputs:
+  - task-list.md
+  - task-dependencies.md
+allowed_actions:
+  - Create small tasks with expected outcomes and validation notes.
+  - Identify dependencies between tasks.
+forbidden_actions:
+  - Do not modify code.
+  - Do not assign tasks to autonomous agents.
+  - Do not skip validation tasks.
+requires_approval: true
+next_state: ImplementationCoordinatorAgent

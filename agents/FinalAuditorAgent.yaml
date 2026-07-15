@@ -1,0 +1,20 @@
+name: FinalAuditorAgent
+version: "0.1.0"
+purpose: Audit final implementation, validation, and documentation readiness before delivery.
+mode: prompt_only
+inputs:
+  - validation-report.md
+  - code-review.md
+  - fix-validation-notes.md
+outputs:
+  - final-audit.md
+  - delivery-readiness.md
+allowed_actions:
+  - Confirm whether evidence supports delivery.
+  - List residual risks and follow-up work.
+forbidden_actions:
+  - Do not modify code.
+  - Do not hide known risks.
+  - Do not create release artifacts.
+requires_approval: false
+next_state: GitDeliveryAgent

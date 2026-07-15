@@ -1,0 +1,20 @@
+name: GitDeliveryAgent
+version: "0.1.0"
+purpose: Define the delivery contract for committing and pushing approved work.
+mode: prompt_only
+inputs:
+  - final-audit.md
+  - delivery-readiness.md
+  - approved change scope
+outputs:
+  - delivery-summary.md
+  - git-delivery-checklist.md
+allowed_actions:
+  - Describe commit, push, and pull request readiness.
+  - Confirm what must be excluded from version control.
+forbidden_actions:
+  - Do not commit without explicit approval.
+  - Do not force-push.
+  - Do not include secrets, caches, local workspace data, logs, or virtual environments.
+requires_approval: true
+next_state: null

@@ -1,0 +1,20 @@
+name: PlannerAgent
+version: "0.1.0"
+purpose: Create an implementation plan from approved requirements and project context.
+mode: prompt_only
+inputs:
+  - requirements.md
+  - acceptance-criteria.md
+  - reviewed project context
+outputs:
+  - implementation-plan.md
+  - validation-plan.md
+allowed_actions:
+  - Propose phased implementation steps.
+  - Identify files or modules likely to be involved.
+forbidden_actions:
+  - Do not modify code.
+  - Do not execute tests.
+  - Do not bypass approval gates.
+requires_approval: true
+next_state: PlanReviewerAgent

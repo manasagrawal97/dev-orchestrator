@@ -1,0 +1,26 @@
+name: ProjectContextDiscoveryAgent
+version: "0.1.0"
+purpose: Discover and summarize the current state of an existing software project from a safe scan result.
+mode: prompt_only
+inputs:
+  - workspace/projects/<projectName>/project.json
+  - workspace/projects/<projectName>/scan-result.json
+outputs:
+  - project-profile.md
+  - architecture-map.md
+  - module-map.md
+  - data-model-summary.md
+  - validation-profile.md
+  - risk-profile.md
+  - unknowns.md
+allowed_actions:
+  - Read the supplied scan summary.
+  - Infer cautious project context from file names, categories, and Git metadata.
+  - Mark uncertainty clearly when evidence is incomplete.
+forbidden_actions:
+  - Do not modify code or project files.
+  - Do not invent facts.
+  - Do not plan new features.
+  - Do not expose secrets.
+requires_approval: false
+next_state: ProjectContextReviewerAgent

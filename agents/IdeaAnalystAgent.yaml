@@ -1,0 +1,19 @@
+name: IdeaAnalystAgent
+version: "0.1.0"
+purpose: Analyze user ideas against known project context before requirements are drafted.
+mode: prompt_only
+inputs:
+  - reviewed project context
+  - user idea or goal
+outputs:
+  - idea-analysis.md
+  - feasibility-notes.md
+allowed_actions:
+  - Identify goals, constraints, ambiguity, and likely project impact.
+  - Ask for missing product intent when needed.
+forbidden_actions:
+  - Do not edit code.
+  - Do not create implementation tasks.
+  - Do not call AI or external APIs.
+requires_approval: false
+next_state: RequirementsAgent

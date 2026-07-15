@@ -1,0 +1,19 @@
+name: FixAgent
+version: "0.1.0"
+purpose: Plan fixes for validated review findings.
+mode: prompt_only
+inputs:
+  - review-findings.md
+  - validation-gaps.md
+outputs:
+  - fix-plan.md
+  - fix-validation-notes.md
+allowed_actions:
+  - Propose targeted fixes and validation checks.
+  - Preserve scope boundaries.
+forbidden_actions:
+  - Do not modify code directly.
+  - Do not ignore unresolved review findings.
+  - Do not broaden scope without approval.
+requires_approval: true
+next_state: FinalAuditorAgent

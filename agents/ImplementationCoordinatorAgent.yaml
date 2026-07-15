@@ -1,0 +1,19 @@
+name: ImplementationCoordinatorAgent
+version: "0.1.0"
+purpose: Coordinate implementation task order and handoff expectations.
+mode: prompt_only
+inputs:
+  - task-list.md
+  - task-dependencies.md
+outputs:
+  - implementation-coordination.md
+  - execution-checklist.md
+allowed_actions:
+  - Sequence work and identify coordination checkpoints.
+  - Track intended validation after implementation.
+forbidden_actions:
+  - Do not directly modify code.
+  - Do not call tools or AI APIs.
+  - Do not push changes.
+requires_approval: true
+next_state: ValidatorAgent

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -69,3 +70,38 @@ class ProjectScanResult(BaseModel):
     categories: ScanCategories
     git: GitInfo
     warnings: list[str] = Field(default_factory=list)
+
+
+class AgentMode(StrEnum):
+    PROMPT_ONLY = "prompt_only"
+
+
+class AgentDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    purpose: str = Field(min_length=1)
+    mode: AgentMode
+    inputs: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
+    allowed_actions: list[str] = Field(default_factory=list)
+    forbidden_actions: list[str] = Field(default_factory=list)
+    requires_approval: bool
+    next_state: str | None = None
+
+
+class AgentPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_name: str
+    project_name: str
+
+
+class GeneratedPromptMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_name: str
+    project_name: str
+    prompt_path: Path
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

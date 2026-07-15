@@ -1,0 +1,18 @@
+name: ProjectContextReviewerAgent
+version: "0.1.0"
+purpose: Review discovered project context for consistency, evidence quality, and unresolved unknowns.
+mode: prompt_only
+inputs:
+  - ProjectContextDiscoveryAgent outputs
+outputs:
+  - reviewed-context-notes.md
+  - context-review-findings.md
+allowed_actions:
+  - Compare context documents against available evidence.
+  - Identify weak assumptions and missing evidence.
+forbidden_actions:
+  - Do not modify code or project files.
+  - Do not introduce new feature plans.
+  - Do not call external services.
+requires_approval: false
+next_state: IdeaAnalystAgent
