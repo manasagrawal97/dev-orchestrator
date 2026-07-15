@@ -11,6 +11,16 @@ from .schemas import ApprovalRecord, ContextState, ContextStatus, ImportedAgentA
 
 DISCOVERY_AGENT_NAME = "ProjectContextDiscoveryAgent"
 REVIEWER_AGENT_NAME = "ProjectContextReviewerAgent"
+REQUIRED_DISCOVERY_HEADINGS = (
+    "# project-profile.md",
+    "# architecture-map.md",
+    "# module-map.md",
+    "# data-model-summary.md",
+    "# validation-profile.md",
+    "# risk-profile.md",
+    "# unknowns.md",
+)
+MAX_DISCOVERY_DRAFT_CHARS = 80_000
 
 DISCOVERY_DRAFT_NAME = "project-context-discovery.md"
 REVIEW_ARTIFACT_NAME = "project-context-review.md"
@@ -38,6 +48,7 @@ def import_agent_output(
     state = load_context_state(project_name, workspace_root=root)
 
     if agent_name == DISCOVERY_AGENT_NAME:
+        validate_discovery_output(source_path.read_text(encoding="utf-8"))
         artifact_path = _context_root(root, project_name) / "drafts" / DISCOVERY_DRAFT_NAME
         status = ContextStatus.CONTEXT_DRAFTED
     elif agent_name == REVIEWER_AGENT_NAME:
@@ -153,7 +164,54 @@ def get_discovery_draft_text(project_name: str, workspace_root: Path | None = No
         msg = "ProjectContextDiscoveryAgent draft output not found."
         raise ValueError(msg)
     text = state.discovery_artifact.artifact_path.read_text(encoding="utf-8")
-    return text[:20_000]
+    validate_discovery_output(text)
+    if len(text) > MAX_DISCOVERY_DRAFT_CHARS:
+        msg = (
+            "ProjectContextDiscoveryAgent draft output is too large for prompt generation. "
+            f"Limit: {MAX_DISCOVERY_DRAFT_CHARS} characters."
+        )
+        raise ValueError(msg)
+    return text
+
+
+def validate_discovery_output(text: str) -> None:
+    positions: dict[str, int] = {}
+    for heading in REQUIRED_DISCOVERY_HEADINGS:
+        position = _find_heading_position(text, heading)
+        if position == -1:
+            msg = f"ProjectContextDiscoveryAgent output is missing required section heading: {heading}"
+            raise ValueError(msg)
+        positions[heading] = position
+
+    ordered_positions = [positions[heading] for heading in REQUIRED_DISCOVERY_HEADINGS]
+    if ordered_positions != sorted(ordered_positions):
+        msg = "ProjectContextDiscoveryAgent output section headings are out of order."
+        raise ValueError(msg)
+
+    risk_position = positions["# risk-profile.md"]
+    unknowns_position = positions["# unknowns.md"]
+    if unknowns_position <= risk_position:
+        msg = "ProjectContextDiscoveryAgent output must include # unknowns.md after # risk-profile.md."
+        raise ValueError(msg)
+
+    risk_section = text[risk_position:unknowns_position].rstrip()
+    if risk_section.endswith("Future planning agents should treat th"):
+        msg = "ProjectContextDiscoveryAgent risk-profile.md appears truncated before unknowns.md."
+        raise ValueError(msg)
+
+
+def _find_heading_position(text: str, heading: str) -> int:
+    for line_start, line in _iter_lines_with_positions(text):
+        if line.strip() == heading:
+            return line_start
+    return -1
+
+
+def _iter_lines_with_positions(text: str):
+    position = 0
+    for line in text.splitlines(keepends=True):
+        yield position, line
+        position += len(line)
 
 
 def _initial_context_status(workspace_root: Path, project_name: str) -> ContextStatus:

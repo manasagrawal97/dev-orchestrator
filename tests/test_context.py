@@ -14,11 +14,12 @@ runner = CliRunner()
 def test_imports_project_context_discovery_output(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _registered_scanned_project(tmp_path, monkeypatch)
     output_file = tmp_path / "discovery-output.md"
-    output_file.write_text("# Project profile\nDetected facts only.\n", encoding="utf-8")
+    output_file.write_text(_discovery_output(), encoding="utf-8")
 
     result = runner.invoke(
         app,
         ["agent", "import-output", "ProjectContextDiscoveryAgent", "--project", "sample", "--file", str(output_file)],
+        terminal_width=240,
     )
 
     assert result.exit_code == 0
@@ -30,6 +31,57 @@ def test_imports_project_context_discovery_output(tmp_path: Path, monkeypatch) -
     assert state["status"] == "CONTEXT_DRAFTED"
     assert state["discovery_artifact"]["agent_name"] == "ProjectContextDiscoveryAgent"
     assert Path(state["discovery_artifact"]["artifact_path"]) == draft_file
+
+
+def test_discovery_import_requires_unknowns_section(tmp_path: Path, monkeypatch) -> None:
+    _registered_scanned_project(tmp_path, monkeypatch)
+    output_file = tmp_path / "incomplete-discovery-output.md"
+    output_file.write_text(_discovery_output(include_unknowns=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["agent", "import-output", "ProjectContextDiscoveryAgent", "--project", "sample", "--file", str(output_file)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "ProjectContextDiscoveryAgent output is missing" in result.output
+    assert "required section heading" in result.output
+    assert "# unknowns.md" in result.output
+
+
+def test_discovery_import_requires_unknowns_after_risk_profile(tmp_path: Path, monkeypatch) -> None:
+    _registered_scanned_project(tmp_path, monkeypatch)
+    output_file = tmp_path / "out-of-order-discovery-output.md"
+    output_file.write_text(_discovery_output(unknowns_before_risk=True), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["agent", "import-output", "ProjectContextDiscoveryAgent", "--project", "sample", "--file", str(output_file)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "ProjectContextDiscoveryAgent output section" in result.output
+    assert "headings are out of order" in result.output
+
+
+def test_reviewer_prompt_generation_validates_existing_discovery_draft(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _registered_scanned_project(tmp_path, monkeypatch)
+    _import_discovery_output(tmp_path)
+    draft_file = workspace / "projects" / "sample" / "context" / "drafts" / DISCOVERY_DRAFT_NAME
+    draft_file.write_text(_discovery_output(include_unknowns=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["agent", "prompt", "ProjectContextReviewerAgent", "--project", "sample"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "ProjectContextDiscoveryAgent output is missing" in result.output
+    assert "required section heading" in result.output
+    assert "# unknowns.md" in result.output
 
 
 def test_generates_project_context_reviewer_prompt(tmp_path: Path, monkeypatch) -> None:
@@ -169,7 +221,7 @@ def _registered_scanned_project(tmp_path: Path, monkeypatch) -> tuple[Path, Path
 
 def _import_discovery_output(tmp_path: Path) -> None:
     output_file = tmp_path / "discovery-output.md"
-    output_file.write_text("# Project profile\nDetected facts only.\n", encoding="utf-8")
+    output_file.write_text(_discovery_output(), encoding="utf-8")
     result = runner.invoke(
         app,
         ["agent", "import-output", "ProjectContextDiscoveryAgent", "--project", "sample", "--file", str(output_file)],
@@ -185,3 +237,26 @@ def _import_review_output(tmp_path: Path) -> None:
         ["agent", "import-output", "ProjectContextReviewerAgent", "--project", "sample", "--file", str(review_file)],
     )
     assert result.exit_code == 0
+
+
+def _discovery_output(include_unknowns: bool = True, unknowns_before_risk: bool = False) -> str:
+    sections = [
+        "# project-profile.md\n\nDetected facts only.\n",
+        "# architecture-map.md\n\nDetected architecture.\n",
+        "# module-map.md\n\nDetected modules.\n",
+        "# data-model-summary.md\n\nDetected data model.\n",
+        "# validation-profile.md\n\nDetected validation.\n",
+    ]
+    unknowns = "# unknowns.md\n\nUnknowns are clearly marked.\n"
+    risk = (
+        "# risk-profile.md\n\n"
+        "Future planning agents should treat these areas as requiring extra care:\n\n"
+        "- Database migrations.\n"
+    )
+    if unknowns_before_risk:
+        sections.extend([unknowns, risk])
+    else:
+        sections.append(risk)
+        if include_unknowns:
+            sections.append(unknowns)
+    return "\n---\n\n".join(sections)
