@@ -219,7 +219,7 @@ def _categorize_file(categories: ScanCategories, relative_path: str) -> None:
     lower_path = relative_path.lower()
     suffix = path.suffix.lower()
 
-    if suffix == ".sln":
+    if suffix in {".sln", ".slnx"}:
         _record_category(categories.solution_files, relative_path)
 
     if suffix in {".csproj", ".fsproj", ".vbproj"}:

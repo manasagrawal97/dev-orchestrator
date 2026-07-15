@@ -36,7 +36,8 @@ def test_scan_registered_project_creates_bounded_result(tmp_path: Path, monkeypa
     assert data["file_tree"]["scanned_file_count"] > 0
     assert data["file_tree"]["sample_paths"]
     assert len(data["file_tree"]["sample_paths"]) <= data["limits"]["max_tree_entries"]
-    assert data["categories"]["solution_files"] == ["Sample.sln"]
+    assert data["categories"]["solution_files"] == ["Sample.sln", "Sample.slnx"]
+    assert len(data["categories"]["solution_files"]) == 2
     assert data["categories"]["project_files"] == ["src/Sample.csproj", "tests/Sample.Tests.csproj"]
     assert "README.md" in data["categories"]["readme_docs_files"]
     assert "Dockerfile" in data["categories"]["docker_files"]
@@ -118,6 +119,7 @@ def _create_sample_project(project_path: Path) -> None:
 
     (project_path / "README.md").write_text("# Sample\n", encoding="utf-8")
     (project_path / "Sample.sln").write_text("solution\n", encoding="utf-8")
+    (project_path / "Sample.slnx").write_text("<Solution />\n", encoding="utf-8")
     (project_path / "src" / "Sample.csproj").write_text("<Project />\n", encoding="utf-8")
     (project_path / "tests" / "Sample.Tests.csproj").write_text("<Project />\n", encoding="utf-8")
     (project_path / "package.json").write_text("{}\n", encoding="utf-8")

@@ -49,6 +49,7 @@ def test_agent_prompt_generates_project_context_discovery_prompt(tmp_path: Path,
     project_path.mkdir()
     (project_path / "README.md").write_text("# Sample\n", encoding="utf-8")
     (project_path / "pyproject.toml").write_text("[project]\nname = 'sample'\n", encoding="utf-8")
+    (project_path / "Sample.slnx").write_text("<Solution />\n", encoding="utf-8")
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
 
     add_result = runner.invoke(app, ["project", "add", "--name", "sample", "--path", str(project_path)])
@@ -76,6 +77,8 @@ def test_agent_prompt_generates_project_context_discovery_prompt(tmp_path: Path,
     assert '"scanned_file_count"' in prompt_text
     assert "README.md" in prompt_text
     assert "pyproject.toml" in prompt_text
+    assert "Sample.slnx" in prompt_text
+    assert '"solution_files": 1' in prompt_text
     assert "Stored in:" in prompt_result.output
 
 
