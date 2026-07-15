@@ -7,12 +7,15 @@ from typing import Any
 
 import yaml
 
+from .context import get_discovery_draft_text
 from .projects import get_workspace_root
 from .scanner import load_registered_project
 from .schemas import AgentDefinition, GeneratedPromptMetadata, ProjectScanResult
 
 DISCOVERY_AGENT_NAME = "ProjectContextDiscoveryAgent"
+REVIEWER_AGENT_NAME = "ProjectContextReviewerAgent"
 DISCOVERY_TEMPLATE_NAME = "project_context_discovery.md"
+REVIEWER_TEMPLATE_NAME = "project_context_reviewer.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
@@ -76,6 +79,38 @@ def generate_project_context_discovery_prompt(
     )
 
 
+def generate_project_context_reviewer_prompt(
+    project_name: str,
+    workspace_root: Path | None = None,
+    agents_dir: Path | None = None,
+    prompts_dir: Path | None = None,
+) -> GeneratedPromptMetadata:
+    root = workspace_root or get_workspace_root()
+    registration = load_registered_project(project_name, workspace_root=root)
+    scan_result = _load_scan_result(project_name, workspace_root=root)
+    discovery_draft = get_discovery_draft_text(project_name, workspace_root=root)
+    agent = load_agent_definition(REVIEWER_AGENT_NAME, agents_dir=agents_dir)
+    template_text = _load_prompt_template(REVIEWER_TEMPLATE_NAME, prompts_dir=prompts_dir)
+
+    prompt = _render_project_context_reviewer_prompt(
+        template_text=template_text,
+        agent=agent,
+        project_name=project_name,
+        project_path=str(registration.path),
+        scan_result=scan_result,
+        discovery_draft=discovery_draft,
+    )
+
+    output_file = root / "projects" / project_name / "prompts" / "project-context-reviewer.prompt.md"
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(prompt, encoding="utf-8")
+    return GeneratedPromptMetadata(
+        agent_name=agent.name,
+        project_name=project_name,
+        prompt_path=output_file,
+    )
+
+
 def _load_scan_result(project_name: str, workspace_root: Path) -> ProjectScanResult:
     scan_file = workspace_root / "projects" / project_name / "scan-result.json"
     if not scan_file.exists():
@@ -111,6 +146,30 @@ def _render_project_context_prompt(
         project_name=project_name,
         project_path=project_path,
         scan_summary=json.dumps(summary, indent=2, default=str),
+        allowed_actions=_markdown_list(agent.allowed_actions),
+        forbidden_actions=_markdown_list(agent.forbidden_actions),
+        expected_outputs=_markdown_list(agent.outputs),
+    )
+
+
+def _render_project_context_reviewer_prompt(
+    template_text: str,
+    agent: AgentDefinition,
+    project_name: str,
+    project_path: str,
+    scan_result: ProjectScanResult,
+    discovery_draft: str,
+) -> str:
+    summary = _build_scan_summary(scan_result)
+    template = Template(template_text)
+    return template.safe_substitute(
+        agent_name=agent.name,
+        agent_version=agent.version,
+        agent_purpose=agent.purpose,
+        project_name=project_name,
+        project_path=project_path,
+        scan_summary=json.dumps(summary, indent=2, default=str),
+        discovery_draft=discovery_draft,
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),
         expected_outputs=_markdown_list(agent.outputs),

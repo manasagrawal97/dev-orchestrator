@@ -58,6 +58,14 @@ def register_project(name: str, path: Path, workspace_root: Path | None = None) 
     root = workspace_root or get_workspace_root()
     project_dir = root / "projects" / name
     project_dir.mkdir(parents=True, exist_ok=True)
+    for lifecycle_dir in (
+        project_dir / "context",
+        project_dir / "context" / "drafts",
+        project_dir / "context" / "reviews",
+        project_dir / "context" / "approved",
+        project_dir / "approvals",
+    ):
+        lifecycle_dir.mkdir(parents=True, exist_ok=True)
     project_file = project_dir / "project.json"
     project_file.write_text(
         registration.model_dump_json(indent=2),

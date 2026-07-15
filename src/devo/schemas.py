@@ -105,3 +105,44 @@ class GeneratedPromptMetadata(BaseModel):
     project_name: str
     prompt_path: Path
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ContextStatus(StrEnum):
+    REGISTERED = "REGISTERED"
+    SCANNED = "SCANNED"
+    CONTEXT_DRAFTED = "CONTEXT_DRAFTED"
+    CONTEXT_REVIEWED = "CONTEXT_REVIEWED"
+    CONTEXT_APPROVED = "CONTEXT_APPROVED"
+
+
+class ImportedAgentArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_name: str
+    source_file_path: Path
+    imported_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    artifact_path: Path
+
+
+class ContextState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    project_path: Path
+    status: ContextStatus = ContextStatus.REGISTERED
+    discovery_artifact: ImportedAgentArtifact | None = None
+    review_artifact: ImportedAgentArtifact | None = None
+    approved_at: datetime | None = None
+    approved_by: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ApprovalRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    approved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    approved_by: str
+    discovery_artifact_path: Path
+    review_artifact_path: Path
+    approved_artifact_paths: list[Path] = Field(default_factory=list)

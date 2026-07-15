@@ -4,12 +4,19 @@ purpose: Review discovered project context for consistency, evidence quality, an
 mode: prompt_only
 inputs:
   - ProjectContextDiscoveryAgent outputs
+  - workspace/projects/<projectName>/project.json
+  - workspace/projects/<projectName>/scan-result.json
 outputs:
-  - reviewed-context-notes.md
-  - context-review-findings.md
+  - review-summary.md
+  - "findings with severity: blocking / major / minor / note"
+  - accepted facts
+  - questionable facts
+  - missing context
+  - "approval recommendation: approve / approve_with_notes / revise_required"
 allowed_actions:
   - Compare context documents against available evidence.
   - Identify weak assumptions and missing evidence.
+  - Recommend whether context can be approved.
 forbidden_actions:
   - Do not modify code or project files.
   - Do not introduce new feature plans.

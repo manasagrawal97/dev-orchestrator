@@ -63,6 +63,36 @@ Generate a ready-to-paste Project Context Discovery prompt:
 devo agent prompt ProjectContextDiscoveryAgent --project MyProject
 ```
 
+Import Project Context Discovery output:
+
+```powershell
+devo agent import-output ProjectContextDiscoveryAgent --project MyProject --file E:\path\to\discovery-output.md
+```
+
+Generate a ready-to-paste Project Context Reviewer prompt:
+
+```powershell
+devo agent prompt ProjectContextReviewerAgent --project MyProject
+```
+
+Import Project Context Reviewer output:
+
+```powershell
+devo agent import-output ProjectContextReviewerAgent --project MyProject --file E:\path\to\review-output.md
+```
+
+Show context lifecycle status:
+
+```powershell
+devo project context-status MyProject
+```
+
+Approve reviewed project context:
+
+```powershell
+devo project approve-context MyProject
+```
+
 Registered projects are stored under:
 
 ```text
@@ -84,6 +114,20 @@ The scanner walks the registered project in read-only mode and records bounded m
 Agents are prompt-only role definitions in this version. Each agent is a YAML contract that describes its purpose, allowed inputs, expected outputs, workflow rules, approval requirements, and next state. DevOrchestrator can list these definitions, show their details, and generate a bounded ProjectContextDiscoveryAgent prompt from `scan-result.json`.
 
 No AI model is called yet. No autonomous agent workflow, Codex integration, code modification, or web UI is implemented.
+
+## Context Lifecycle
+
+Project context moves through a manual approval lifecycle:
+
+```text
+REGISTERED -> SCANNED -> CONTEXT_DRAFTED -> CONTEXT_REVIEWED -> CONTEXT_APPROVED
+```
+
+After scanning a registered project, generate a ProjectContextDiscoveryAgent prompt and paste it into your AI tool of choice. Import the resulting Markdown with `devo agent import-output ProjectContextDiscoveryAgent --project MyProject --file <file>`. This stores the draft under `workspace/projects/<projectName>/context/drafts/` and records lifecycle metadata in `context/context-state.json`.
+
+Next, generate the ProjectContextReviewerAgent prompt. It uses `project.json`, the bounded `scan-result.json` summary, and the imported discovery draft. Import the reviewer output with `devo agent import-output ProjectContextReviewerAgent --project MyProject --file <file>`. Once both discovery and review artifacts exist, approve the context with `devo project approve-context MyProject`.
+
+Approval creates `workspace/projects/<projectName>/approvals/context-approval.json` and promotes the reviewed artifacts into `workspace/projects/<projectName>/context/approved/`. DevOrchestrator does not modify the scanned project.
 
 ## Development
 
