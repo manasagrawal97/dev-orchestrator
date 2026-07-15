@@ -93,6 +93,31 @@ Approve reviewed project context:
 devo project approve-context MyProject
 ```
 
+Create a development run from approved context:
+
+```powershell
+devo run create --project MyProject --goal "Add command search"
+```
+
+List development runs:
+
+```powershell
+devo run list --project MyProject
+```
+
+Show run status:
+
+```powershell
+devo run status <runId> --project MyProject
+```
+
+Select an active project or run:
+
+```powershell
+devo use --project MyProject
+devo use --project MyProject --run <runId>
+```
+
 Registered projects are stored under:
 
 ```text
@@ -130,6 +155,20 @@ Discovery imports must include all required sections in order: `project-profile.
 Next, generate the ProjectContextReviewerAgent prompt. It uses `project.json`, the bounded `scan-result.json` summary, and the imported discovery draft. Import the reviewer output with `devo agent import-output ProjectContextReviewerAgent --project MyProject --file <file>`. Once both discovery and review artifacts exist, approve the context with `devo project approve-context MyProject`.
 
 Approval creates `workspace/projects/<projectName>/approvals/context-approval.json` and promotes the reviewed artifacts into `workspace/projects/<projectName>/context/approved/`. DevOrchestrator does not modify the scanned project.
+
+## Run Concept
+
+A development run is the workspace container for one feature, bugfix, refactor, or new project goal. Runs are created only after project context is approved, so later requirements, planning, task decomposition, implementation prompts, validation, review, and final audit can all refer back to an approved context snapshot.
+
+Run data is stored under:
+
+```text
+workspace/runs/<projectName>/<runId>/
+```
+
+Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
+
+This version only creates and tracks runs. It does not implement requirements prompts, planning prompts, task workflow, validation runners, AI model calls, Codex integration, or a web UI.
 
 ## Development
 

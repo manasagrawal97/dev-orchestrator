@@ -146,3 +146,37 @@ class ApprovalRecord(BaseModel):
     discovery_artifact_path: Path
     review_artifact_path: Path
     approved_artifact_paths: list[Path] = Field(default_factory=list)
+
+
+class RunStatus(StrEnum):
+    RUN_CREATED = "RUN_CREATED"
+
+
+class ContextSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    context_state_path: Path
+    approval_record_path: Path
+    approved_artifact_paths: list[Path] = Field(default_factory=list)
+
+
+class RunState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    project_path: Path
+    run_id: str
+    goal: str
+    status: RunStatus = RunStatus.RUN_CREATED
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    context_snapshot: ContextSnapshot
+
+
+class CurrentSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    project_path: Path
+    run_id: str | None = None
+    run_path: Path | None = None
+    selected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
