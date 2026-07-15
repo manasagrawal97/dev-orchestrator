@@ -11,6 +11,7 @@ from .context import get_discovery_draft_text
 from .projects import get_workspace_root
 from .runs import (
     CODE_REVIEWER_AGENT_NAME,
+    FINAL_AUDITOR_AGENT_NAME,
     IDEA_ANALYST_AGENT_NAME,
     IMPLEMENTATION_COORDINATOR_AGENT_NAME,
     PLANNER_AGENT_NAME,
@@ -23,6 +24,7 @@ from .runs import (
     get_run_artifact_text,
     load_run,
     require_context_approved,
+    require_code_review,
     require_implementation_completion,
     require_run_artifact,
     require_run_status_at_least,
@@ -45,6 +47,7 @@ TASK_DECOMPOSER_TEMPLATE_NAME = "task_decomposer.md"
 IMPLEMENTATION_COORDINATOR_TEMPLATE_NAME = "implementation_coordinator.md"
 VALIDATOR_TEMPLATE_NAME = "validator.md"
 CODE_REVIEWER_TEMPLATE_NAME = "code_reviewer.md"
+FINAL_AUDITOR_TEMPLATE_NAME = "final_auditor.md"
 MAX_CATEGORY_PATHS = 20
 MAX_SAMPLE_PATHS = 40
 MAX_WARNINGS = 10
@@ -241,6 +244,16 @@ def generate_run_agent_prompt(
         require_validation_review(run_state, normalized_task_id)
         template_name = CODE_REVIEWER_TEMPLATE_NAME
         output_name = f"code-reviewer-{normalized_task_id}.prompt.md"
+    elif agent.name == FINAL_AUDITOR_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.CODE_REVIEWED,
+            "FinalAuditorAgent requires code review evidence before final audit.",
+        )
+        require_code_review(run_state, normalized_task_id)
+        template_name = FINAL_AUDITOR_TEMPLATE_NAME
+        output_name = f"final-auditor-{normalized_task_id}.prompt.md"
     else:
         msg = f"Run-level prompt generation is not supported for agent: {agent_name}"
         raise ValueError(msg)
@@ -362,6 +375,10 @@ def _render_run_agent_prompt(
         implementation_record.validation_report_path if implementation_record else None,
         MAX_IMPLEMENTATION_ARTIFACT_CHARS,
     )
+    code_review = _read_optional_path(
+        implementation_record.code_review_path if implementation_record else None,
+        MAX_IMPLEMENTATION_ARTIFACT_CHARS,
+    )
     return template.safe_substitute(
         agent_name=agent.name,
         agent_version=agent.version,
@@ -392,6 +409,8 @@ def _render_run_agent_prompt(
         completion_report=completion_report or "MISSING: implementation completion report has not been imported for this task.",
         validation_report_status="available" if validation_report else "missing",
         validation_report=validation_report or "MISSING: validation report has not been imported for this task.",
+        code_review_status="available" if code_review else "missing",
+        code_review=code_review or "MISSING: code review report has not been imported for this task.",
         agent_definition=yaml.safe_dump(agent.model_dump(mode="json"), sort_keys=False),
         allowed_actions=_markdown_list(agent.allowed_actions),
         forbidden_actions=_markdown_list(agent.forbidden_actions),

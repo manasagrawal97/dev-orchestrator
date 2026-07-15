@@ -159,6 +159,7 @@ class RunStatus(StrEnum):
     IMPLEMENTATION_REPORTED = "IMPLEMENTATION_REPORTED"
     VALIDATION_REVIEWED = "VALIDATION_REVIEWED"
     CODE_REVIEWED = "CODE_REVIEWED"
+    FINAL_AUDITED = "FINAL_AUDITED"
 
 
 class RunArtifactType(StrEnum):
@@ -170,6 +171,7 @@ class RunArtifactType(StrEnum):
     IMPLEMENTATION_BRIEF = "implementation_brief"
     VALIDATION_REPORT = "validation_report"
     CODE_REVIEW = "code_review"
+    FINAL_AUDIT = "final_audit"
 
 
 class RunArtifact(BaseModel):
@@ -218,6 +220,9 @@ class ImplementationRecord(BaseModel):
     code_review_path: Path | None = None
     reviewed_at: datetime | None = None
     review_decision: str = "unknown"
+    final_audit_path: Path | None = None
+    audited_at: datetime | None = None
+    final_decision: str = "unknown"
 
 
 class RunState(BaseModel):

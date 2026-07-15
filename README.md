@@ -122,6 +122,7 @@ devo agent prompt TaskDecomposerAgent --project MyProject --run <runId>
 devo agent prompt ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId>
 devo agent prompt ValidatorAgent --project MyProject --run <runId> --task <taskId>
 devo agent prompt CodeReviewerAgent --project MyProject --run <runId> --task <taskId>
+devo agent prompt FinalAuditorAgent --project MyProject --run <runId> --task <taskId>
 ```
 
 Import run-level agent outputs:
@@ -135,6 +136,7 @@ devo agent import-output TaskDecomposerAgent --project MyProject --run <runId> -
 devo agent import-output ImplementationCoordinatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\implementation-output.md
 devo agent import-output ValidatorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\validation-output.md
 devo agent import-output CodeReviewerAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\code-review-output.md
+devo agent import-output FinalAuditorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\final-audit-output.md
 ```
 
 Record implementation completion evidence after implementation is performed outside DevOrchestrator:
@@ -158,6 +160,14 @@ Review implementation evidence after validation has been reviewed:
 devo agent prompt CodeReviewerAgent --project MyProject --run <runId> --task <taskId>
 devo agent import-output CodeReviewerAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\code-review-output.md
 devo review status --project MyProject --run <runId> --task <taskId>
+```
+
+Audit final task evidence after code review:
+
+```powershell
+devo agent prompt FinalAuditorAgent --project MyProject --run <runId> --task <taskId>
+devo agent import-output FinalAuditorAgent --project MyProject --run <runId> --task <taskId> --file E:\path\to\final-audit-output.md
+devo audit status --project MyProject --run <runId> --task <taskId>
 ```
 
 Show run artifacts and generated prompts:
@@ -223,7 +233,7 @@ workspace/runs/<projectName>/<runId>/
 
 Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
 
-This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, ImplementationCoordinatorAgent, ValidatorAgent, and CodeReviewerAgent workflow. It does not execute implementations, run tests automatically, inspect diffs automatically, call AI models, integrate Codex, or provide a web UI.
+This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, ImplementationCoordinatorAgent, ValidatorAgent, CodeReviewerAgent, and FinalAuditorAgent workflow. It does not execute implementations, run tests automatically, inspect diffs automatically, apply fixes, call AI models, integrate Codex, or provide a web UI.
 
 ## Run-Level Agent Workflow
 
@@ -253,15 +263,19 @@ After validation has been reviewed, generate a CodeReviewerAgent prompt with `de
 
 CodeReviewerAgent output should include `review-summary.md`, `scope-review.md`, `changed-files-review.md`, `quality-review.md`, `risk-review.md`, `test-review.md`, `findings.md`, `review-decision.md`, and `recommended-next-step.md`. The review decision must be exactly one of `approve`, `approve_with_notes`, `changes_requested`, or `blocked`. DevOrchestrator does not automatically inspect Git diffs yet, so CodeReviewerAgent must state whether it reviewed actual code/diff or only completion and validation evidence.
 
+After code review has been recorded, generate a FinalAuditorAgent prompt with `devo agent prompt FinalAuditorAgent --project MyProject --run <runId> --task <taskId>`. The prompt includes approved context, run artifacts, the selected task, `implementation-brief.md`, `completion-report.md`, `validation-report.md`, and `code-review.md`. Import the audit with `devo agent import-output FinalAuditorAgent --project MyProject --run <runId> --task <taskId> --file <file>`. This stores `artifacts/implementation/<taskId>/final-audit.md`, records the final decision when extractable, and moves the run to `FINAL_AUDITED`. Inspect the recorded audit with `devo audit status --project MyProject --run <runId> --task <taskId>`.
+
+FinalAuditorAgent output should include `audit-summary.md`, `lifecycle-check.md`, `evidence-check.md`, `decision-check.md`, `unresolved-notes.md`, `final-decision.md`, and `recommended-next-step.md`. The final decision must be exactly one of `close_task`, `close_with_notes`, `needs_follow_up`, or `blocked`. This workflow can recommend closure or follow-up, but it does not modify code, apply fixes, or create a separate task-closed state yet.
+
 The run-level status flow is:
 
 ```text
-RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY -> IMPLEMENTATION_REPORTED -> VALIDATION_REVIEWED -> CODE_REVIEWED
+RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> PLAN_REVIEWED -> TASKS_DRAFTED -> IMPLEMENTATION_READY -> IMPLEMENTATION_REPORTED -> VALIDATION_REVIEWED -> CODE_REVIEWED -> FINAL_AUDITED
 ```
 
-`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs, completion reports, validation reports, and code review reports grouped by task id, plus every generated prompt.
+`devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, implementation briefs, completion reports, validation reports, code review reports, and final audit reports grouped by task id, plus every generated prompt.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. This version does not implement automatic validation runners, automatic diff extraction, fix, final audit, AI model calls, or a web UI.
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. This version does not implement automatic validation runners, automatic diff extraction, fix, task-closed state, AI model calls, or a web UI.
 
 ## Development
 

@@ -29,6 +29,7 @@ TASK_DECOMPOSER_AGENT_NAME = "TaskDecomposerAgent"
 IMPLEMENTATION_COORDINATOR_AGENT_NAME = "ImplementationCoordinatorAgent"
 VALIDATOR_AGENT_NAME = "ValidatorAgent"
 CODE_REVIEWER_AGENT_NAME = "CodeReviewerAgent"
+FINAL_AUDITOR_AGENT_NAME = "FinalAuditorAgent"
 IDEA_ANALYSIS_ARTIFACT_NAME = "idea-analysis.md"
 REQUIREMENTS_ARTIFACT_NAME = "requirements.md"
 PLAN_ARTIFACT_NAME = "plan.md"
@@ -38,6 +39,7 @@ IMPLEMENTATION_BRIEF_ARTIFACT_NAME = "implementation-brief.md"
 COMPLETION_REPORT_ARTIFACT_NAME = "completion-report.md"
 VALIDATION_REPORT_ARTIFACT_NAME = "validation-report.md"
 CODE_REVIEW_ARTIFACT_NAME = "code-review.md"
+FINAL_AUDIT_ARTIFACT_NAME = "final-audit.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -50,6 +52,7 @@ RUN_STATUS_ORDER = {
     RunStatus.IMPLEMENTATION_REPORTED: 7,
     RunStatus.VALIDATION_REVIEWED: 8,
     RunStatus.CODE_REVIEWED: 9,
+    RunStatus.FINAL_AUDITED: 10,
 }
 
 RUN_SUBDIRECTORIES = (
@@ -232,11 +235,27 @@ def import_run_agent_output(
         artifact_type = RunArtifactType.CODE_REVIEW
         artifact_name = CODE_REVIEW_ARTIFACT_NAME
         next_status = RunStatus.CODE_REVIEWED
+    elif agent_name == FINAL_AUDITOR_AGENT_NAME:
+        normalized_task_id = require_task_id(task_id)
+        require_run_status_at_least(
+            run_state,
+            RunStatus.CODE_REVIEWED,
+            "FinalAuditorAgent requires code review evidence before final audit.",
+        )
+        require_code_review(run_state, normalized_task_id)
+        artifact_type = RunArtifactType.FINAL_AUDIT
+        artifact_name = FINAL_AUDIT_ARTIFACT_NAME
+        next_status = RunStatus.FINAL_AUDITED
     else:
         msg = f"Run-level import is not supported for agent: {agent_name}"
         raise ValueError(msg)
 
-    if agent_name in {IMPLEMENTATION_COORDINATOR_AGENT_NAME, VALIDATOR_AGENT_NAME, CODE_REVIEWER_AGENT_NAME}:
+    if agent_name in {
+        IMPLEMENTATION_COORDINATOR_AGENT_NAME,
+        VALIDATOR_AGENT_NAME,
+        CODE_REVIEWER_AGENT_NAME,
+        FINAL_AUDITOR_AGENT_NAME,
+    }:
         artifact_path = _implementation_artifact_dir(root, project_name, run_id, normalized_task_id) / artifact_name
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
     else:
@@ -313,6 +332,29 @@ def import_run_agent_output(
                     "code_review_path": artifact_path,
                     "reviewed_at": reviewed_at,
                     "review_decision": _extract_review_decision(review_text),
+                }
+            )
+            if existing.task_id == normalized_task_id
+            else existing
+            for existing in run_state.implementation_records
+        ]
+    elif agent_name == FINAL_AUDITOR_AGENT_NAME:
+        run_state.artifacts = [
+            existing
+            for existing in run_state.artifacts
+            if not (
+                existing.artifact_type == artifact_type
+                and existing.artifact_path.parent.name == normalized_task_id
+            )
+        ]
+        audited_at = datetime.now(UTC)
+        audit_text = source_path.read_text(encoding="utf-8")
+        run_state.implementation_records = [
+            existing.model_copy(
+                update={
+                    "final_audit_path": artifact_path,
+                    "audited_at": audited_at,
+                    "final_decision": _extract_final_decision(audit_text),
                 }
             )
             if existing.task_id == normalized_task_id
@@ -463,6 +505,33 @@ def get_review_status(
     }
 
 
+def get_audit_status(
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    normalized_task_id = require_task_id(task_id)
+    record = require_code_review(run_state, normalized_task_id)
+
+    return {
+        "project_name": project_name,
+        "run_id": run_id,
+        "task_id": normalized_task_id,
+        "run_status": run_state.status.value,
+        "implementation_brief_path": str(record.implementation_brief_path),
+        "completion_report_path": str(record.completion_report_path),
+        "validation_report_path": str(record.validation_report_path),
+        "code_review_path": str(record.code_review_path),
+        "final_audit_path": str(record.final_audit_path) if record.final_audit_path else None,
+        "audited_at": record.audited_at.isoformat() if record.audited_at else None,
+        "final_decision": record.final_decision,
+    }
+
+
 def save_current_selection(
     project_name: str,
     run_id: str | None = None,
@@ -560,6 +629,14 @@ def require_validation_review(run_state: RunState, task_id: str) -> Implementati
     return record
 
 
+def require_code_review(run_state: RunState, task_id: str) -> ImplementationRecord:
+    record = require_validation_review(run_state, task_id)
+    if not record.code_review_path or not record.code_review_path.exists():
+        msg = f"Code review report not found for task: {task_id}"
+        raise ValueError(msg)
+    return record
+
+
 def extract_task_excerpt(tasks_text: str, task_id: str) -> str | None:
     pattern = re.compile(
         rf"(?ims)^##\s+Task\s+{re.escape(task_id)}\b.*?(?=^##\s+Task\s+\S+\b|^---\s*$|\Z)"
@@ -607,6 +684,7 @@ def get_run_artifacts_summary(
                 "completion_report_path": str(record.completion_report_path) if record.completion_report_path else None,
                 "validation_report_path": str(record.validation_report_path) if record.validation_report_path else None,
                 "code_review_path": str(record.code_review_path) if record.code_review_path else None,
+                "final_audit_path": str(record.final_audit_path) if record.final_audit_path else None,
             }
             for record in run_state.implementation_records
         ],
@@ -732,6 +810,23 @@ def _extract_review_decision(review_text: str) -> str:
     if inline:
         candidates.append(inline.group(1))
     candidates.append(review_text)
+
+    for candidate in candidates:
+        normalized = candidate.strip().lower()
+        for decision in allowed:
+            if re.search(rf"\b{re.escape(decision)}\b", normalized):
+                return decision
+    return "unknown"
+
+
+def _extract_final_decision(audit_text: str) -> str:
+    allowed = ("close_with_notes", "needs_follow_up", "close_task", "blocked")
+    section = re.search(r"(?ims)^#+\s*final-decision\.md\s*\n+(.+?)(?=^#+\s|\Z)", audit_text)
+    candidates = [section.group(1)] if section else []
+    inline = re.search(r"(?im)^\s*(?:[-*]\s*)?final decision\s*:\s*(.+)$", audit_text)
+    if inline:
+        candidates.append(inline.group(1))
+    candidates.append(audit_text)
 
     for candidate in candidates:
         normalized = candidate.strip().lower()

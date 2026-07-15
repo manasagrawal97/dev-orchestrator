@@ -3,17 +3,36 @@ version: "0.1.0"
 purpose: Audit final implementation, validation, and documentation readiness before delivery.
 mode: prompt_only
 inputs:
-  - validation-report.md
-  - code-review.md
-  - fix-validation-notes.md
+  - approved project context artifacts
+  - goal.md
+  - run-state.json
+  - idea-analysis.md
+  - requirements.md
+  - plan.md
+  - plan-review.md
+  - tasks.md
+  - implementation-brief.md for selected task
+  - completion-report.md for selected task
+  - validation-report.md for selected task
+  - code-review.md for selected task
+  - selected task id
 outputs:
-  - final-audit.md
-  - delivery-readiness.md
+  - audit-summary.md
+  - lifecycle-check.md
+  - evidence-check.md
+  - decision-check.md
+  - unresolved-notes.md
+  - final-decision.md
+  - recommended-next-step.md
 allowed_actions:
-  - Confirm whether evidence supports delivery.
-  - List residual risks and follow-up work.
+  - Confirm whether task lifecycle evidence supports closure or follow-up.
+  - Review implementation, validation, and code review decisions.
+  - List residual risks, unresolved notes, and follow-up work.
+  - Recommend whether to close, close with notes, follow up, or block.
 forbidden_actions:
   - Do not modify code.
+  - Do not run tests.
+  - Do not apply fixes.
   - Do not hide known risks.
   - Do not create release artifacts.
 requires_approval: false
