@@ -45,6 +45,7 @@ CODE_REVIEW_ARTIFACT_NAME = "code-review.md"
 FINAL_AUDIT_ARTIFACT_NAME = "final-audit.md"
 CLOSURE_RECORD_ARTIFACT_NAME = "closure-record.md"
 TASK_LEDGER_ARTIFACT_NAME = "task-ledger.json"
+RUN_SUMMARY_ARTIFACT_NAME = "run-summary.md"
 
 RUN_STATUS_ORDER = {
     RunStatus.RUN_CREATED: 0,
@@ -59,6 +60,7 @@ RUN_STATUS_ORDER = {
     RunStatus.CODE_REVIEWED: 9,
     RunStatus.FINAL_AUDITED: 10,
     RunStatus.TASK_CLOSED: 11,
+    RunStatus.RUN_CLOSED: 12,
 }
 
 TASK_CLOSING_FINAL_DECISIONS = {
@@ -727,6 +729,60 @@ def list_run_tasks(
     return [tasks_by_id[task_id] for task_id in sorted(tasks_by_id)]
 
 
+def close_run(
+    project_name: str,
+    run_id: str,
+    note: str | None = None,
+    workspace_root: Path | None = None,
+) -> RunState:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    tasks = _require_run_tasks(run_state, workspace_root=root)
+    unresolved = _unresolved_tasks(tasks)
+    if unresolved:
+        unresolved_ids = ", ".join(task["task_id"] for task in unresolved)
+        msg = f"Run cannot be closed because unresolved tasks remain: {unresolved_ids}"
+        raise ValueError(msg)
+
+    closed_at = datetime.now(UTC)
+    summary_path = _run_dir(root, project_name, run_id) / RUN_SUMMARY_ARTIFACT_NAME
+    summary_path.write_text(
+        _render_run_summary(run_state, tasks, closed_at=closed_at, note=note, workspace_root=root),
+        encoding="utf-8",
+    )
+    run_state.status = RunStatus.RUN_CLOSED
+    run_state.closed_at = closed_at
+    run_state.run_summary_path = summary_path
+    run_state.closure_note = note
+    run_state.updated_at = closed_at
+    save_run_state(run_state, workspace_root=root)
+    return run_state
+
+
+def get_run_summary(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
+    root = workspace_root or get_workspace_root()
+    require_context_approved(project_name, workspace_root=root)
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    tasks = _require_run_tasks(run_state, workspace_root=root)
+    unresolved = _unresolved_tasks(tasks)
+    return {
+        "project_name": run_state.project_name,
+        "run_id": run_state.run_id,
+        "goal": run_state.goal,
+        "status": run_state.status.value,
+        "closed_at": run_state.closed_at.isoformat() if run_state.closed_at else None,
+        "closure_note": run_state.closure_note,
+        "run_summary_path": str(run_state.run_summary_path) if run_state.run_summary_path else None,
+        "tasks": tasks,
+        "unresolved_task_ids": [task["task_id"] for task in unresolved],
+    }
+
+
 def save_current_selection(
     project_name: str,
     run_id: str | None = None,
@@ -881,6 +937,7 @@ def get_run_artifacts_summary(
         "plan_review_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.PLAN_REVIEW),
         "tasks_artifact_path": _artifact_path_or_none(run_state, RunArtifactType.TASKS),
         "task_ledger_path": str(_task_ledger_path(root, project_name, run_id)) if _task_ledger_path(root, project_name, run_id).exists() else None,
+        "run_summary_path": str(directory / RUN_SUMMARY_ARTIFACT_NAME) if (directory / RUN_SUMMARY_ARTIFACT_NAME).exists() else None,
         "implementation_artifact_paths": [
             {
                 "task_id": record.task_id,
@@ -925,6 +982,34 @@ def _artifact_path_or_none(run_state: RunState, artifact_type: RunArtifactType) 
     return str(artifact.artifact_path)
 
 
+def _require_run_tasks(run_state: RunState, workspace_root: Path | None = None) -> list[dict[str, object]]:
+    tasks_artifact = find_run_artifact(run_state, RunArtifactType.TASKS)
+    if not tasks_artifact or not tasks_artifact.artifact_path.exists():
+        msg = "Run closure requires tasks.md."
+        raise ValueError(msg)
+    tasks = list_run_tasks(run_state.project_name, run_state.run_id, workspace_root=workspace_root)
+    if not tasks:
+        msg = "Run closure requires tasks.md to contain at least one task."
+        raise ValueError(msg)
+    return tasks
+
+
+def _unresolved_tasks(tasks: list[dict[str, object]]) -> list[dict[str, object]]:
+    resolved_dispositions = {
+        TaskDispositionStatus.COVERED_BY.value,
+        TaskDispositionStatus.SUPERSEDED.value,
+        TaskDispositionStatus.NOT_NEEDED.value,
+        TaskDispositionStatus.CLOSED_MANUALLY.value,
+    }
+    unresolved: list[dict[str, object]] = []
+    for task in tasks:
+        has_formal_closure = task.get("closure_status") in {"closed", "closed_with_notes"} and bool(task.get("closure_record_path"))
+        has_resolved_disposition = task.get("disposition_status") in resolved_dispositions
+        if not has_formal_closure and not has_resolved_disposition:
+            unresolved.append(task)
+    return unresolved
+
+
 def _render_goal_markdown(run_state: RunState) -> str:
     return "\n".join(
         [
@@ -941,6 +1026,81 @@ def _render_goal_markdown(run_state: RunState) -> str:
             "",
         ]
     )
+
+
+def _render_run_summary(
+    run_state: RunState,
+    tasks: list[dict[str, object]],
+    closed_at: datetime,
+    note: str | None,
+    workspace_root: Path,
+) -> str:
+    artifacts = get_run_artifacts_summary(run_state.project_name, run_state.run_id, workspace_root=workspace_root)
+    lines = [
+        "# run-summary.md",
+        "",
+        f"- project name: {run_state.project_name}",
+        f"- run id: {run_state.run_id}",
+        f"- closed_at: {closed_at.isoformat()}",
+        f"- final run status: {RunStatus.RUN_CLOSED.value}",
+    ]
+    if note:
+        lines.append(f"- closure note: {note}")
+    lines.extend([
+        "",
+        "## Goal",
+        "",
+        run_state.goal,
+        "",
+        "## Task Resolution",
+        "",
+        "| task id | title | closure status | disposition status | covered by | final decision |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ])
+    for task in tasks:
+        lines.append(
+            "| "
+            f"{task['task_id']} | "
+            f"{_table_cell(task['task_title'])} | "
+            f"{task['closure_status']} | "
+            f"{task['disposition_status']} | "
+            f"{task['covered_by_task_id'] or 'none'} | "
+            f"{task['final_decision']} |"
+        )
+    lines.extend([
+        "",
+        "## Key Artifacts",
+        "",
+        f"- idea-analysis: {artifacts['idea_analysis_artifact_path'] or 'none'}",
+        f"- requirements: {artifacts['requirements_artifact_path'] or 'none'}",
+        f"- plan: {artifacts['plan_artifact_path'] or 'none'}",
+        f"- plan-review: {artifacts['plan_review_artifact_path'] or 'none'}",
+        f"- tasks: {artifacts['tasks_artifact_path'] or 'none'}",
+        f"- task-ledger: {artifacts['task_ledger_path'] or 'none'}",
+        "",
+        "## Implementation Records",
+        "",
+    ])
+    records = artifacts["implementation_artifact_paths"]
+    if not records:
+        lines.append("- none")
+    for record in records:
+        lines.extend([
+            f"### {record['task_id']}",
+            "",
+            f"- implementation brief: {record['implementation_brief_path']}",
+            f"- completion report: {record['completion_report_path'] or 'none'}",
+            f"- validation report: {record['validation_report_path'] or 'none'}",
+            f"- code review: {record['code_review_path'] or 'none'}",
+            f"- final audit: {record['final_audit_path'] or 'none'}",
+            f"- closure record: {record['closure_record_path'] or 'none'}",
+            "",
+        ])
+    return "\n".join(lines)
+
+
+def _table_cell(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
 
 
 def _render_closure_record(

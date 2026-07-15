@@ -19,6 +19,7 @@ from .context import approve_context, get_context_status, import_agent_output
 from .projects import get_workspace_root, list_projects, register_project
 from .runs import (
     CODE_REVIEWER_AGENT_NAME,
+    close_run,
     FINAL_AUDITOR_AGENT_NAME,
     IDEA_ANALYST_AGENT_NAME,
     IMPLEMENTATION_COORDINATOR_AGENT_NAME,
@@ -33,6 +34,7 @@ from .runs import (
     get_implementation_status,
     get_review_status,
     get_run_artifacts_summary,
+    get_run_summary,
     get_task_status,
     get_validation_status,
     import_implementation_completion_report,
@@ -218,6 +220,7 @@ def generate_agent_prompt(
         IMPLEMENTATION_COORDINATOR_AGENT_NAME,
         VALIDATOR_AGENT_NAME,
         CODE_REVIEWER_AGENT_NAME,
+    close_run,
         FINAL_AUDITOR_AGENT_NAME,
     }:
         if not run_id:
@@ -285,6 +288,7 @@ def import_output(
             IMPLEMENTATION_COORDINATOR_AGENT_NAME,
             VALIDATOR_AGENT_NAME,
             CODE_REVIEWER_AGENT_NAME,
+    close_run,
             FINAL_AUDITOR_AGENT_NAME,
         }:
             if not run_id:
@@ -372,8 +376,63 @@ def show_run_status(
     console.print(f"  Status: {run_state.status.value}")
     console.print(f"  Goal: {run_state.goal}")
     console.print(f"  Created at: {run_state.created_at.isoformat()}")
+    console.print(f"  Closed at: {run_state.closed_at.isoformat() if run_state.closed_at else 'none'}")
+    console.print(f"  Run summary: {_named_path(run_state.run_summary_path)}")
+    console.print(f"  Closure note: {run_state.closure_note or 'none'}")
     console.print(f"  Context state: {_named_path(run_state.context_snapshot.context_state_path)}")
     console.print(f"  Approval record: {_named_path(run_state.context_snapshot.approval_record_path)}")
+
+
+@run_app.command("close")
+def close_development_run(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    note: str | None = typer.Option(None, "--note", help="Optional run closure note."),
+) -> None:
+    """Close a run when every task is resolved."""
+    try:
+        run_state = close_run(project_name=project_name, run_id=run_id, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(f"[green]Closed run[/green] {run_state.run_id}")
+    console.print(f"Project: {run_state.project_name}")
+    console.print(f"Status: {run_state.status.value}")
+    console.print(f"Closed at: {run_state.closed_at.isoformat() if run_state.closed_at else 'none'}")
+    console.print(f"Summary: {_named_path(run_state.run_summary_path)}")
+    console.print(f"Note: {run_state.closure_note or 'none'}")
+
+
+@run_app.command("summary")
+def show_run_summary(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show run closure summary and task resolution."""
+    try:
+        summary = get_run_summary(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(f"[bold]{summary['run_id']}[/bold]")
+    console.print(f"  Project: {summary['project_name']}")
+    console.print(f"  Status: {summary['status']}")
+    console.print(f"  Goal: {summary['goal']}")
+    console.print(f"  Closed at: {summary['closed_at'] or 'none'}")
+    console.print(f"  Closure note: {summary['closure_note'] or 'none'}")
+    console.print(f"  Run summary: {_named_path(summary['run_summary_path'])}")
+    unresolved = summary["unresolved_task_ids"]
+    console.print(f"  Unresolved tasks: {', '.join(unresolved) if unresolved else 'none'}")
+    console.print("  Task resolution:")
+    for task in summary["tasks"]:
+        console.print(
+            "    - "
+            f"{task['task_id']} {task['task_title']} | "
+            f"closure={task['closure_status']} | "
+            f"disposition={task['disposition_status']} | "
+            f"covered_by={task['covered_by_task_id'] or 'none'} | "
+            f"final={task['final_decision']}"
+        )
 
 
 @run_app.command("artifacts")
@@ -396,6 +455,7 @@ def show_run_artifacts(
     console.print(f"  plan-review: {_named_path(summary['plan_review_artifact_path'])}")
     console.print(f"  tasks: {_named_path(summary['tasks_artifact_path'])}")
     console.print(f"  task-ledger.json: {_named_path(summary['task_ledger_path'])}")
+    console.print(f"  run-summary.md: {_named_path(summary['run_summary_path'])}")
     implementation_paths = summary["implementation_artifact_paths"]
     if implementation_paths:
         console.print("  implementation:")

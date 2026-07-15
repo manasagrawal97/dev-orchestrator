@@ -161,6 +161,7 @@ class RunStatus(StrEnum):
     CODE_REVIEWED = "CODE_REVIEWED"
     FINAL_AUDITED = "FINAL_AUDITED"
     TASK_CLOSED = "TASK_CLOSED"
+    RUN_CLOSED = "RUN_CLOSED"
 
 
 class RunArtifactType(StrEnum):
@@ -274,6 +275,9 @@ class RunState(BaseModel):
     implementation_ready_at: datetime | None = None
     implementation_records: list[ImplementationRecord] = Field(default_factory=list)
     task_ledger_path: Path | None = None
+    closed_at: datetime | None = None
+    run_summary_path: Path | None = None
+    closure_note: str | None = None
 
 
 class CurrentSelection(BaseModel):
