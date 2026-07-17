@@ -288,3 +288,22 @@ class CurrentSelection(BaseModel):
     run_id: str | None = None
     run_path: Path | None = None
     selected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class BackupManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    source_workspace_path: Path
+    backup_path: Path
+    label: str | None = None
+    included_roots: list[str] = Field(default_factory=list)
+    excluded_patterns: list[str] = Field(default_factory=list)
+    file_count: int = 0
+    total_bytes: int = 0
+    sha256_by_file: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    tool_version: str = "unknown"
+    git_commit_hash: str = "unknown"
+    git_branch: str = "unknown"

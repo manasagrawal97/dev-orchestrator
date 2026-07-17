@@ -5,6 +5,8 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from .backups import create_backup, list_backups, restore_backup, verify_backup
+
 from .agents import (
     DISCOVERY_AGENT_NAME,
     REVIEWER_AGENT_NAME,
@@ -57,6 +59,7 @@ validation_app = typer.Typer(help="Inspect validation review evidence.")
 review_app = typer.Typer(help="Inspect code review evidence.")
 audit_app = typer.Typer(help="Inspect final audit evidence.")
 task_app = typer.Typer(help="Manage run tasks.")
+backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -65,6 +68,7 @@ app.add_typer(validation_app, name="validation")
 app.add_typer(review_app, name="review")
 app.add_typer(audit_app, name="audit")
 app.add_typer(task_app, name="task")
+app.add_typer(backup_app, name="backup")
 
 console = Console()
 
@@ -728,3 +732,73 @@ def list_tasks_for_run(
             console.print(f"  Disposition note: {task['disposition_note']}")
         if task["closure_record_path"]:
             console.print(f"  Closure record: {_named_path(task['closure_record_path'])}")
+
+
+@backup_app.command("create")
+def create_workspace_backup(
+    dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
+    label: str | None = typer.Option(None, "--label", help="Optional backup label."),
+) -> None:
+    """Create a timestamped backup of DevOrchestrator workspace state."""
+    try:
+        manifest = create_backup(dest=dest, label=label)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--dest") from exc
+
+    console.print(f"[green]Created backup[/green] {manifest.backup_path}")
+    console.print(f"Manifest: {manifest.backup_path / 'backup-manifest.json'}")
+    console.print(f"Files: {manifest.file_count}")
+    console.print(f"Total bytes: {manifest.total_bytes}")
+    if manifest.warnings:
+        console.print("Warnings:")
+        for warning in manifest.warnings:
+            console.print(f"  - {warning}")
+
+
+@backup_app.command("verify")
+def verify_workspace_backup(path: Path = typer.Option(..., "--path", help="Backup folder to verify.")) -> None:
+    """Verify a workspace backup manifest, file set, byte count, and hashes."""
+    try:
+        manifest = verify_backup(path)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--path") from exc
+
+    console.print(f"[green]Verified backup[/green] {manifest.backup_path}")
+    console.print(f"Manifest: {manifest.backup_path / 'backup-manifest.json'}")
+    console.print(f"Files: {manifest.file_count}")
+    console.print(f"Total bytes: {manifest.total_bytes}")
+
+
+@backup_app.command("restore")
+def restore_workspace_backup(
+    backup: Path = typer.Option(..., "--backup", help="Backup folder to restore."),
+    dest: Path = typer.Option(..., "--dest", help="Empty destination workspace folder."),
+) -> None:
+    """Restore a verified backup into an empty workspace destination."""
+    try:
+        manifest = restore_backup(backup=backup, dest=dest)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--dest") from exc
+
+    console.print(f"[green]Restored backup[/green] {manifest.backup_path}")
+    console.print(f"Destination: {dest.expanduser().resolve()}")
+    console.print(f"Files: {manifest.file_count}")
+    console.print(f"Total bytes: {manifest.total_bytes}")
+
+
+@backup_app.command("list")
+def list_workspace_backups(dest: Path = typer.Option(..., "--dest", help="Backup root directory.")) -> None:
+    """List DevOrchestrator workspace backups under a backup root."""
+    backups = list_backups(dest)
+    if not backups:
+        console.print("[yellow]No backups found.[/yellow]")
+        return
+
+    for manifest in backups:
+        console.print(f"[bold]{manifest.backup_path.name}[/bold]")
+        console.print(f"  Path: {manifest.backup_path}")
+        console.print(f"  Created at: {manifest.created_at.isoformat()}")
+        console.print(f"  Label: {manifest.label or 'none'}")
+        console.print(f"  Files: {manifest.file_count}")
+        console.print(f"  Total bytes: {manifest.total_bytes}")
+        console.print(f"  Git: {manifest.git_branch} {manifest.git_commit_hash}")

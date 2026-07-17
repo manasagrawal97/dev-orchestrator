@@ -302,6 +302,52 @@ RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> 
 
 RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. Run closure requires approved project context, an existing run, `tasks.md`, and no unresolved tasks. This version does not implement automatic next-run creation, automatic next-task selection, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
 
+## Workspace Backup
+
+DevOrchestrator source code is stored in GitHub, but the local `workspace/` folder contains runtime state that Git intentionally does not track: registered project metadata, approved context artifacts, run history, prompt outputs, task closure records, validation/review/audit reports, run summaries, and enriched context artifacts. Back this up regularly to a location outside the repo, such as Google Drive Desktop.
+
+Workspace backup includes only:
+
+```text
+workspace/projects/**
+workspace/runs/**
+workspace/current.json
+```
+
+Workspace backup does not include DevOrchestrator source code, `.git`, `.venv`, target project repositories such as `E:\Personal OS`, caches, temporary files, lock files, or arbitrary paths outside the DevOrchestrator workspace. Do not use Google Drive as the active DevOrchestrator workspace; keep the active workspace local and use Drive only as a backup destination.
+
+Create a backup:
+
+```powershell
+devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "before-task-017"
+```
+
+List backups:
+
+```powershell
+devo backup list --dest "G:\My Drive\Backups\DevOrchestrator"
+```
+
+Verify a backup:
+
+```powershell
+devo backup verify --path "G:\My Drive\Backups\DevOrchestrator\devo-workspace-backup-20260715-210000-before-task-017"
+```
+
+Restore a backup into an empty workspace folder:
+
+```powershell
+devo backup restore --backup "G:\My Drive\Backups\DevOrchestrator\devo-workspace-backup-20260715-210000-before-task-017" --dest "E:\RestoredDevOrchestratorWorkspace"
+```
+
+Recommended daily/manual backup command:
+
+```powershell
+devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "daily"
+```
+
+Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, and creation timestamp. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs.
+
 ## Development
 
 Run tests:
