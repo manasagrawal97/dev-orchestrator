@@ -38,6 +38,90 @@ function Invoke-LoggedCommand {
     return $output
 }
 
+function Test-BackupPathCandidate {
+    param([string]$Candidate)
+    if (-not $Candidate) { return $null }
+    $clean = $Candidate.Trim().Trim('"')
+    if (-not $clean) { return $null }
+    if (Test-Path -LiteralPath $clean -PathType Container) {
+        return (Resolve-Path -LiteralPath $clean).Path
+    }
+    return $null
+}
+
+function Get-CreatedBackupPathFromOutput {
+    param([object[]]$OutputLines)
+    $lines = @($OutputLines | ForEach-Object { [string]$_ })
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        $line = $lines[$index]
+        if ($line -match '^\s*Created backup\s*(.*)$') {
+            $parts = @()
+            if ($Matches[1]) { $parts += $Matches[1].Trim() }
+            foreach ($candidate in @($parts -join "", $parts -join " ")) {
+                $resolved = Test-BackupPathCandidate -Candidate $candidate
+                if ($resolved) { return $resolved }
+            }
+
+            for ($next = $index + 1; $next -lt $lines.Count; $next++) {
+                $nextLine = $lines[$next].Trim()
+                if ($nextLine -match '^(Manifest:|Files:|Total bytes:|Protected:|Warnings:)') { break }
+                if (-not $nextLine) { continue }
+                $parts += $nextLine
+                foreach ($candidate in @($nextLine, ($parts -join ""), ($parts -join " "))) {
+                    $resolved = Test-BackupPathCandidate -Candidate $candidate
+                    if ($resolved) { return $resolved }
+                }
+            }
+        }
+    }
+    return $null
+}
+
+function Get-CreatedBackupPathFromManifestFallback {
+    param(
+        [string]$Root,
+        [string]$ExpectedLabel,
+        [datetime]$StartedAtUtc
+    )
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return $null }
+
+    $candidates = @()
+    foreach ($folder in Get-ChildItem -LiteralPath $Root -Directory -Filter "devo-workspace-backup-*") {
+        $manifestPath = Join-Path $folder.FullName "backup-manifest.json"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { continue }
+        try {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $createdAt = ([datetime]$manifest.created_at).ToUniversalTime()
+            $manifestLabel = [string]$manifest.label
+            if ($manifestLabel -ne $ExpectedLabel) { continue }
+            if ($createdAt -lt $StartedAtUtc) { continue }
+            $candidates += [pscustomobject]@{
+                Path = $folder.FullName
+                CreatedAt = $createdAt
+            }
+        } catch {
+            continue
+        }
+    }
+
+    $selected = $candidates | Sort-Object CreatedAt -Descending | Select-Object -First 1
+    if ($selected) { return $selected.Path }
+    return $null
+}
+
+function Write-CapturedOutput {
+    param(
+        [object[]]$OutputLines,
+        [string]$LogFile
+    )
+    Write-Host "Captured backup create output:"
+    Add-Content -LiteralPath $LogFile -Value "Captured backup create output before path detection failure:"
+    foreach ($line in $OutputLines) {
+        Write-Host $line
+        Add-Content -LiteralPath $LogFile -Value $line
+    }
+}
+
 $RepoPath = Resolve-RepoPath -ProvidedPath $RepoPath
 if (-not (Test-Path -LiteralPath $RepoPath -PathType Container)) {
     throw "Repo path does not exist: $RepoPath"
@@ -68,21 +152,15 @@ Add-Content -LiteralPath $logFile -Value "BackupRoot: $BackupRoot"
 
 $createArgs = @("backup", "create", "--dest", $BackupRoot, "--label", $Label)
 if ($Protect.IsPresent) { $createArgs += "--protect" }
+$scriptStartUtc = (Get-Date).ToUniversalTime()
 $createOutput = Invoke-LoggedCommand -FilePath $devoPath -Arguments $createArgs -LogFile $logFile
 
-$createdBackupPath = $null
-foreach ($line in $createOutput) {
-    if ($line -match "Created backup\s+(.+)$") {
-        $createdBackupPath = $Matches[1].Trim()
-        break
-    }
-}
+$createdBackupPath = Get-CreatedBackupPathFromOutput -OutputLines $createOutput
 if (-not $createdBackupPath) {
-    $createdBackupPath = Get-ChildItem -LiteralPath $BackupRoot -Directory -Filter "devo-workspace-backup-*" |
-        Sort-Object LastWriteTimeUtc -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
+    $createdBackupPath = Get-CreatedBackupPathFromManifestFallback -Root $BackupRoot -ExpectedLabel $Label -StartedAtUtc $scriptStartUtc
 }
 if (-not $createdBackupPath -or -not (Test-Path -LiteralPath $createdBackupPath -PathType Container)) {
+    Write-CapturedOutput -OutputLines $createOutput -LogFile $logFile
     throw "Could not determine created backup path."
 }
 

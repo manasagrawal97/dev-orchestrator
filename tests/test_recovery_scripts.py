@@ -110,5 +110,49 @@ def test_backup_script_cleanup_requires_successful_verify_text() -> None:
     assert "if ($Cleanup -and $Verify)" in backup_script
 
 
+
+def test_backup_script_parses_created_backup_output_line() -> None:
+    backup_script = _script("backup-devo-workspace.ps1")
+
+    assert "Get-CreatedBackupPathFromOutput" in backup_script
+    assert "Created backup" in backup_script
+    assert "^\\s*Created backup\\s*(.*)$" in backup_script
+
+
+def test_backup_script_falls_back_to_manifest_scan_after_script_start() -> None:
+    backup_script = _script("backup-devo-workspace.ps1")
+
+    assert "Get-CreatedBackupPathFromManifestFallback" in backup_script
+    assert "backup-manifest.json" in backup_script
+    assert "$scriptStartUtc" in backup_script
+    assert "created_at" in backup_script
+    assert "$manifestLabel -ne $ExpectedLabel" in backup_script
+
+
+def test_backup_script_prints_captured_output_on_detection_failure() -> None:
+    backup_script = _script("backup-devo-workspace.ps1")
+
+    assert "Write-CapturedOutput" in backup_script
+    assert "Captured backup create output" in backup_script
+    assert "Could not determine created backup path" in backup_script
+
+
+def test_backup_script_handles_paths_with_spaces_as_literal_paths() -> None:
+    backup_script = _script("backup-devo-workspace.ps1")
+
+    assert "Test-Path -LiteralPath $clean" in backup_script
+    assert "Resolve-Path -LiteralPath $clean" in backup_script
+    assert "$parts -join \" \"" in backup_script
+
+
+def test_install_script_passes_expected_backup_wrapper_arguments() -> None:
+    install_script = _script("install-devo-backup-task.ps1")
+
+    assert '-RepoPath `"$RepoPath`"' in install_script
+    assert '-BackupRoot `"$BackupRoot`"' in install_script
+    assert '-Label `"scheduled`"' in install_script
+    assert "-RetentionCount $RetentionCount" in install_script
+
+
 def _script(name: str) -> str:
     return (SCRIPT_DIR / name).read_text(encoding="utf-8")
