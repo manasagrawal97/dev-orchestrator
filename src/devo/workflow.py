@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .approvals import find_matching_approved_approval
 from .context import load_context_state
 from .policy import PolicyCheckResult, check_policy
 from .projects import get_workspace_root
@@ -376,21 +377,37 @@ def _policy_gate_action(run_state: RunState, task_id: str, root: Path, warnings:
     )
     if policy.risk_level in {"medium", "high", "critical"}:
         warnings.append(policy_warning)
-    if not policy.approval_required and not policy.blocked:
+    if policy.blocked:
+        return WorkflowAction(
+            action_type="blocked",
+            current_status=run_state.status.value,
+            task_id=task_id,
+            command_to_run=f"devo approval request --project {run_state.project_name} --run {run_state.run_id} --task {task_id} --action implementation_prompt",
+            reason=f"Policy gate blocked critical risk task {task_id}; approval override is not implemented.",
+            blockers=["Task is blocked by current policy."],
+            warnings=warnings,
+        )
+    if not policy.approval_required:
         return None
 
-    blockers = []
-    if policy.required_approval_note:
-        blockers.append(policy.required_approval_note)
-    if policy.blocked:
-        blockers.append("Task is blocked by current policy.")
+    approval = find_matching_approved_approval(
+        run_state.project_name,
+        run_state.run_id,
+        task_id,
+        "implementation_prompt",
+        workspace_root=root,
+    )
+    if approval:
+        warnings.append(f"Policy approval {approval.approval_id} matches task {task_id} scope.")
+        return None
+
     return WorkflowAction(
-        action_type="policy_review_required" if not policy.blocked else "blocked",
+        action_type="approval_required",
         current_status=run_state.status.value,
         task_id=task_id,
-        command_to_run=f"devo policy check --project {run_state.project_name} --run {run_state.run_id} --task {task_id} --action implementation_prompt",
-        reason=f"Policy gate stopped normal implementation prompt recommendation for {policy.risk_level} risk task {task_id}.",
-        blockers=blockers,
+        command_to_run=f"devo approval request --project {run_state.project_name} --run {run_state.run_id} --task {task_id} --action implementation_prompt",
+        reason=f"Task {task_id} is high risk and needs a matching Devo approval before implementation prompt generation.",
+        blockers=[policy.required_approval_note or f"Approval required for task {task_id}."],
         warnings=warnings,
     )
 

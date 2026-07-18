@@ -151,9 +151,9 @@ def test_workflow_next_includes_policy_warning_for_high_risk_selected_task(tmp_p
     result = runner.invoke(app, ["workflow", "next", "--project", "sample", "--run", "run-1"], terminal_width=240)
 
     assert result.exit_code == 0
-    assert "Action type: policy_review_required" in result.output
+    assert "Action type: approval_required" in result.output
     assert "Policy risk for task T001: high" in result.output
-    assert "devo policy check" in result.output
+    assert "devo approval request" in result.output
 
 
 def test_workflow_batch_stops_on_high_risk_selected_task(tmp_path: Path, monkeypatch) -> None:
@@ -163,7 +163,7 @@ def test_workflow_batch_stops_on_high_risk_selected_task(tmp_path: Path, monkeyp
 
     assert result.exit_code == 0
     assert "Stop reason: INCONSISTENT_STATE" in result.output
-    assert "policy_review_required" in result.output
+    assert "approval_required" in result.output
 
 
 def test_task_next_displays_risk_summary_if_available(tmp_path: Path, monkeypatch) -> None:

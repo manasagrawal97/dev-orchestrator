@@ -6,6 +6,14 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from .approvals import (
+    DevoApprovalRecord,
+    approval_artifact_paths,
+    approve_approval,
+    create_approval_request,
+    get_approval_status,
+    reject_approval,
+)
 from .backups import cleanup_backups, create_backup, list_backups, restore_backup, verify_backup
 from .environment import (
     create_environment_snapshot,
@@ -75,6 +83,7 @@ review_app = typer.Typer(help="Inspect code review evidence.")
 audit_app = typer.Typer(help="Inspect final audit evidence.")
 task_app = typer.Typer(help='Manage run tasks.')
 policy_app = typer.Typer(help='Classify task risk and check policy gates.')
+approval_app = typer.Typer(help='Record and inspect Devo approval requests.')
 backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
@@ -87,6 +96,7 @@ app.add_typer(review_app, name="review")
 app.add_typer(audit_app, name="audit")
 app.add_typer(task_app, name='task')
 app.add_typer(policy_app, name='policy')
+app.add_typer(approval_app, name='approval')
 app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
@@ -147,6 +157,51 @@ def _print_task_selection(
         for blocker in selection.blockers:
             console.print(f"  - {blocker}")
 
+
+def _print_approval(record: DevoApprovalRecord) -> None:
+    paths = approval_artifact_paths(record)
+    console.print(f"Approval ID: {record.approval_id}")
+    console.print(f"Project: {record.project_name}")
+    console.print(f"Run: {record.run_id}")
+    console.print(f"Task: {record.task_id}")
+    console.print(f"Title: {record.task_title}")
+    console.print(f"Action: {record.action_type}")
+    console.print(f"Risk level: {record.risk_level}")
+    console.print(f"Approval required: {record.approval_required}")
+    console.print(f"Blocked: {record.blocked}")
+    console.print(f"Status: {record.status.value}")
+    console.print(f"Requested at: {record.requested_at.isoformat()}")
+    console.print(f"Reason: {record.requested_reason or 'none'}")
+    console.print(f"Scope fingerprint: {record.scope_fingerprint}")
+    console.print(f"Approved at: {record.approved_at.isoformat() if record.approved_at else 'none'}")
+    console.print(f"Approved by: {record.approved_by or 'none'}")
+    console.print(f"Approval note: {record.approval_note or 'none'}")
+    console.print(f"Rejected at: {record.rejected_at.isoformat() if record.rejected_at else 'none'}")
+    console.print(f"Rejected by: {record.rejected_by or 'none'}")
+    console.print(f"Rejection note: {record.rejection_note or 'none'}")
+    console.print(f"Ledger: {_named_path(paths['ledger'])}")
+    console.print(f"JSON: {_named_path(paths['json'])}")
+    console.print(f"Markdown: {_named_path(paths['markdown'])}")
+    console.print("Policy reasons:")
+    for reason in record.policy_reasons or ["none"]:
+        console.print(f"  - {reason}")
+    console.print("Matched signals:")
+    for signal in record.matched_signals or ["none"]:
+        console.print(f"  - {signal}")
+
+
+def _print_approval_list(records: list[DevoApprovalRecord]) -> None:
+    if not records:
+        console.print("[yellow]No approvals found.[/yellow]")
+        return
+    for record in records:
+        console.print(f"[bold]{record.approval_id}[/bold]")
+        console.print(f"  Task: {record.task_id} {record.task_title}")
+        console.print(f"  Action: {record.action_type}")
+        console.print(f"  Risk level: {record.risk_level}")
+        console.print(f"  Status: {record.status.value}")
+        console.print(f"  Requested at: {record.requested_at.isoformat()}")
+        console.print(f"  Scope fingerprint: {record.scope_fingerprint}")
 def _print_policy_classification(classification: PolicyClassification) -> None:
     console.print(f"Project: {classification.project_name}")
     console.print(f"Run: {classification.run_id}")
@@ -898,6 +953,95 @@ def show_task_candidates(
 
     _print_task_selection(selection, include_skipped=include_skipped, output_format=output_format, candidates_only=True)
 
+
+@approval_app.command("request")
+def request_approval(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+    action_type: str = typer.Option(..., "--action", help="Action type to approve."),
+    reason: str | None = typer.Option(None, "--reason", help="Reason for requesting approval."),
+) -> None:
+    """Create a Devo approval request for a task/action scope."""
+    try:
+        record = create_approval_request(project_name=project_name, run_id=run_id, task_id=task_id, action_type=action_type, reason=reason)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    _print_approval(record)
+    if record.status.value == "pending":
+        console.print(
+            "Next command: "
+            f"devo approval approve --project {project_name} --run {run_id} --approval {record.approval_id} --by <name>"
+        )
+    else:
+        console.print("Next command: none; this request is blocked by policy.")
+
+
+@approval_app.command("approve")
+def approve_requested_approval(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    approval_id: str = typer.Option(..., "--approval", help="Approval request ID."),
+    approved_by: str = typer.Option(..., "--by", help="Approver name."),
+    note: str | None = typer.Option(None, "--note", help="Optional approval note."),
+) -> None:
+    """Approve a pending Devo approval request without executing anything."""
+    try:
+        record = approve_approval(project_name=project_name, run_id=run_id, approval_id=approval_id, approved_by=approved_by, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--approval") from exc
+
+    _print_approval(record)
+
+
+@approval_app.command("reject")
+def reject_requested_approval(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    approval_id: str = typer.Option(..., "--approval", help="Approval request ID."),
+    rejected_by: str = typer.Option(..., "--by", help="Rejector name."),
+    note: str | None = typer.Option(None, "--note", help="Optional rejection note."),
+) -> None:
+    """Reject a pending Devo approval request without executing anything."""
+    try:
+        record = reject_approval(project_name=project_name, run_id=run_id, approval_id=approval_id, rejected_by=rejected_by, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--approval") from exc
+
+    _print_approval(record)
+
+
+@approval_app.command("status")
+def show_approval_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    approval_id: str | None = typer.Option(None, "--approval", help="Approval request ID."),
+) -> None:
+    """Show one approval request or all approvals for a run."""
+    try:
+        records = get_approval_status(project_name=project_name, run_id=run_id, approval_id=approval_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--approval") from exc
+
+    if approval_id and records:
+        _print_approval(records[0])
+    else:
+        _print_approval_list(records)
+
+
+@approval_app.command("list")
+def list_approvals(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """List approvals for a run."""
+    try:
+        records = get_approval_status(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    _print_approval_list(records)
 @policy_app.command("classify")
 def classify_policy_task(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),

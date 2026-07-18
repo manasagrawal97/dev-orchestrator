@@ -302,6 +302,22 @@ RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> 
 
 RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. Task selection requires approved project context, an existing run, and `tasks.md`; it skips formal closures and resolved dispositions, skips blocked tasks when blocker metadata is present, warns on unknown statuses, and does not invent missing risk or priority. Run closure requires approved project context, an existing run, `tasks.md`, and no unresolved tasks. This version does not implement automatic next-run creation, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
 
+## Approval Ledger
+
+The approval ledger records explicit user approval for a specific Devo task/action scope. It is an internal audit record only: it does not bypass Codex/OpenAI approval policy, does not grant OS, GitHub, Google Drive, scheduler, or shell permissions, and does not execute risky commands.
+
+```powershell
+devo approval request --project MyProject --run <runId> --task <taskId> --action implementation_prompt --reason "Why approval is needed"
+devo approval approve --project MyProject --run <runId> --approval <approvalId> --by "Your Name" --note "Approved scope"
+devo approval reject --project MyProject --run <runId> --approval <approvalId> --by "Your Name" --note "Rejected reason"
+devo approval status --project MyProject --run <runId>
+devo approval status --project MyProject --run <runId> --approval <approvalId>
+devo approval list --project MyProject --run <runId>
+```
+
+Approval records are written under `workspace/runs/<projectName>/<runId>/artifacts/approvals/` as `approvals-ledger.json`, `approval-<approvalId>.json`, and `approval-<approvalId>.md`. Each record stores task id/title, action type, risk level, policy reasons, matched signals, requested/approved/rejected metadata, and a deterministic scope fingerprint. If task text or policy reasons change later, a prior approval will not silently match the changed scope.
+
+High-risk workflow recommendations stop at `devo approval request` until a matching pending request is approved. Once a matching approval exists, `devo workflow next` and `devo workflow batch` can recommend the normal next command while showing the approval reference. Critical/blocked actions remain blocked for now; break-glass override and approval expiry are deferred.
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.

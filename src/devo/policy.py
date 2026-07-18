@@ -60,6 +60,7 @@ class PolicyCheckResult:
     project_name: str
     run_id: str
     task_id: str
+    task_title: str
     action_type: str
     allowed: bool
     approval_required: bool
@@ -172,6 +173,7 @@ def check_policy(
         project_name=project_name,
         run_id=run_id,
         task_id=task_id,
+        task_title=classification.task_title,
         action_type=normalized_action,
         allowed=allowed,
         approval_required=approval_required,
