@@ -26,6 +26,7 @@ from .runs import (
     run_path,
 )
 from .schemas import RunArtifactType, RunState, RunStatus, TaskDispositionStatus
+from .task_selector import select_next_task
 
 RESOLVED_DISPOSITIONS = {
     TaskDispositionStatus.COVERED_BY.value,
@@ -495,10 +496,11 @@ def _agent_is_task_specific(agent_name: str) -> bool:
 
 
 def _next_unresolved_task(run_state: RunState, root: Path, warnings: list[str]) -> dict[str, Any] | None:
-    tasks = _safe_tasks(run_state, root, warnings)
-    for task in tasks:
-        if not _task_is_resolved(task):
-            return task
+    selection = select_next_task(run_state.project_name, run_state.run_id, workspace_root=root)
+    warnings.extend(selection.warnings)
+    warnings.extend(selection.blockers)
+    if selection.selected:
+        return {"task_id": selection.selected.task_id, "task_title": selection.selected.title}
     return None
 
 
@@ -592,5 +594,3 @@ def _lifecycle_stage(status: RunStatus) -> str:
 
 def _implementation_report_command(run_state: RunState, task_id: str, file_hint: str) -> str:
     return f"devo implementation report --project {run_state.project_name} --run {run_state.run_id} --task {task_id} --file {file_hint}"
-
-

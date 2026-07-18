@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import typer
@@ -53,6 +54,7 @@ from .runs import (
     save_current_selection,
 )
 from .scanner import scan_registered_project
+from .task_selector import DEFAULT_STRATEGY, TaskSelection, list_task_candidates, select_next_task
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -81,6 +83,59 @@ app.add_typer(workflow_app, name="workflow")
 console = Console()
 
 
+
+def _print_task_selection(
+    selection: TaskSelection,
+    include_skipped: bool,
+    output_format: str,
+    candidates_only: bool = False,
+) -> None:
+    normalized_format = output_format.strip().lower()
+    if normalized_format == "json":
+        typer.echo(json.dumps(selection.to_dict(), indent=2, default=str))
+        return
+    if normalized_format != "text":
+        raise typer.BadParameter("Unsupported format. Use text or json.", param_hint="--format")
+
+    console.print(f"Project: {selection.project_name}")
+    console.print(f"Run: {selection.run_id}")
+    console.print(f"Strategy: {selection.strategy}")
+    console.print(f"Source artifact: {selection.source_artifact or 'none'}")
+    if selection.selected and not candidates_only:
+        task = selection.selected
+        console.print(f"Selected task: {task.task_id} {task.title}")
+        console.print(f"Status: {task.closure_status}")
+        console.print(f"Disposition: {task.disposition_status}")
+        console.print(f"Reason: {selection.reason}")
+        console.print(f"Suggested next command: {selection.suggested_command}")
+    elif not candidates_only:
+        console.print("Selected task: none")
+        console.print(f"Reason: {selection.reason}")
+        console.print(f"Run may be ready for closure: {selection.all_resolved}")
+
+    shown = selection.candidates if include_skipped else [item for item in selection.candidates if item.selection_status == "selectable"]
+    console.print("Candidates:")
+    if not shown:
+        console.print("  none")
+    for item in shown:
+        console.print(f"  - {item.task_id}: {item.title}")
+        console.print(f"    status: {item.closure_status}")
+        console.print(f"    disposition: {item.disposition_status}")
+        console.print(f"    priority: {item.priority or 'unknown'}")
+        console.print(f"    risk: {item.risk or 'unknown'}")
+        console.print(f"    safety: {item.safety or 'unknown'}")
+        console.print(f"    blocked: {item.blocked}")
+        console.print(f"    selection rank: {item.selection_rank or 'none'}")
+        console.print(f"    selection status: {item.selection_status}")
+        console.print(f"    skip reason: {item.skip_reason or 'none'}")
+    if selection.warnings:
+        console.print("Warnings:")
+        for warning in selection.warnings:
+            console.print(f"  - {warning}")
+    if selection.blockers:
+        console.print("Blockers:")
+        for blocker in selection.blockers:
+            console.print(f"  - {blocker}")
 def _named_path(path: object | None) -> str:
     if not path:
         return "none"
@@ -742,6 +797,39 @@ def list_tasks_for_run(
             console.print(f"  Closure record: {_named_path(task['closure_record_path'])}")
 
 
+
+@task_app.command("next")
+def show_next_task(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    strategy: str = typer.Option(DEFAULT_STRATEGY, "--strategy", help="Selection strategy."),
+    include_skipped: bool = typer.Option(False, "--include-skipped", help="Show skipped tasks and reasons."),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """Select the next actionable task deterministically."""
+    try:
+        selection = select_next_task(project_name=project_name, run_id=run_id, strategy=strategy)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    _print_task_selection(selection, include_skipped=include_skipped, output_format=output_format)
+
+
+@task_app.command("candidates")
+def show_task_candidates(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    strategy: str = typer.Option(DEFAULT_STRATEGY, "--strategy", help="Selection strategy."),
+    include_skipped: bool = typer.Option(True, "--include-skipped/--hide-skipped", help="Show skipped tasks and reasons."),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+) -> None:
+    """List task-selection candidates with skip reasons."""
+    try:
+        selection = list_task_candidates(project_name=project_name, run_id=run_id, strategy=strategy)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    _print_task_selection(selection, include_skipped=include_skipped, output_format=output_format, candidates_only=True)
 @backup_app.command("create")
 def create_workspace_backup(
     dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
