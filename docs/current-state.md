@@ -1,0 +1,90 @@
+# DevOrchestrator Current State
+
+## Project Identity
+
+- Project name: DevOrchestrator
+- Purpose: model/tool-agnostic AI development control plane
+- Local path: `E:\DevOrchestrator`
+- GitHub repo: `https://github.com/manasagrawal97/dev-orchestrator`
+- Backup root: `G:\My Drive\Projects\Dev Orchestrator`
+
+## Backup Policy
+
+- Scheduled backups run every 6 hours.
+- Keep the latest 3 normal backups.
+- Older normal backups are auto-deleted only after a new backup is successfully created and verified.
+- Protected backups are kept only when explicitly created with `-Protect` or `--protect`.
+- Manual backup after every task is not required.
+- Manual backup is reserved for risky milestones or backup/recovery system changes.
+- Source code is protected by GitHub.
+- Devo workspace/runtime context is protected by Google Drive workspace backups.
+
+## Current Operating Model
+
+DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, run validation commands, or bypass Codex/OpenAI/OS/GitHub security policy.
+
+The working loop is:
+
+1. ChatGPT helps plan, reason about risk, and choose the next safe step.
+2. Codex implements DevOrchestrator changes, runs tests, commits, pushes, and records reports.
+3. Devo persists project/run/task state, workflow decisions, policy gates, approval records, validation command metadata, and recovery artifacts.
+4. The user gives final approval for risky work and handles manual operations when Codex approval policy blocks them.
+
+## Latest State
+
+- Latest completed task: TASK-022 validation command registry
+- Latest planned next task: TASK-023 safe validation runner
+- Latest pushed commit at time of this document: `794256e feat: add validation command registry`
+- PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
+- PersonalOS validation commands are high risk, approval required, and disabled by default.
+- No PersonalOS repo files were modified by TASK-022.
+- No validation/build/test/restore commands were executed by TASK-022.
+
+## Readiness Estimate
+
+- Practical ready-before-PersonalOS-work target after TASK-022: around 75-80% complete.
+- Long-term product vision after TASK-022: around 40-45% complete.
+
+DevOrchestrator is not yet ready to execute validation commands automatically. It is ready to record and inspect validation command metadata safely.
+
+## Completed Work
+
+- TASK-001 CLI + project registry
+- TASK-002 safe project scanner
+- TASK-003 agent registry + ProjectContextDiscoveryAgent prompt
+- TASK-004 project context lifecycle/import/reviewer prompt/approval gate
+- TASK-004A context completeness validation / no truncated prompt
+- TASK-005 run creation and goal lifecycle
+- TASK-006 run-level IdeaAnalystAgent + RequirementsAgent workflow
+- TASK-007 PlannerAgent + PlanReviewerAgent workflow
+- TASK-008 TaskDecomposerAgent workflow
+- Manual scanner fix for `.slnx` categorization
+- TASK-009 ImplementationCoordinatorAgent workflow
+- TASK-010 implementation completion record workflow
+- TASK-011 ValidatorAgent workflow
+- TASK-012 CodeReviewerAgent workflow
+- TASK-013 FinalAuditorAgent workflow
+- TASK-014 task closure workflow
+- TASK-015 task disposition / ledger reconciliation workflow
+- TASK-016 run closure workflow
+- TASK-026 workspace backup/export workflow
+- TASK-027 tech stack / environment snapshot workflow
+- TASK-028 backup automation and disaster recovery scripts
+- TASK-028A backup wrapper path detection hotfix
+- TASK-017 workflow status / next / advance commands
+- TASK-018 workflow batch runner
+- TASK-019 deterministic task selection
+- TASK-020 risk classification + policy gates
+- TASK-021 approval request and approval ledger system
+- TASK-021B backup schedule/retention policy + repo rename housekeeping
+- TASK-022 validation command registry
+
+## Recovery Pointers
+
+If chat context is lost, start here:
+
+1. Read this file.
+2. Read `docs/roadmap.md`.
+3. Read `docs/operating-model.md`.
+4. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+5. Continue from the latest planned next task.

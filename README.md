@@ -4,6 +4,24 @@ DevOrchestrator is an initial Python CLI for registering local software projects
 
 This version intentionally does not include autonomous agents, AI API integration, or a web UI.
 
+## Project Memory
+
+Durable project direction is tracked in GitHub docs so DevOrchestrator can recover even if chat context is unavailable:
+
+- [Current state](docs/current-state.md)
+- [Roadmap](docs/roadmap.md)
+- [Deferred scope](docs/deferred-scope.md)
+- [Operating model](docs/operating-model.md)
+- [Recovery guide](docs/recovery.md)
+
+## If Context Is Lost
+
+1. Clone the repo from `https://github.com/manasagrawal97/dev-orchestrator`.
+2. Read [docs/current-state.md](docs/current-state.md).
+3. Read [docs/roadmap.md](docs/roadmap.md).
+4. Run `powershell.exe -ExecutionPolicy Bypass -File .\scripts\recovery\check-devo-recovery-status.ps1`.
+5. Continue from the next planned task.
+
 ## Setup
 
 ```powershell
