@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import load_context_state
+from .policy import PolicyCheckResult, check_policy
 from .projects import get_workspace_root
 from .runs import (
     CODE_REVIEWER_AGENT_NAME,
@@ -168,6 +169,9 @@ def get_next_workflow_action(project_name: str, run_id: str, workspace_root: Pat
             return _inconsistent_action(run_state, warnings)
         if not task:
             return _run_close_action(run_state, warnings=warnings)
+        policy_action = _policy_gate_action(run_state, str(task["task_id"]), root, warnings)
+        if policy_action:
+            return policy_action
         return _implementation_prompt_action(run_state, str(task["task_id"]), warnings=warnings)
 
     if status == RunStatus.IMPLEMENTATION_READY:
@@ -222,6 +226,9 @@ def get_next_workflow_action(project_name: str, run_id: str, workspace_root: Pat
         if warnings and not task:
             return _inconsistent_action(run_state, warnings)
         if task:
+            policy_action = _policy_gate_action(run_state, str(task["task_id"]), root, warnings)
+            if policy_action:
+                return policy_action
             return _implementation_prompt_action(run_state, str(task["task_id"]), warnings=warnings)
         return _run_close_action(run_state, warnings=warnings)
 
@@ -358,6 +365,48 @@ def _run_close_action(run_state: RunState, warnings: list[str] | None = None) ->
 
 
 
+
+def _policy_gate_action(run_state: RunState, task_id: str, root: Path, warnings: list[str]) -> WorkflowAction | None:
+    policy = _safe_policy_check(run_state, task_id, root, warnings)
+    if not policy:
+        return None
+    policy_warning = (
+        f"Policy risk for task {task_id}: {policy.risk_level}; "
+        f"approval_required={policy.approval_required}; blocked={policy.blocked}."
+    )
+    if policy.risk_level in {"medium", "high", "critical"}:
+        warnings.append(policy_warning)
+    if not policy.approval_required and not policy.blocked:
+        return None
+
+    blockers = []
+    if policy.required_approval_note:
+        blockers.append(policy.required_approval_note)
+    if policy.blocked:
+        blockers.append("Task is blocked by current policy.")
+    return WorkflowAction(
+        action_type="policy_review_required" if not policy.blocked else "blocked",
+        current_status=run_state.status.value,
+        task_id=task_id,
+        command_to_run=f"devo policy check --project {run_state.project_name} --run {run_state.run_id} --task {task_id} --action implementation_prompt",
+        reason=f"Policy gate stopped normal implementation prompt recommendation for {policy.risk_level} risk task {task_id}.",
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+
+def _safe_policy_check(run_state: RunState, task_id: str, root: Path, warnings: list[str]) -> PolicyCheckResult | None:
+    try:
+        return check_policy(
+            run_state.project_name,
+            run_state.run_id,
+            task_id,
+            action_type="implementation_prompt",
+            workspace_root=root,
+        )
+    except ValueError as exc:
+        warnings.append(f"Policy check failed for task {task_id}: {exc}")
+        return None
 def _inconsistent_action(run_state: RunState, warnings: list[str]) -> WorkflowAction:
     return WorkflowAction(
         action_type="blocked",

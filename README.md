@@ -302,6 +302,21 @@ RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> 
 
 RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. Task selection requires approved project context, an existing run, and `tasks.md`; it skips formal closures and resolved dispositions, skips blocked tasks when blocker metadata is present, warns on unknown statuses, and does not invent missing risk or priority. Run closure requires approved project context, an existing run, `tasks.md`, and no unresolved tasks. This version does not implement automatic next-run creation, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
 
+## Policy Gates
+
+Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.
+
+```powershell
+devo policy classify --project MyProject --run <runId> --task <taskId>
+devo policy check --project MyProject --run <runId> --task <taskId> --action implementation_prompt
+devo policy status --project MyProject --run <runId>
+```
+
+Risk levels are `low`, `medium`, `high`, and `critical`. Low risk is allowed without approval. Medium risk is allowed with warnings and approval recommended. High risk requires approval before proceeding. Critical risk is blocked until a future approval/override workflow exists.
+
+Policy signals include low-risk read-only inspection, prompt/report generation, docs summaries, and non-mutating workflow checks; medium-risk local source edits, workspace artifact writes, ledger mutations, and local commits; high-risk target project modification, target commands, database or migration work, scheduler changes, restore/cleanup, Git push, external folder writes such as Google Drive, and machine configuration changes; and critical destructive deletes, secret or credential handling, production database modification, force operations, or approval bypass attempts.
+
+`devo workflow next` and `devo workflow batch` use policy checks when choosing an implementation task. Low and medium tasks can still produce the normal next command, with medium warnings. High or critical tasks stop at a policy review recommendation instead of pretending they are safe to implement. Approval storage and overrides are intentionally deferred.
 ## Environment Snapshot
 
 Environment snapshots are read-only recovery notes for a project machine setup. They record tool versions, Git branch and commit, dependency files, solution/project files, package references, recommended recovery commands, excluded heavy/cache paths, and warnings about local or sensitive settings files. They do not copy source code, dependency caches, `.venv`, `.git`, `.packages`, `.tools`, `node_modules`, build outputs, `.env` values, or local settings values.

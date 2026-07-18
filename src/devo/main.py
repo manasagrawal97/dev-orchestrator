@@ -24,6 +24,14 @@ from .agents import (
 )
 from .context import approve_context, get_context_status, import_agent_output
 from .projects import get_workspace_root, list_projects, register_project
+from .policy import (
+    PolicyCheckResult,
+    PolicyClassification,
+    PolicyStatus,
+    check_policy,
+    classify_task,
+    get_policy_status,
+)
 from .runs import (
     CODE_REVIEWER_AGENT_NAME,
     close_run,
@@ -65,7 +73,8 @@ implementation_app = typer.Typer(help="Record implementation completion evidence
 validation_app = typer.Typer(help="Inspect validation review evidence.")
 review_app = typer.Typer(help="Inspect code review evidence.")
 audit_app = typer.Typer(help="Inspect final audit evidence.")
-task_app = typer.Typer(help="Manage run tasks.")
+task_app = typer.Typer(help='Manage run tasks.')
+policy_app = typer.Typer(help='Classify task risk and check policy gates.')
 backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
@@ -76,7 +85,8 @@ app.add_typer(implementation_app, name="implementation")
 app.add_typer(validation_app, name="validation")
 app.add_typer(review_app, name="review")
 app.add_typer(audit_app, name="audit")
-app.add_typer(task_app, name="task")
+app.add_typer(task_app, name='task')
+app.add_typer(policy_app, name='policy')
 app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
@@ -136,6 +146,63 @@ def _print_task_selection(
         console.print("Blockers:")
         for blocker in selection.blockers:
             console.print(f"  - {blocker}")
+
+def _print_policy_classification(classification: PolicyClassification) -> None:
+    console.print(f"Project: {classification.project_name}")
+    console.print(f"Run: {classification.run_id}")
+    console.print(f"Task: {classification.task_id}")
+    console.print(f"Title: {classification.task_title}")
+    console.print(f"Risk level: {classification.risk_level}")
+    console.print(f"Approval required: {classification.approval_required}")
+    console.print(f"Blocked: {classification.blocked}")
+    console.print(f"Closure status: {classification.closure_status}")
+    console.print(f"Disposition status: {classification.disposition_status}")
+    console.print("Reasons:")
+    for reason in classification.reasons or ["none"]:
+        console.print(f"  - {reason}")
+    console.print("Matched risk signals:")
+    for signal in classification.matched_risk_signals or ["none"]:
+        console.print(f"  - {signal}")
+    console.print(f"Safe action categories: {', '.join(classification.safe_action_categories) or 'none'}")
+    console.print(f"Unsafe action categories: {', '.join(classification.unsafe_action_categories) or 'none'}")
+    console.print(f"Recommended next command/action: {classification.recommended_next_command or 'none'}")
+
+
+def _print_policy_check(result: PolicyCheckResult) -> None:
+    console.print(f"Project: {result.project_name}")
+    console.print(f"Run: {result.run_id}")
+    console.print(f"Task: {result.task_id}")
+    console.print(f"Action: {result.action_type}")
+    console.print(f"Allowed: {result.allowed}")
+    console.print(f"Approval required: {result.approval_required}")
+    console.print(f"Blocked: {result.blocked}")
+    console.print(f"Risk level: {result.risk_level}")
+    console.print(f"Required approval note: {result.required_approval_note or 'none'}")
+    console.print(f"Suggested safer alternative: {result.suggested_safer_alternative or 'none'}")
+    console.print("Reasons:")
+    for reason in result.reasons or ["none"]:
+        console.print(f"  - {reason}")
+    console.print("Matched risk signals:")
+    for signal in result.matched_risk_signals or ["none"]:
+        console.print(f"  - {signal}")
+
+
+def _print_policy_status(status: PolicyStatus) -> None:
+    console.print(f"Project: {status.project_name}")
+    console.print(f"Run: {status.run_id}")
+    console.print("Tasks:")
+    if not status.tasks:
+        console.print("  none")
+    for task in status.tasks:
+        summary = task.reasons[0] if task.reasons else "none"
+        console.print(f"  - {task.task_id}: {task.task_title}")
+        console.print(f"    status: {task.closure_status}")
+        console.print(f"    disposition: {task.disposition_status}")
+        console.print(f"    risk level: {task.risk_level}")
+        console.print(f"    approval required: {task.approval_required}")
+        console.print(f"    blocked: {task.blocked}")
+        console.print(f"    reason summary: {summary}")
+
 def _named_path(path: object | None) -> str:
     if not path:
         return "none"
@@ -830,6 +897,50 @@ def show_task_candidates(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
 
     _print_task_selection(selection, include_skipped=include_skipped, output_format=output_format, candidates_only=True)
+
+@policy_app.command("classify")
+def classify_policy_task(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+) -> None:
+    """Classify a run task with deterministic risk rules."""
+    try:
+        classification = classify_task(project_name=project_name, run_id=run_id, task_id=task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    _print_policy_classification(classification)
+
+
+@policy_app.command("check")
+def check_policy_task(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+    action_type: str = typer.Option("unknown", "--action", help="Action type to check."),
+) -> None:
+    """Check whether a proposed task/action can proceed under policy."""
+    try:
+        result = check_policy(project_name=project_name, run_id=run_id, task_id=task_id, action_type=action_type)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--action") from exc
+
+    _print_policy_check(result)
+
+
+@policy_app.command("status")
+def show_policy_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show policy risk status for all tasks in a run."""
+    try:
+        status = get_policy_status(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    _print_policy_status(status)
 @backup_app.command("create")
 def create_workspace_backup(
     dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
