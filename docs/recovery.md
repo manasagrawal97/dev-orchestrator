@@ -51,7 +51,7 @@ The status script checks the Git repo, current branch and commit, `.venv`, `devo
 ## Disaster Recovery On A New Or Clean Machine
 
 ```powershell
-git clone https://github.com/manasagrawal97/DevOrchestrator.git E:\DevOrchestrator
+git clone https://github.com/manasagrawal97/dev-orchestrator.git E:\DevOrchestrator
 cd E:\DevOrchestrator
 .\scripts\recovery\restore-devo-workspace.ps1
 ```
