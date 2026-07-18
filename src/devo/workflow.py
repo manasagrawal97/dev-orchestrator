@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +69,31 @@ class WorkflowStatus:
     next_action: WorkflowAction
     can_close_run: bool
     warnings: list[str]
+
+
+@dataclass
+class WorkflowBatchStep:
+    step_number: int
+    action: WorkflowAction
+
+
+@dataclass
+class WorkflowBatchReport:
+    project_name: str
+    run_id: str
+    run_goal: str
+    starting_status: str
+    ending_status: str
+    steps_inspected: int
+    actions_recommended: list[WorkflowAction]
+    commands_to_run: list[str]
+    artifacts_expected: list[str]
+    stop_reason: str
+    warnings: list[str]
+    mutation_occurred: bool
+    next_human_action: str
+    report_path: Path | None = None
+    json_report_path: Path | None = None
 
 
 def get_workflow_status(project_name: str, run_id: str, workspace_root: Path | None = None) -> WorkflowStatus:
@@ -136,6 +163,8 @@ def get_next_workflow_action(project_name: str, run_id: str, workspace_root: Pat
 
     if status == RunStatus.TASKS_DRAFTED:
         task = _next_unresolved_task(run_state, root, warnings)
+        if warnings and not task:
+            return _inconsistent_action(run_state, warnings)
         if not task:
             return _run_close_action(run_state, warnings=warnings)
         return _implementation_prompt_action(run_state, str(task["task_id"]), warnings=warnings)
@@ -189,6 +218,8 @@ def get_next_workflow_action(project_name: str, run_id: str, workspace_root: Pat
 
     if status == RunStatus.TASK_CLOSED:
         task = _next_unresolved_task(run_state, root, warnings)
+        if warnings and not task:
+            return _inconsistent_action(run_state, warnings)
         if task:
             return _implementation_prompt_action(run_state, str(task["task_id"]), warnings=warnings)
         return _run_close_action(run_state, warnings=warnings)
@@ -214,6 +245,58 @@ def advance_workflow(project_name: str, run_id: str, workspace_root: Path | None
     action = get_next_workflow_action(project_name, run_id, workspace_root=workspace_root)
     action.warnings.append("workflow advance is non-mutating for this step; run the recommended command explicitly.")
     return action
+
+
+
+def run_workflow_batch(
+    project_name: str,
+    run_id: str,
+    max_steps: int = 20,
+    dry_run: bool = True,
+    apply: bool = False,
+    workspace_root: Path | None = None,
+) -> WorkflowBatchReport:
+    root = workspace_root or get_workspace_root()
+    run_state = load_run(project_name, run_id, workspace_root=root)
+    starting_status = run_state.status.value
+    actions: list[WorkflowAction] = []
+    warnings: list[str] = []
+    stop_reason = "MAX_STEPS_REACHED"
+
+    if apply:
+        warnings.append("--apply is deferred; workflow batch remains non-mutating and reports recommended commands only.")
+    if max_steps <= 0:
+        warnings.append("max_steps was zero; no workflow actions were inspected.")
+    else:
+        for _index in range(max_steps):
+            action = get_next_workflow_action(project_name, run_id, workspace_root=root)
+            if apply:
+                action.warnings.append("--apply is deferred for this action; run the recommended command explicitly.")
+            actions.append(action)
+            warnings.extend(action.warnings)
+            stop_reason = _batch_stop_reason(action)
+            break
+
+    ending_status = load_run(project_name, run_id, workspace_root=root).status.value
+    report = WorkflowBatchReport(
+        project_name=project_name,
+        run_id=run_id,
+        run_goal=run_state.goal,
+        starting_status=starting_status,
+        ending_status=ending_status,
+        steps_inspected=len(actions),
+        actions_recommended=actions,
+        commands_to_run=[action.command_to_run for action in actions if action.command_to_run],
+        artifacts_expected=[action.expected_output_artifact for action in actions if action.expected_output_artifact],
+        stop_reason=stop_reason,
+        warnings=_dedupe(warnings),
+        mutation_occurred=False,
+        next_human_action=_next_human_action(stop_reason, actions[-1] if actions else None),
+    )
+    report_path, json_path = _write_batch_report(report, root)
+    report.report_path = report_path
+    report.json_report_path = json_path
+    return report
 
 
 def _agent_prompt_action(
@@ -271,6 +354,132 @@ def _run_close_action(run_state: RunState, warnings: list[str] | None = None) ->
         reason="All tasks appear resolved, so the run can be closed.",
         warnings=warnings or [],
     )
+
+
+
+def _inconsistent_action(run_state: RunState, warnings: list[str]) -> WorkflowAction:
+    return WorkflowAction(
+        action_type="blocked",
+        current_status=run_state.status.value,
+        reason="Run state is inconsistent; resolve warnings before advancing workflow.",
+        blockers=list(warnings),
+        warnings=warnings,
+    )
+
+
+def _batch_stop_reason(action: WorkflowAction) -> str:
+    if action.action_type == "none":
+        return "RUN_CLOSED"
+    if action.action_type == "unknown_status":
+        return "UNKNOWN_STATUS"
+    if action.action_type == "blocked" or action.blockers:
+        return "INCONSISTENT_STATE"
+    if action.action_type == "close_task":
+        return "WAITING_FOR_TASK_CLOSE"
+    if action.action_type == "close_run":
+        return "WAITING_FOR_RUN_CLOSE"
+    if action.action_type == "wait_for_input":
+        return "WAITING_FOR_IMPLEMENTATION_REPORT"
+    if action.agent_name == VALIDATOR_AGENT_NAME:
+        return "WAITING_FOR_VALIDATION_REPORT"
+    if action.agent_name == CODE_REVIEWER_AGENT_NAME:
+        return "WAITING_FOR_CODE_REVIEW"
+    if action.agent_name == FINAL_AUDITOR_AGENT_NAME:
+        return "WAITING_FOR_FINAL_AUDIT"
+    if action.action_type == "generate_agent_prompt":
+        return "WAITING_FOR_AGENT_OUTPUT"
+    return "UNKNOWN_STATUS"
+
+
+def _next_human_action(stop_reason: str, action: WorkflowAction | None) -> str:
+    if action and action.command_to_run:
+        if stop_reason == "WAITING_FOR_AGENT_OUTPUT":
+            return "Run the prompt command, produce the requested output, then import it with the shown import command."
+        if stop_reason == "WAITING_FOR_IMPLEMENTATION_REPORT":
+            return "Complete implementation outside DevOrchestrator, then import the completion report with the shown command."
+        if stop_reason in {"WAITING_FOR_VALIDATION_REPORT", "WAITING_FOR_CODE_REVIEW", "WAITING_FOR_FINAL_AUDIT"}:
+            return "Run the prompt command, produce the review artifact, then import it with the shown import command."
+        if stop_reason in {"WAITING_FOR_TASK_CLOSE", "WAITING_FOR_RUN_CLOSE"}:
+            return "Review the recommendation and run the shown closure command when ready."
+    if stop_reason == "RUN_CLOSED":
+        return "No action needed; the run is closed."
+    if stop_reason == "MAX_STEPS_REACHED":
+        return "Increase --max-steps and rerun workflow batch if more inspection is needed."
+    if stop_reason in {"INCONSISTENT_STATE", "UNKNOWN_STATUS"}:
+        return "Resolve blockers or inconsistent state before continuing."
+    return "Inspect workflow status and choose the next safe command."
+
+
+def _write_batch_report(report: WorkflowBatchReport, root: Path) -> tuple[Path, Path]:
+    report_dir = run_path(report.project_name, report.run_id, workspace_root=root) / "artifacts" / "workflow"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    md_path = report_dir / f"batch-report-{timestamp}.md"
+    json_path = report_dir / f"batch-report-{timestamp}.json"
+    md_path.write_text(_render_batch_report_markdown(report), encoding="utf-8")
+    data = asdict(report)
+    data["report_path"] = str(md_path)
+    data["json_report_path"] = str(json_path)
+    json_path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    return md_path, json_path
+
+
+def _render_batch_report_markdown(report: WorkflowBatchReport) -> str:
+    lines = [
+        "# Workflow batch report",
+        "",
+        f"Project: {report.project_name}",
+        f"Run: {report.run_id}",
+        f"Goal: {report.run_goal}",
+        f"Starting status: {report.starting_status}",
+        f"Ending status: {report.ending_status}",
+        f"Steps inspected: {report.steps_inspected}",
+        f"Stop reason: {report.stop_reason}",
+        f"Mutation occurred: {report.mutation_occurred}",
+        "",
+        "## Steps",
+        "",
+    ]
+    if not report.actions_recommended:
+        lines.append("- none")
+    for index, action in enumerate(report.actions_recommended, start=1):
+        lines.extend(
+            [
+                f"### Step {index}",
+                "",
+                f"- action_type: {action.action_type}",
+                f"- current_status: {action.current_status}",
+                f"- next_status: {action.next_status or 'none'}",
+                f"- agent_name: {action.agent_name or 'none'}",
+                f"- task_id: {action.task_id or 'none'}",
+                f"- expected_output_artifact: {action.expected_output_artifact or 'none'}",
+                f"- reason: {action.reason or 'none'}",
+                "",
+                "Command:",
+                "",
+                f"    {action.command_to_run or 'none'}",
+                "",
+                "Import command:",
+                "",
+                f"    {action.import_command or 'none'}",
+                "",
+            ]
+        )
+    lines.extend(["## Warnings", ""])
+    if report.warnings:
+        lines.extend(f"- {warning}" for warning in report.warnings)
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Next human action", "", report.next_human_action, ""])
+    return "\n".join(lines)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for value in values:
+        if value and value not in deduped:
+            deduped.append(value)
+    return deduped
 
 
 def _current_task_id(run_state: RunState) -> str | None:

@@ -53,7 +53,7 @@ from .runs import (
     save_current_selection,
 )
 from .scanner import scan_registered_project
-from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status
+from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
 project_app = typer.Typer(help="Manage registered projects.")
@@ -998,3 +998,49 @@ def advance_workflow_command(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_workflow_action(action)
+
+@workflow_app.command("batch")
+def run_workflow_batch_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    max_steps: int = typer.Option(20, "--max-steps", help="Maximum workflow decisions to inspect."),
+    dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run", help="Inspect and report without applying workflow mutations."),
+    apply: bool = typer.Option(False, "--apply", help="Reserved for future deterministic internal mutations."),
+) -> None:
+    """Run bounded workflow guidance until a safe stop condition."""
+    try:
+        report = run_workflow_batch(
+            project_name=project_name,
+            run_id=run_id,
+            max_steps=max_steps,
+            dry_run=dry_run,
+            apply=apply,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print("[bold]Workflow batch report[/bold]")
+    console.print(f"Project: {report.project_name}")
+    console.print(f"Run: {report.run_id}")
+    console.print(f"Starting status: {report.starting_status}")
+    console.print(f"Ending status: {report.ending_status}")
+    console.print(f"Steps inspected: {report.steps_inspected}")
+    console.print(f"Stop reason: {report.stop_reason}")
+    console.print(f"Mutation occurred: {report.mutation_occurred}")
+    console.print(f"Report: {report.report_path}")
+    console.print(f"JSON report: {report.json_report_path}")
+    if report.actions_recommended:
+        console.print("Actions recommended:")
+        for index, action in enumerate(report.actions_recommended, start=1):
+            console.print(f"  Step {index}: {action.action_type}")
+            console.print(f"    Agent: {action.agent_name or 'none'}")
+            console.print(f"    Task: {action.task_id or 'none'}")
+            console.print(f"    Command: {action.command_to_run or 'none'}")
+    else:
+        console.print("Actions recommended: none")
+    if report.warnings:
+        console.print("Warnings:")
+        for warning in report.warnings:
+            console.print(f"  - {warning}")
+    console.print("Next human action:")
+    console.print(f"  {report.next_human_action}")

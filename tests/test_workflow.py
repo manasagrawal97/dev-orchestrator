@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from devo.main import app
+from devo.workflow import WorkflowAction, run_workflow_batch
 from devo.schemas import (
     ContextSnapshot,
     ContextState,
@@ -323,8 +324,290 @@ def test_workflow_commands_do_not_modify_target_project_files(tmp_path: Path, mo
     assert sentinel.read_text(encoding="utf-8") == before
 
 
+
+def test_workflow_batch_on_run_created_stops_at_idea_prompt(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, RunStatus.RUN_CREATED)
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_AGENT_OUTPUT" in result.output
+    assert "IdeaAnalystAgent" in result.output
+    assert "devo agent prompt IdeaAnalystAgent" in result.output
+
+
+def test_workflow_batch_does_not_mutate_state_by_default(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, RunStatus.RUN_CREATED)
+    state_path = workspace / "runs" / "sample" / "run-1" / "run-state.json"
+    before = state_path.read_text(encoding="utf-8")
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Mutation occurred: False" in result.output
+    assert state_path.read_text(encoding="utf-8") == before
+
+
+def test_workflow_batch_writes_batch_report_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, RunStatus.RUN_CREATED)
+
+    result = _batch()
+
+    report_dir = workspace / "runs" / "sample" / "run-1" / "artifacts" / "workflow"
+    assert result.exit_code == 0
+    assert list(report_dir.glob("batch-report-*.md"))
+    assert list(report_dir.glob("batch-report-*.json"))
+    assert "Report:" in result.output
+
+
+def test_workflow_batch_includes_stop_reason_in_report_json_and_markdown(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, RunStatus.RUN_CREATED)
+
+    assert _batch().exit_code == 0
+    md_path, json_path = _latest_batch_reports(workspace)
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert data["project_name"] == "sample"
+    assert data["run_id"] == "run-1"
+    assert data["starting_status"] == "RUN_CREATED"
+    assert data["stop_reason"] == "WAITING_FOR_AGENT_OUTPUT"
+    assert "Stop reason: WAITING_FOR_AGENT_OUTPUT" in md_path.read_text(encoding="utf-8")
+
+
+def test_workflow_batch_respects_max_steps(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, RunStatus.RUN_CREATED)
+
+    result = _batch(max_steps=0)
+
+    assert result.exit_code == 0
+    assert "Steps inspected: 0" in result.output
+    assert "Stop reason: MAX_STEPS_REACHED" in result.output
+
+
+def test_workflow_batch_on_run_closed_reports_no_action(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, RunStatus.RUN_CLOSED, artifacts=[RunArtifactType.TASKS], closed_tasks=["T001"], tasks=("T001",))
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: RUN_CLOSED" in result.output
+    assert "Actions recommended:" in result.output
+    assert "Step 1: none" in result.output
+
+
+def test_workflow_batch_unknown_status_stops_safely(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, RunStatus.RUN_CREATED)
+
+    def fake_next(project_name: str, run_id: str, workspace_root=None):
+        return WorkflowAction(action_type="unknown_status", current_status="ALIEN", reason="unknown")
+
+    monkeypatch.setattr("devo.workflow.get_next_workflow_action", fake_next)
+    report = run_workflow_batch("sample", "run-1", workspace_root=workspace)
+
+    assert report.stop_reason == "UNKNOWN_STATUS"
+    assert report.actions_recommended[0].current_status == "ALIEN"
+
+
+def test_workflow_batch_for_tasks_drafted_selects_first_unresolved_task(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, RunStatus.TASKS_DRAFTED, artifacts=[RunArtifactType.TASKS])
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_AGENT_OUTPUT" in result.output
+    assert "ImplementationCoordinatorAgent" in result.output
+    assert "--task T001" in result.output
+
+
+def test_workflow_batch_skips_resolved_tasks(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.TASKS_DRAFTED,
+        artifacts=[RunArtifactType.TASKS],
+        dispositions={
+            "T001": TaskDispositionStatus.COVERED_BY,
+            "T002": TaskDispositionStatus.SUPERSEDED,
+            "T003": TaskDispositionStatus.NOT_NEEDED,
+        },
+        closed_tasks=["T004"],
+        tasks=("T001", "T002", "T003", "T004", "T005"),
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "--task T005" in result.output
+
+
+def test_workflow_batch_stops_at_implementation_ready(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.IMPLEMENTATION_READY,
+        artifacts=[RunArtifactType.TASKS],
+        current_task_id="T001",
+        implementation_records=[_implementation_record(tmp_path, "T001")],
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_IMPLEMENTATION_REPORT" in result.output
+    assert "devo implementation report" in result.output
+
+
+def test_workflow_batch_stops_at_implementation_reported_with_validator(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.IMPLEMENTATION_REPORTED,
+        artifacts=[RunArtifactType.TASKS],
+        current_task_id="T001",
+        implementation_records=[_implementation_record(tmp_path, "T001", completion=True)],
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_VALIDATION_REPORT" in result.output
+    assert "ValidatorAgent" in result.output
+
+
+def test_workflow_batch_stops_at_validation_reviewed_with_code_reviewer(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.VALIDATION_REVIEWED,
+        artifacts=[RunArtifactType.TASKS],
+        current_task_id="T001",
+        implementation_records=[_implementation_record(tmp_path, "T001", completion=True, validation=True)],
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_CODE_REVIEW" in result.output
+    assert "CodeReviewerAgent" in result.output
+
+
+def test_workflow_batch_stops_at_code_reviewed_with_final_auditor(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.CODE_REVIEWED,
+        artifacts=[RunArtifactType.TASKS],
+        current_task_id="T001",
+        implementation_records=[_implementation_record(tmp_path, "T001", completion=True, validation=True, review=True)],
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_FINAL_AUDIT" in result.output
+    assert "FinalAuditorAgent" in result.output
+
+
+def test_workflow_batch_stops_at_final_audited_with_task_close(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.FINAL_AUDITED,
+        artifacts=[RunArtifactType.TASKS],
+        current_task_id="T001",
+        implementation_records=[
+            _implementation_record(tmp_path, "T001", completion=True, validation=True, review=True, audit=True, final_decision="close_task")
+        ],
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_TASK_CLOSE" in result.output
+    assert "devo task close" in result.output
+
+
+def test_workflow_batch_after_task_closed_with_unresolved_task_recommends_next_task(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.TASK_CLOSED,
+        artifacts=[RunArtifactType.TASKS],
+        closed_tasks=["T001"],
+        tasks=("T001", "T002"),
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "ImplementationCoordinatorAgent" in result.output
+    assert "--task T002" in result.output
+
+
+def test_workflow_batch_after_task_closed_all_resolved_recommends_run_close(tmp_path: Path, monkeypatch) -> None:
+    _workspace(
+        tmp_path,
+        monkeypatch,
+        RunStatus.TASK_CLOSED,
+        artifacts=[RunArtifactType.TASKS],
+        closed_tasks=["T001"],
+        dispositions={"T002": TaskDispositionStatus.NOT_NEEDED},
+        tasks=("T001", "T002"),
+    )
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: WAITING_FOR_RUN_CLOSE" in result.output
+    assert "devo run close" in result.output
+
+
+def test_workflow_batch_does_not_modify_target_project_files(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch, RunStatus.TASKS_DRAFTED, artifacts=[RunArtifactType.TASKS])
+    project_path = Path(json.loads((workspace / "projects" / "sample" / "project.json").read_text(encoding="utf-8"))["path"])
+    sentinel = project_path / "README.md"
+    before = sentinel.read_text(encoding="utf-8")
+
+    assert _batch().exit_code == 0
+
+    assert sentinel.read_text(encoding="utf-8") == before
+
+
+def test_workflow_batch_handles_missing_task_artifact_gracefully(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, RunStatus.TASKS_DRAFTED, artifacts=[])
+
+    result = _batch()
+
+    assert result.exit_code == 0
+    assert "Stop reason: INCONSISTENT_STATE" in result.output
+    assert "tasks.md" in result.output
+
+
+def test_workflow_batch_command_appears_in_readme() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "devo workflow batch" in readme
+
+
 def _next():
     return runner.invoke(app, ["workflow", "next", "--project", "sample", "--run", "run-1"], terminal_width=240)
+
+
+def _batch(max_steps: int = 20):
+    return runner.invoke(
+        app,
+        ["workflow", "batch", "--project", "sample", "--run", "run-1", "--max-steps", str(max_steps)],
+        terminal_width=240,
+    )
+
+
+def _latest_batch_reports(workspace: Path) -> tuple[Path, Path]:
+    report_dir = workspace / "runs" / "sample" / "run-1" / "artifacts" / "workflow"
+    md_reports = sorted(report_dir.glob("batch-report-*.md"))
+    json_reports = sorted(report_dir.glob("batch-report-*.json"))
+    assert md_reports
+    assert json_reports
+    return md_reports[-1], json_reports[-1]
 
 
 def _planning_artifacts(include_plan_review: bool = True) -> list[RunArtifactType]:
