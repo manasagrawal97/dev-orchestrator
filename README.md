@@ -339,6 +339,21 @@ Recovery strategy: restore DevOrchestrator source from Git, restore `workspace/`
 
 For scripted backup, restore, retention cleanup, scheduled backups, and disaster recovery steps, see [docs/recovery.md](docs/recovery.md). The committed scripts under scripts/recovery/ are the preferred wrappers around the devo backup commands.
 
+## Workflow Guidance
+
+Workflow commands inspect a run and recommend the next safe orchestration step without calling AI, modifying target projects, running builds/tests, committing Git changes, or fabricating agent outputs.
+
+```powershell
+devo workflow status --project MyProject --run <runId>
+devo workflow next --project MyProject --run <runId>
+devo workflow advance --project MyProject --run <runId>
+```
+
+`devo workflow status` shows the run goal, lifecycle stage, context status, present and missing artifacts, task ledger summary, open tasks, closed or dispositioned tasks, warnings, whether the run can be closed, and the next recommended action.
+
+`devo workflow next` prints one recommended action: the agent prompt command to run, an implementation report command to use, a task close command when final audit permits closure, a run close command when all tasks are resolved, or no action for a closed run.
+
+`devo workflow advance` is intentionally conservative. It does not fake missing AI outputs or execute target-project work. For prompt-based or report-based steps, it shows the exact command to run explicitly.
 ## Workspace Backup
 
 DevOrchestrator source code is stored in GitHub, but the local `workspace/` folder contains runtime state that Git intentionally does not track: registered project metadata, approved context artifacts, run history, prompt outputs, task closure records, validation/review/audit reports, run summaries, and enriched context artifacts. Back this up regularly to a location outside the repo, such as Google Drive Desktop.

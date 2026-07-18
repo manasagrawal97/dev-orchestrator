@@ -53,6 +53,7 @@ from .runs import (
     save_current_selection,
 )
 from .scanner import scan_registered_project
+from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
 project_app = typer.Typer(help="Manage registered projects.")
@@ -65,6 +66,7 @@ audit_app = typer.Typer(help="Inspect final audit evidence.")
 task_app = typer.Typer(help="Manage run tasks.")
 backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
+workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -75,6 +77,7 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(task_app, name="task")
 app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
+app.add_typer(workflow_app, name="workflow")
 console = Console()
 
 
@@ -901,3 +904,97 @@ def show_env_bootstrap_plan(
     console.print(f"Plan: {plan_file}")
     console.print("")
     console.print(plan_text)
+
+
+def _print_workflow_action(action: WorkflowAction) -> None:
+    console.print(f"Action type: {action.action_type}")
+    console.print(f"Current status: {action.current_status}")
+    console.print(f"Next status: {action.next_status or 'none'}")
+    console.print(f"Agent: {action.agent_name or 'none'}")
+    console.print(f"Task: {action.task_id or 'none'}")
+    console.print(f"Command: {action.command_to_run or 'none'}")
+    console.print(f"Expected output: {action.expected_output_artifact or 'none'}")
+    console.print(f"Import command: {action.import_command or 'none'}")
+    console.print(f"Reason: {action.reason or 'none'}")
+    if action.blockers:
+        console.print("Blockers:")
+        for blocker in action.blockers:
+            console.print(f"  - {blocker}")
+    if action.warnings:
+        console.print("Warnings:")
+        for warning in action.warnings:
+            console.print(f"  - {warning}")
+
+
+@workflow_app.command("status")
+def show_workflow_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show current run workflow state and next action."""
+    try:
+        status = get_workflow_status(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(f"[bold]{status.project_name}[/bold]")
+    console.print(f"Run: {status.run_id}")
+    console.print(f"Goal: {status.run_goal}")
+    console.print(f"Run status: {status.run_status}")
+    console.print(f"Context status: {status.context_status or 'unknown'}")
+    console.print(f"Lifecycle stage: {status.lifecycle_stage}")
+    console.print(f"Artifacts present: {', '.join(status.artifacts_present) or 'none'}")
+    console.print(f"Artifacts missing: {', '.join(status.artifacts_missing) or 'none'}")
+    console.print("Task ledger summary:")
+    for key, value in status.task_ledger_summary.items():
+        console.print(f"  {key}: {value}")
+    console.print("Open tasks:")
+    if status.open_tasks:
+        for task in status.open_tasks:
+            console.print(f"  - {task['task_id']}: {task['task_title']}")
+    else:
+        console.print("  none")
+    console.print("Closed/resolved tasks:")
+    resolved = {task['task_id']: task for task in status.closed_resolved_tasks}
+    for task in status.dispositioned_tasks:
+        resolved.setdefault(task['task_id'], task)
+    if resolved:
+        for task in resolved.values():
+            console.print(
+                f"  - {task['task_id']}: closure={task['closure_status']} disposition={task['disposition_status']}"
+            )
+    else:
+        console.print("  none")
+    console.print(f"Can close run: {status.can_close_run}")
+    if status.warnings:
+        console.print("Warnings:")
+        for warning in status.warnings:
+            console.print(f"  - {warning}")
+    console.print("Next recommended action:")
+    _print_workflow_action(status.next_action)
+
+
+@workflow_app.command("next")
+def show_workflow_next(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show the single next recommended workflow action without mutating state."""
+    try:
+        action = get_next_workflow_action(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_workflow_action(action)
+
+
+@workflow_app.command("advance")
+def advance_workflow_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Explain deterministic next workflow advancement without fabricating outputs."""
+    try:
+        action = advance_workflow(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_workflow_action(action)
