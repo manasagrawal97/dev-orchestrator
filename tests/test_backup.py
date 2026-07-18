@@ -221,17 +221,17 @@ def test_backup_cli_create_supports_protected_manifest_flag(tmp_path: Path, monk
     assert "Protected: True" in result.output
 
 
-def test_backup_cleanup_keeps_latest_10_unprotected_backups(tmp_path: Path, monkeypatch) -> None:
+def test_backup_cleanup_keeps_latest_3_unprotected_backups_by_default(tmp_path: Path, monkeypatch) -> None:
     workspace, _target = _sample_workspace(tmp_path)
     backup_root = tmp_path / "backups"
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
-    created = _create_ordered_backups(backup_root, count=12)
+    created = _create_ordered_backups(backup_root, count=5)
 
-    result = cleanup_backups(backup_root, keep=10)
+    result = cleanup_backups(backup_root)
 
     deleted_names = {path.name for path in result.deleted_backups}
     assert deleted_names == {created[0].backup_path.name, created[1].backup_path.name}
-    assert len(result.retained_backups) == 10
+    assert len(result.retained_backups) == 3
     assert not created[0].backup_path.exists()
     assert not created[1].backup_path.exists()
     assert created[2].backup_path.exists()

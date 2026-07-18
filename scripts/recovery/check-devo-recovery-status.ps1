@@ -68,7 +68,7 @@ if ($backups.Count -gt 0) {
     Write-Host "Latest backup age: $([math]::Round($age.TotalHours, 1)) hours"
     if ($age.TotalHours -gt 24) { Write-Check "WARN" "Latest backup is older than 24 hours" }
     Write-Host "Latest retained normal backups:"
-    $backups | Where-Object { -not $_.Protected } | Select-Object -First 10 | ForEach-Object { Write-Host "  $($_.CreatedAt.ToString('o')) $($_.Path)" }
+    $backups | Where-Object { -not $_.Protected } | Select-Object -First 3 | ForEach-Object { Write-Host "  $($_.CreatedAt.ToString('o')) $($_.Path)" }
     Write-Host "Protected backups:"
     $backups | Where-Object { $_.Protected } | ForEach-Object { Write-Host "  $($_.CreatedAt.ToString('o')) $($_.Path)" }
 } else {

@@ -127,7 +127,7 @@ def list_backups(dest: Path) -> list[BackupManifest]:
     return sorted(backups, key=lambda manifest: manifest.created_at)
 
 
-def cleanup_backups(dest: Path, keep: int = 10, dry_run: bool = False) -> BackupCleanupResult:
+def cleanup_backups(dest: Path, keep: int = 3, dry_run: bool = False) -> BackupCleanupResult:
     if keep < 0:
         msg = "Backup cleanup keep count must be zero or greater."
         raise ValueError(msg)

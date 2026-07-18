@@ -2,8 +2,8 @@
 
 DevOrchestrator recovery is intentionally split across GitHub and Google Drive Desktop:
 
-- GitHub stores DevOrchestrator source code and committed recovery scripts.
-- Google Drive Desktop stores DevOrchestrator `workspace/` backups.
+- GitHub stores and protects DevOrchestrator source code and committed recovery scripts.
+- Google Drive Desktop stores DevOrchestrator `workspace/` backups for Devo workspace/runtime context only.
 - The active workspace stays local at `E:\DevOrchestrator\workspace`.
 - Google Drive is backup storage only, not the active workspace.
 
@@ -35,9 +35,9 @@ The script passes `--protect` to `devo backup create`, and the manifest stores `
 
 Default scheduled policy:
 
-- frequency: every 12 hours
+- frequency: every 6 hours
 - label: `scheduled`
-- retention: keep latest 10 normal backups
+- retention: keep latest 3 normal backups
 - protected: false
 
 ## Check Recovery Health
@@ -74,11 +74,13 @@ To remove it:
 
 ## Backup Policy
 
-- Scheduled backups run every 12 hours by default.
-- Keep the latest 10 normal backups.
+- Scheduled backups run every 6 hours by default.
+- Keep the latest 3 normal backups.
 - Auto-delete older normal backups only after a new backup is successfully created and verified.
 - Protected backups are created only with `-Protect` in PowerShell or `--protect` in the CLI.
 - Protected backups are never auto-deleted.
+- Manual backup after every task is not required; use manual backups only for risky milestones or backup/recovery system changes.
+- GitHub protects source code; Google Drive backup protects Devo workspace/context such as projects, runs, current selection, and environment snapshots.
 - Cleanup deletes only valid Devo backup folders with readable `backup-manifest.json` files.
 - Cleanup skips unknown folders and folders with missing or invalid manifests.
 - If backup verification fails, cleanup does not run.

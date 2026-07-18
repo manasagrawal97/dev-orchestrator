@@ -48,17 +48,18 @@ def test_install_script_references_expected_task_name() -> None:
     assert "Register-ScheduledTask" in install_script
 
 
-def test_install_script_defaults_to_every_12_hours() -> None:
+def test_install_script_defaults_to_every_6_hours() -> None:
     install_script = _script("install-devo-backup-task.ps1")
 
-    assert '[string]$Frequency = "Every12Hours"' in install_script
-    assert "New-TimeSpan -Hours 12" in install_script
+    assert '[string]$Frequency = "Every6Hours"' in install_script
+    assert "New-TimeSpan -Hours 6" in install_script
+    assert '[int]$RetentionCount = 3' in install_script
 
 
-def test_backup_script_defaults_retention_count_to_10() -> None:
+def test_backup_script_defaults_retention_count_to_3() -> None:
     backup_script = _script("backup-devo-workspace.ps1")
 
-    assert "[int]$RetentionCount = 10" in backup_script
+    assert "[int]$RetentionCount = 3" in backup_script
 
 
 def test_backup_script_supports_protect() -> None:
@@ -82,6 +83,7 @@ def test_check_status_script_references_latest_backup_verification() -> None:
     assert "Latest backup verifies" in status_script
     assert "backup verify" in status_script
     assert "older than 24 hours" in status_script
+    assert "Select-Object -First 3" in status_script
 
 
 def test_recovery_docs_exist_and_mention_commands() -> None:
@@ -153,6 +155,35 @@ def test_install_script_passes_expected_backup_wrapper_arguments() -> None:
     assert '-Label `"scheduled`"' in install_script
     assert "-RetentionCount $RetentionCount" in install_script
 
+
+def test_recovery_docs_describe_current_backup_policy_and_repo_url() -> None:
+    text = Path("docs/recovery.md").read_text(encoding="utf-8")
+
+    assert "every 6 hours" in text
+    assert "latest 3 normal backups" in text
+    assert "Manual backup after every task is not required" in text
+    assert "GitHub protects source code" in text
+    assert "Google Drive backup protects Devo workspace/context" in text
+    assert "https://github.com/manasagrawal97/dev-orchestrator.git" in text
+    assert ("https://github.com/manasagrawal97/" + "DevOrchestrator.git") not in text
+
+
+def test_readme_describes_current_backup_policy() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert "every 6 hours" in readme
+    assert "latest 3 normal backups" in readme
+    assert "Manual backup after every task is not required" in readme
+    assert "GitHub" in readme and "source code" in readme
+    assert "workspace/context" in readme
+
+
+def test_old_github_repo_url_is_absent_from_docs_and_recovery_scripts() -> None:
+    old_url = "https://github.com/manasagrawal97/" + "DevOrchestrator.git"
+    checked_paths = [Path("README.md"), Path("docs/recovery.md"), *SCRIPT_DIR.glob("*.ps1")]
+
+    for path in checked_paths:
+        assert old_url not in path.read_text(encoding="utf-8")
 
 def _script(name: str) -> str:
     return (SCRIPT_DIR / name).read_text(encoding="utf-8")

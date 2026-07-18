@@ -3,7 +3,7 @@ param(
     [string]$BackupRoot = "G:\My Drive\Projects\Dev Orchestrator",
     [string]$RepoPath = "",
     [string]$Label = "scheduled",
-    [int]$RetentionCount = 10,
+    [int]$RetentionCount = 3,
     [bool]$Verify = $true,
     [bool]$Cleanup = $true,
     [switch]$Protect,

@@ -3,11 +3,11 @@ param(
     [string]$BackupRoot = "G:\My Drive\Projects\Dev Orchestrator",
     [string]$RepoPath = "E:\DevOrchestrator",
     [string]$TaskName = "DevOrchestrator Workspace Backup",
-    [ValidateSet("Every12Hours", "Daily")]
-    [string]$Frequency = "Every12Hours",
+    [ValidateSet("Every6Hours", "Every12Hours", "Daily")]
+    [string]$Frequency = "Every6Hours",
     [datetime]$StartTime = (Get-Date).Date.AddHours(9),
     [switch]$RunNow,
-    [int]$RetentionCount = 10
+    [int]$RetentionCount = 3
 )
 
 $ErrorActionPreference = "Stop"
@@ -19,7 +19,9 @@ if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Backup sc
 
 $argument = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -RepoPath `"$RepoPath`" -BackupRoot `"$BackupRoot`" -Label `"scheduled`" -RetentionCount $RetentionCount"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argument
-if ($Frequency -eq "Every12Hours") {
+if ($Frequency -eq "Every6Hours") {
+    $trigger = New-ScheduledTaskTrigger -Once -At $StartTime -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 3650)
+} elseif ($Frequency -eq "Every12Hours") {
     $trigger = New-ScheduledTaskTrigger -Once -At $StartTime -RepetitionInterval (New-TimeSpan -Hours 12) -RepetitionDuration (New-TimeSpan -Days 3650)
 } else {
     $trigger = New-ScheduledTaskTrigger -Daily -At $StartTime

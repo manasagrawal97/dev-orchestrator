@@ -390,7 +390,7 @@ devo workflow batch --project MyProject --run <runId> --max-steps 20
 `devo workflow batch` repeatedly evaluates the run until it reaches a safe stop condition such as waiting for agent output, an implementation report, task closure, run closure, inconsistent state, or a closed run. It writes concise Markdown and JSON reports under `artifacts/workflow/batch-report-YYYYMMDD-HHMMSS.*` and remains non-mutating by default.
 ## Workspace Backup
 
-DevOrchestrator source code is stored in GitHub, but the local `workspace/` folder contains runtime state that Git intentionally does not track: registered project metadata, approved context artifacts, run history, prompt outputs, task closure records, validation/review/audit reports, run summaries, and enriched context artifacts. Back this up regularly to a location outside the repo, such as Google Drive Desktop.
+DevOrchestrator source code is protected by GitHub, but the local `workspace/` folder contains runtime state that Git intentionally does not track: registered project metadata, approved context artifacts, run history, prompt outputs, task closure records, validation/review/audit reports, run summaries, environment snapshots, and enriched context artifacts. Google Drive Desktop backup protects this Devo workspace/context only. Scheduled backups run every 6 hours by default, keep the latest 3 normal backups, and auto-delete older normal backups only after a new backup is successfully created and verified.
 
 Workspace backup includes only:
 
@@ -430,8 +430,8 @@ devo backup verify --path "G:\My Drive\Backups\DevOrchestrator\devo-workspace-ba
 Clean up old unprotected backups after a backup has been created and verified:
 
 ```powershell
-devo backup cleanup --dest "G:\My Drive\Backups\DevOrchestrator" --keep 10
-devo backup cleanup --dest "G:\My Drive\Backups\DevOrchestrator" --keep 10 --dry-run
+devo backup cleanup --dest "G:\My Drive\Backups\DevOrchestrator" --keep 3
+devo backup cleanup --dest "G:\My Drive\Backups\DevOrchestrator" --keep 3 --dry-run
 ```
 
 Restore a backup into an empty workspace folder:
@@ -440,13 +440,13 @@ Restore a backup into an empty workspace folder:
 devo backup restore --backup "G:\My Drive\Backups\DevOrchestrator\devo-workspace-backup-20260715-210000-before-task-017" --dest "E:\RestoredDevOrchestratorWorkspace"
 ```
 
-Recommended daily/manual backup command:
+Manual backup after every task is not required. Use manual backups only for risky milestones or backup/recovery system changes:
 
 ```powershell
-devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "daily"
+devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "before-risky-milestone"
 ```
 
-Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, creation timestamp, and `protected: true/false`. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs. `devo backup cleanup` keeps the latest 10 normal backups by default, never deletes protected backups, and skips unknown or invalid folders.
+Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, creation timestamp, and `protected: true/false`. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs. `devo backup cleanup` keeps the latest 3 normal backups by default, never deletes protected backups, and skips unknown or invalid folders.
 
 ## Development
 

@@ -1161,7 +1161,7 @@ def list_workspace_backups(dest: Path = typer.Option(..., "--dest", help="Backup
 @backup_app.command("cleanup")
 def cleanup_workspace_backups(
     dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
-    keep: int = typer.Option(10, "--keep", help="Number of latest unprotected backups to retain."),
+    keep: int = typer.Option(3, "--keep", help="Number of latest unprotected backups to retain."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report cleanup actions without deleting backups."),
 ) -> None:
     """Delete old unprotected backups after successful create and verify."""
