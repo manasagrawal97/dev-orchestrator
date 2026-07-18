@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from devo.backups import create_backup, list_backups, restore_backup, verify_backup
+from devo.backups import cleanup_backups, create_backup, list_backups, restore_backup, verify_backup
 from devo.main import app
 
 runner = CliRunner()
@@ -21,6 +22,7 @@ def test_backup_create_copies_workspace_roots(tmp_path: Path, monkeypatch) -> No
     backup_workspace = manifest.backup_path / "workspace"
     assert (backup_workspace / "projects" / "sample" / "project.json").exists()
     assert (backup_workspace / "runs" / "sample" / "run-1" / "run-state.json").exists()
+    assert (backup_workspace / "environment" / "sample" / "environment-snapshot.json").exists()
     assert (backup_workspace / "current.json").exists()
 
 
@@ -34,7 +36,7 @@ def test_backup_create_writes_manifest(tmp_path: Path, monkeypatch) -> None:
     assert manifest_file.exists()
     data = json.loads(manifest_file.read_text(encoding="utf-8"))
     assert data["label"] == "before-task"
-    assert data["included_roots"] == ["projects", "runs", "current.json"]
+    assert data["included_roots"] == ["projects", "runs", "environment", "current.json"]
 
 
 def test_manifest_includes_counts_hashes_paths_and_timestamp(tmp_path: Path, monkeypatch) -> None:
@@ -200,6 +202,98 @@ def test_backup_cli_create_verify_and_restore(tmp_path: Path, monkeypatch) -> No
     assert (restore_dest / "projects" / "sample" / "project.json").exists()
 
 
+
+def test_backup_cli_create_supports_protected_manifest_flag(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+
+    result = runner.invoke(
+        app,
+        ["backup", "create", "--dest", str(backup_root), "--label", "milestone", "--protect"],
+        terminal_width=200,
+    )
+
+    assert result.exit_code == 0
+    backup_folder = next(backup_root.glob("devo-workspace-backup-*-milestone"))
+    data = json.loads((backup_folder / "backup-manifest.json").read_text(encoding="utf-8"))
+    assert data["protected"] is True
+    assert "Protected: True" in result.output
+
+
+def test_backup_cleanup_keeps_latest_10_unprotected_backups(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    created = _create_ordered_backups(backup_root, count=12)
+
+    result = cleanup_backups(backup_root, keep=10)
+
+    deleted_names = {path.name for path in result.deleted_backups}
+    assert deleted_names == {created[0].backup_path.name, created[1].backup_path.name}
+    assert len(result.retained_backups) == 10
+    assert not created[0].backup_path.exists()
+    assert not created[1].backup_path.exists()
+    assert created[2].backup_path.exists()
+
+
+def test_backup_cleanup_never_deletes_protected_backups(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    created = _create_ordered_backups(backup_root, count=11)
+    protected = create_backup(backup_root, label="protected", protect=True)
+    _set_manifest_created_at(protected.backup_path, datetime(2026, 1, 1, tzinfo=UTC))
+
+    result = cleanup_backups(backup_root, keep=1)
+
+    assert protected.backup_path.exists()
+    assert protected.backup_path in result.skipped_protected_backups
+    assert any(path.name == created[0].backup_path.name for path in result.deleted_backups)
+
+
+def test_backup_cleanup_skips_invalid_and_missing_manifest_folders(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    create_backup(backup_root, label="valid")
+    missing_manifest = backup_root / "devo-workspace-backup-20260101-000000-missing"
+    missing_manifest.mkdir(parents=True)
+    invalid_manifest = backup_root / "devo-workspace-backup-20260101-000001-invalid"
+    invalid_manifest.mkdir(parents=True)
+    (invalid_manifest / "backup-manifest.json").write_text("not-json", encoding="utf-8")
+    unknown = backup_root / "not-a-devo-backup"
+    unknown.mkdir()
+
+    result = cleanup_backups(backup_root, keep=0)
+
+    assert missing_manifest.exists()
+    assert invalid_manifest.exists()
+    assert unknown.exists()
+    skipped = "\n".join(result.skipped_invalid_backups)
+    assert "missing" in skipped
+    assert "invalid" in skipped
+    assert "unknown folder" in skipped
+
+
+def test_backup_cleanup_cli_supports_dry_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    created = _create_ordered_backups(backup_root, count=2)
+
+    result = runner.invoke(
+        app,
+        ["backup", "cleanup", "--dest", str(backup_root), "--keep", "1", "--dry-run"],
+        terminal_width=200,
+    )
+
+    assert result.exit_code == 0
+    assert "Dry run: True" in result.output
+    assert "Would delete backups" in result.output
+    assert created[0].backup_path.exists()
+
+
 def _sample_workspace(tmp_path: Path) -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     target_project = tmp_path / "target-project"
@@ -229,5 +323,28 @@ def _sample_workspace(tmp_path: Path) -> tuple[Path, Path]:
     (run_dir / "artifacts").mkdir()
     (run_dir / "artifacts" / "summary.md").write_text("summary", encoding="utf-8")
 
+
+    environment_dir = workspace / "environment" / "sample"
+    environment_dir.mkdir(parents=True)
+    (environment_dir / "environment-snapshot.json").write_text('{"name":"sample"}', encoding="utf-8")
+
     (workspace / "current.json").write_text('{"project_name":"sample"}', encoding="utf-8")
     return workspace, target_project
+
+
+def _create_ordered_backups(backup_root: Path, count: int):
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    created = []
+    for index in range(count):
+        manifest = create_backup(backup_root, label=f"backup-{index:02d}")
+        created_at = start + timedelta(hours=index)
+        _set_manifest_created_at(manifest.backup_path, created_at)
+        created.append(manifest.model_copy(update={"created_at": created_at}))
+    return created
+
+
+def _set_manifest_created_at(backup_path: Path, created_at: datetime) -> None:
+    manifest_file = backup_path / "backup-manifest.json"
+    data = json.loads(manifest_file.read_text(encoding="utf-8"))
+    data["created_at"] = created_at.isoformat().replace("+00:00", "Z")
+    manifest_file.write_text(json.dumps(data), encoding="utf-8")

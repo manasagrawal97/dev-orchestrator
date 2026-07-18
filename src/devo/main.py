@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .backups import create_backup, list_backups, restore_backup, verify_backup
+from .backups import cleanup_backups, create_backup, list_backups, restore_backup, verify_backup
 from .environment import (
     create_environment_snapshot,
     generate_environment_bootstrap_plan,
@@ -743,10 +743,11 @@ def list_tasks_for_run(
 def create_workspace_backup(
     dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
     label: str | None = typer.Option(None, "--label", help="Optional backup label."),
+    protect: bool = typer.Option(False, "--protect", help="Mark backup as protected from cleanup."),
 ) -> None:
     """Create a timestamped backup of DevOrchestrator workspace state."""
     try:
-        manifest = create_backup(dest=dest, label=label)
+        manifest = create_backup(dest=dest, label=label, protect=protect)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--dest") from exc
 
@@ -754,6 +755,7 @@ def create_workspace_backup(
     console.print(f"Manifest: {manifest.backup_path / 'backup-manifest.json'}")
     console.print(f"Files: {manifest.file_count}")
     console.print(f"Total bytes: {manifest.total_bytes}")
+    console.print(f"Protected: {manifest.protected}")
     if manifest.warnings:
         console.print("Warnings:")
         for warning in manifest.warnings:
@@ -804,10 +806,42 @@ def list_workspace_backups(dest: Path = typer.Option(..., "--dest", help="Backup
         console.print(f"  Path: {manifest.backup_path}")
         console.print(f"  Created at: {manifest.created_at.isoformat()}")
         console.print(f"  Label: {manifest.label or 'none'}")
+        console.print(f"  Protected: {manifest.protected}")
         console.print(f"  Files: {manifest.file_count}")
         console.print(f"  Total bytes: {manifest.total_bytes}")
         console.print(f"  Git: {manifest.git_branch} {manifest.git_commit_hash}")
 
+
+@backup_app.command("cleanup")
+def cleanup_workspace_backups(
+    dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
+    keep: int = typer.Option(10, "--keep", help="Number of latest unprotected backups to retain."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report cleanup actions without deleting backups."),
+) -> None:
+    """Delete old unprotected backups after successful create and verify."""
+    try:
+        result = cleanup_backups(dest=dest, keep=keep, dry_run=dry_run)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--dest") from exc
+
+    action = "Would delete" if dry_run else "Deleted"
+    console.print(f"[green]Backup cleanup complete[/green] {result.backup_root}")
+    console.print(f"Keep latest unprotected backups: {result.keep}")
+    console.print(f"Dry run: {result.dry_run}")
+    if result.deleted_backups:
+        console.print(f"{action} backups:")
+        for path in result.deleted_backups:
+            console.print(f"  - {path}")
+    else:
+        console.print("Deleted backups: none")
+    if result.skipped_protected_backups:
+        console.print("Skipped protected backups:")
+        for path in result.skipped_protected_backups:
+            console.print(f"  - {path}")
+    if result.skipped_invalid_backups:
+        console.print("Skipped invalid or unknown folders:")
+        for item in result.skipped_invalid_backups:
+            console.print(f"  - {item}")
 
 @env_app.command("snapshot")
 def create_env_snapshot(

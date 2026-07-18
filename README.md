@@ -335,6 +335,10 @@ devo env bootstrap-plan --snapshot "E:\DevOrchestrator\workspace\environment\Dev
 ```
 
 Recovery strategy: restore DevOrchestrator source from Git, restore `workspace/` from a verified workspace backup, then use environment snapshots to reinstall tools and dependencies deliberately. Treat recommended commands as recovery candidates; inspect project documentation before running them. Local secrets and machine-specific settings must be restored manually by the owner, because DevOrchestrator intentionally records only their path classification and never their values.
+## Recovery Automation
+
+For scripted backup, restore, retention cleanup, scheduled backups, and disaster recovery steps, see [docs/recovery.md](docs/recovery.md). The committed scripts under scripts/recovery/ are the preferred wrappers around the devo backup commands.
+
 ## Workspace Backup
 
 DevOrchestrator source code is stored in GitHub, but the local `workspace/` folder contains runtime state that Git intentionally does not track: registered project metadata, approved context artifacts, run history, prompt outputs, task closure records, validation/review/audit reports, run summaries, and enriched context artifacts. Back this up regularly to a location outside the repo, such as Google Drive Desktop.
@@ -344,15 +348,22 @@ Workspace backup includes only:
 ```text
 workspace/projects/**
 workspace/runs/**
+workspace/environment/**
 workspace/current.json
 ```
 
 Workspace backup does not include DevOrchestrator source code, `.git`, `.venv`, target project repositories such as `E:\Personal OS`, caches, temporary files, lock files, or arbitrary paths outside the DevOrchestrator workspace. Do not use Google Drive as the active DevOrchestrator workspace; keep the active workspace local and use Drive only as a backup destination.
 
-Create a backup:
+Create a normal backup:
 
 ```powershell
 devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "before-task-017"
+```
+
+Create a protected milestone backup that cleanup never deletes:
+
+```powershell
+devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "before-major-work" --protect
 ```
 
 List backups:
@@ -367,6 +378,13 @@ Verify a backup:
 devo backup verify --path "G:\My Drive\Backups\DevOrchestrator\devo-workspace-backup-20260715-210000-before-task-017"
 ```
 
+Clean up old unprotected backups after a backup has been created and verified:
+
+```powershell
+devo backup cleanup --dest "G:\My Drive\Backups\DevOrchestrator" --keep 10
+devo backup cleanup --dest "G:\My Drive\Backups\DevOrchestrator" --keep 10 --dry-run
+```
+
 Restore a backup into an empty workspace folder:
 
 ```powershell
@@ -379,7 +397,7 @@ Recommended daily/manual backup command:
 devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "daily"
 ```
 
-Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, and creation timestamp. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs.
+Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, creation timestamp, and `protected: true/false`. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs. `devo backup cleanup` keeps the latest 10 normal backups by default, never deletes protected backups, and skips unknown or invalid folders.
 
 ## Development
 

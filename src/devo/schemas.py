@@ -307,6 +307,19 @@ class BackupManifest(BaseModel):
     tool_version: str = "unknown"
     git_commit_hash: str = "unknown"
     git_branch: str = "unknown"
+    protected: bool = False
+
+
+class BackupCleanupResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backup_root: Path
+    keep: int
+    dry_run: bool = False
+    deleted_backups: list[Path] = Field(default_factory=list)
+    retained_backups: list[Path] = Field(default_factory=list)
+    skipped_protected_backups: list[Path] = Field(default_factory=list)
+    skipped_invalid_backups: list[str] = Field(default_factory=list)
 
 
 class EnvironmentSnapshot(BaseModel):

@@ -9,14 +9,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .projects import get_workspace_root
-from .schemas import BackupManifest
+from .schemas import BackupCleanupResult, BackupManifest
 
 BACKUP_SCHEMA_VERSION = "1"
 BACKUP_FOLDER_PREFIX = "devo-workspace-backup"
 MANIFEST_NAME = "backup-manifest.json"
 WORKSPACE_BACKUP_DIR = "workspace"
 
-INCLUDED_ROOTS = ("projects", "runs", "current.json")
+INCLUDED_ROOTS = ("projects", "runs", "environment", "current.json")
+OPTIONAL_INCLUDED_ROOTS = {"environment", "current.json"}
 EXCLUDED_PATTERNS = (
     "__pycache__",
     ".pytest_cache",
@@ -34,7 +35,12 @@ EXCLUDED_FILE_NAMES = {".DS_Store"}
 EXCLUDED_FILE_SUFFIXES = {".tmp", ".lock", ".swp"}
 
 
-def create_backup(dest: Path, label: str | None = None, workspace_root: Path | None = None) -> BackupManifest:
+def create_backup(
+    dest: Path,
+    label: str | None = None,
+    workspace_root: Path | None = None,
+    protect: bool = False,
+) -> BackupManifest:
     source_workspace = (workspace_root or get_workspace_root()).resolve()
     if not source_workspace.exists():
         msg = f"Workspace does not exist: {source_workspace}"
@@ -60,7 +66,7 @@ def create_backup(dest: Path, label: str | None = None, workspace_root: Path | N
         for root_name in INCLUDED_ROOTS:
             source = source_workspace / root_name
             if not source.exists():
-                if root_name != "current.json":
+                if root_name not in OPTIONAL_INCLUDED_ROOTS:
                     warnings.append(f"Included root is missing: {root_name}")
                 continue
 
@@ -94,6 +100,7 @@ def create_backup(dest: Path, label: str | None = None, workspace_root: Path | N
             tool_version="0.1.0",
             git_commit_hash=_git_output(["git", "rev-parse", "HEAD"]),
             git_branch=_git_output(["git", "branch", "--show-current"]),
+            protected=protect,
         )
 
         (temp_backup_path / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
@@ -118,6 +125,55 @@ def list_backups(dest: Path) -> list[BackupManifest]:
         except ValueError:
             continue
     return sorted(backups, key=lambda manifest: manifest.created_at)
+
+
+def cleanup_backups(dest: Path, keep: int = 10, dry_run: bool = False) -> BackupCleanupResult:
+    if keep < 0:
+        msg = "Backup cleanup keep count must be zero or greater."
+        raise ValueError(msg)
+
+    backup_root = dest.expanduser().resolve()
+    result = BackupCleanupResult(backup_root=backup_root, keep=keep, dry_run=dry_run)
+    if not backup_root.exists():
+        return result
+    if not backup_root.is_dir():
+        msg = f"Backup root must be a directory: {backup_root}"
+        raise ValueError(msg)
+
+    valid_backups: list[BackupManifest] = []
+    for child in sorted(backup_root.iterdir()):
+        if not child.is_dir():
+            continue
+        if not child.name.startswith(f"{BACKUP_FOLDER_PREFIX}-"):
+            result.skipped_invalid_backups.append(f"{child}: unknown folder")
+            continue
+        try:
+            valid_backups.append(_load_manifest(child))
+        except ValueError as exc:
+            result.skipped_invalid_backups.append(f"{child}: {exc}")
+
+    normal_backups = sorted(
+        (manifest for manifest in valid_backups if not manifest.protected),
+        key=lambda manifest: manifest.created_at,
+        reverse=True,
+    )
+    protected_backups = sorted(
+        (manifest for manifest in valid_backups if manifest.protected),
+        key=lambda manifest: manifest.created_at,
+        reverse=True,
+    )
+
+    retained = normal_backups[:keep]
+    deletion_candidates = normal_backups[keep:]
+    result.retained_backups = [manifest.backup_path for manifest in retained]
+    result.skipped_protected_backups = [manifest.backup_path for manifest in protected_backups]
+
+    for manifest in deletion_candidates:
+        result.deleted_backups.append(manifest.backup_path)
+        if not dry_run:
+            shutil.rmtree(manifest.backup_path)
+
+    return result
 
 
 def verify_backup(path: Path) -> BackupManifest:
@@ -217,8 +273,13 @@ def _load_manifest(backup_path: Path) -> BackupManifest:
     if not manifest_file.exists():
         msg = f"Backup manifest is missing: {manifest_file}"
         raise ValueError(msg)
-    data = json.loads(manifest_file.read_text(encoding="utf-8"))
-    return BackupManifest.model_validate(data).model_copy(update={"backup_path": backup_path.resolve()})
+    try:
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
+        manifest = BackupManifest.model_validate(data)
+    except (json.JSONDecodeError, OSError, ValueError) as exc:
+        msg = f"Backup manifest is invalid: {manifest_file}"
+        raise ValueError(msg) from exc
+    return manifest.model_copy(update={"backup_path": backup_path.resolve()})
 
 
 def _verify_restored_workspace(manifest: BackupManifest, workspace_dest: Path) -> None:
