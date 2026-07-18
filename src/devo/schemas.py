@@ -290,6 +290,63 @@ class CurrentSelection(BaseModel):
     selected_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class ValidationCommandCategory(StrEnum):
+    RESTORE = "restore"
+    BUILD = "build"
+    TEST = "test"
+    LINT = "lint"
+    COMPILE = "compile"
+    RUN = "run"
+    SCRIPT = "script"
+    BACKUP = "backup"
+    OTHER = "other"
+
+
+class ValidationRiskLevel(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class ValidationCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    command: str = Field(min_length=1)
+    working_dir: Path | None = None
+    category: ValidationCommandCategory = ValidationCommandCategory.OTHER
+    risk_level: ValidationRiskLevel = ValidationRiskLevel.MEDIUM
+    approval_required: bool = False
+    enabled: bool = True
+    source: str = "manual"
+    notes: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ValidationCommandRegistry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1"
+    project_name: str
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    commands: list[ValidationCommand] = Field(default_factory=list)
+
+
+class ValidationCommandCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    command_id: str
+    allowed: bool
+    approval_required: bool
+    blocked: bool
+    risk_level: ValidationRiskLevel
+    reasons: list[str] = Field(default_factory=list)
+    suggested_approval_request_command: str | None = None
+
 class BackupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

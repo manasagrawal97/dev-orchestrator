@@ -333,6 +333,23 @@ Risk levels are `low`, `medium`, `high`, and `critical`. Low risk is allowed wit
 Policy signals include low-risk read-only inspection, prompt/report generation, docs summaries, and non-mutating workflow checks; medium-risk local source edits, workspace artifact writes, ledger mutations, and local commits; high-risk target project modification, target commands, database or migration work, scheduler changes, restore/cleanup, Git push, external folder writes such as Google Drive, and machine configuration changes; and critical destructive deletes, secret or credential handling, production database modification, force operations, or approval bypass attempts.
 
 `devo workflow next` and `devo workflow batch` use policy checks when choosing an implementation task. Low and medium tasks can still produce the normal next command, with medium warnings. High or critical tasks stop at a policy review recommendation instead of pretending they are safe to implement. Approval storage and overrides are intentionally deferred.
+## Validation Command Registry
+
+The validation command registry records known project validation commands with metadata before any runner exists. It stores command id, name, command text, working directory, category, risk level, approval requirement, enabled state, source, and notes under `workspace/projects/<projectName>/validation-commands.json`.
+
+```powershell
+devo validation list --project MyProject
+devo validation add --project MyProject --id dotnet-build --name "Build solution" --command "dotnet build MyProject.slnx" --category build
+devo validation add --project MyProject --id pytest --name "Run pytest" --command "python -m pytest" --category test --risk medium --no-approval-required
+devo validation show --project MyProject --id dotnet-build
+devo validation check --project MyProject --id dotnet-build
+devo validation suggest --project MyProject
+devo validation suggest --project MyProject --write
+```
+
+TASK-022 does not execute validation commands. `devo validation suggest` only proposes likely commands from project metadata such as `.sln`/`.slnx`, `.csproj`, `pyproject.toml`, and `package.json`; `--write` records those suggestions in the Devo workspace registry. Execution is deferred to a future validation runner.
+
+High-risk target project validation commands, including `dotnet restore`, `dotnet build`, `dotnet test`, `npm test`, and unconstrained project test commands, are approval-required by default and are written disabled when suggested. Protected policy and approval checks still apply before any future execution.
 ## Environment Snapshot
 
 Environment snapshots are read-only recovery notes for a project machine setup. They record tool versions, Git branch and commit, dependency files, solution/project files, package references, recommended recovery commands, excluded heavy/cache paths, and warnings about local or sensitive settings files. They do not copy source code, dependency caches, `.venv`, `.git`, `.packages`, `.tools`, `node_modules`, build outputs, `.env` values, or local settings values.

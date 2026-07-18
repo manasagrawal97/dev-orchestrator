@@ -71,6 +71,14 @@ from .runs import (
 )
 from .scanner import scan_registered_project
 from .task_selector import DEFAULT_STRATEGY, TaskSelection, list_task_candidates, select_next_task
+from .validation_registry import (
+    add_validation_command,
+    check_validation_command,
+    get_validation_command,
+    list_validation_commands,
+    registry_path,
+    suggest_validation_commands,
+)
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -78,7 +86,7 @@ project_app = typer.Typer(help="Manage registered projects.")
 agent_app = typer.Typer(help="Inspect agent definitions and generate prompts.")
 run_app = typer.Typer(help="Manage development runs.")
 implementation_app = typer.Typer(help="Record implementation completion evidence.")
-validation_app = typer.Typer(help="Inspect validation review evidence.")
+validation_app = typer.Typer(help="Manage validation command metadata and review evidence.")
 review_app = typer.Typer(help="Inspect code review evidence.")
 audit_app = typer.Typer(help="Inspect final audit evidence.")
 task_app = typer.Typer(help='Manage run tasks.')
@@ -738,6 +746,144 @@ def show_implementation_status(
     console.print(f"  Commit hash: {status['commit_hash']}")
 
 
+
+def _print_validation_command(command: object) -> None:
+    console.print(f"[bold]{command.id}[/bold]")
+    console.print(f"  Name: {command.name}")
+    console.print(f"  Command: {command.command}", soft_wrap=True)
+    console.print(f"  Working directory: {command.working_dir or 'none'}", soft_wrap=True)
+    console.print(f"  Category: {command.category.value}")
+    console.print(f"  Risk level: {command.risk_level.value}")
+    console.print(f"  Approval required: {command.approval_required}")
+    console.print(f"  Enabled: {command.enabled}")
+    console.print(f"  Source: {command.source}")
+    console.print(f"  Notes: {'; '.join(command.notes) if command.notes else 'none'}", soft_wrap=True)
+    console.print(f"  Created at: {command.created_at.isoformat()}")
+    console.print(f"  Updated at: {command.updated_at.isoformat()}")
+
+
+def _print_validation_check(result: object) -> None:
+    console.print(f"Project: {result.project_name}")
+    console.print(f"Command ID: {result.command_id}")
+    console.print(f"Allowed: {result.allowed}")
+    console.print(f"Approval required: {result.approval_required}")
+    console.print(f"Blocked: {result.blocked}")
+    console.print(f"Risk level: {result.risk_level.value}")
+    console.print("Reasons:")
+    for reason in result.reasons or ["none"]:
+        console.print(f"  - {reason}")
+    console.print(f"Suggested approval request command: {result.suggested_approval_request_command or 'none'}")
+
+
+@validation_app.command("list")
+def list_project_validation_commands(project_name: str = typer.Option(..., "--project", help="Registered project name.")) -> None:
+    """List registered validation commands for a project without executing them."""
+    try:
+        commands = list_validation_commands(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+
+    if not commands:
+        console.print("[yellow]No validation commands registered.[/yellow]")
+        console.print(f"Registry: {registry_path(project_name)}")
+        return
+    console.print(f"[bold]Validation commands for {project_name}[/bold]")
+    for command in commands:
+        _print_validation_command(command)
+
+
+@validation_app.command("add")
+def add_project_validation_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    command_id: str = typer.Option(..., "--id", help="Validation command id."),
+    name: str = typer.Option(..., "--name", help="Display name."),
+    command: str = typer.Option(..., "--command", help="Command text to record, not execute."),
+    category: str = typer.Option(..., "--category", help="Category: restore/build/test/lint/compile/run/script/backup/other."),
+    working_dir: Path | None = typer.Option(None, "--working-dir", help="Working directory for future execution."),
+    risk: str | None = typer.Option(None, "--risk", help="Risk level: low/medium/high/critical."),
+    approval_required: bool | None = typer.Option(None, "--approval-required/--no-approval-required", help="Whether future execution requires approval."),
+    enabled: bool = typer.Option(True, "--enabled/--disabled", help="Whether the command is enabled for future selection."),
+    source: str = typer.Option("manual", "--source", help="Metadata source."),
+    note: str | None = typer.Option(None, "--note", help="Optional note."),
+    replace: bool = typer.Option(False, "--replace", help="Replace an existing command with the same id."),
+) -> None:
+    """Add a validation command to the registry without executing it."""
+    try:
+        validation_command = add_validation_command(
+            project_name=project_name,
+            command_id=command_id,
+            name=name,
+            command=command,
+            category=category,
+            working_dir=working_dir,
+            risk=risk,
+            approval_required=approval_required,
+            enabled=enabled,
+            source=source,
+            note=note,
+            replace=replace,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--id") from exc
+
+    console.print(f"[green]Registered validation command[/green] {validation_command.id}")
+    console.print(f"Registry: {registry_path(project_name)}")
+    _print_validation_command(validation_command)
+
+
+@validation_app.command("show")
+def show_project_validation_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    command_id: str = typer.Option(..., "--id", help="Validation command id."),
+) -> None:
+    """Show one validation command with full metadata."""
+    try:
+        command = get_validation_command(project_name, command_id)
+        result = check_validation_command(project_name, command_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--id") from exc
+
+    _print_validation_command(command)
+    console.print("Policy classification:")
+    _print_validation_check(result)
+
+
+@validation_app.command("check")
+def check_project_validation_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    command_id: str = typer.Option(..., "--id", help="Validation command id."),
+) -> None:
+    """Run Devo policy classification on validation command metadata without executing it."""
+    try:
+        result = check_validation_command(project_name, command_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--id") from exc
+
+    _print_validation_check(result)
+
+
+@validation_app.command("suggest")
+def suggest_project_validation_commands(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    write: bool = typer.Option(False, "--write", help="Write suggestions to the registry without executing them."),
+) -> None:
+    """Suggest likely validation commands from project metadata without executing them."""
+    try:
+        commands = suggest_validation_commands(project_name, write=write)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+
+    if not commands:
+        console.print("[yellow]No validation command suggestions found.[/yellow]")
+        return
+    console.print(f"[bold]Suggested validation commands for {project_name}[/bold]")
+    console.print(f"Write mode: {write}")
+    for command in commands:
+        _print_validation_command(command)
+    if write:
+        console.print(f"[green]Wrote suggestions[/green] to {registry_path(project_name)}")
+    else:
+        console.print("No registry changes made. Re-run with --write to save suggestions.")
 @validation_app.command("status")
 def show_validation_status(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
