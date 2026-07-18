@@ -307,3 +307,35 @@ class BackupManifest(BaseModel):
     tool_version: str = "unknown"
     git_commit_hash: str = "unknown"
     git_branch: str = "unknown"
+
+
+class EnvironmentSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    name: str
+    project_path: Path
+    project_git_branch: str | None = None
+    project_git_commit: str | None = None
+    project_git_status_summary: str | None = None
+    operating_system: str
+    python_version: str | None = None
+    pip_version: str | None = None
+    dotnet_info: str | None = None
+    dotnet_sdks: list[str] = Field(default_factory=list)
+    dotnet_runtimes: list[str] = Field(default_factory=list)
+    git_version: str | None = None
+    node_version: str | None = None
+    npm_version: str | None = None
+    dependency_files_found: list[str] = Field(default_factory=list)
+    dependency_files_missing: list[str] = Field(default_factory=list)
+    detected_project_files: list[str] = Field(default_factory=list)
+    detected_solution_files: list[str] = Field(default_factory=list)
+    detected_test_projects: list[str] = Field(default_factory=list)
+    package_versions_summary: dict[str, list[str]] = Field(default_factory=dict)
+    commands_detected: list[str] = Field(default_factory=list)
+    recommended_commands: list[str] = Field(default_factory=list)
+    excluded_heavy_paths: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    recovery_notes: list[str] = Field(default_factory=list)

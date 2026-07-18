@@ -302,6 +302,39 @@ RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> 
 
 RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. Run closure requires approved project context, an existing run, `tasks.md`, and no unresolved tasks. This version does not implement automatic next-run creation, automatic next-task selection, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
 
+## Environment Snapshot
+
+Environment snapshots are read-only recovery notes for a project machine setup. They record tool versions, Git branch and commit, dependency files, solution/project files, package references, recommended recovery commands, excluded heavy/cache paths, and warnings about local or sensitive settings files. They do not copy source code, dependency caches, `.venv`, `.git`, `.packages`, `.tools`, `node_modules`, build outputs, `.env` values, or local settings values.
+
+Environment snapshots complement workspace backups. A workspace backup preserves DevOrchestrator runtime state under `workspace/`. An environment snapshot helps rebuild or understand a development environment after a machine failure by pointing to Git state, dependency files, tool versions, and bootstrap commands.
+
+Create an environment snapshot:
+
+```powershell
+devo env snapshot --name DevOrchestrator --path "E:\DevOrchestrator"
+devo env snapshot --name PersonalOS --path "E:\Personal OS"
+```
+
+Snapshots are written to:
+
+```text
+workspace/environment/<name>/environment-snapshot.json
+workspace/environment/<name>/bootstrap-plan.md
+```
+
+Verify a snapshot:
+
+```powershell
+devo env verify --snapshot "E:\DevOrchestrator\workspace\environment\DevOrchestrator\environment-snapshot.json"
+```
+
+Render or refresh the bootstrap plan from a snapshot:
+
+```powershell
+devo env bootstrap-plan --snapshot "E:\DevOrchestrator\workspace\environment\DevOrchestrator\environment-snapshot.json"
+```
+
+Recovery strategy: restore DevOrchestrator source from Git, restore `workspace/` from a verified workspace backup, then use environment snapshots to reinstall tools and dependencies deliberately. Treat recommended commands as recovery candidates; inspect project documentation before running them. Local secrets and machine-specific settings must be restored manually by the owner, because DevOrchestrator intentionally records only their path classification and never their values.
 ## Workspace Backup
 
 DevOrchestrator source code is stored in GitHub, but the local `workspace/` folder contains runtime state that Git intentionally does not track: registered project metadata, approved context artifacts, run history, prompt outputs, task closure records, validation/review/audit reports, run summaries, and enriched context artifacts. Back this up regularly to a location outside the repo, such as Google Drive Desktop.

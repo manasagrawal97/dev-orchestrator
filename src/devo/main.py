@@ -6,7 +6,11 @@ import typer
 from rich.console import Console
 
 from .backups import create_backup, list_backups, restore_backup, verify_backup
-
+from .environment import (
+    create_environment_snapshot,
+    generate_environment_bootstrap_plan,
+    verify_environment_snapshot,
+)
 from .agents import (
     DISCOVERY_AGENT_NAME,
     REVIEWER_AGENT_NAME,
@@ -60,6 +64,7 @@ review_app = typer.Typer(help="Inspect code review evidence.")
 audit_app = typer.Typer(help="Inspect final audit evidence.")
 task_app = typer.Typer(help="Manage run tasks.")
 backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
+env_app = typer.Typer(help="Capture and verify environment snapshots.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -69,7 +74,7 @@ app.add_typer(review_app, name="review")
 app.add_typer(audit_app, name="audit")
 app.add_typer(task_app, name="task")
 app.add_typer(backup_app, name="backup")
-
+app.add_typer(env_app, name="env")
 console = Console()
 
 
@@ -802,3 +807,63 @@ def list_workspace_backups(dest: Path = typer.Option(..., "--dest", help="Backup
         console.print(f"  Files: {manifest.file_count}")
         console.print(f"  Total bytes: {manifest.total_bytes}")
         console.print(f"  Git: {manifest.git_branch} {manifest.git_commit_hash}")
+
+
+@env_app.command("snapshot")
+def create_env_snapshot(
+    name: str = typer.Option(..., "--name", help="Snapshot name used under workspace/environment."),
+    path: Path = typer.Option(..., "--path", help="Project path to inspect in read-only mode."),
+) -> None:
+    """Create a bounded environment snapshot and bootstrap plan."""
+    try:
+        snapshot, snapshot_file, plan_file = create_environment_snapshot(name=name, project_path=path)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--path") from exc
+
+    console.print(f"[green]Created environment snapshot[/green] {snapshot.name}")
+    console.print(f"Project path: {snapshot.project_path}")
+    console.print(f"Snapshot: {snapshot_file}")
+    console.print(f"Bootstrap plan: {plan_file}")
+    console.print(f"Dependency files found: {len(snapshot.dependency_files_found)}")
+    console.print(f"Solution files: {len(snapshot.detected_solution_files)}")
+    console.print(f"Project files: {len(snapshot.detected_project_files)}")
+    console.print(f"Warnings: {len(snapshot.warnings)}")
+    for warning in snapshot.warnings[:5]:
+        console.print(f"  - {warning}")
+    if len(snapshot.warnings) > 5:
+        console.print(f"  - ... {len(snapshot.warnings) - 5} more warnings omitted")
+
+
+@env_app.command("verify")
+def verify_env_snapshot(
+    snapshot: Path = typer.Option(..., "--snapshot", help="environment-snapshot.json to verify."),
+) -> None:
+    """Verify an environment snapshot schema and version."""
+    try:
+        result = verify_environment_snapshot(snapshot)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--snapshot") from exc
+
+    console.print(f"[green]Verified environment snapshot[/green] {result.name}")
+    console.print(f"Project path: {result.project_path}")
+    console.print(f"Created at: {result.created_at.isoformat()}")
+    console.print(f"Dependency files found: {len(result.dependency_files_found)}")
+    console.print(f"Solutions: {len(result.detected_solution_files)}")
+    console.print(f"Projects: {len(result.detected_project_files)}")
+    console.print(f"Warnings: {len(result.warnings)}")
+
+
+@env_app.command("bootstrap-plan")
+def show_env_bootstrap_plan(
+    snapshot: Path = typer.Option(..., "--snapshot", help="environment-snapshot.json to render into a bootstrap plan."),
+) -> None:
+    """Render and display a recovery bootstrap plan from a snapshot."""
+    try:
+        result, plan_file, plan_text = generate_environment_bootstrap_plan(snapshot)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--snapshot") from exc
+
+    console.print(f"[green]Generated bootstrap plan[/green] {result.name}")
+    console.print(f"Plan: {plan_file}")
+    console.print("")
+    console.print(plan_text)
