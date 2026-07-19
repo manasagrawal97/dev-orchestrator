@@ -79,6 +79,7 @@ from .validation_registry import (
     registry_path,
     suggest_validation_commands,
 )
+from .validation_runner import list_validation_history, run_validation_command, terminal_excerpt
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -884,6 +885,121 @@ def suggest_project_validation_commands(
         console.print(f"[green]Wrote suggestions[/green] to {registry_path(project_name)}")
     else:
         console.print("No registry changes made. Re-run with --write to save suggestions.")
+
+
+def _print_validation_run_result(result: object) -> None:
+    record = result.record
+    status_label = record.status.value.upper()
+    console.print(f"[bold]{status_label}[/bold] validation run {record.validation_run_id}")
+    console.print(f"Project: {record.project_name}")
+    console.print(f"Run: {record.run_id or 'none'}")
+    console.print(f"Task: {record.task_id or 'none'}")
+    console.print(f"Command ID: {record.command_id}")
+    console.print(f"Command: {record.command}", soft_wrap=True)
+    console.print(f"Working directory: {record.working_dir}", soft_wrap=True)
+    console.print(f"Risk level: {record.risk_level.value}")
+    console.print(f"Approval required: {record.approval_required}")
+    console.print(f"Approval ID: {record.approval_id or 'none'}")
+    console.print(f"Status: {record.status.value}")
+    console.print(f"Exit code: {record.exit_code if record.exit_code is not None else 'none'}")
+    console.print(f"Duration seconds: {record.duration_seconds}")
+    console.print(f"Blocked reason: {record.blocked_reason or 'none'}", soft_wrap=True)
+    console.print(f"Report: {record.report_path or 'none'}")
+    console.print("Policy reasons:")
+    for reason in record.policy_reasons or ["none"]:
+        console.print(f"  - {reason}", soft_wrap=True)
+    if result.stdout_text:
+        console.print("Stdout excerpt:")
+        console.print(terminal_excerpt(result.stdout_text), soft_wrap=True)
+    if result.stderr_text:
+        console.print("Stderr excerpt:")
+        console.print(terminal_excerpt(result.stderr_text), soft_wrap=True)
+
+
+@validation_app.command("run")
+def run_project_validation_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    command_id: str = typer.Option(..., "--id", help="Registered validation command id."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional run id for linked artifacts and approvals."),
+    task_id: str | None = typer.Option(None, "--task", help="Optional task id for linked approvals."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Do not execute; show what would happen."),
+    timeout_seconds: int = typer.Option(300, "--timeout-seconds", help="Maximum execution time in seconds."),
+    allow_disabled: bool = typer.Option(False, "--allow-disabled", help="Allow disabled commands if policy and approval also allow."),
+    require_approval: bool | None = typer.Option(None, "--require-approval/--no-require-approval", help="Override approval requirement for this run."),
+    write_report: bool = typer.Option(True, "--write-report/--no-write-report", help="Write validation run artifacts."),
+) -> None:
+    """Safely run one registered validation command with policy and approval gates."""
+    try:
+        result = run_validation_command(
+            project_name=project_name,
+            command_id=command_id,
+            run_id=run_id,
+            task_id=task_id,
+            dry_run=dry_run,
+            timeout_seconds=timeout_seconds,
+            allow_disabled=allow_disabled,
+            require_approval=require_approval,
+            write_report=write_report,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--id") from exc
+    _print_validation_run_result(result)
+
+
+@validation_app.command("dry-run")
+def dry_run_project_validation_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    command_id: str = typer.Option(..., "--id", help="Registered validation command id."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional run id for linked artifacts and approvals."),
+    task_id: str | None = typer.Option(None, "--task", help="Optional task id for linked approvals."),
+    timeout_seconds: int = typer.Option(300, "--timeout-seconds", help="Maximum execution time in seconds."),
+    allow_disabled: bool = typer.Option(False, "--allow-disabled", help="Show disabled command details without execution."),
+    require_approval: bool | None = typer.Option(None, "--require-approval/--no-require-approval", help="Override approval requirement for this dry run."),
+    write_report: bool = typer.Option(True, "--write-report/--no-write-report", help="Write dry-run artifacts."),
+) -> None:
+    """Alias for validation run --dry-run."""
+    try:
+        result = run_validation_command(
+            project_name=project_name,
+            command_id=command_id,
+            run_id=run_id,
+            task_id=task_id,
+            dry_run=True,
+            timeout_seconds=timeout_seconds,
+            allow_disabled=allow_disabled,
+            require_approval=require_approval,
+            write_report=write_report,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--id") from exc
+    _print_validation_run_result(result)
+
+
+@validation_app.command("history")
+def show_validation_history(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    command_id: str | None = typer.Option(None, "--id", help="Optional validation command id filter."),
+) -> None:
+    """Show previous validation command run records."""
+    try:
+        records = list_validation_history(project_name=project_name, command_id=command_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    if not records:
+        console.print("[yellow]No validation runs found.[/yellow]")
+        return
+    console.print(f"[bold]Validation history for {project_name}[/bold]")
+    for record in records:
+        console.print(f"[bold]{record.validation_run_id}[/bold]")
+        console.print(f"  Command ID: {record.command_id}")
+        console.print(f"  Status: {record.status.value}")
+        console.print(f"  Exit code: {record.exit_code if record.exit_code is not None else 'none'}")
+        console.print(f"  Started at: {record.started_at.isoformat()}")
+        console.print(f"  Finished at: {record.finished_at.isoformat() if record.finished_at else 'none'}")
+        console.print(f"  Duration seconds: {record.duration_seconds}")
+        console.print(f"  Report: {record.report_path or 'none'}")
+        console.print(f"  Run: {record.run_id or 'none'}")
+        console.print(f"  Task: {record.task_id or 'none'}")
 @validation_app.command("status")
 def show_validation_status(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),

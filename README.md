@@ -351,9 +351,9 @@ Risk levels are `low`, `medium`, `high`, and `critical`. Low risk is allowed wit
 Policy signals include low-risk read-only inspection, prompt/report generation, docs summaries, and non-mutating workflow checks; medium-risk local source edits, workspace artifact writes, ledger mutations, and local commits; high-risk target project modification, target commands, database or migration work, scheduler changes, restore/cleanup, Git push, external folder writes such as Google Drive, and machine configuration changes; and critical destructive deletes, secret or credential handling, production database modification, force operations, or approval bypass attempts.
 
 `devo workflow next` and `devo workflow batch` use policy checks when choosing an implementation task. Low and medium tasks can still produce the normal next command, with medium warnings. High or critical tasks stop at a policy review recommendation instead of pretending they are safe to implement. Approval storage and overrides are intentionally deferred.
-## Validation Command Registry
+## Validation Command Registry And Runner
 
-The validation command registry records known project validation commands with metadata before any runner exists. It stores command id, name, command text, working directory, category, risk level, approval requirement, enabled state, source, and notes under `workspace/projects/<projectName>/validation-commands.json`.
+The validation command registry records known project validation commands with metadata before execution. It stores command id, name, command text, working directory, category, risk level, approval requirement, enabled state, source, and notes under `workspace/projects/<projectName>/validation-commands.json`.
 
 ```powershell
 devo validation list --project MyProject
@@ -363,11 +363,18 @@ devo validation show --project MyProject --id dotnet-build
 devo validation check --project MyProject --id dotnet-build
 devo validation suggest --project MyProject
 devo validation suggest --project MyProject --write
+devo validation run --project MyProject --id pytest --timeout-seconds 300
+devo validation run --project MyProject --id dotnet-build --run <runId> --task <taskId> --dry-run
+devo validation dry-run --project MyProject --id dotnet-build
+devo validation history --project MyProject
+devo validation history --project MyProject --id pytest
 ```
 
-TASK-022 does not execute validation commands. `devo validation suggest` only proposes likely commands from project metadata such as `.sln`/`.slnx`, `.csproj`, `pyproject.toml`, and `package.json`; `--write` records those suggestions in the Devo workspace registry. Execution is deferred to a future validation runner.
+`devo validation suggest` proposes likely commands from project metadata such as `.sln`/`.slnx`, `.csproj`, `pyproject.toml`, and `package.json`; `--write` records those suggestions in the Devo workspace registry. `devo validation run` only executes registered commands. It never accepts arbitrary free-form execution input outside the registry.
 
-High-risk target project validation commands, including `dotnet restore`, `dotnet build`, `dotnet test`, `npm test`, and unconstrained project test commands, are approval-required by default and are written disabled when suggested. Protected policy and approval checks still apply before any future execution.
+The validation runner uses deterministic safety gates: disabled commands are blocked unless `--allow-disabled` is supplied, critical commands are blocked, high-risk commands require matching approved approval, missing working directories fail safely, timeouts are enforced, stdout/stderr are captured, and artifacts are written under either project-level `validation-runs/` or run-linked `artifacts/validation-runs/` folders.
+
+PersonalOS commands are registered but high-risk and disabled by default. PersonalOS restore/build/test commands should be inspected with `devo validation dry-run` until the user explicitly approves a matching validation or target-command scope. The Devo approval ledger does not bypass Codex/OpenAI/OS/GitHub security policy.
 ## Environment Snapshot
 
 Environment snapshots are read-only recovery notes for a project machine setup. They record tool versions, Git branch and commit, dependency files, solution/project files, package references, recommended recovery commands, excluded heavy/cache paths, and warnings about local or sensitive settings files. They do not copy source code, dependency caches, `.venv`, `.git`, `.packages`, `.tools`, `node_modules`, build outputs, `.env` values, or local settings values.

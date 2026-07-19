@@ -347,6 +347,44 @@ class ValidationCommandCheck(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     suggested_approval_request_command: str | None = None
 
+class ValidationRunStatus(StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    DRY_RUN = "dry_run"
+    TIMED_OUT = "timed_out"
+    ERROR = "error"
+
+
+class ValidationRunRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1"
+    validation_run_id: str
+    project_name: str
+    run_id: str | None = None
+    task_id: str | None = None
+    command_id: str
+    command_name: str
+    command: str
+    working_dir: Path
+    category: ValidationCommandCategory
+    risk_level: ValidationRiskLevel
+    approval_required: bool
+    approval_id: str | None = None
+    status: ValidationRunStatus
+    exit_code: int | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    finished_at: datetime | None = None
+    duration_seconds: float | None = None
+    timeout_seconds: int = 300
+    dry_run: bool = False
+    blocked_reason: str | None = None
+    stdout_path: Path | None = None
+    stderr_path: Path | None = None
+    report_path: Path | None = None
+    policy_reasons: list[str] = Field(default_factory=list)
+
 class BackupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

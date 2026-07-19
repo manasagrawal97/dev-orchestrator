@@ -26,7 +26,7 @@ DevOrchestrator is considered 90-95% ready for PersonalOS work when it has:
 
 ## Rough Remaining Effort
 
-- Practical readiness remaining: around 12-24 focused hours.
+- Practical readiness remaining: around 8-18 focused hours.
 - Full long-term product vision: 80-150+ hours.
 
 ## Near-Term Direction
