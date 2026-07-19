@@ -32,9 +32,11 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed task: TASK-029 project/run report and handoff summary commands
-- Latest planned next task: TASK-030 end-to-end dogfood run on DevOrchestrator itself
-- Latest pushed commit at time of this document: TASK-029 project report commands commit
+- Latest completed source task: TASK-029 project/run report and handoff summary commands
+- Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
+- Current run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
+- Latest planned next task after dogfood evidence: TASK-031 resume PersonalOS through Devo with one safe real task
+- Latest pushed commit before TASK-030 docs work: `fd59e87 fix: stabilize report and context summaries`
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - No PersonalOS repo files were modified by TASK-022.
@@ -49,6 +51,8 @@ The working loop is:
 - Long-term product vision after TASK-025: around 50% complete.
 
 DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, and generate project/run/handoff reports. An end-to-end dogfood workflow is still needed before deeper PersonalOS work.
+
+TASK-030 uses DevOrchestrator's approved self-context to run one small documentation consistency task through the file-backed workflow before returning to PersonalOS.
 
 ## Completed Work
 
@@ -85,6 +89,7 @@ DevOrchestrator can execute registered low/medium validation commands with safet
 - TASK-024 Git delivery workflow
 - TASK-025 project context update / enrichment workflow
 - TASK-029 project/run report and handoff summary commands
+- TASK-030A DevOrchestrator self-onboarding as an approved Devo project
 
 ## Recovery Pointers
 
@@ -95,4 +100,5 @@ If chat context is lost, start here:
 3. Read `docs/operating-model.md`.
 4. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
 5. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-6. Continue from the latest planned next task.
+6. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+7. Continue from the latest planned next task.

@@ -20,7 +20,8 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 2. Read [docs/current-state.md](docs/current-state.md).
 3. Read [docs/roadmap.md](docs/roadmap.md).
 4. Run `powershell.exe -ExecutionPolicy Bypass -File .\scripts\recovery\check-devo-recovery-status.ps1`.
-5. Continue from the next planned task.
+5. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for the latest compact workspace state.
+6. Continue from the next planned task.
 
 ## Setup
 
@@ -434,6 +435,8 @@ devo report handoff --project MyProject --run <runId> --write
 `devo report handoff` is the concise recovery view. It includes the current state, last completed run/task signal, next action, safety constraints, commands to inspect state, key docs to read, what not to do, and deferred scope reminders.
 
 Use `--write` to store Markdown and JSON artifacts. Project and handoff reports are written under `workspace/projects/<projectName>/reports/`; run reports are written under `workspace/runs/<projectName>/<runId>/artifacts/reports/`. Report commands are read-only with respect to registered target projects and do not run validation, create approvals, push Git changes, call AI models, or modify workflow state.
+
+DevOrchestrator is now dogfooding these report and handoff commands through TASK-030 before resuming deeper PersonalOS work.
 
 ## Environment Snapshot
 

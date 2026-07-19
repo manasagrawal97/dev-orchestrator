@@ -2,7 +2,7 @@
 
 ## Immediate Planned Tasks
 
-- TASK-030 end-to-end dogfood run on DevOrchestrator itself
+- TASK-030 end-to-end dogfood run on DevOrchestrator itself - current
 - TASK-031 resume PersonalOS through Devo with one safe real task
 - TASK-032 improve docs/current-state/project memory handling
 
@@ -45,7 +45,7 @@ Added deterministic project, run, and handoff reports. Devo now summarizes proje
 
 ### TASK-030 End-To-End Dogfood Run
 
-Run DevOrchestrator on itself using its own workflows. The goal is to prove the control plane before relying on it for deeper PersonalOS work.
+Run DevOrchestrator on itself using its own workflows. The goal is to prove the control plane before relying on it for deeper PersonalOS work. The dogfood target should stay small and safe, with report/handoff artifacts used as the recovery trail.
 
 ### TASK-031 Resume PersonalOS Through Devo
 
