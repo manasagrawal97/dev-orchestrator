@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import subprocess
@@ -72,6 +72,15 @@ def test_handoff_report_includes_inspection_commands(tmp_path: Path, monkeypatch
     assert "devo report project --project sample" in result.output
     assert "devo report run --project sample --run run-1" in result.output
     assert "Do not modify registered target projects" in result.output
+
+
+def test_report_text_preserves_sensitive_placeholder_markup(tmp_path: Path, monkeypatch) -> None:
+    _write_workspace(tmp_path, monkeypatch, with_run=True, approved=True)
+
+    result = runner.invoke(app, ["report", "handoff", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Do not expose [sensitive]s or local settings values" in result.output
 
 
 def test_project_report_write_creates_markdown_and_json(tmp_path: Path, monkeypatch) -> None:
@@ -452,5 +461,3 @@ def _project(tmp_path: Path) -> Path:
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
-
-

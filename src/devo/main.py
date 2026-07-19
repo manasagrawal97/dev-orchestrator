@@ -414,7 +414,7 @@ def _print_report(report: dict[str, object], output_format: str, write: bool, pr
     if normalized == "json":
         typer.echo(json.dumps(report, indent=2, default=str))
     elif normalized == "text":
-        console.print(render_report_markdown(report))
+        console.print(render_report_markdown(report), markup=False)
     else:
         raise typer.BadParameter("Unsupported format. Use text or json.", param_hint="--format")
     if write:
