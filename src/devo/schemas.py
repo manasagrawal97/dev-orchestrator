@@ -385,6 +385,79 @@ class ValidationRunRecord(BaseModel):
     report_path: Path | None = None
     policy_reasons: list[str] = Field(default_factory=list)
 
+class GitFileState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    status: str
+
+
+class GitSecretSignal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    signal_type: str
+
+
+class GitDeliveryReadiness(StrEnum):
+    READY = "ready"
+    WARNING = "warning"
+    BLOCKED = "blocked"
+
+
+class GitRepositoryStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    repo_path: Path
+    is_git_repo: bool
+    current_branch: str | None = None
+    head_commit: str | None = None
+    upstream_branch: str | None = None
+    remote_detected: bool = False
+    ahead: int | None = None
+    behind: int | None = None
+    working_tree_clean: bool = True
+    staged_files: list[GitFileState] = Field(default_factory=list)
+    unstaged_files: list[GitFileState] = Field(default_factory=list)
+    untracked_files: list[GitFileState] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GitDeliveryCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    repo_path: Path
+    run_id: str | None = None
+    task_id: str | None = None
+    status: GitRepositoryStatus
+    readiness: GitDeliveryReadiness
+    checks_performed: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    forbidden_files: list[str] = Field(default_factory=list)
+    secret_signals: list[GitSecretSignal] = Field(default_factory=list)
+    validation_evidence: list[str] = Field(default_factory=list)
+    approval_evidence: list[str] = Field(default_factory=list)
+    suggested_commit_command: str | None = None
+    suggested_push_command: str | None = None
+    next_human_action: str
+
+
+class GitDeliveryReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    repo_path: Path
+    run_id: str | None = None
+    task_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    markdown_path: Path
+    json_path: Path
+    requested_commit_message: str | None = None
+    delivery_check: GitDeliveryCheck
+
 class BackupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

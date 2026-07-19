@@ -20,6 +20,11 @@ from .environment import (
     generate_environment_bootstrap_plan,
     verify_environment_snapshot,
 )
+from .git_delivery import (
+    create_delivery_report,
+    get_git_repository_status,
+    run_delivery_check,
+)
 from .agents import (
     DISCOVERY_AGENT_NAME,
     REVIEWER_AGENT_NAME,
@@ -96,6 +101,7 @@ approval_app = typer.Typer(help='Record and inspect Devo approval requests.')
 backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
+git_app = typer.Typer(help="Inspect Git delivery readiness without mutating repositories.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -109,6 +115,7 @@ app.add_typer(approval_app, name='approval')
 app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
+app.add_typer(git_app, name="git")
 console = Console()
 
 
@@ -273,6 +280,117 @@ def _named_path(path: object | None) -> str:
     path_text = str(path)
     return f"{Path(path_text).name} ({path_text})"
 
+
+def _print_git_repository_status(status: object) -> None:
+    console.print(f"[bold]{status.project_name}[/bold]")
+    console.print(f"  Repo path: {status.repo_path}", soft_wrap=True)
+    console.print(f"  Branch: {status.current_branch or 'unknown'}")
+    console.print(f"  HEAD: {status.head_commit or 'unknown'}")
+    console.print(f"  Upstream: {status.upstream_branch or 'none'}")
+    console.print(f"  Ahead: {status.ahead if status.ahead is not None else 'unknown'}")
+    console.print(f"  Behind: {status.behind if status.behind is not None else 'unknown'}")
+    console.print(f"  Remote detected: {status.remote_detected}")
+    console.print(f"  Working tree clean: {status.working_tree_clean}")
+    _print_git_file_group("Staged files", status.staged_files)
+    _print_git_file_group("Unstaged files", status.unstaged_files)
+    _print_git_file_group("Untracked files", status.untracked_files)
+    if status.warnings:
+        console.print("  Warnings:")
+        for warning in status.warnings:
+            console.print(f"    - {warning}", soft_wrap=True)
+
+
+def _print_git_file_group(label: str, files: object) -> None:
+    console.print(f"  {label}:")
+    if not files:
+        console.print("    none")
+        return
+    for item in files:
+        console.print(f"    - {item.path} ({item.status})", soft_wrap=True)
+
+
+def _print_git_delivery_check(check: object) -> None:
+    _print_git_repository_status(check.status)
+    console.print(f"  Delivery readiness: {check.readiness.value}")
+    console.print("  Checks performed:")
+    for item in check.checks_performed:
+        console.print(f"    - {item}", soft_wrap=True)
+    console.print("  Blockers:")
+    if check.blockers:
+        for blocker in check.blockers:
+            console.print(f"    - {blocker}", soft_wrap=True)
+    else:
+        console.print("    none")
+    console.print("  Warnings:")
+    if check.warnings:
+        for warning in check.warnings:
+            console.print(f"    - {warning}", soft_wrap=True)
+    else:
+        console.print("    none")
+    console.print("  Secret signals:")
+    if check.secret_signals:
+        for signal in check.secret_signals:
+            console.print(f"    - {signal.path}: {signal.signal_type}", soft_wrap=True)
+    else:
+        console.print("    none")
+    console.print("  Validation evidence:")
+    if check.validation_evidence:
+        for evidence in check.validation_evidence:
+            console.print(f"    - {evidence}", soft_wrap=True)
+    else:
+        console.print("    none")
+    console.print("  Approval evidence:")
+    if check.approval_evidence:
+        for evidence in check.approval_evidence:
+            console.print(f"    - {evidence}", soft_wrap=True)
+    else:
+        console.print("    none")
+    console.print(f"  Suggested commit command: {check.suggested_commit_command or 'none'}", soft_wrap=True)
+    console.print(f"  Suggested push command: {check.suggested_push_command or 'none'}", soft_wrap=True)
+    console.print(f"  Next human action: {check.next_human_action}", soft_wrap=True)
+
+
+@git_app.command("status")
+def show_git_status(project_name: str = typer.Option(..., "--project", help="Registered project name.")) -> None:
+    """Show read-only Git status for a registered project."""
+    try:
+        status = get_git_repository_status(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_git_repository_status(status)
+
+
+@git_app.command("delivery-check")
+def check_git_delivery(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional run ID for validation/approval evidence."),
+    task_id: str | None = typer.Option(None, "--task", help="Optional task ID for validation/approval evidence."),
+) -> None:
+    """Run non-mutating Git delivery readiness checks."""
+    try:
+        check = run_delivery_check(project_name=project_name, run_id=run_id, task_id=task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_git_delivery_check(check)
+
+
+@git_app.command("delivery-report")
+def write_git_delivery_report(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional run ID."),
+    task_id: str | None = typer.Option(None, "--task", help="Optional task ID."),
+    message: str | None = typer.Option(None, "--message", help="Optional suggested commit message."),
+) -> None:
+    """Write a Git delivery report artifact without committing or pushing."""
+    try:
+        report = create_delivery_report(project_name=project_name, run_id=run_id, task_id=task_id, commit_message=message)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Created Git delivery report[/green] for {report.project_name}")
+    console.print(f"Readiness: {report.delivery_check.readiness.value}")
+    console.print(f"Markdown: {_named_path(report.markdown_path)}")
+    console.print(f"JSON: {_named_path(report.json_path)}")
+    console.print(f"Next human action: {report.delivery_check.next_human_action}", soft_wrap=True)
 
 @app.callback()
 def main() -> None:

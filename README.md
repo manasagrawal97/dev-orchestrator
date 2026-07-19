@@ -375,6 +375,25 @@ devo validation history --project MyProject --id pytest
 The validation runner uses deterministic safety gates: disabled commands are blocked unless `--allow-disabled` is supplied, critical commands are blocked, high-risk commands require matching approved approval, missing working directories fail safely, timeouts are enforced, stdout/stderr are captured, and artifacts are written under either project-level `validation-runs/` or run-linked `artifacts/validation-runs/` folders.
 
 PersonalOS commands are registered but high-risk and disabled by default. PersonalOS restore/build/test commands should be inspected with `devo validation dry-run` until the user explicitly approves a matching validation or target-command scope. The Devo approval ledger does not bypass Codex/OpenAI/OS/GitHub security policy.
+## Git Delivery
+
+Git delivery commands inspect registered project repositories without staging, committing, pushing, or modifying target files.
+
+```powershell
+devo git status --project MyProject
+devo git delivery-check --project MyProject
+devo git delivery-check --project MyProject --run <runId> --task <taskId>
+devo git delivery-report --project MyProject --message "feat: describe delivered work"
+devo git delivery-report --project MyProject --run <runId> --task <taskId> --message "feat: describe delivered work"
+```
+
+`devo git status` shows the branch, HEAD commit, upstream, ahead/behind counts when available, clean/dirty state, staged files, unstaged files, untracked files, and warnings.
+
+`devo git delivery-check` performs deterministic readiness checks. It detects staged forbidden paths such as `.env`, key files, `workspace/`, backup folders, `.venv/`, `node_modules/`, `.pytest_cache/`, `__pycache__/`, `bin/`, `obj/`, and `.packages/`. It scans changed text files for conservative secret-like signals such as `OPENAI_API_KEY`, `API_KEY=`, `SECRET=`, `PASSWORD=`, `TOKEN=`, `PRIVATE KEY`, and connection strings with passwords. Secret values are never printed; only the path and signal type are reported. It also runs `git diff --check`, summarizes validation evidence when a run/task is supplied, and notes Devo approval evidence for `git_commit` and `git_push` when available.
+
+`devo git delivery-report` writes Markdown and JSON reports under `workspace/projects/<projectName>/git-delivery/` or, when a run is supplied, under `workspace/runs/<projectName>/<runId>/artifacts/git-delivery/`. Reports include readiness (`ready`, `warning`, or `blocked`), changed-file summaries, blockers, warnings, validation/approval evidence, suggested commit guidance, suggested push guidance when the branch is ahead, and the exact next human action.
+
+DevOrchestrator does not auto-push and does not bypass external approval policies. If push is blocked by Codex approval policy, the user must run `git push` manually after reviewing the delivery report.
 ## Environment Snapshot
 
 Environment snapshots are read-only recovery notes for a project machine setup. They record tool versions, Git branch and commit, dependency files, solution/project files, package references, recommended recovery commands, excluded heavy/cache paths, and warnings about local or sensitive settings files. They do not copy source code, dependency caches, `.venv`, `.git`, `.packages`, `.tools`, `node_modules`, build outputs, `.env` values, or local settings values.

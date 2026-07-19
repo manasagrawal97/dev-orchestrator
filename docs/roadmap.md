@@ -1,10 +1,7 @@
-# DevOrchestrator Roadmap
+﻿# DevOrchestrator Roadmap
 
 ## Immediate Planned Tasks
 
-- TASK-022A persist project state, roadmap, and deferred scope
-- TASK-023 safe validation runner
-- TASK-024 Git delivery workflow
 - TASK-025 project context update / enrichment workflow
 - TASK-029 run/report summary command
 - TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -35,9 +32,9 @@ DevOrchestrator is considered 90-95% ready for PersonalOS work when it has:
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.
 
-### TASK-024 Git Delivery Workflow
+### TASK-024 Git Delivery Workflow - Completed
 
-Record and inspect Git delivery status for implementation tasks: local commit hash, branch, remote status, push result, and whether the delivered code matches reported evidence. This should not force-push or bypass approval policy.
+Added non-mutating Git status, delivery-check, and delivery-report commands. Devo now reports branch/upstream state, changed files, forbidden staged paths, secret-like changed-file signals, validation evidence, approval evidence, and exact manual commit/push guidance without force-pushing or bypassing approval policy.
 
 ### TASK-025 Project Context Update / Enrichment Workflow
 
