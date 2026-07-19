@@ -32,22 +32,23 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed task: TASK-025 project context update / enrichment workflow
-- Latest planned next task: TASK-029 run/report summary command
-- Latest pushed commit at time of this document: TASK-025 project context update workflow commit
+- Latest completed task: TASK-029 project/run report and handoff summary commands
+- Latest planned next task: TASK-030 end-to-end dogfood run on DevOrchestrator itself
+- Latest pushed commit at time of this document: TASK-029 project report commands commit
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - No PersonalOS repo files were modified by TASK-022.
 - TASK-023 added controlled validation execution, but PersonalOS validation/build/test/restore commands remain dry-run only unless explicitly approved.
 - TASK-024 added non-mutating Git status, delivery-check, and delivery-report commands with risky-file and secret-signal checks.
 - TASK-025 added deterministic context-summary, context-refresh, context-apply, and context-history commands for append-only project context updates.
+- TASK-029 added deterministic project, run, and handoff reports for context recovery and work transfer.
 
 ## Readiness Estimate
 
 - Practical ready-before-PersonalOS-work target after TASK-025: around 88-92% complete.
 - Long-term product vision after TASK-025: around 50% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates and can dry-run high-risk target commands. Run/report summary and end-to-end dogfood workflows are still needed before deeper PersonalOS work.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, and generate project/run/handoff reports. An end-to-end dogfood workflow is still needed before deeper PersonalOS work.
 
 ## Completed Work
 
@@ -83,6 +84,7 @@ DevOrchestrator can execute registered low/medium validation commands with safet
 - TASK-023 safe validation runner
 - TASK-024 Git delivery workflow
 - TASK-025 project context update / enrichment workflow
+- TASK-029 project/run report and handoff summary commands
 
 ## Recovery Pointers
 
@@ -92,4 +94,5 @@ If chat context is lost, start here:
 2. Read `docs/roadmap.md`.
 3. Read `docs/operating-model.md`.
 4. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-5. Continue from the latest planned next task.
+5. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+6. Continue from the latest planned next task.

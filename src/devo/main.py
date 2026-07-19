@@ -43,6 +43,13 @@ from .context_updates import (
     refresh_project_context,
     render_context_update_markdown,
 )
+from .reports import (
+    build_handoff_report,
+    build_project_report,
+    build_run_report,
+    render_report_markdown,
+    write_report_artifacts,
+)
 from .projects import get_workspace_root, list_projects, register_project
 from .policy import (
     PolicyCheckResult,
@@ -109,6 +116,7 @@ backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
 git_app = typer.Typer(help="Inspect Git delivery readiness without mutating repositories.")
+report_app = typer.Typer(help="Generate deterministic project, run, and handoff reports.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -123,6 +131,7 @@ app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(git_app, name="git")
+app.add_typer(report_app, name="report")
 console = Console()
 
 
@@ -398,6 +407,69 @@ def write_git_delivery_report(
     console.print(f"Markdown: {_named_path(report.markdown_path)}")
     console.print(f"JSON: {_named_path(report.json_path)}")
     console.print(f"Next human action: {report.delivery_check.next_human_action}", soft_wrap=True)
+
+
+def _print_report(report: dict[str, object], output_format: str, write: bool, project_name: str, run_id: str | None = None) -> None:
+    normalized = output_format.strip().lower()
+    if normalized == "json":
+        typer.echo(json.dumps(report, indent=2, default=str))
+    elif normalized == "text":
+        console.print(render_report_markdown(report))
+    else:
+        raise typer.BadParameter("Unsupported format. Use text or json.", param_hint="--format")
+    if write:
+        md_path, json_path = write_report_artifacts(report, project_name=project_name, run_id=run_id)
+        console.print(f"[green]Wrote report[/green] {Path(md_path).name}")
+        console.print(f"Markdown: {_named_path(md_path)}")
+        console.print(f"JSON: {_named_path(json_path)}")
+
+
+@report_app.command("project")
+def report_project(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    write: bool = typer.Option(False, "--write", help="Write Markdown and JSON report artifacts."),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+    limit: int = typer.Option(5, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """Generate a deterministic project-level report."""
+    try:
+        report = build_project_report(project_name, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_report(report, output_format=output_format, write=write, project_name=project_name)
+
+
+@report_app.command("run")
+def report_run(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    write: bool = typer.Option(False, "--write", help="Write Markdown and JSON report artifacts."),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+    limit: int = typer.Option(5, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """Generate a deterministic run-level report."""
+    try:
+        report = build_run_report(project_name, run_id, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_report(report, output_format=output_format, write=write, project_name=project_name, run_id=run_id)
+
+
+@report_app.command("handoff")
+def report_handoff(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional run ID."),
+    write: bool = typer.Option(False, "--write", help="Write Markdown and JSON handoff artifacts."),
+    output_format: str = typer.Option("text", "--format", help="Output format: text or json."),
+    limit: int = typer.Option(5, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """Generate a concise handoff report for context recovery."""
+    try:
+        report = build_handoff_report(project_name, run_id=run_id, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_report(report, output_format=output_format, write=write, project_name=project_name)
+
 
 @app.callback()
 def main() -> None:

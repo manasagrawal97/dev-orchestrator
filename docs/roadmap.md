@@ -2,7 +2,6 @@
 
 ## Immediate Planned Tasks
 
-- TASK-029 run/report summary command
 - TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - TASK-031 resume PersonalOS through Devo with one safe real task
 - TASK-032 improve docs/current-state/project memory handling
@@ -18,6 +17,7 @@ DevOrchestrator is considered 90-95% ready for PersonalOS work when it has:
 - safe validation runner
 - git delivery workflow
 - context update workflow
+- project/run/handoff report commands
 - one end-to-end dogfood run
 
 ## Rough Remaining Effort
@@ -39,9 +39,9 @@ Added non-mutating Git status, delivery-check, and delivery-report commands. Dev
 
 Added deterministic context-summary, context-refresh, context-apply, and context-history commands. Context updates are append-only Devo workspace records sourced from scans, validation metadata, environment snapshots, runs, delivery reports, and approval ledgers; they do not modify target repositories or overwrite approved context automatically.
 
-### TASK-029 Run/Report Summary Command
+### TASK-029 Project/Run Report And Handoff Summary Commands - Completed
 
-Create a concise command that summarizes a run, task state, validation registry state, approvals, artifacts, and recommended next action.
+Added deterministic project, run, and handoff reports. Devo now summarizes project context, recent runs, workflow next actions, task resolution, policy/approval/validation/git-delivery evidence, warnings, suggested actions, and recovery handoff commands without mutating target projects or workflow state.
 
 ### TASK-030 End-To-End Dogfood Run
 

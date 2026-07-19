@@ -413,6 +413,28 @@ devo git delivery-report --project MyProject --run <runId> --task <taskId> --mes
 `devo git delivery-report` writes Markdown and JSON reports under `workspace/projects/<projectName>/git-delivery/` or, when a run is supplied, under `workspace/runs/<projectName>/<runId>/artifacts/git-delivery/`. Reports include readiness (`ready`, `warning`, or `blocked`), changed-file summaries, blockers, warnings, validation/approval evidence, suggested commit guidance, suggested push guidance when the branch is ahead, and the exact next human action.
 
 DevOrchestrator does not auto-push and does not bypass external approval policies. If push is blocked by Codex approval policy, the user must run `git push` manually after reviewing the delivery report.
+
+## Reports And Handoff
+
+Deterministic reports collect the current Devo workspace state into compact summaries. They are useful when context is lost, after a long interruption, or before handing work from ChatGPT to Codex or a human.
+
+```powershell
+devo report project --project MyProject
+devo report project --project MyProject --write
+devo report run --project MyProject --run <runId>
+devo report run --project MyProject --run <runId> --write --format json
+devo report handoff --project MyProject
+devo report handoff --project MyProject --run <runId> --write
+```
+
+`devo report project` summarizes registered project metadata, Git repository state when available, context approval/update state, recent runs, validation records, approval records, Git delivery reports, warnings, and suggested next actions.
+
+`devo report run` summarizes one run: run state, workflow next-action guidance, task selection, task resolution, policy and approval evidence, validation evidence, Git delivery evidence, context updates, blockers, and suggested next human or Codex action.
+
+`devo report handoff` is the concise recovery view. It includes the current state, last completed run/task signal, next action, safety constraints, commands to inspect state, key docs to read, what not to do, and deferred scope reminders.
+
+Use `--write` to store Markdown and JSON artifacts. Project and handoff reports are written under `workspace/projects/<projectName>/reports/`; run reports are written under `workspace/runs/<projectName>/<runId>/artifacts/reports/`. Report commands are read-only with respect to registered target projects and do not run validation, create approvals, push Git changes, call AI models, or modify workflow state.
+
 ## Environment Snapshot
 
 Environment snapshots are read-only recovery notes for a project machine setup. They record tool versions, Git branch and commit, dependency files, solution/project files, package references, recommended recovery commands, excluded heavy/cache paths, and warnings about local or sensitive settings files. They do not copy source code, dependency caches, `.venv`, `.git`, `.packages`, `.tools`, `node_modules`, build outputs, `.env` values, or local settings values.

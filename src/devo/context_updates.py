@@ -483,3 +483,8 @@ def _dedupe(items: Iterable[str]) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def sanitize_summary_items(items: Iterable[str]) -> list[str]:
+    """Return report-safe summary lines with local/sensitive details omitted."""
+    return _sanitize_list(items)
