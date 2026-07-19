@@ -342,7 +342,7 @@ def _environment_summary(snapshot_path: Path) -> list[str]:
     ]
     if snapshot.warnings:
         lines.extend(f"Environment warning classification: {warning}" for warning in snapshot.warnings[:MAX_ITEMS])
-    return lines
+    return _sanitize_list(lines)
 
 
 def _recent_run_summaries(project_name: str, root: Path, run_id: str | None) -> list[str]:
@@ -393,7 +393,7 @@ def _git_delivery_summary(root: Path, project_name: str, run_id: str | None) -> 
         lines.append(
             f"{path.name}: readiness={check.get('readiness', 'unknown')}, branch={status.get('current_branch', 'unknown')}, ahead={status.get('ahead', 'unknown')}, behind={status.get('behind', 'unknown')}."
         )
-    return lines
+    return _sanitize_list(lines)
 
 
 def _approvals_summary(root: Path, project_name: str, run_id: str | None) -> list[str]:
@@ -414,7 +414,7 @@ def _approvals_summary(root: Path, project_name: str, run_id: str | None) -> lis
             status = str(record.get("status", "unknown")) if isinstance(record, dict) else "unknown"
             counts[status] = counts.get(status, 0) + 1
         lines.append(f"{path.name}: approvals={len(approvals) if isinstance(approvals, dict) else 0}, statuses={_format_counts(counts)}.")
-    return lines
+    return _sanitize_list(lines)
 
 
 def _recommended_actions(project_name: str, has_scan: bool, has_registry: bool, has_env: bool) -> list[str]:
