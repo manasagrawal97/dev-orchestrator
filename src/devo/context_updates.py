@@ -31,7 +31,7 @@ CONTEXT_UPDATE_DIR = "context-updates"
 CONTEXT_UPDATE_LEDGER = "context-updates-ledger.json"
 CONTEXT_UPDATE_SCHEMA_VERSION = "1"
 MAX_ITEMS = 8
-SENSITIVE_RE = re.compile(r"(secret|password|token|api[_-]?key|private key|connectionstring|connection string|settings\.local)", re.IGNORECASE)
+SENSITIVE_RE = re.compile(r"(secret|password|token|api[_-]?key|private key|connectionstring|connection string|settings\.local|appsettings\.development|\.user|\.local)", re.IGNORECASE)
 
 
 def get_project_context_summary(project_name: str, workspace_root: Path | None = None) -> dict[str, Any]:
@@ -464,7 +464,8 @@ def _sanitize_list(items: Iterable[str]) -> list[str]:
     for item in items:
         text = str(item)
         if SENSITIVE_RE.search(text):
-            if "settings.local" in text.lower():
+            lowered = text.lower()
+            if any(signal in lowered for signal in ("settings.local", "appsettings.development", ".user", ".local")):
                 sanitized.append("Local/sensitive settings artifact detected; path/value details omitted.")
             else:
                 sanitized.append(SENSITIVE_RE.sub("[sensitive]", text))
