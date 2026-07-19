@@ -1,8 +1,7 @@
-﻿# DevOrchestrator Roadmap
+# DevOrchestrator Roadmap
 
 ## Immediate Planned Tasks
 
-- TASK-025 project context update / enrichment workflow
 - TASK-029 run/report summary command
 - TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - TASK-031 resume PersonalOS through Devo with one safe real task
@@ -36,9 +35,9 @@ Add controlled execution for registered validation commands. It should require p
 
 Added non-mutating Git status, delivery-check, and delivery-report commands. Devo now reports branch/upstream state, changed files, forbidden staged paths, secret-like changed-file signals, validation evidence, approval evidence, and exact manual commit/push guidance without force-pushing or bypassing approval policy.
 
-### TASK-025 Project Context Update / Enrichment Workflow
+### TASK-025 Project Context Update / Enrichment Workflow - Completed
 
-Support updating approved project context artifacts from safe enrichment runs without modifying target project source. This is needed for PersonalOS context enrichment findings.
+Added deterministic context-summary, context-refresh, context-apply, and context-history commands. Context updates are append-only Devo workspace records sourced from scans, validation metadata, environment snapshots, runs, delivery reports, and approval ledgers; they do not modify target repositories or overwrite approved context automatically.
 
 ### TASK-029 Run/Report Summary Command
 

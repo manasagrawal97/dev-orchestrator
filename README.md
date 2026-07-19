@@ -375,6 +375,25 @@ devo validation history --project MyProject --id pytest
 The validation runner uses deterministic safety gates: disabled commands are blocked unless `--allow-disabled` is supplied, critical commands are blocked, high-risk commands require matching approved approval, missing working directories fail safely, timeouts are enforced, stdout/stderr are captured, and artifacts are written under either project-level `validation-runs/` or run-linked `artifacts/validation-runs/` folders.
 
 PersonalOS commands are registered but high-risk and disabled by default. PersonalOS restore/build/test commands should be inspected with `devo validation dry-run` until the user explicitly approves a matching validation or target-command scope. The Devo approval ledger does not bypass Codex/OpenAI/OS/GitHub security policy.
+## Project Context Updates
+
+Project context updates keep Devo workspace knowledge fresh after scans, completed runs, validation registry changes, environment snapshots, delivery reports, and approval ledger changes. They are deterministic summaries of existing Devo artifacts only: DevOrchestrator does not call AI, does not modify target projects, and does not overwrite approved baseline context automatically.
+
+```powershell
+devo project context-summary MyProject
+devo project context-refresh --project MyProject
+devo project context-refresh --project MyProject --run <runId> --write-draft
+devo project context-apply --project MyProject --file E:\path\to\context-update.json
+devo project context-history --project MyProject
+```
+
+`devo project context-summary` shows the registered path, lifecycle status, approved context artifacts when present, latest scan summary, validation registry summary, environment snapshot summary, recent run statuses, warnings, and the suggested next context action.
+
+`devo project context-refresh` reads only Devo workspace metadata such as `project.json`, `scan-result.json`, approved context paths, `validation-commands.json`, environment snapshots, recent run summaries, workflow batch reports, validation run records, git delivery reports, and approval ledgers. By default it prints a non-mutating summary. With `--write-draft`, it writes `context-update-YYYYMMDD-HHMMSS.md` and `.json` under `workspace/projects/<projectName>/context-updates/` and records the draft in `context-updates-ledger.json`.
+
+`devo project context-apply` accepts only generated context-refresh JSON files. Applying a reviewed draft appends an applied record to the context update ledger and records `latest_context_update_at` and `latest_context_update_file` in Devo context metadata. If baseline context is already approved, it stays approved; the update is stored separately. If context is not approved, Devo records the update but does not pretend it is approved baseline context.
+
+Context updates use `facts_added` and `facts_changed` only for deterministic facts already present in Devo artifacts. Missing data becomes warnings instead of invented facts, and secret-like or local sensitive values are omitted or classified rather than copied.
 ## Git Delivery
 
 Git delivery commands inspect registered project repositories without staging, committing, pushing, or modifying target files.

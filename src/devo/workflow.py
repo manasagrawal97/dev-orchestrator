@@ -237,7 +237,7 @@ def get_next_workflow_action(project_name: str, run_id: str, workspace_root: Pat
         return WorkflowAction(
             action_type="none",
             current_status=status.value,
-            reason="Run is already closed; no next workflow action is available.",
+            reason=f"Run is already closed; no next workflow action is available. Consider `devo project context-refresh --project {run_state.project_name} --run {run_state.run_id} --write-draft` if this run changed durable project context.",
             warnings=warnings,
         )
 

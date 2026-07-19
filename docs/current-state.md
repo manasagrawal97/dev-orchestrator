@@ -32,21 +32,22 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed task: TASK-024 Git delivery workflow
-- Latest planned next task: TASK-025 project context update / enrichment workflow
-- Latest pushed commit at time of this document: TASK-024 Git delivery workflow commit
+- Latest completed task: TASK-025 project context update / enrichment workflow
+- Latest planned next task: TASK-029 run/report summary command
+- Latest pushed commit at time of this document: TASK-025 project context update workflow commit
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - No PersonalOS repo files were modified by TASK-022.
 - TASK-023 added controlled validation execution, but PersonalOS validation/build/test/restore commands remain dry-run only unless explicitly approved.
 - TASK-024 added non-mutating Git status, delivery-check, and delivery-report commands with risky-file and secret-signal checks.
+- TASK-025 added deterministic context-summary, context-refresh, context-apply, and context-history commands for append-only project context updates.
 
 ## Readiness Estimate
 
-- Practical ready-before-PersonalOS-work target after TASK-024: around 85-90% complete.
-- Long-term product vision after TASK-024: around 48% complete.
+- Practical ready-before-PersonalOS-work target after TASK-025: around 88-92% complete.
+- Long-term product vision after TASK-025: around 50% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates and can dry-run high-risk target commands. Context update workflows are still needed before deeper PersonalOS work.
+DevOrchestrator can execute registered low/medium validation commands with safety gates and can dry-run high-risk target commands. Run/report summary and end-to-end dogfood workflows are still needed before deeper PersonalOS work.
 
 ## Completed Work
 
@@ -81,6 +82,7 @@ DevOrchestrator can execute registered low/medium validation commands with safet
 - TASK-022 validation command registry
 - TASK-023 safe validation runner
 - TASK-024 Git delivery workflow
+- TASK-025 project context update / enrichment workflow
 
 ## Recovery Pointers
 

@@ -36,6 +36,13 @@ from .agents import (
     render_agent_definition,
 )
 from .context import approve_context, get_context_status, import_agent_output
+from .context_updates import (
+    apply_context_update,
+    get_project_context_summary,
+    list_context_updates,
+    refresh_project_context,
+    render_context_update_markdown,
+)
 from .projects import get_workspace_root, list_projects, register_project
 from .policy import (
     PolicyCheckResult,
@@ -468,6 +475,112 @@ def show_context_status(project_name: str = typer.Argument(..., help="Registered
     console.print(f"  Approval status: {status['approval_status'] or 'none'}")
 
 
+
+@project_app.command("context-summary")
+def show_project_context_summary(
+    project_name: str = typer.Argument(None, help="Registered project name."),
+    project_option: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show current known context state for a registered project."""
+    name = project_option or project_name
+    if not name:
+        raise typer.BadParameter("Project name is required as an argument or --project.", param_hint="projectName")
+    try:
+        summary = get_project_context_summary(name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_context_summary(summary)
+
+
+@project_app.command("context-refresh")
+def refresh_project_context_command(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional source run ID."),
+    write_draft: bool = typer.Option(False, "--write-draft", help="Write context update draft artifacts."),
+) -> None:
+    """Build a deterministic context refresh summary from Devo workspace artifacts."""
+    try:
+        update, md_path, json_path = refresh_project_context(project_name, run_id=run_id, write_draft=write_draft)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    if write_draft:
+        console.print(f"[green]Wrote context update draft[/green] {update.update_id}")
+        console.print(f"Markdown: {_named_path(md_path)}")
+        console.print(f"JSON: {_named_path(json_path)}")
+    else:
+        console.print(render_context_update_markdown(update))
+
+
+@project_app.command("context-apply")
+def apply_project_context_update(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    file_path: Path = typer.Option(..., "--file", help="Generated context update JSON file."),
+) -> None:
+    """Apply a reviewed generated context update into Devo workspace metadata."""
+    try:
+        update = apply_context_update(project_name, file_path)
+    except ValueError as exc:
+        console.print(f"[red]Context update apply failed:[/red] {exc}", soft_wrap=True)
+        raise typer.Exit(1) from exc
+    console.print(f"[green]Applied context update[/green] {update.update_id}")
+    console.print(f"Project: {update.project_name}")
+    console.print(f"Status: {update.status.value}")
+    console.print(f"Applied at: {update.applied_at.isoformat() if update.applied_at else 'none'}")
+    console.print(f"JSON: {_named_path(update.json_path)}")
+    if update.warnings:
+        console.print("Warnings:")
+        for warning in update.warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+
+
+@project_app.command("context-history")
+def show_project_context_history(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+) -> None:
+    """List generated and applied context updates for a project."""
+    try:
+        ledger = list_context_updates(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Context updates for {ledger.project_name}[/bold]")
+    if not ledger.updates:
+        console.print("  none")
+        return
+    for update in ledger.updates:
+        summary = update.facts_added[0] if update.facts_added else "none"
+        console.print(f"[bold]{update.update_id}[/bold]")
+        console.print(f"  Created at: {update.created_at.isoformat()}")
+        console.print(f"  Source run: {update.source_run_id or 'none'}")
+        console.print(f"  Status: {update.status.value}")
+        console.print(f"  Path: {_named_path(update.json_path or update.markdown_path)}")
+        console.print(f"  Summary: {summary}", soft_wrap=True)
+        console.print(f"  Warnings: {'; '.join(update.warnings) if update.warnings else 'none'}", soft_wrap=True)
+
+
+def _print_context_summary(summary: dict[str, object]) -> None:
+    console.print(f"[bold]{summary['project_name']}[/bold]")
+    console.print(f"  Project path: {summary['project_path']}", soft_wrap=True)
+    console.print(f"  Context status: {summary['context_status']}")
+    console.print("  Approved context paths:")
+    for path in summary["approved_context_paths"] or ["none"]:
+        console.print(f"    - {path}", soft_wrap=True)
+    console.print("  Last scan result:")
+    for item in summary["last_scan_result"] or ["none"]:
+        console.print(f"    - {item}", soft_wrap=True)
+    console.print("  Environment snapshot:")
+    for item in summary["environment_snapshot"] or ["none"]:
+        console.print(f"    - {item}", soft_wrap=True)
+    console.print("  Validation registry:")
+    for item in summary["validation_registry"] or ["none"]:
+        console.print(f"    - {item}", soft_wrap=True)
+    console.print("  Recent runs:")
+    for item in summary["recent_runs"] or ["none"]:
+        console.print(f"    - {item}", soft_wrap=True)
+    console.print(f"  Latest context update: {summary['latest_context_update_file'] or 'none'}")
+    console.print("  Warnings:")
+    for warning in summary["warnings"] or ["none"]:
+        console.print(f"    - {warning}", soft_wrap=True)
+    console.print(f"  Suggested next context action: {summary['suggested_next_context_action']}", soft_wrap=True)
 @project_app.command("approve-context")
 def approve_project_context(project_name: str = typer.Argument(..., help="Registered project name.")) -> None:
     """Approve imported project context after discovery and review."""

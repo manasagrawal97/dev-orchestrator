@@ -134,6 +134,48 @@ class ContextState(BaseModel):
     review_artifact: ImportedAgentArtifact | None = None
     approved_at: datetime | None = None
     approved_by: str | None = None
+    latest_context_update_at: datetime | None = None
+    latest_context_update_file: Path | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+
+class ContextUpdateStatus(StrEnum):
+    DRAFT = "draft"
+    APPLIED = "applied"
+
+
+class ProjectContextUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1"
+    update_id: str
+    project_name: str
+    project_path: Path
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    source_run_id: str | None = None
+    status: ContextUpdateStatus = ContextUpdateStatus.DRAFT
+    applied_at: datetime | None = None
+    facts_added: list[str] = Field(default_factory=list)
+    facts_changed: list[str] = Field(default_factory=list)
+    new_artifacts: list[str] = Field(default_factory=list)
+    recent_runs: list[str] = Field(default_factory=list)
+    validation_registry_summary: list[str] = Field(default_factory=list)
+    environment_snapshot_summary: list[str] = Field(default_factory=list)
+    git_delivery_summary: list[str] = Field(default_factory=list)
+    approvals_summary: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    recommended_next_actions: list[str] = Field(default_factory=list)
+    markdown_path: Path | None = None
+    json_path: Path | None = None
+
+
+class ProjectContextUpdateLedger(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1"
+    project_name: str
+    updates: list[ProjectContextUpdate] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
