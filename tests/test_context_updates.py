@@ -181,7 +181,7 @@ def test_context_refresh_avoids_secrets_and_local_sensitive_values(tmp_path: Pat
     text = update_json.read_text(encoding="utf-8")
     assert "super-secret-value" not in text
     assert "settings.local.json" not in text
-    assert "[sensitive]" in text or "Local/sensitive settings artifact" in text
+    assert "Sensitive signal detected; value details omitted." in text or "Local/sensitive settings artifact" in text
 
 
 def test_readme_documents_context_update_commands() -> None:

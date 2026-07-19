@@ -468,7 +468,7 @@ def _sanitize_list(items: Iterable[str]) -> list[str]:
             if any(signal in lowered for signal in ("settings.local", "appsettings.development", ".user", ".local")):
                 sanitized.append("Local/sensitive settings artifact detected; path/value details omitted.")
             else:
-                sanitized.append(SENSITIVE_RE.sub("[sensitive]", text))
+                sanitized.append("Sensitive signal detected; value details omitted.")
         else:
             sanitized.append(text)
     return _dedupe(sanitized)

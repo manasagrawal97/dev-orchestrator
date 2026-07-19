@@ -74,13 +74,14 @@ def test_handoff_report_includes_inspection_commands(tmp_path: Path, monkeypatch
     assert "Do not modify registered target projects" in result.output
 
 
-def test_report_text_preserves_sensitive_placeholder_markup(tmp_path: Path, monkeypatch) -> None:
-    _write_workspace(tmp_path, monkeypatch, with_run=True, approved=True)
+def test_report_text_preserves_sensitive_classification(tmp_path: Path, monkeypatch) -> None:
+    _write_workspace(tmp_path, monkeypatch, with_run=True, approved=True, environment=True, secretish=True)
 
-    result = runner.invoke(app, ["report", "handoff", "--project", "sample"], terminal_width=240)
+    result = runner.invoke(app, ["report", "project", "--project", "sample"], terminal_width=240)
 
     assert result.exit_code == 0
-    assert "Do not expose [sensitive]s or local settings values" in result.output
+    assert "Sensitive signal detected; value details omitted." in result.output
+    assert "super-secret-value" not in result.output
 
 
 def test_project_report_write_creates_markdown_and_json(tmp_path: Path, monkeypatch) -> None:
@@ -191,7 +192,7 @@ def test_reports_sanitize_sensitive_local_settings_details(tmp_path: Path, monke
     assert "super-secret-value" not in report_text
     assert "PASSWORD=abc123" not in report_text
     assert "settings.local.json" not in report_text
-    assert "Local/sensitive settings artifact detected" in report_text
+    assert "Sensitive signal detected; value details omitted." in report_text
 
 
 def test_report_generation_does_not_modify_target_project(tmp_path: Path, monkeypatch) -> None:
@@ -347,7 +348,7 @@ def _write_environment(workspace: Path, project: Path, *, secretish: bool) -> No
     env_dir.mkdir(parents=True)
     warning = "safe warning"
     if secretish:
-        warning = ".claude/settings.local.json is local config"
+        warning = "API_KEY=super-secret-value"
     snapshot = EnvironmentSnapshot(
         schema_version="1",
         name="sample",

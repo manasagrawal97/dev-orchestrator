@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
@@ -127,7 +127,7 @@ def build_handoff_report(
                 "Do not modify registered target projects unless an explicit implementation task is approved.",
                 "Do not execute target build/test/restore commands from report generation.",
                 "Do not call AI or fabricate agent outputs inside Devo commands.",
-                "Do not expose secrets or local settings values; local-sensitive artifacts are classified only.",
+                "Do not expose credentials or local settings values; local-sensitive artifacts are classified only.",
                 "Do not bypass Codex/OpenAI/OS/GitHub security policy.",
             ],
             "commands_to_inspect_state": _handoff_commands(project_name, run_id),
@@ -499,4 +499,3 @@ def _dedupe(items: Iterable[str]) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
-
