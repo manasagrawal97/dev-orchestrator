@@ -2,9 +2,14 @@
 
 ## Immediate Planned Tasks
 
-- TASK-030 end-to-end dogfood run on DevOrchestrator itself - current
 - TASK-031 resume PersonalOS through Devo with one safe real task
-- TASK-032 improve docs/current-state/project memory handling
+- TASK-030B register DevOrchestrator validation commands
+- TASK-030C reduce policy and secret-signal noise
+- TASK-033 interrupted work recovery/resume command
+- TASK-034 Codex handoff prompt generator
+- TASK-035 global Devo status/dashboard command
+- TASK-036 run templates for common task types
+- TASK-037 approval UX improvements
 
 ## Immediate Readiness Target
 
@@ -45,15 +50,43 @@ Added deterministic project, run, and handoff reports. Devo now summarizes proje
 
 ### TASK-030 End-To-End Dogfood Run
 
-Run DevOrchestrator on itself using its own workflows. The goal is to prove the control plane before relying on it for deeper PersonalOS work. The dogfood target should stay small and safe, with report/handoff artifacts used as the recovery trail.
+Completed. DevOrchestrator ran a docs-only task through its own file-backed workflow, including manual-assisted agent artifacts, policy approval, implementation evidence, validation review, code review, final audit, task closure, run closure, delivery report, context refresh draft, and handoff report.
 
 ### TASK-031 Resume PersonalOS Through Devo
 
 Use Devo to select and execute one safe real PersonalOS task after validation runner and delivery workflow exist.
 
-### TASK-032 Project Memory Handling
+### TASK-030B Register DevOrchestrator Validation Commands
 
-Improve durable project memory so completed/deferred/planned work survives chat context loss and can be recovered from GitHub plus workspace backups.
+Register focused and full pytest commands for DevOrchestrator so future runs can cite Devo validation evidence directly.
+
+### TASK-030C Reduce Policy And Secret-Signal Noise
+
+Refine policy and delivery checks using TASK-030 dogfood findings: safety-boundary text can trigger high-risk signals, and documented secret-signal names can create warning noise.
+
+### TASK-032 Project Memory Handling - Current
+
+Persist durable project memory, user-facing operating guidance, token-usage expectations, and future improvement plans so they survive chat context loss and can be recovered from GitHub plus workspace backups.
+
+### TASK-033 Interrupted Work Recovery/Resume Command
+
+Add a read-only command that summarizes interrupted work and recommends the safest resume point.
+
+### TASK-034 Codex Handoff Prompt Generator
+
+Generate compact Codex-ready prompts from approved context, run state, task scope, policy, validation, and delivery evidence.
+
+### TASK-035 Global Devo Status/Dashboard Command
+
+Show registered projects, active runs, warnings, approvals, validation state, and next actions in one command.
+
+### TASK-036 Run Templates For Common Task Types
+
+Provide deterministic templates for docs-only tasks, safe bugfixes, validation-only work, recovery work, and larger feature planning.
+
+### TASK-037 Approval UX Improvements
+
+Improve approval summaries, pending-action display, and matched-signal explanations.
 
 ## Guiding Constraints
 

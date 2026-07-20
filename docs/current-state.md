@@ -32,11 +32,12 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-029 project/run report and handoff summary commands
+- Latest completed source task: TASK-030 dogfood report workflow documentation update
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
-- Current run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
-- Latest planned next task after dogfood evidence: TASK-031 resume PersonalOS through Devo with one safe real task
-- Latest pushed commit before TASK-030 docs work: `fd59e87 fix: stabilize report and context summaries`
+- Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
+- Latest pushed commit before TASK-032 docs work: `3985e70 docs: dogfood report workflow`
+- Next recommended action: TASK-031 resume PersonalOS through Devo with one safe current-state documentation task.
+- Recommended follow-up after TASK-031: TASK-030B register DevOrchestrator validation commands, then TASK-030C reduce policy and secret-signal noise.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - No PersonalOS repo files were modified by TASK-022.
@@ -47,12 +48,12 @@ The working loop is:
 
 ## Readiness Estimate
 
-- Practical ready-before-PersonalOS-work target after TASK-025: around 88-92% complete.
-- Long-term product vision after TASK-025: around 50% complete.
+- Practical ready-before-PersonalOS-work target after TASK-030: around 92-94% complete.
+- Long-term product vision after TASK-030: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, and generate project/run/handoff reports. An end-to-end dogfood workflow is still needed before deeper PersonalOS work.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, and complete a manual-assisted end-to-end dogfood run.
 
-TASK-030 uses DevOrchestrator's approved self-context to run one small documentation consistency task through the file-backed workflow before returning to PersonalOS.
+The next PersonalOS step should still be cautious: use Devo to select and execute one safe current-state documentation task before attempting deeper implementation work.
 
 ## Completed Work
 
@@ -90,6 +91,7 @@ TASK-030 uses DevOrchestrator's approved self-context to run one small documenta
 - TASK-025 project context update / enrichment workflow
 - TASK-029 project/run report and handoff summary commands
 - TASK-030A DevOrchestrator self-onboarding as an approved Devo project
+- TASK-030 end-to-end DevOrchestrator dogfood run
 
 ## Recovery Pointers
 

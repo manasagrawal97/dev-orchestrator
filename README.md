@@ -10,9 +10,18 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 
 - [Current state](docs/current-state.md)
 - [Roadmap](docs/roadmap.md)
+- [How to use Devo](docs/how-to-use-devo.md)
+- [Token usage](docs/token-usage.md)
+- [Future improvements](docs/future-improvements.md)
 - [Deferred scope](docs/deferred-scope.md)
 - [Operating model](docs/operating-model.md)
 - [Recovery guide](docs/recovery.md)
+
+## How To Use Devo Day To Day
+
+Start with `devo report project --project <name>` or `devo report handoff --project <name>` to recover current state. Use `devo workflow status --project <name> --run <runId>` and `devo workflow next --project <name> --run <runId>` to find the next safe step. Let a human or coding agent perform implementation, then record evidence with Devo validation, review, delivery, context refresh, and handoff commands.
+
+Devo keeps the workflow honest and recoverable; it does not call AI, implement code by itself, or bypass external security policy.
 
 ## If Context Is Lost
 
