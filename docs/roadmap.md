@@ -2,7 +2,6 @@
 
 ## Immediate Planned Tasks
 
-- TASK-030B register DevOrchestrator validation commands
 - TASK-030C continue delivery secret-signal noise reduction
 - TASK-033 interrupted work recovery/resume command
 - TASK-038 Codex handoff prompt generator
@@ -55,9 +54,9 @@ Completed. DevOrchestrator ran a docs-only task through its own file-backed work
 
 Used Devo to execute one safe real PersonalOS task: a docs-only update to `docs/current-state.md`, with no code, database, restore/build/test, migration, script, secret, generated-file, or local-settings changes.
 
-### TASK-030B Register DevOrchestrator Validation Commands
+### TASK-030B Register DevOrchestrator Validation Commands - Completed
 
-Register focused and full pytest commands for DevOrchestrator so future runs can cite Devo validation evidence directly.
+Registered DevOrchestrator validation commands in its Devo workspace registry: core py_compile, focused policy tests, focused approval tests, focused report tests, git diff whitespace checks, and a disabled-by-default full pytest command. Future dogfood runs can cite Devo validation run evidence directly.
 
 ### TASK-030C Reduce Policy And Secret-Signal Noise - Partially Completed By TASK-034
 

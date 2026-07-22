@@ -32,15 +32,17 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-034 docs-only target policy/action handling
+- Latest completed source task: TASK-030B DevOrchestrator validation registry setup
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood task: TASK-031 added `docs/current-state.md` in the PersonalOS repository through Devo-controlled docs-only scope.
-- Latest pushed commit before TASK-034 policy work: `29b2804 docs: add Devo user guide and future plan`
-- Next recommended action: TASK-030B register DevOrchestrator validation commands.
-- Recommended follow-up after TASK-030B: continue delivery-signal noise reduction, then add interrupted-work recovery/resume and handoff prompt generation.
+- Latest pushed commit before TASK-030B registry work: `d955e95 fix: improve docs-only policy actions`
+- Next recommended action: continue delivery-signal noise reduction, then add interrupted-work recovery/resume and handoff prompt generation.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
+- DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
+- DevOrchestrator has enabled focused validation commands for core py_compile, policy tests, approval tests, report tests, and git diff whitespace checks; full pytest is registered but disabled by default because it is heavier.
+- Future DevOrchestrator dogfood runs can attach validation evidence from the registry instead of only relying on manually reported pytest output.
 - No PersonalOS repo files were modified by TASK-022.
 - TASK-023 added controlled validation execution, but PersonalOS validation/build/test/restore commands remain dry-run only unless explicitly approved.
 - TASK-024 added non-mutating Git status, delivery-check, and delivery-report commands with risky-file and secret-signal checks.
@@ -48,6 +50,7 @@ The working loop is:
 - TASK-029 added deterministic project, run, and handoff reports for context recovery and work transfer.
 - TASK-031 used Devo to complete one safe PersonalOS docs-only current-state task.
 - TASK-034 improves docs-only target repository policy actions and records safety exclusions separately from matched risk signals.
+- TASK-030B registered DevOrchestrator's own validation commands for future dogfood evidence.
 
 ## Readiness Estimate
 
@@ -97,6 +100,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-030 end-to-end DevOrchestrator dogfood run
 - TASK-031 PersonalOS current-state docs-only dogfood task
 - TASK-034 docs-only target policy/action handling
+- TASK-030B DevOrchestrator validation registry setup
 
 ## Recovery Pointers
 
