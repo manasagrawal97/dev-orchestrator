@@ -20,6 +20,7 @@ WORK_PACKAGE_DIR = "work-package"
 WORK_PACKAGE_JSON = "work-package.json"
 WORK_PACKAGE_MD = "work-package.md"
 OPERATOR_PROMPT_MD = "operator-prompt.md"
+SCOPE_TEMPLATE_MD = "scope-template.md"
 SUPPORTED_PROMPT_PHASES = {"scope", "implement", "validate", "deliver", "complete"}
 
 
@@ -97,6 +98,13 @@ class WorkPackagePhasePrompt(BaseModel):
     phase: str
     prompt_path: Path
     prompt_text: str
+
+
+class WorkPackageScopeTemplate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    template_path: Path
+    template_text: str
 
 
 BUILT_IN_LANES: dict[str, WorkLane] = {
@@ -304,6 +312,7 @@ def work_package_artifact_paths(package: WorkPackage, workspace_root: Path | Non
         "json": directory / WORK_PACKAGE_JSON,
         "markdown": directory / WORK_PACKAGE_MD,
         "operator_prompt": directory / OPERATOR_PROMPT_MD,
+        "scope_template": directory / SCOPE_TEMPLATE_MD,
     }
 
 
@@ -332,6 +341,167 @@ def generate_work_package_phase_prompt(
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(prompt_text, encoding="utf-8")
     return WorkPackagePhasePrompt(phase=normalized_phase, prompt_path=prompt_path, prompt_text=prompt_text)
+
+
+def work_package_scope_template_path(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> Path:
+    root = workspace_root or get_workspace_root()
+    return _work_package_dir(root, project_name, run_id) / SCOPE_TEMPLATE_MD
+
+
+def generate_work_scope_template(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> WorkPackageScopeTemplate:
+    root = workspace_root or get_workspace_root()
+    package = load_work_package(project_name, run_id, workspace_root=root)
+    template_text = render_work_scope_template(package, workspace_root=root)
+    template_path = work_package_scope_template_path(project_name, run_id, workspace_root=root)
+    template_path.parent.mkdir(parents=True, exist_ok=True)
+    template_path.write_text(template_text, encoding="utf-8")
+    return WorkPackageScopeTemplate(template_path=template_path, template_text=template_text)
+
+
+def render_work_scope_template(package: WorkPackage, workspace_root: Path | None = None) -> str:
+    root = workspace_root or get_workspace_root()
+    lane = get_lane(package.lane)
+    validation_commands = _scope_template_validation_commands(package, lane, root)
+    lines = [
+        f"# Work Package Scope Template: {package.goal}",
+        "",
+        f"- project: {package.project}",
+        f"- run_id: {package.run_id}",
+        f"- lane: {lane.id}",
+        "- instructions: Fill TODO items, keep the scope low-risk, then import with `devo work import-scope`.",
+        "",
+        "## Selected Items",
+        "",
+    ]
+    lines.extend(_template_items(package.proposed_items, ["TODO: describe selected item 1"]))
+    lines.extend(["", "## Exact Files", ""])
+    lines.extend(_template_items(package.approved_files, ["TODO: list exact file path or approved area"]))
+    lines.extend(["", "## Allowed Changes", ""])
+    lines.extend(_template_items(package.allowed_changes or lane.allowed, lane.allowed))
+    lines.extend(["", "## Forbidden Changes", ""])
+    lines.extend(_template_items(package.forbidden_changes or lane.forbidden, lane.forbidden))
+    lines.extend(["", "## Validation Command", ""])
+    lines.extend(_template_items(validation_commands, ["<validation-command-id>"]))
+    lines.extend(["", "## Delivery Plan", ""])
+    lines.extend(
+        _template_items(
+            package.delivery_plan,
+            [
+                "Run safe git status and diff checks before validation.",
+                "Run approved validation command through Devo.",
+                "Commit and push only approved files after validation passes.",
+                "Run `devo work complete` with the delivered commit hash.",
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "## Excluded Items",
+            "",
+            "- TODO: list intentionally excluded files, warnings, features, or behaviors",
+            "",
+            "## Expected Validation Result",
+            "",
+            f"- {', '.join(validation_commands)} passes without app run, DB commands, scripts, backups, or external API calls.",
+            "",
+            "## Stop Conditions",
+            "",
+        ]
+    )
+    lines.extend(_bullets(_default_stop_conditions()))
+    lines.extend(
+        [
+            "",
+            "## Approval Bundle Note",
+            "",
+            "- Request one approval bundle after importing this scope.",
+            "- Do not edit target project files before the bundle is approved.",
+            "",
+            "## Final Report Expectations",
+            "",
+            "- changed files",
+            "- implementation summary",
+            "- validation result and artifact path",
+            "- Devo report/context artifacts",
+            "- commit hash and push result",
+            "- final Git status",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_work_scope_example(lane_id: str) -> str:
+    lane = get_lane(lane_id)
+    validation_commands = lane.default_validation_commands or ["<validation-command-id>"]
+    lines = [
+        f"# Example Work Package Scope: {lane.name}",
+        "",
+        "## Selected Items",
+        "",
+        "- Add empty/help states to approved Razor list pages",
+        "- Add display-only guidance using already-loaded data",
+        "",
+        "## Exact Files",
+        "",
+        "- src/web/PersonalOS.Web/Components/Pages/ExampleList.razor",
+        "- src/web/PersonalOS.Web/Components/Pages/ExampleDetails.razor",
+        "",
+        "## Allowed Changes",
+        "",
+    ]
+    lines.extend(_bullets(lane.allowed))
+    lines.extend(["", "## Forbidden Changes", ""])
+    lines.extend(_bullets(lane.forbidden))
+    lines.extend(["", "## Validation Command", ""])
+    lines.extend(_bullets(validation_commands))
+    lines.extend(
+        [
+            "",
+            "## Delivery Plan",
+            "",
+            "- Run safe git status and diff checks before validation.",
+            "- Run approved validation command through Devo.",
+            "- Commit and push only approved files after validation passes.",
+            "",
+            "## Excluded Items",
+            "",
+            "- DB, services, models, config, secrets, generated files, app run, and external APIs",
+            "",
+            "## Expected Validation Result",
+            "",
+            f"- {', '.join(validation_commands)} passes.",
+            "",
+            "## Stop Conditions",
+            "",
+        ]
+    )
+    lines.extend(_bullets(_default_stop_conditions()))
+    lines.extend(
+        [
+            "",
+            "## Approval Bundle Note",
+            "",
+            "- Request one approval bundle after importing the completed scope.",
+            "",
+            "## Final Report Expectations",
+            "",
+            "- changed files",
+            "- validation result",
+            "- commit hash and push result",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def render_work_package_markdown(package: WorkPackage) -> str:
@@ -611,6 +781,19 @@ def _default_validation_commands(project_name: str, lane: WorkLane, workspace_ro
     return defaults
 
 
+def _scope_template_validation_commands(package: WorkPackage, lane: WorkLane, workspace_root: Path) -> list[str]:
+    if package.validation_commands:
+        return package.validation_commands
+    registered = {command.id for command in list_validation_commands(package.project, workspace_root=workspace_root)}
+    defaults = [command_id for command_id in lane.default_validation_commands if command_id in registered]
+    return defaults or ["<validation-command-id>"]
+
+
+def _template_items(existing_items: list[str], fallback_items: list[str]) -> list[str]:
+    items = existing_items or fallback_items
+    return _bullets(items)
+
+
 def _work_package_dir(workspace_root: Path, project_name: str, run_id: str) -> Path:
     return run_path(project_name, run_id, workspace_root=workspace_root) / "artifacts" / WORK_PACKAGE_DIR
 
@@ -634,9 +817,9 @@ def get_work_package_next_step(package: WorkPackage) -> WorkPackageNextStep:
     if package.status == WorkPackageStatus.DRAFT:
         return WorkPackageNextStep(
             current_status=package.status,
-            next_action="Prepare/import scope",
-            required_command=f"devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>",
-            suggested_prompt_command=_prompt_command(package, "scope"),
+            next_action="Generate/fill/import scope",
+            required_command=f"devo work scope-template --project {package.project} --run {package.run_id}",
+            suggested_prompt_command=None,
             stop_conditions=stop_conditions,
             user_approval_needed=False,
         )
@@ -766,6 +949,8 @@ def _phase_commands(phase: str, package: WorkPackage) -> list[str]:
     diff_paths = " ".join(package.approved_files) if package.approved_files else "<approved-files>"
     commands = {
         "scope": [
+            f"- devo work scope-template --project {package.project} --run {package.run_id}",
+            "- Fill the generated scope-template.md with selected items, exact files, and delivery details.",
             f"- devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>",
             f"- devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001",
         ],

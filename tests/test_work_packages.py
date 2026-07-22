@@ -47,7 +47,8 @@ def test_work_start_creates_run_and_draft_artifacts(tmp_path: Path, monkeypatch)
     assert paths["json"].exists()
     assert paths["markdown"].exists()
     assert paths["operator_prompt"].exists()
-    assert "devo work import-scope" in result.output
+    assert paths["scope_template"].name == "scope-template.md"
+    assert "devo work scope-template" in result.output
 
 
 def test_work_import_scope_updates_package_and_tasks_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -86,6 +87,66 @@ def test_work_status_reports_artifact_paths(tmp_path: Path, monkeypatch) -> None
     assert "Operator prompt:" in result.output
     assert "work-package.json" in result.output
     assert "Suggested next command:" in result.output
+    assert "devo work scope-template" in result.output
+
+
+def test_work_scope_template_creates_template_file(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    template_path = _package_root(workspace, package.run_id) / "scope-template.md"
+    text = template_path.read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "scope-template.md" in result.output
+    assert template_path.exists()
+    for heading in [
+        "## Selected Items",
+        "## Exact Files",
+        "## Allowed Changes",
+        "## Forbidden Changes",
+        "## Validation Command",
+        "## Delivery Plan",
+    ]:
+        assert heading in text
+
+
+def test_work_scope_template_includes_lane_rules_and_validation_command(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    text = (_package_root(workspace, package.run_id) / "scope-template.md").read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "- Razor UI files" in text
+    assert "- empty states" in text
+    assert "- mechanical analyzer/warning fixes" in text
+    assert "- DB changes" in text
+    assert "- external API calls" in text
+    assert "- dotnet-build-personalos" in text
+
+
+def test_work_scope_template_uses_placeholder_when_validation_command_unavailable(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch, include_validation_command=False)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    text = (_package_root(workspace, package.run_id) / "scope-template.md").read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "<validation-command-id>" in text
+
+
+def test_work_scope_template_fails_if_work_package_missing(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    run_state = create_run("sample", "Standalone run", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", run_state.run_id], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Work package not found" in result.output
 
 
 def test_work_next_for_draft_status(tmp_path: Path, monkeypatch) -> None:
@@ -96,8 +157,8 @@ def test_work_next_for_draft_status(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Current status: draft" in result.output
-    assert "Next action: Prepare/import scope" in result.output
-    assert "devo work import-scope" in result.output
+    assert "Next action: Generate/fill/import scope" in result.output
+    assert "devo work scope-template" in result.output
     assert "User approval needed: False" in result.output
 
 
@@ -442,6 +503,8 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
     runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
     runner.invoke(app, ["work", "status", "--project", "sample", "--run", package.run_id])
     runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id])
+    runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id])
+    runner.invoke(app, ["work", "scope-example", "--lane", "low-risk-ui-maintenance"])
     runner.invoke(app, ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "implement"])
     runner.invoke(app, ["work", "list", "--project", "sample"])
     runner.invoke(app, ["work", "history", "--project", "sample"])
@@ -451,7 +514,7 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
     assert sentinel.read_text(encoding="utf-8") == before
 
 
-def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+def _workspace(tmp_path: Path, monkeypatch, include_validation_command: bool = True) -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
     project_path = tmp_path / "target-project"
@@ -481,17 +544,18 @@ def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     approval_path.write_text("{}", encoding="utf-8")
     run_state = ContextSnapshot(context_state_path=context_path, approval_record_path=approval_path, approved_artifact_paths=[])
     assert run_state.context_state_path == context_path
-    add_validation_command(
-        "sample",
-        "dotnet-build-personalos",
-        "Build PersonalOS",
-        "dotnet build PersonalOS.slnx",
-        "build",
-        risk="high",
-        approval_required=True,
-        enabled=False,
-        workspace_root=workspace,
-    )
+    if include_validation_command:
+        add_validation_command(
+            "sample",
+            "dotnet-build-personalos",
+            "Build PersonalOS",
+            "dotnet build PersonalOS.slnx",
+            "build",
+            risk="high",
+            approval_required=True,
+            enabled=False,
+            workspace_root=workspace,
+        )
     return workspace, project_path
 
 
@@ -551,6 +615,7 @@ def _package_paths(workspace: Path, run_id: str) -> dict[str, Path]:
         "json": root / "work-package.json",
         "markdown": root / "work-package.md",
         "operator_prompt": root / "operator-prompt.md",
+        "scope_template": root / "scope-template.md",
     }
 
 

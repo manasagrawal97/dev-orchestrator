@@ -36,13 +36,16 @@ Current bundled flow:
 
 1. User gives a goal.
 2. Codex creates a Devo work package in the `low-risk-ui-maintenance` lane.
-3. Codex imports exact scope into the work package.
-4. User approves the approval bundle when the exact scope is acceptable.
-5. Codex implements inside scope.
-6. Codex runs safe pre-build checks.
-7. Codex runs the registered Devo build validation when the bundle's child validation approval matches.
-8. If validation passes, Codex reports, commits, and pushes.
-9. User receives a short final summary.
+3. Devo generates a lane-aware scope template.
+4. Codex fills and imports exact scope into the work package.
+5. User approves the approval bundle when the exact scope is acceptable.
+6. Codex implements inside scope.
+7. Codex runs safe pre-build checks.
+8. Codex runs the registered Devo build validation when the bundle's child validation approval matches.
+9. If validation passes, Codex reports, commits, pushes, and runs `devo work complete`.
+10. User receives a short final summary.
+
+Use `devo work scope-template --project PersonalOS --run <runId>` before importing scope. The generated template should be filled with the exact approved files, selected low-risk UI items, forbidden changes, validation command, delivery plan, and stop conditions.
 
 Fallback practical flow when a bundle is not appropriate:
 

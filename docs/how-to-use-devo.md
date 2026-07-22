@@ -45,10 +45,11 @@ For current PersonalOS maintenance, use the simpler practical flow from [Persona
 
 1. user gives a goal
 2. Codex/Devo creates a work package in the right lane
-3. Codex imports exact scope into the work package
-4. user approves the approval bundle when the scope is acceptable
-5. Codex implements within scope
-6. Codex validates with the registered command, commits, pushes, marks the work package complete, and gives a short final summary
+3. Devo generates a lane-aware scope template
+4. Codex fills and imports exact scope into the work package
+5. user approves the approval bundle when the scope is acceptable
+6. Codex implements within scope
+7. Codex validates with the registered command, commits, pushes, marks the work package complete, and gives a short final summary
 
 The older two-stop flow, separate source approval followed by separate build approval, remains useful when a bundle is not available or the scope/risk changes.
 
@@ -56,7 +57,8 @@ Source/freshness: this diagram reflects the current low-risk work-package flow a
 
 ```mermaid
 flowchart LR
-    Start["work start"] --> Scope["import scope"]
+    Start["work start"] --> Template["scope-template"]
+    Template --> Scope["fill and import scope"]
     Scope --> Bundle["request approval bundle"]
     Bundle --> Approve["bundle approved"]
     Approve --> Implement["implement approved scope"]
@@ -127,6 +129,7 @@ For small bounded batches, use the work-package flow instead of hand-assembling 
 ```powershell
 devo work lanes
 devo work start --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
+devo work scope-template --project <name> --run <runId>
 devo work import-scope --project <name> --run <runId> --file <scopeMarkdownFile>
 devo work status --project <name> --run <runId>
 devo work next --project <name> --run <runId>
@@ -140,16 +143,17 @@ devo work history --project <name> --limit 10
 devo project activity --project <name> --limit 10
 devo visual work-package --project <name> --run <runId>
 devo visual project-activity --project <name> --limit 10
+devo work scope-example --lane low-risk-ui-maintenance
 ```
 
-The scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
+Use `devo work scope-template` while the package is still draft. It writes `scope-template.md` under `workspace/runs/<project>/<runId>/artifacts/work-package/` with the required import sections, lane allowed/forbidden rules, validation command guidance, stop conditions, and final report expectations. The filled scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
 
-`devo work next` reads the package state and shows the next action, required command, stop conditions, and whether user approval is needed. `devo work prompt --phase <phase>` writes a phase-specific Codex operator prompt under the work-package artifacts folder. Supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
+`devo work next` reads the package state and shows the next action, required command, stop conditions, and whether user approval is needed. In draft state it suggests `devo work scope-template`. `devo work prompt --phase <phase>` writes a phase-specific Codex operator prompt under the work-package artifacts folder. Supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
 
 The final low-risk package flow is:
 
 ```text
-work start -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
+work start -> scope-template -> fill scope -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
 ```
 
 `devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action and suggested next command so the final package state is obvious after a successful push.

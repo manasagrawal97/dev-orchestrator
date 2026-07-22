@@ -107,10 +107,12 @@ from .validation_runner import list_validation_history, run_validation_command, 
 from .work_packages import (
     complete_work_package,
     generate_work_package_phase_prompt,
+    generate_work_scope_template,
     get_work_package_next_step,
     import_work_scope,
     list_lanes,
     load_work_package,
+    render_work_scope_example,
     start_work_package,
     work_package_artifact_paths,
     work_package_next_action,
@@ -313,6 +315,7 @@ def _print_work_package(package: object) -> None:
     console.print(f"JSON: {_named_path(paths['json'])}")
     console.print(f"Markdown: {_named_path(paths['markdown'])}")
     console.print(f"Operator prompt: {_named_path(paths['operator_prompt'])}")
+    console.print(f"Scope template: {_named_path(paths['scope_template'])}")
 
 
 def _print_work_next(package: object) -> None:
@@ -1749,8 +1752,39 @@ def start_work(
     _print_work_package(package)
     console.print(
         "Next command: "
-        f"devo work import-scope --project {project_name} --run {package.run_id} --file <scopeMarkdownFile>"
+        f"devo work scope-template --project {project_name} --run {package.run_id}"
     )
+
+
+@work_app.command("scope-template")
+def write_work_scope_template(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Write a fill-in scope markdown template for a draft work package."""
+    try:
+        result = generate_work_scope_template(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(f"Scope template: {_named_path(result.template_path)}")
+    console.print(
+        "Next command: "
+        f"devo work import-scope --project {project_name} --run {run_id} --file {result.template_path}"
+    )
+
+
+@work_app.command("scope-example")
+def show_work_scope_example(
+    lane_id: str = typer.Option(..., "--lane", help="Work lane ID."),
+) -> None:
+    """Print an example filled work-package scope for a lane."""
+    try:
+        example = render_work_scope_example(lane_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--lane") from exc
+
+    console.print(example)
 
 
 @work_app.command("import-scope")
