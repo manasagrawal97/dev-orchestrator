@@ -134,6 +134,8 @@ devo work complete --project <name> --run <runId> --commit <commitHash> --messag
 devo work list --project <name> --limit 10
 devo work history --project <name> --limit 10
 devo project activity --project <name> --limit 10
+devo visual work-package --project <name> --run <runId>
+devo visual project-activity --project <name> --limit 10
 ```
 
 The scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
@@ -149,6 +151,8 @@ work start -> import scope -> request approval bundle -> bundle approve -> promp
 `devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action and suggested next command so the final package state is obvious after a successful push.
 
 Use `devo work list` to see recent open and delivered work packages with approval, validation, commit, and next-action fields. Use `devo work history` when you mainly want delivered work and commit summaries. Use `devo project activity` for a compact project-level view across recent runs, delivered packages, validation runs, context updates, reports, current Git state, and the suggested next action.
+
+Use `devo visual work-package` to write a Mermaid lifecycle artifact for one run at `workspace/runs/<project>/<runId>/artifacts/visuals/work-package-flow.md`. Use `devo visual project-activity` to write a compact recent activity diagram at `workspace/projects/<project>/visuals/project-activity.md`. These are generated workspace artifacts for current state, not hand-maintained docs.
 
 ## Safety
 

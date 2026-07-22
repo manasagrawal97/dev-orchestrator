@@ -115,6 +115,7 @@ from .work_packages import (
     work_package_next_action,
 )
 from .work_history import ProjectActivitySummary, WorkPackageSummary, build_project_activity_summary, list_work_package_summaries
+from .visual_reports import generate_project_activity_visual, generate_work_package_visual
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -134,6 +135,7 @@ env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
 git_app = typer.Typer(help="Inspect Git delivery readiness without mutating repositories.")
 report_app = typer.Typer(help="Generate deterministic project, run, and handoff reports.")
+visual_app = typer.Typer(help="Generate Mermaid visual report artifacts.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -150,6 +152,7 @@ app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(git_app, name="git")
 app.add_typer(report_app, name="report")
+app.add_typer(visual_app, name="visual")
 console = Console()
 
 
@@ -1835,6 +1838,32 @@ def request_work_approval_bundle(
         )
     else:
         console.print("Next command: none; at least one child approval is blocked or rejected.")
+
+
+@visual_app.command("work-package")
+def write_work_package_visual(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Write a Mermaid work-package lifecycle visual artifact."""
+    try:
+        result = generate_work_package_visual(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    console.print(f"Visual report: {_named_path(result.path)}")
+
+
+@visual_app.command("project-activity")
+def write_project_activity_visual(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """Write a compact Mermaid project activity visual artifact."""
+    try:
+        result = generate_project_activity_visual(project_name=project_name, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"Visual report: {_named_path(result.path)}")
 
 
 @approval_app.command("request")

@@ -28,6 +28,10 @@ Do not add diagrams everywhere. A diagram should reduce confusion, show relation
 
 The future dashboard should generate visuals from Devo structured data and artifacts, not from manually maintained Mermaid source.
 
+Generated visual reports are the bridge between static documentation diagrams and the future dashboard. Commands such as `devo visual work-package` and `devo visual project-activity` write Mermaid Markdown under `workspace/` from live Devo artifacts. Those generated files summarize current work-package and project activity state, so they should not be committed.
+
+Static Mermaid docs are for stable concepts. Generated Mermaid reports are for current project activity.
+
 Good future visualization tools may include:
 
 - React Flow or XYFlow for interactive workflow graphs
@@ -49,3 +53,12 @@ The intentionally small current set is:
 - `docs/recovery.md`: scheduled workspace backup flow
 
 This set should stay compact until a generated dashboard replaces hand-maintained diagrams.
+
+## Generated Visual Reports
+
+Current generated visual artifacts:
+
+- `workspace/runs/<project>/<runId>/artifacts/visuals/work-package-flow.md`
+- `workspace/projects/<project>/visuals/project-activity.md`
+
+These reports should stay small and tolerate older runs with missing optional fields. Future dashboard work can reuse the same structured data model behind these reports instead of parsing the generated Markdown.

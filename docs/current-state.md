@@ -36,7 +36,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-052 work history and project activity summaries
+- Latest completed source task: TASK-DEVO-053B generated visual reports for work packages and project activity
 - Latest docs task: TASK-DEVO-053A adds a visual strategy and a few essential Mermaid diagrams for stable Devo concepts.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -65,13 +65,14 @@ The working loop is:
 - TASK-DEVO-051 adds `devo work next` and `devo work prompt --phase <phase>` for scoped phase prompts covering scope, implement, validate, deliver, and complete.
 - TASK-DEVO-052 adds `devo work list`, `devo work history`, and `devo project activity` for compact recent work-package, delivery, validation, context/report, Git status, and next-action summaries.
 - TASK-DEVO-053A adds `docs/visual-strategy.md` and a compact set of Mermaid diagrams for Devo architecture, agent workflow, work-package lifecycle, usability roadmap, and backup flow. Future dashboard visuals should be generated from Devo structured data/artifacts rather than manually maintained Mermaid.
+- TASK-DEVO-053B adds `devo visual work-package` and `devo visual project-activity` to generate compact Mermaid workspace artifacts from live Devo work-package and project activity data.
 
 ## Readiness Estimate
 
 - Practical ready-before-PersonalOS-work target after TASK-030: around 92-94% complete.
 - Long-term product vision after TASK-030: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, create scoped work packages, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, create scoped work packages, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
 The next PersonalOS step should still be cautious: use Devo to select and execute one safe current-state documentation task before attempting deeper implementation work.
 
@@ -124,6 +125,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-DEVO-051 work-package next-action and phase prompt commands
 - TASK-DEVO-052 work history and project activity summary commands
 - TASK-DEVO-053A visual strategy and essential Mermaid diagrams
+- TASK-DEVO-053B generated visual reports for work packages and project activity
 
 ## Recovery Pointers
 

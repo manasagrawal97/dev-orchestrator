@@ -369,6 +369,8 @@ devo work complete --project MyProject --run <runId> --commit <commitHash> --mes
 devo work list --project MyProject --limit 10
 devo work history --project MyProject --limit 10
 devo project activity --project MyProject --limit 10
+devo visual work-package --project MyProject --run <runId>
+devo visual project-activity --project MyProject --limit 10
 ```
 
 `devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
@@ -391,6 +393,8 @@ work start -> import scope -> request approval bundle -> bundle approve -> promp
 ```
 
 For recent activity, `devo work list` shows compact open and recent work-package state, including approval bundle status, latest validation status, delivered commit, and next action. `devo work history` puts delivered/closed packages first and includes the delivery summary. `devo project activity` combines recent runs, delivered packages, latest validation runs, recent context/report artifacts, current Git delivery status, and a suggested next action.
+
+`devo visual work-package` and `devo visual project-activity` generate Mermaid Markdown under `workspace/` from current Devo artifacts. Static Mermaid docs explain stable concepts; generated visual reports summarize live/current work and are not committed.
 
 ## Policy Gates
 
