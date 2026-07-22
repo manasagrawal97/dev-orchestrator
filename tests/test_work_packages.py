@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from devo.approvals import approve_approval_bundle, create_approval_bundle
 from devo.main import app
-from devo.runs import load_run
-from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration, RunStatus
+from devo.runs import create_run, load_run
+from devo.schemas import (
+    ContextSnapshot,
+    ContextState,
+    ContextStatus,
+    ProjectRegistration,
+    RunStatus,
+    ValidationCommandCategory,
+    ValidationRiskLevel,
+    ValidationRunRecord,
+    ValidationRunStatus,
+)
 from devo.validation_registry import add_validation_command
-from devo.work_packages import WorkPackageStatus, list_lanes, load_work_package, start_work_package
+from devo.work_packages import WorkPackageStatus, complete_work_package, list_lanes, load_work_package, start_work_package
 
 runner = CliRunner()
 
@@ -73,6 +86,103 @@ def test_work_status_reports_artifact_paths(tmp_path: Path, monkeypatch) -> None
     assert "work-package.json" in result.output
 
 
+def test_work_complete_updates_status_and_delivery_fields(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    completed = complete_work_package(
+        "sample",
+        package.run_id,
+        commit_hash="abc1234",
+        delivery_summary="Delivered small UI fixes",
+        workspace_root=workspace,
+    )
+
+    assert completed.status == WorkPackageStatus.DELIVERED
+    assert completed.delivered_at is not None
+    assert completed.commit_hash == "abc1234"
+    assert completed.delivery_summary == "Delivered small UI fixes"
+
+
+def test_work_complete_stores_latest_validation_bundle_and_git_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
+    bundle = create_approval_bundle("sample", package.run_id, "T001", workspace_root=workspace)
+    approve_approval_bundle("sample", package.run_id, bundle.bundle_id, approved_by="Manas", workspace_root=workspace)
+    _write_validation_record(workspace, package.run_id, "20260722-100000-build", ValidationRunStatus.PASSED)
+    _write_git_delivery_report(workspace, package.run_id)
+
+    completed = complete_work_package(
+        "sample",
+        package.run_id,
+        commit_hash="def5678",
+        delivery_summary="Delivered and pushed",
+        workspace_root=workspace,
+    )
+
+    assert completed.status == WorkPackageStatus.DELIVERED
+    assert completed.validation_run_id == "20260722-100000-build"
+    assert completed.validation_status == "passed"
+    assert completed.approval_bundle_status == "approved"
+    assert completed.final_git_status == "ready; branch=master; head=def5678; clean=True"
+
+
+def test_work_status_shows_delivered_state(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    complete_result = runner.invoke(
+        app,
+        [
+            "work",
+            "complete",
+            "--project",
+            "sample",
+            "--run",
+            package.run_id,
+            "--commit",
+            "abc1234",
+            "--message",
+            "Delivered small UI fixes",
+        ],
+        terminal_width=240,
+    )
+    status_result = runner.invoke(app, ["work", "status", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert complete_result.exit_code == 0, complete_result.output
+    assert status_result.exit_code == 0, status_result.output
+    assert "Status: delivered" in status_result.output
+    assert "Delivery commit: abc1234" in status_result.output
+    assert "Validation: none (none)" in status_result.output
+    assert "Next action: Delivered." in status_result.output
+
+
+def test_work_complete_fails_if_no_work_package_exists(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    run_state = create_run("sample", "Run without work package", workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        [
+            "work",
+            "complete",
+            "--project",
+            "sample",
+            "--run",
+            run_state.run_id,
+            "--commit",
+            "abc1234",
+            "--message",
+            "Should fail",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Work package not found" in result.output
+
+
 def test_import_scope_requires_complete_sections(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
@@ -115,6 +225,7 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
 
     runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
     runner.invoke(app, ["work", "status", "--project", "sample", "--run", package.run_id])
+    complete_work_package("sample", package.run_id, "abc1234", "Delivered", workspace_root=workspace)
 
     assert sentinel.read_text(encoding="utf-8") == before
 
@@ -209,3 +320,47 @@ def _package_paths(workspace: Path, run_id: str) -> dict[str, Path]:
         "markdown": root / "work-package.md",
         "operator_prompt": root / "operator-prompt.md",
     }
+
+
+def _write_validation_record(
+    workspace: Path,
+    run_id: str,
+    validation_run_id: str,
+    status: ValidationRunStatus,
+) -> None:
+    validation_dir = workspace / "runs" / "sample" / run_id / "artifacts" / "validation-runs" / validation_run_id
+    validation_dir.mkdir(parents=True)
+    record = ValidationRunRecord(
+        validation_run_id=validation_run_id,
+        project_name="sample",
+        run_id=run_id,
+        task_id="T001",
+        command_id="dotnet-build-personalos",
+        command_name="Build PersonalOS",
+        command="dotnet build PersonalOS.slnx",
+        working_dir=workspace,
+        category=ValidationCommandCategory.BUILD,
+        risk_level=ValidationRiskLevel.HIGH,
+        approval_required=True,
+        status=status,
+        exit_code=0,
+        started_at=datetime(2026, 7, 22, 10, 0, tzinfo=UTC),
+    )
+    (validation_dir / "validation-run.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _write_git_delivery_report(workspace: Path, run_id: str) -> None:
+    delivery_dir = workspace / "runs" / "sample" / run_id / "artifacts" / "git-delivery"
+    delivery_dir.mkdir(parents=True)
+    report = {
+        "created_at": "2026-07-22T10:05:00+00:00",
+        "delivery_check": {
+            "readiness": "ready",
+            "status": {
+                "current_branch": "master",
+                "head_commit": "def5678",
+                "working_tree_clean": True,
+            },
+        },
+    }
+    (delivery_dir / "git-delivery-report-20260722-100500.json").write_text(json.dumps(report), encoding="utf-8")

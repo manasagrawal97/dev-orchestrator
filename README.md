@@ -362,6 +362,7 @@ devo work start --project MyProject --lane low-risk-ui-maintenance --goal "Fix U
 devo work import-scope --project MyProject --run <runId> --file E:\path\to\scope.md
 devo work status --project MyProject --run <runId>
 devo work request-approval-bundle --project MyProject --run <runId> --task T001
+devo work complete --project MyProject --run <runId> --commit <commitHash> --message "Delivered summary"
 ```
 
 `devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
@@ -374,6 +375,12 @@ devo approval bundle-approve --project MyProject --run <runId> --bundle <bundleI
 ```
 
 Exact `target_command` approval remains supported for maximum precision. Bundled `target_repo_build` or `target_repo_test` child approvals still have to match the registered validation command category plus the exact command id and command text before the validation runner will execute them.
+
+After implementation, registered validation, commit, and push, run `devo work complete` to mark the package delivered. Completion stores the commit hash, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` then shows the compact final state and next action. The intended low-risk package loop is:
+
+```text
+work start -> import scope -> request approval bundle -> bundle approve -> implement/build/commit -> work complete -> final report
+```
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.

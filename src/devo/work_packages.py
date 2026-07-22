@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .projects import get_workspace_root
 from .runs import create_run, load_run, run_path, save_run_state
 from .scanner import load_registered_project
-from .schemas import RunArtifact, RunArtifactType, RunStatus
+from .schemas import RunArtifact, RunArtifactType, RunStatus, ValidationRunRecord
 from .validation_registry import get_validation_command, list_validation_commands
 
 WORK_PACKAGE_SCHEMA_VERSION = "1"
@@ -60,6 +60,13 @@ class WorkPackage(BaseModel):
     validation_commands: list[str] = Field(default_factory=list)
     delivery_plan: list[str] = Field(default_factory=list)
     approval_bundle_id: str | None = None
+    delivered_at: datetime | None = None
+    commit_hash: str | None = None
+    delivery_summary: str | None = None
+    validation_run_id: str | None = None
+    validation_status: str | None = None
+    approval_bundle_status: str | None = None
+    final_git_status: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -201,6 +208,41 @@ def load_work_package(project_name: str, run_id: str, workspace_root: Path | Non
     return WorkPackage.model_validate(data)
 
 
+def complete_work_package(
+    project_name: str,
+    run_id: str,
+    commit_hash: str,
+    delivery_summary: str,
+    workspace_root: Path | None = None,
+) -> WorkPackage:
+    root = workspace_root or get_workspace_root()
+    package = load_work_package(project_name, run_id, workspace_root=root)
+    normalized_commit = commit_hash.strip()
+    normalized_summary = delivery_summary.strip()
+    if not normalized_commit:
+        msg = "Commit hash is required."
+        raise ValueError(msg)
+    if not normalized_summary:
+        msg = "Delivery summary is required."
+        raise ValueError(msg)
+
+    validation = _latest_validation_record(project_name, run_id, root)
+    updated = package.model_copy(
+        update={
+            "status": WorkPackageStatus.DELIVERED,
+            "delivered_at": datetime.now(UTC),
+            "commit_hash": normalized_commit,
+            "delivery_summary": normalized_summary,
+            "validation_run_id": validation.validation_run_id if validation else None,
+            "validation_status": validation.status.value if validation else None,
+            "approval_bundle_status": _approval_bundle_status(package, root),
+            "final_git_status": _latest_git_delivery_status(project_name, run_id, root),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+    return save_work_package(updated, workspace_root=root)
+
+
 def save_work_package(package: WorkPackage, workspace_root: Path | None = None) -> WorkPackage:
     root = workspace_root or get_workspace_root()
     package = package.model_copy(update={"updated_at": datetime.now(UTC)})
@@ -272,6 +314,20 @@ def render_work_package_markdown(package: WorkPackage) -> str:
     lines.extend(_bullets(package.validation_commands))
     lines.extend(["", "## Delivery Plan", ""])
     lines.extend(_bullets(package.delivery_plan))
+    lines.extend(
+        [
+            "",
+            "## Final Delivery",
+            "",
+            f"- delivered_at: {package.delivered_at.isoformat() if package.delivered_at else 'none'}",
+            f"- commit_hash: {package.commit_hash or 'none'}",
+            f"- delivery_summary: {package.delivery_summary or 'none'}",
+            f"- validation_run_id: {package.validation_run_id or 'none'}",
+            f"- validation_status: {package.validation_status or 'none'}",
+            f"- approval_bundle_status: {package.approval_bundle_status or 'none'}",
+            f"- final_git_status: {package.final_git_status or 'none'}",
+        ]
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -466,3 +522,81 @@ def bundle_id_for_package(project_name: str, run_id: str, task_id: str, created_
 def validation_command_details(project_name: str, command_id: str, workspace_root: Path | None = None) -> tuple[str, str]:
     command = get_validation_command(project_name, command_id, workspace_root=workspace_root)
     return command.id, command.command
+
+
+def work_package_next_action(package: WorkPackage) -> str:
+    if package.status == WorkPackageStatus.DRAFT:
+        return f"Import scope with: devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>"
+    if package.status == WorkPackageStatus.SCOPE_PROPOSED:
+        return f"Request approval bundle with: devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001"
+    if package.status == WorkPackageStatus.APPROVAL_REQUESTED:
+        return "Approve the pending approval bundle before implementation."
+    if package.status == WorkPackageStatus.APPROVED:
+        return "Implement approved scope, validate, commit, push, then run devo work complete."
+    if package.status in {WorkPackageStatus.IMPLEMENTED, WorkPackageStatus.VALIDATED}:
+        return "Finish delivery, commit/push if needed, then run devo work complete."
+    if package.status == WorkPackageStatus.DELIVERED:
+        return "Delivered. Review reports or close the formal run if a supported run-closure path applies."
+    if package.status == WorkPackageStatus.CLOSED:
+        return "Closed. No further work-package action is needed."
+    return "Inspect work package state."
+
+
+def _latest_validation_record(project_name: str, run_id: str, workspace_root: Path) -> ValidationRunRecord | None:
+    validation_root = run_path(project_name, run_id, workspace_root=workspace_root) / "artifacts" / "validation-runs"
+    records: list[ValidationRunRecord] = []
+    for path in sorted(validation_root.glob("*/validation-run.json")):
+        try:
+            records.append(ValidationRunRecord.model_validate(json.loads(path.read_text(encoding="utf-8"))))
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+    if not records:
+        return None
+    return sorted(records, key=lambda record: record.started_at, reverse=True)[0]
+
+
+def _approval_bundle_status(package: WorkPackage, workspace_root: Path) -> str | None:
+    if not package.approval_bundle_id:
+        return None
+    path = (
+        run_path(package.project, package.run_id, workspace_root=workspace_root)
+        / "artifacts"
+        / "approval-bundles"
+        / f"approval-bundle-{package.approval_bundle_id}.json"
+    )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    status = data.get("status")
+    return str(status) if status else None
+
+
+def _latest_git_delivery_status(project_name: str, run_id: str, workspace_root: Path) -> str | None:
+    delivery_root = run_path(project_name, run_id, workspace_root=workspace_root) / "artifacts" / "git-delivery"
+    reports: list[tuple[datetime, str]] = []
+    for path in sorted(delivery_root.glob("git-delivery-report-*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        created_at = _parse_datetime(str(data.get("created_at") or ""))
+        check = data.get("delivery_check") or {}
+        status = check.get("status") or {}
+        readiness = check.get("readiness") or "unknown"
+        branch = status.get("current_branch") or "unknown"
+        head = status.get("head_commit") or "unknown"
+        clean = status.get("working_tree_clean")
+        reports.append((created_at, f"{readiness}; branch={branch}; head={head}; clean={clean}"))
+    if not reports:
+        return None
+    return sorted(reports, key=lambda item: item[0], reverse=True)[0][1]
+
+
+def _parse_datetime(value: str) -> datetime:
+    if not value:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)

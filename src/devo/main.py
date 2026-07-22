@@ -104,11 +104,13 @@ from .validation_registry import (
 )
 from .validation_runner import list_validation_history, run_validation_command, terminal_excerpt
 from .work_packages import (
+    complete_work_package,
     import_work_scope,
     list_lanes,
     load_work_package,
     start_work_package,
     work_package_artifact_paths,
+    work_package_next_action,
 )
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
@@ -260,6 +262,16 @@ def _print_work_package(package: object) -> None:
     console.print(f"Lane: {getattr(package, 'lane')}")
     console.print(f"Status: {getattr(package, 'status').value}")
     console.print(f"Approval bundle: {getattr(package, 'approval_bundle_id') or 'none'}")
+    console.print(f"Approval bundle status: {getattr(package, 'approval_bundle_status') or 'none'}")
+    validation = getattr(package, "validation_run_id") or "none"
+    validation_status = getattr(package, "validation_status") or "none"
+    console.print(f"Validation: {validation} ({validation_status})")
+    console.print(f"Delivery commit: {getattr(package, 'commit_hash') or 'none'}")
+    console.print(f"Delivery summary: {getattr(package, 'delivery_summary') or 'none'}")
+    delivered_at = getattr(package, "delivered_at") or None
+    console.print(f"Delivered at: {delivered_at.isoformat() if delivered_at else 'none'}")
+    console.print(f"Final git status: {getattr(package, 'final_git_status') or 'none'}")
+    console.print(f"Next action: {work_package_next_action(package)}")
     console.print("Proposed items:")
     for item in getattr(package, "proposed_items") or ["none"]:
         console.print(f"  - {item}")
@@ -1647,6 +1659,28 @@ def show_work_status(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
 
+    _print_work_package(package)
+
+
+@work_app.command("complete")
+def complete_work(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    commit_hash: str = typer.Option(..., "--commit", help="Delivered Git commit hash."),
+    message: str = typer.Option(..., "--message", help="Short delivery summary."),
+) -> None:
+    """Mark a work package delivered after validation, commit, and push."""
+    try:
+        package = complete_work_package(
+            project_name=project_name,
+            run_id=run_id,
+            commit_hash=commit_hash,
+            delivery_summary=message,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print("[green]Completed work package.[/green]")
     _print_work_package(package)
 
 

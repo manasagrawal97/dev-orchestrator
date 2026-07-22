@@ -48,7 +48,7 @@ For current PersonalOS maintenance, use the simpler practical flow from [Persona
 3. Codex imports exact scope into the work package
 4. user approves the approval bundle when the scope is acceptable
 5. Codex implements within scope
-6. Codex validates with the registered command, commits, pushes, and gives a short final summary
+6. Codex validates with the registered command, commits, pushes, marks the work package complete, and gives a short final summary
 
 The older two-stop flow, separate source approval followed by separate build approval, remains useful when a bundle is not available or the scope/risk changes.
 
@@ -114,9 +114,18 @@ devo work status --project <name> --run <runId>
 devo work request-approval-bundle --project <name> --run <runId> --task T001
 devo approval bundle-status --project <name> --run <runId> --bundle <bundleId>
 devo approval bundle-approve --project <name> --run <runId> --bundle <bundleId> --by Manas --note "Approved scope"
+devo work complete --project <name> --run <runId> --commit <commitHash> --message "<summary>"
 ```
 
 The scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
+
+The final low-risk package flow is:
+
+```text
+work start -> import scope -> request approval bundle -> bundle approve -> implement/build/commit -> work complete -> final report
+```
+
+`devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action so the final package state is obvious after a successful push.
 
 ## Safety
 
