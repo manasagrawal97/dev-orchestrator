@@ -39,6 +39,9 @@ Default scheduled policy:
 - label: `scheduled`
 - retention: keep latest 3 normal backups
 - protected: false
+- window style: hidden PowerShell
+
+The scheduled backup should not show a random terminal window after the task is reinstalled with the current script. If an older task still shows a visible PowerShell window, do not close it while it is running; closing it can interrupt the backup and leave a `.incomplete` folder. Reinstall or update the scheduled task only during an approved scheduler-maintenance task.
 
 ## Check Recovery Health
 
@@ -47,6 +50,13 @@ Default scheduled policy:
 ```
 
 The status script checks the Git repo, current branch and commit, `.venv`, `devo`, active workspace, latest backup, latest backup verification, scheduled task presence, latest backup age, normal retained backups, and protected backups.
+
+For a read-only backup inventory without recovery checks:
+
+```powershell
+devo backup status --dest "G:\My Drive\Projects\Dev Orchestrator"
+devo backup list --dest "G:\My Drive\Projects\Dev Orchestrator"
+```
 
 ## Disaster Recovery On A New Or Clean Machine
 
@@ -79,10 +89,13 @@ To remove it:
 - Auto-delete older normal backups only after a new backup is successfully created and verified.
 - Protected backups are created only with `-Protect` in PowerShell or `--protect` in the CLI.
 - Protected backups are never auto-deleted.
+- Complete backups are the only restorable backups.
+- `.incomplete` folders mean a backup was interrupted or failed before completion.
+- Incomplete backups are reported separately and are not counted as successful backups.
 - Manual backup after every task is not required; use manual backups only for risky milestones or backup/recovery system changes.
 - GitHub protects source code; Google Drive backup protects Devo workspace/context such as projects, runs, current selection, and environment snapshots.
 - Cleanup deletes only valid Devo backup folders with readable `backup-manifest.json` files.
-- Cleanup skips unknown folders and folders with missing or invalid manifests.
+- Cleanup skips unknown folders, incomplete folders, and folders with missing or invalid manifests.
 - If backup verification fails, cleanup does not run.
 
 Normal backups include scheduled, manual, and milestone labels unless explicitly protected.

@@ -5,16 +5,19 @@ import json
 import re
 import shutil
 import subprocess
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .projects import get_workspace_root
-from .schemas import BackupCleanupResult, BackupManifest
+from .schemas import BackupCleanupResult, BackupInventory, BackupManifest, IncompleteBackupFolder
 
 BACKUP_SCHEMA_VERSION = "1"
 BACKUP_FOLDER_PREFIX = "devo-workspace-backup"
 MANIFEST_NAME = "backup-manifest.json"
+INCOMPLETE_SUFFIX = ".incomplete"
+INCOMPLETE_MARKER_NAME = "BACKUP_INCOMPLETE.txt"
 WORKSPACE_BACKUP_DIR = "workspace"
+DEFAULT_INCOMPLETE_STALE_AFTER = timedelta(hours=1)
 
 INCLUDED_ROOTS = ("projects", "runs", "environment", "current.json")
 OPTIONAL_INCLUDED_ROOTS = {"environment", "current.json"}
@@ -108,23 +111,56 @@ def create_backup(
         return manifest.model_copy(update={"backup_path": final_backup_path})
     except Exception:
         if temp_backup_path.exists():
-            marker = temp_backup_path / "BACKUP_INCOMPLETE.txt"
+            marker = temp_backup_path / INCOMPLETE_MARKER_NAME
             marker.write_text("Backup did not complete successfully.\n", encoding="utf-8")
         raise
 
 
 def list_backups(dest: Path) -> list[BackupManifest]:
+    return list_backup_inventory(dest).complete_backups
+
+
+def list_backup_inventory(dest: Path, stale_after: timedelta = DEFAULT_INCOMPLETE_STALE_AFTER) -> BackupInventory:
     backup_root = dest.expanduser().resolve()
     if not backup_root.exists():
-        return []
+        return BackupInventory(backup_root=backup_root)
+    if not backup_root.is_dir():
+        msg = f"Backup root must be a directory: {backup_root}"
+        raise ValueError(msg)
 
-    backups: list[BackupManifest] = []
-    for manifest_file in sorted(backup_root.glob(f"{BACKUP_FOLDER_PREFIX}-*/{MANIFEST_NAME}")):
-        try:
-            backups.append(_load_manifest(manifest_file.parent))
-        except ValueError:
+    complete_backups: list[BackupManifest] = []
+    incomplete_backups: list[IncompleteBackupFolder] = []
+    invalid_backup_folders: list[str] = []
+
+    for child in sorted(backup_root.iterdir()):
+        if not child.is_dir() or not child.name.startswith(f"{BACKUP_FOLDER_PREFIX}-"):
             continue
-    return sorted(backups, key=lambda manifest: manifest.created_at)
+        if _is_incomplete_backup_folder(child):
+            incomplete_backups.append(_inspect_incomplete_backup(child, stale_after=stale_after))
+            continue
+        try:
+            complete_backups.append(_load_manifest(child))
+        except ValueError as exc:
+            invalid_backup_folders.append(f"{child}: {exc}")
+
+    complete_backups = sorted(complete_backups, key=lambda manifest: manifest.created_at)
+    normal_backups = sorted(
+        (manifest for manifest in complete_backups if not manifest.protected),
+        key=lambda manifest: manifest.created_at,
+    )
+    protected_backups = sorted(
+        (manifest for manifest in complete_backups if manifest.protected),
+        key=lambda manifest: manifest.created_at,
+    )
+    incomplete_backups = sorted(incomplete_backups, key=lambda item: item.last_modified_at)
+    return BackupInventory(
+        backup_root=backup_root,
+        complete_backups=complete_backups,
+        normal_backups=normal_backups,
+        protected_backups=protected_backups,
+        incomplete_backups=incomplete_backups,
+        invalid_backup_folders=invalid_backup_folders,
+    )
 
 
 def cleanup_backups(dest: Path, keep: int = 3, dry_run: bool = False) -> BackupCleanupResult:
@@ -146,6 +182,9 @@ def cleanup_backups(dest: Path, keep: int = 3, dry_run: bool = False) -> BackupC
             continue
         if not child.name.startswith(f"{BACKUP_FOLDER_PREFIX}-"):
             result.skipped_invalid_backups.append(f"{child}: unknown folder")
+            continue
+        if _is_incomplete_backup_folder(child):
+            result.skipped_incomplete_backups.append(child.resolve())
             continue
         try:
             valid_backups.append(_load_manifest(child))
@@ -280,6 +319,36 @@ def _load_manifest(backup_path: Path) -> BackupManifest:
         msg = f"Backup manifest is invalid: {manifest_file}"
         raise ValueError(msg) from exc
     return manifest.model_copy(update={"backup_path": backup_path.resolve()})
+
+
+def _is_incomplete_backup_folder(path: Path) -> bool:
+    return path.name.endswith(INCOMPLETE_SUFFIX)
+
+
+def _inspect_incomplete_backup(path: Path, stale_after: timedelta) -> IncompleteBackupFolder:
+    marker_path = path / INCOMPLETE_MARKER_NAME
+    marker_text: str | None = None
+    marker: Path | None = None
+    if marker_path.exists() and marker_path.is_file():
+        marker = marker_path.resolve()
+        try:
+            marker_text = marker_path.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            marker_text = None
+    last_modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+    age = datetime.now(UTC) - last_modified_at
+    return IncompleteBackupFolder(
+        backup_path=path.resolve(),
+        last_modified_at=last_modified_at,
+        marker_path=marker,
+        marker_text=marker_text,
+        stale=age >= stale_after,
+        likely_interrupted=True,
+        reason=(
+            "Incomplete backups usually mean the backup was interrupted or the PowerShell process "
+            "was closed before completion."
+        ),
+    )
 
 
 def _verify_restored_workspace(manifest: BackupManifest, workspace_dest: Path) -> None:

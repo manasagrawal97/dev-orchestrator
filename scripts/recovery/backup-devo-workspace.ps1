@@ -163,6 +163,9 @@ if (-not $createdBackupPath -or -not (Test-Path -LiteralPath $createdBackupPath 
     Write-CapturedOutput -OutputLines $createOutput -LogFile $logFile
     throw "Could not determine created backup path."
 }
+if ($createdBackupPath.EndsWith(".incomplete")) {
+    throw "Backup path is still incomplete, likely because backup creation was interrupted: $createdBackupPath"
+}
 
 if ($Verify) {
     Invoke-LoggedCommand -FilePath $devoPath -Arguments @("backup", "verify", "--path", $createdBackupPath) -LogFile $logFile | Out-Null

@@ -56,6 +56,13 @@ def test_install_script_defaults_to_every_6_hours() -> None:
     assert '[int]$RetentionCount = 3' in install_script
 
 
+def test_install_script_registers_hidden_powershell_window() -> None:
+    install_script = _script("install-devo-backup-task.ps1")
+
+    assert "-WindowStyle Hidden" in install_script
+    assert 'Write-Host "WindowStyle: Hidden"' in install_script
+
+
 def test_backup_script_defaults_retention_count_to_3() -> None:
     backup_script = _script("backup-devo-workspace.ps1")
 
@@ -145,6 +152,13 @@ def test_backup_script_handles_paths_with_spaces_as_literal_paths() -> None:
     assert "Test-Path -LiteralPath $clean" in backup_script
     assert "Resolve-Path -LiteralPath $clean" in backup_script
     assert "$parts -join \" \"" in backup_script
+
+
+def test_backup_script_fails_if_created_path_is_still_incomplete() -> None:
+    backup_script = _script("backup-devo-workspace.ps1")
+
+    assert '$createdBackupPath.EndsWith(".incomplete")' in backup_script
+    assert "Backup path is still incomplete" in backup_script
 
 
 def test_install_script_passes_expected_backup_wrapper_arguments() -> None:

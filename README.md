@@ -565,6 +565,12 @@ List backups:
 devo backup list --dest "G:\My Drive\Backups\DevOrchestrator"
 ```
 
+Check backup health without creating, restoring, deleting, or scheduling anything:
+
+```powershell
+devo backup status --dest "G:\My Drive\Backups\DevOrchestrator"
+```
+
 Verify a backup:
 
 ```powershell
@@ -590,7 +596,11 @@ Manual backup after every task is not required. Use manual backups only for risk
 devo backup create --dest "G:\My Drive\Backups\DevOrchestrator" --label "before-risky-milestone"
 ```
 
-Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, creation timestamp, and `protected: true/false`. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs. `devo backup cleanup` keeps the latest 3 normal backups by default, never deletes protected backups, and skips unknown or invalid folders.
+Each backup is written to a timestamped folder named `devo-workspace-backup-YYYYMMDD-HHMMSS[-label]` and includes `backup-manifest.json` plus a copied `workspace/` folder. The manifest records included roots, excluded patterns, file count, total bytes, per-file SHA-256 hashes, source workspace path, backup path, Git commit, Git branch, warnings, creation timestamp, and `protected: true/false`. `devo backup verify` fails if the manifest is missing, a copied file is missing, file count or total bytes differ, or any file hash differs. Complete backups are the only restorable backups.
+
+During creation, Devo uses a temporary `.incomplete` folder and renames it only after the manifest is written. If a folder still ends with `.incomplete`, the backup was interrupted or failed, commonly because the PowerShell process was closed before completion. Incomplete folders are reported separately by `devo backup list` and `devo backup status`; they are not counted as successful backups and are not retention candidates.
+
+`devo backup cleanup` keeps the latest 3 complete normal backups by default, never deletes protected backups, and skips unknown, invalid, and incomplete folders. Scheduled backup installs use hidden PowerShell mode so a random terminal window should not appear. If an older visible scheduled task is still installed, reinstall it later with `.\scripts\recovery\install-devo-backup-task.ps1` after approving scheduler changes.
 
 ## Development
 

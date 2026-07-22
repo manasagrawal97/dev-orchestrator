@@ -14,6 +14,8 @@
 - Keep the latest 3 normal backups.
 - Older normal backups are auto-deleted only after a new backup is successfully created and verified.
 - Protected backups are kept only when explicitly created with `-Protect` or `--protect`.
+- Scheduled backup installs use hidden PowerShell mode; visible legacy backup windows should not be closed while running.
+- `.incomplete` backup folders mean a backup was interrupted or failed and are not counted as successful/restorable backups.
 - Manual backup after every task is not required.
 - Manual backup is reserved for risky milestones or backup/recovery system changes.
 - Source code is protected by GitHub.
@@ -34,7 +36,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-048B work packages and approval bundles MVP
+- Latest completed source task: TASK-DEVO-049 scheduled backup visibility and incomplete reporting
 - Latest docs task: TASK-DEVO-048A documents Devo vision, current capabilities, agent workflow, usability roadmap, and PersonalOS operating model.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -58,6 +60,7 @@ The working loop is:
 - TASK-037 aligned validation-runner approval matching so exact `target_command` approvals remain supported and safely scoped `target_repo_build`, `target_repo_test`, and `target_repo_validation` approvals can authorize matching registered validation commands without duplicate approval friction.
 - TASK-DEVO-048A added plain-language product docs for what Devo is, how current agents work, what Devo can do today, how PersonalOS should be operated through Devo, and which usability improvements come next.
 - TASK-DEVO-048B adds first-class work packages, the built-in `low-risk-ui-maintenance` lane, generated operator prompts, and approval bundles that create normal child approvals for scoped source edits and registered build validation.
+- TASK-DEVO-049 makes future scheduled backup installs run with hidden PowerShell mode and reports `.incomplete` backup folders separately as likely interrupted/failed backups.
 
 ## Readiness Estimate
 
@@ -112,6 +115,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-037 validation approval matching for target build/test actions
 - TASK-DEVO-048A Devo vision, capability, agent workflow, usability roadmap, and PersonalOS operating model docs
 - TASK-DEVO-048B work packages and approval bundles MVP
+- TASK-DEVO-049 scheduled backup visibility and incomplete reporting
 
 ## Recovery Pointers
 

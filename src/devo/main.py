@@ -18,7 +18,7 @@ from .approvals import (
     get_approval_status,
     reject_approval,
 )
-from .backups import cleanup_backups, create_backup, list_backups, restore_backup, verify_backup
+from .backups import cleanup_backups, create_backup, list_backup_inventory, restore_backup, verify_backup
 from .environment import (
     create_environment_snapshot,
     generate_environment_bootstrap_plan,
@@ -1898,12 +1898,58 @@ def restore_workspace_backup(
 @backup_app.command("list")
 def list_workspace_backups(dest: Path = typer.Option(..., "--dest", help="Backup root directory.")) -> None:
     """List DevOrchestrator workspace backups under a backup root."""
-    backups = list_backups(dest)
-    if not backups:
+    try:
+        inventory = list_backup_inventory(dest)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--dest") from exc
+
+    _print_backup_inventory(inventory, latest=0)
+
+
+@backup_app.command("status")
+def show_workspace_backup_status(
+    dest: Path = typer.Option(..., "--dest", help="Backup root directory."),
+    latest: int = typer.Option(5, "--latest", help="Number of latest complete/incomplete folders to show."),
+) -> None:
+    """Summarize backup health without creating, restoring, deleting, or scheduling anything."""
+    try:
+        inventory = list_backup_inventory(dest)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--dest") from exc
+
+    _print_backup_inventory(inventory, latest=latest)
+
+
+def _print_backup_inventory(inventory: object, latest: int = 0) -> None:
+    complete_backups = list(getattr(inventory, "complete_backups"))
+    normal_backups = list(getattr(inventory, "normal_backups"))
+    protected_backups = list(getattr(inventory, "protected_backups"))
+    incomplete_backups = list(getattr(inventory, "incomplete_backups"))
+    invalid_backup_folders = list(getattr(inventory, "invalid_backup_folders"))
+
+    if not complete_backups and not incomplete_backups and not invalid_backup_folders:
         console.print("[yellow]No backups found.[/yellow]")
         return
 
-    for manifest in backups:
+    console.print(f"Backup root: {getattr(inventory, 'backup_root')}")
+    console.print(f"Complete backups: {len(complete_backups)}")
+    console.print(f"Normal backups: {len(normal_backups)}")
+    console.print(f"Protected backups: {len(protected_backups)}")
+    console.print(f"Incomplete backups: {len(incomplete_backups)}")
+    if incomplete_backups:
+        console.print(
+            "[yellow]Incomplete backups usually mean the backup was interrupted or the PowerShell process was closed before completion.[/yellow]"
+        )
+
+    complete_to_print = sorted(complete_backups, key=lambda item: item.created_at, reverse=True)
+    incomplete_to_print = sorted(incomplete_backups, key=lambda item: item.last_modified_at, reverse=True)
+    if latest > 0:
+        complete_to_print = complete_to_print[:latest]
+        incomplete_to_print = incomplete_to_print[:latest]
+
+    if complete_to_print:
+        console.print("Complete backup folders:")
+    for manifest in complete_to_print:
         console.print(f"[bold]{manifest.backup_path.name}[/bold]")
         console.print(f"  Path: {manifest.backup_path}")
         console.print(f"  Created at: {manifest.created_at.isoformat()}")
@@ -1912,6 +1958,21 @@ def list_workspace_backups(dest: Path = typer.Option(..., "--dest", help="Backup
         console.print(f"  Files: {manifest.file_count}")
         console.print(f"  Total bytes: {manifest.total_bytes}")
         console.print(f"  Git: {manifest.git_branch} {manifest.git_commit_hash}")
+    if incomplete_to_print:
+        console.print("Incomplete backup folders:")
+    for incomplete in incomplete_to_print:
+        console.print(f"[bold yellow]{incomplete.backup_path.name}[/bold yellow]")
+        console.print(f"  Path: {incomplete.backup_path}")
+        console.print(f"  Last modified: {incomplete.last_modified_at.isoformat()}")
+        console.print(f"  Stale: {incomplete.stale}")
+        console.print(f"  Likely interrupted: {incomplete.likely_interrupted}")
+        console.print(f"  Reason: {incomplete.reason}")
+        if incomplete.marker_text:
+            console.print(f"  Marker: {incomplete.marker_text}")
+    if invalid_backup_folders:
+        console.print("Invalid backup folders:")
+        for item in invalid_backup_folders:
+            console.print(f"  - {item}")
 
 
 @backup_app.command("cleanup")
@@ -1940,6 +2001,11 @@ def cleanup_workspace_backups(
         console.print("Skipped protected backups:")
         for path in result.skipped_protected_backups:
             console.print(f"  - {path}")
+    if result.skipped_incomplete_backups:
+        console.print("Skipped incomplete backups:")
+        for path in result.skipped_incomplete_backups:
+            console.print(f"  - {path}")
+        console.print("Incomplete backups are not counted as successful backups and are never retention candidates.")
     if result.skipped_invalid_backups:
         console.print("Skipped invalid or unknown folders:")
         for item in result.skipped_invalid_backups:

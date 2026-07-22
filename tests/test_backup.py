@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from devo.backups import cleanup_backups, create_backup, list_backups, restore_backup, verify_backup
+from devo.backups import cleanup_backups, create_backup, list_backup_inventory, list_backups, restore_backup, verify_backup
 from devo.main import app
 
 runner = CliRunner()
@@ -100,6 +101,58 @@ def test_backup_list_shows_created_backups(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "devo-workspace-backup" in result.output
     assert "one" in result.output
+
+
+def test_backup_list_excludes_incomplete_folders_from_successful_backups(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    create_backup(backup_root, label="complete")
+    incomplete = _incomplete_backup_folder(backup_root, "20260101-000000")
+
+    listed = list_backups(backup_root)
+    inventory = list_backup_inventory(backup_root)
+
+    assert len(listed) == 1
+    assert listed[0].backup_path.name.endswith("complete")
+    assert [item.backup_path for item in inventory.incomplete_backups] == [incomplete.resolve()]
+    assert len(inventory.complete_backups) == 1
+    assert len(inventory.normal_backups) == 1
+
+
+def test_backup_list_cli_reports_incomplete_folders_separately(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    create_backup(backup_root, label="complete")
+    _incomplete_backup_folder(backup_root, "20260101-000000")
+
+    result = runner.invoke(app, ["backup", "list", "--dest", str(backup_root)], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Complete backups: 1" in result.output
+    assert "Normal backups: 1" in result.output
+    assert "Protected backups: 0" in result.output
+    assert "Incomplete backups: 1" in result.output
+    assert "Incomplete backups usually mean the backup was interrupted" in result.output
+    assert ".incomplete" in result.output
+
+
+def test_backup_status_reports_stale_incomplete_warning(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    incomplete = _incomplete_backup_folder(backup_root, "20260101-000000")
+    old = datetime.now(UTC) - timedelta(hours=3)
+    os.utime(incomplete, (old.timestamp(), old.timestamp()))
+
+    inventory = list_backup_inventory(backup_root)
+    result = runner.invoke(app, ["backup", "status", "--dest", str(backup_root)], terminal_width=240)
+
+    assert inventory.incomplete_backups[0].stale is True
+    assert result.exit_code == 0
+    assert "Stale: True" in result.output
+    assert "Likely interrupted: True" in result.output
 
 
 def test_restore_copies_backup_workspace_to_empty_destination(tmp_path: Path, monkeypatch) -> None:
@@ -237,6 +290,21 @@ def test_backup_cleanup_keeps_latest_3_unprotected_backups_by_default(tmp_path: 
     assert created[2].backup_path.exists()
 
 
+def test_backup_cleanup_retention_skips_incomplete_and_counts_complete_normals_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    created = _create_ordered_backups(backup_root, count=4)
+    incomplete = _incomplete_backup_folder(backup_root, "20260101-090000")
+
+    result = cleanup_backups(backup_root, keep=3)
+
+    assert incomplete.exists()
+    assert incomplete.resolve() in result.skipped_incomplete_backups
+    assert {path.name for path in result.deleted_backups} == {created[0].backup_path.name}
+    assert len(result.retained_backups) == 3
+
+
 def test_backup_cleanup_never_deletes_protected_backups(tmp_path: Path, monkeypatch) -> None:
     workspace, _target = _sample_workspace(tmp_path)
     backup_root = tmp_path / "backups"
@@ -294,6 +362,24 @@ def test_backup_cleanup_cli_supports_dry_run(tmp_path: Path, monkeypatch) -> Non
     assert created[0].backup_path.exists()
 
 
+def test_backup_cleanup_cli_reports_skipped_incomplete_folders(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target = _sample_workspace(tmp_path)
+    backup_root = tmp_path / "backups"
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    _create_ordered_backups(backup_root, count=2)
+    _incomplete_backup_folder(backup_root, "20260101-000000")
+
+    result = runner.invoke(
+        app,
+        ["backup", "cleanup", "--dest", str(backup_root), "--keep", "1", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0
+    assert "Skipped incomplete backups:" in result.output
+    assert "not counted as successful backups" in result.output
+
+
 def _sample_workspace(tmp_path: Path) -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     target_project = tmp_path / "target-project"
@@ -341,6 +427,13 @@ def _create_ordered_backups(backup_root: Path, count: int):
         _set_manifest_created_at(manifest.backup_path, created_at)
         created.append(manifest.model_copy(update={"created_at": created_at}))
     return created
+
+
+def _incomplete_backup_folder(backup_root: Path, timestamp: str) -> Path:
+    incomplete = backup_root / f"devo-workspace-backup-{timestamp}-scheduled.incomplete"
+    incomplete.mkdir(parents=True)
+    (incomplete / "BACKUP_INCOMPLETE.txt").write_text("Backup did not complete successfully.\n", encoding="utf-8")
+    return incomplete
 
 
 def _set_manifest_created_at(backup_path: Path, created_at: datetime) -> None:

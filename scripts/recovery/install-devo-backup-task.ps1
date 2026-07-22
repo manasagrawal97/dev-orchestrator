@@ -17,7 +17,7 @@ if (-not (Test-Path -LiteralPath $RepoPath -PathType Container)) { throw "Repo p
 $scriptPath = Join-Path $RepoPath "scripts\recovery\backup-devo-workspace.ps1"
 if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "Backup script does not exist: $scriptPath" }
 
-$argument = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -RepoPath `"$RepoPath`" -BackupRoot `"$BackupRoot`" -Label `"scheduled`" -RetentionCount $RetentionCount"
+$argument = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" -RepoPath `"$RepoPath`" -BackupRoot `"$BackupRoot`" -Label `"scheduled`" -RetentionCount $RetentionCount"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argument
 if ($Frequency -eq "Every6Hours") {
     $trigger = New-ScheduledTaskTrigger -Once -At $StartTime -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration (New-TimeSpan -Days 3650)
@@ -32,6 +32,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Se
 Write-Host "Registered scheduled task: $TaskName"
 Write-Host "Frequency: $Frequency"
 Write-Host "BackupRoot: $BackupRoot"
+Write-Host "WindowStyle: Hidden"
 if ($RunNow) {
     Start-ScheduledTask -TaskName $TaskName
     Write-Host "Started scheduled task once: $TaskName"

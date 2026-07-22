@@ -520,6 +520,29 @@ class BackupManifest(BaseModel):
     protected: bool = False
 
 
+class IncompleteBackupFolder(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backup_path: Path
+    last_modified_at: datetime
+    marker_path: Path | None = None
+    marker_text: str | None = None
+    stale: bool = False
+    likely_interrupted: bool = True
+    reason: str = "Backup folder still has .incomplete suffix."
+
+
+class BackupInventory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backup_root: Path
+    complete_backups: list[BackupManifest] = Field(default_factory=list)
+    normal_backups: list[BackupManifest] = Field(default_factory=list)
+    protected_backups: list[BackupManifest] = Field(default_factory=list)
+    incomplete_backups: list[IncompleteBackupFolder] = Field(default_factory=list)
+    invalid_backup_folders: list[str] = Field(default_factory=list)
+
+
 class BackupCleanupResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -529,6 +552,7 @@ class BackupCleanupResult(BaseModel):
     deleted_backups: list[Path] = Field(default_factory=list)
     retained_backups: list[Path] = Field(default_factory=list)
     skipped_protected_backups: list[Path] = Field(default_factory=list)
+    skipped_incomplete_backups: list[Path] = Field(default_factory=list)
     skipped_invalid_backups: list[str] = Field(default_factory=list)
 
 
