@@ -111,6 +111,8 @@ devo work lanes
 devo work start --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
 devo work import-scope --project <name> --run <runId> --file <scopeMarkdownFile>
 devo work status --project <name> --run <runId>
+devo work next --project <name> --run <runId>
+devo work prompt --project <name> --run <runId> --phase implement
 devo work request-approval-bundle --project <name> --run <runId> --task T001
 devo approval bundle-status --project <name> --run <runId> --bundle <bundleId>
 devo approval bundle-approve --project <name> --run <runId> --bundle <bundleId> --by Manas --note "Approved scope"
@@ -119,13 +121,15 @@ devo work complete --project <name> --run <runId> --commit <commitHash> --messag
 
 The scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
 
+`devo work next` reads the package state and shows the next action, required command, stop conditions, and whether user approval is needed. `devo work prompt --phase <phase>` writes a phase-specific Codex operator prompt under the work-package artifacts folder. Supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
+
 The final low-risk package flow is:
 
 ```text
-work start -> import scope -> request approval bundle -> bundle approve -> implement/build/commit -> work complete -> final report
+work start -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
 ```
 
-`devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action so the final package state is obvious after a successful push.
+`devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action and suggested next command so the final package state is obvious after a successful push.
 
 ## Safety
 

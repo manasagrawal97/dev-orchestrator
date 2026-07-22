@@ -105,6 +105,8 @@ from .validation_registry import (
 from .validation_runner import list_validation_history, run_validation_command, terminal_excerpt
 from .work_packages import (
     complete_work_package,
+    generate_work_package_phase_prompt,
+    get_work_package_next_step,
     import_work_scope,
     list_lanes,
     load_work_package,
@@ -256,6 +258,7 @@ def _print_approval_list(records: list[DevoApprovalRecord]) -> None:
 
 def _print_work_package(package: object) -> None:
     paths = work_package_artifact_paths(package)
+    next_step = get_work_package_next_step(package)
     console.print(f"Work package: {getattr(package, 'run_id')}")
     console.print(f"Project: {getattr(package, 'project')}")
     console.print(f"Goal: {getattr(package, 'goal')}")
@@ -272,6 +275,7 @@ def _print_work_package(package: object) -> None:
     console.print(f"Delivered at: {delivered_at.isoformat() if delivered_at else 'none'}")
     console.print(f"Final git status: {getattr(package, 'final_git_status') or 'none'}")
     console.print(f"Next action: {work_package_next_action(package)}")
+    console.print(f"Suggested next command: {next_step.suggested_prompt_command or next_step.required_command or 'none'}")
     console.print("Proposed items:")
     for item in getattr(package, "proposed_items") or ["none"]:
         console.print(f"  - {item}")
@@ -284,6 +288,20 @@ def _print_work_package(package: object) -> None:
     console.print(f"JSON: {_named_path(paths['json'])}")
     console.print(f"Markdown: {_named_path(paths['markdown'])}")
     console.print(f"Operator prompt: {_named_path(paths['operator_prompt'])}")
+
+
+def _print_work_next(package: object) -> None:
+    next_step = get_work_package_next_step(package)
+    console.print(f"Project: {getattr(package, 'project')}")
+    console.print(f"Run: {getattr(package, 'run_id')}")
+    console.print(f"Current status: {next_step.current_status.value}")
+    console.print(f"Next action: {next_step.next_action}")
+    console.print(f"Required command: {next_step.required_command or 'none'}")
+    console.print(f"Suggested prompt command: {next_step.suggested_prompt_command or 'none'}")
+    console.print(f"User approval needed: {next_step.user_approval_needed}")
+    console.print("Stop conditions:")
+    for condition in next_step.stop_conditions or ["none"]:
+        console.print(f"  - {condition}")
 
 
 def _print_approval_bundle(bundle: object) -> None:
@@ -1660,6 +1678,36 @@ def show_work_status(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
 
     _print_work_package(package)
+
+
+@work_app.command("next")
+def show_work_next(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show the next work-package action without mutating project files."""
+    try:
+        package = load_work_package(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    _print_work_next(package)
+
+
+@work_app.command("prompt")
+def write_work_prompt(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    phase: str = typer.Option(..., "--phase", help="Prompt phase: scope, implement, validate, deliver, or complete."),
+) -> None:
+    """Write a phase-specific Codex operator prompt for a work package."""
+    try:
+        result = generate_work_package_phase_prompt(project_name=project_name, run_id=run_id, phase=phase)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--phase") from exc
+
+    console.print(f"Phase: {result.phase}")
+    console.print(f"Prompt: {_named_path(result.prompt_path)}")
 
 
 @work_app.command("complete")

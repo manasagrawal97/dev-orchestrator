@@ -20,6 +20,7 @@ WORK_PACKAGE_DIR = "work-package"
 WORK_PACKAGE_JSON = "work-package.json"
 WORK_PACKAGE_MD = "work-package.md"
 OPERATOR_PROMPT_MD = "operator-prompt.md"
+SUPPORTED_PROMPT_PHASES = {"scope", "implement", "validate", "deliver", "complete"}
 
 
 class WorkPackageStatus(StrEnum):
@@ -77,6 +78,25 @@ class ScopeImportResult(BaseModel):
     package: WorkPackage
     scope_file: Path
     missing_sections: list[str] = Field(default_factory=list)
+
+
+class WorkPackageNextStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_status: WorkPackageStatus
+    next_action: str
+    required_command: str | None = None
+    suggested_prompt_command: str | None = None
+    stop_conditions: list[str] = Field(default_factory=list)
+    user_approval_needed: bool = False
+
+
+class WorkPackagePhasePrompt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phase: str
+    prompt_path: Path
+    prompt_text: str
 
 
 BUILT_IN_LANES: dict[str, WorkLane] = {
@@ -287,6 +307,33 @@ def work_package_artifact_paths(package: WorkPackage, workspace_root: Path | Non
     }
 
 
+def work_package_phase_prompt_path(
+    project_name: str,
+    run_id: str,
+    phase: str,
+    workspace_root: Path | None = None,
+) -> Path:
+    root = workspace_root or get_workspace_root()
+    normalized_phase = _normalize_phase(phase)
+    return _work_package_dir(root, project_name, run_id) / f"operator-prompt-{normalized_phase}.md"
+
+
+def generate_work_package_phase_prompt(
+    project_name: str,
+    run_id: str,
+    phase: str,
+    workspace_root: Path | None = None,
+) -> WorkPackagePhasePrompt:
+    root = workspace_root or get_workspace_root()
+    package = load_work_package(project_name, run_id, workspace_root=root)
+    normalized_phase = _normalize_phase(phase)
+    prompt_text = render_phase_operator_prompt(package, normalized_phase, workspace_root=root)
+    prompt_path = work_package_phase_prompt_path(project_name, run_id, normalized_phase, workspace_root=root)
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(prompt_text, encoding="utf-8")
+    return WorkPackagePhasePrompt(phase=normalized_phase, prompt_path=prompt_path, prompt_text=prompt_text)
+
+
 def render_work_package_markdown(package: WorkPackage) -> str:
     lines = [
         f"# Work Package: {package.goal}",
@@ -398,6 +445,64 @@ def render_operator_prompt(package: WorkPackage, workspace_root: Path | None = N
             "- Devo artifacts",
             "- commit hash",
             "- push result",
+            "- final Git status",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def render_phase_operator_prompt(package: WorkPackage, phase: str, workspace_root: Path | None = None) -> str:
+    root = workspace_root or get_workspace_root()
+    normalized_phase = _normalize_phase(phase)
+    project = load_registered_project(package.project, workspace_root=root)
+    next_step = get_work_package_next_step(package)
+    lines = [
+        f"# Codex Work-Package Prompt: {normalized_phase}",
+        "",
+        f"Project: {package.project}",
+        f"Project path: {project.path}",
+        f"Run id: {package.run_id}",
+        f"Lane: {package.lane}",
+        f"Goal: {package.goal}",
+        f"Status: {package.status.value}",
+        f"Approval bundle: {package.approval_bundle_id or 'none'}",
+        f"Approval bundle status: {package.approval_bundle_status or 'unknown'}",
+        "",
+        "## Approved Files",
+        "",
+    ]
+    lines.extend(_bullets(package.approved_files))
+    lines.extend(["", "## Allowed Changes", ""])
+    lines.extend(_bullets(package.allowed_changes))
+    lines.extend(["", "## Forbidden Changes", ""])
+    lines.extend(_bullets(package.forbidden_changes))
+    lines.extend(["", "## Validation Command", ""])
+    lines.extend(_bullets(package.validation_commands))
+    lines.extend(
+        [
+            "",
+            "## Phase Objective",
+            "",
+            _phase_objective(normalized_phase, package),
+            "",
+            "## Exact Commands",
+            "",
+        ]
+    )
+    lines.extend(_phase_commands(normalized_phase, package))
+    lines.extend(["", "## Stop Conditions", ""])
+    lines.extend(_bullets(next_step.stop_conditions))
+    lines.extend(
+        [
+            "",
+            "## Final Report Format",
+            "",
+            "- phase completed",
+            "- files changed, or confirmation none changed",
+            "- validation result, if validation was run",
+            "- Devo artifact paths",
+            "- commit hash and push result, if delivered",
             "- final Git status",
             "",
         ]
@@ -524,22 +629,172 @@ def validation_command_details(project_name: str, command_id: str, workspace_roo
     return command.id, command.command
 
 
-def work_package_next_action(package: WorkPackage) -> str:
+def get_work_package_next_step(package: WorkPackage) -> WorkPackageNextStep:
+    stop_conditions = _default_stop_conditions()
     if package.status == WorkPackageStatus.DRAFT:
-        return f"Import scope with: devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>"
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="Prepare/import scope",
+            required_command=f"devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>",
+            suggested_prompt_command=_prompt_command(package, "scope"),
+            stop_conditions=stop_conditions,
+            user_approval_needed=False,
+        )
     if package.status == WorkPackageStatus.SCOPE_PROPOSED:
-        return f"Request approval bundle with: devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001"
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="Request approval bundle",
+            required_command=f"devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001",
+            suggested_prompt_command=None,
+            stop_conditions=stop_conditions,
+            user_approval_needed=True,
+        )
     if package.status == WorkPackageStatus.APPROVAL_REQUESTED:
-        return "Approve the pending approval bundle before implementation."
+        command = None
+        if package.approval_bundle_id:
+            command = (
+                f"devo approval bundle-approve --project {package.project} --run {package.run_id} "
+                f"--bundle {package.approval_bundle_id} --by <name>"
+            )
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="Approve bundle or wait",
+            required_command=command,
+            suggested_prompt_command=None,
+            stop_conditions=stop_conditions,
+            user_approval_needed=True,
+        )
     if package.status == WorkPackageStatus.APPROVED:
-        return "Implement approved scope, validate, commit, push, then run devo work complete."
-    if package.status in {WorkPackageStatus.IMPLEMENTED, WorkPackageStatus.VALIDATED}:
-        return "Finish delivery, commit/push if needed, then run devo work complete."
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="Implement approved scope",
+            required_command=_prompt_command(package, "implement"),
+            suggested_prompt_command=_prompt_command(package, "implement"),
+            stop_conditions=stop_conditions,
+            user_approval_needed=False,
+        )
+    if package.status == WorkPackageStatus.IMPLEMENTED:
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="Run validation",
+            required_command=_prompt_command(package, "validate"),
+            suggested_prompt_command=_prompt_command(package, "validate"),
+            stop_conditions=stop_conditions,
+            user_approval_needed=False,
+        )
+    if package.status == WorkPackageStatus.VALIDATED:
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="Generate delivery report and commit/push",
+            required_command=_prompt_command(package, "deliver"),
+            suggested_prompt_command=_prompt_command(package, "deliver"),
+            stop_conditions=stop_conditions,
+            user_approval_needed=False,
+        )
     if package.status == WorkPackageStatus.DELIVERED:
-        return "Delivered. Review reports or close the formal run if a supported run-closure path applies."
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="No action needed",
+            required_command=None,
+            suggested_prompt_command=None,
+            stop_conditions=[],
+            user_approval_needed=False,
+        )
     if package.status == WorkPackageStatus.CLOSED:
-        return "Closed. No further work-package action is needed."
-    return "Inspect work package state."
+        return WorkPackageNextStep(
+            current_status=package.status,
+            next_action="No action needed",
+            required_command=None,
+            suggested_prompt_command=None,
+            stop_conditions=[],
+            user_approval_needed=False,
+        )
+    return WorkPackageNextStep(
+        current_status=package.status,
+        next_action="Inspect work package state",
+        required_command=f"devo work status --project {package.project} --run {package.run_id}",
+        suggested_prompt_command=None,
+        stop_conditions=stop_conditions,
+        user_approval_needed=False,
+    )
+
+
+def work_package_next_action(package: WorkPackage) -> str:
+    return get_work_package_next_step(package).next_action
+
+
+def _prompt_command(package: WorkPackage, phase: str) -> str:
+    return f"devo work prompt --project {package.project} --run {package.run_id} --phase {phase}"
+
+
+def _normalize_phase(phase: str) -> str:
+    normalized = phase.strip().lower()
+    if normalized not in SUPPORTED_PROMPT_PHASES:
+        allowed = ", ".join(sorted(SUPPORTED_PROMPT_PHASES))
+        msg = f"Unknown work prompt phase: {phase}. Supported phases: {allowed}"
+        raise ValueError(msg)
+    return normalized
+
+
+def _default_stop_conditions() -> list[str]:
+    return [
+        "The task needs DB, migrations, appsettings, secrets, local settings, scripts, backups, generated files, user data, app run, or external API calls.",
+        "A file outside the approved work-package scope is needed.",
+        "The change requires a behavior-heavy refactor or a different risk category.",
+        "Validation fails or the validation method changes.",
+        "Git is dirty in an unexpected way.",
+    ]
+
+
+def _phase_objective(phase: str, package: WorkPackage) -> str:
+    objectives = {
+        "scope": "Prepare a low-risk scope markdown file and import it into this work package. Do not edit target project source files.",
+        "implement": "Implement only the approved work-package scope in the approved files, then run safe diff checks.",
+        "validate": "Run the registered validation command through Devo using the existing approval bundle. Do not bypass Devo validation gates.",
+        "deliver": "Generate delivery evidence, refresh reports, commit only approved target files, and push after validation has passed.",
+        "complete": "Record the delivered commit and summary with `devo work complete`, then generate final reports.",
+    }
+    return objectives[phase].replace("this work package", f"this {package.lane} work package")
+
+
+def _phase_commands(phase: str, package: WorkPackage) -> list[str]:
+    validation_commands = package.validation_commands or ["<validationCommandId>"]
+    validation_lines = [
+        f"- devo validation run --project {package.project} --run {package.run_id} --task T001 --id {command_id} --allow-disabled"
+        for command_id in validation_commands
+    ]
+    diff_paths = " ".join(package.approved_files) if package.approved_files else "<approved-files>"
+    commands = {
+        "scope": [
+            f"- devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>",
+            f"- devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001",
+        ],
+        "implement": [
+            f"- devo approval bundle-status --project {package.project} --run {package.run_id} --bundle {package.approval_bundle_id or '<bundleId>'}",
+            "- git status -sb",
+            "- git diff --check",
+            f"- git diff -- {diff_paths}",
+            f"- devo git delivery-check --project {package.project}",
+        ],
+        "validate": validation_lines,
+        "deliver": [
+            f"- devo git delivery-report --project {package.project} --run {package.run_id} --message \"<summary>\"",
+            f"- devo project context-refresh --project {package.project} --run {package.run_id} --write-draft",
+            f"- devo report run --project {package.project} --run {package.run_id} --write",
+            f"- devo report handoff --project {package.project} --run {package.run_id} --write",
+            "- git status -sb",
+            f"- git add {diff_paths}",
+            "- git commit -m \"<message>\"",
+            "- git push origin <branch>",
+        ],
+        "complete": [
+            f"- devo work complete --project {package.project} --run {package.run_id} --commit <commitHash> --message \"<summary>\"",
+            f"- devo work status --project {package.project} --run {package.run_id}",
+            f"- devo report run --project {package.project} --run {package.run_id} --write",
+            f"- devo report handoff --project {package.project} --run {package.run_id} --write",
+        ],
+    }
+    return commands[phase]
 
 
 def _latest_validation_record(project_name: str, run_id: str, workspace_root: Path) -> ValidationRunRecord | None:

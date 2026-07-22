@@ -22,7 +22,7 @@ from devo.schemas import (
     ValidationRunStatus,
 )
 from devo.validation_registry import add_validation_command
-from devo.work_packages import WorkPackageStatus, complete_work_package, list_lanes, load_work_package, start_work_package
+from devo.work_packages import WorkPackageStatus, complete_work_package, list_lanes, load_work_package, save_work_package, start_work_package
 
 runner = CliRunner()
 
@@ -84,6 +84,139 @@ def test_work_status_reports_artifact_paths(tmp_path: Path, monkeypatch) -> None
     assert "Work package:" in result.output
     assert "Operator prompt:" in result.output
     assert "work-package.json" in result.output
+    assert "Suggested next command:" in result.output
+
+
+def test_work_next_for_draft_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Current status: draft" in result.output
+    assert "Next action: Prepare/import scope" in result.output
+    assert "devo work import-scope" in result.output
+    assert "User approval needed: False" in result.output
+
+
+def test_work_next_for_scope_proposed_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
+
+    result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Current status: scope_proposed" in result.output
+    assert "Next action: Request approval bundle" in result.output
+    assert "devo work request-approval-bundle" in result.output
+    assert "User approval needed: True" in result.output
+
+
+def test_work_next_for_approval_requested_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+    create_approval_bundle("sample", package.run_id, "T001", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Current status: approval_requested" in result.output
+    assert "Next action: Approve bundle or wait" in result.output
+    assert "devo approval bundle-approve" in result.output
+    assert "User approval needed: True" in result.output
+
+
+def test_work_next_for_approved_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+    bundle = create_approval_bundle("sample", package.run_id, "T001", workspace_root=workspace)
+    approve_approval_bundle("sample", package.run_id, bundle.bundle_id, approved_by="Manas", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Current status: approved" in result.output
+    assert "Next action: Implement approved scope" in result.output
+    assert "devo work prompt --project sample" in result.output
+    assert "--phase implement" in result.output
+    assert "User approval needed: False" in result.output
+
+
+def test_work_next_for_validated_and_delivered_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    save_work_package(package.model_copy(update={"status": WorkPackageStatus.IMPLEMENTED}), workspace_root=workspace)
+
+    implemented_result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id], terminal_width=240)
+    save_work_package(package.model_copy(update={"status": WorkPackageStatus.VALIDATED}), workspace_root=workspace)
+
+    validated_result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id], terminal_width=240)
+    completed = complete_work_package("sample", package.run_id, "abc1234", "Delivered", workspace_root=workspace)
+    delivered_result = runner.invoke(app, ["work", "next", "--project", "sample", "--run", completed.run_id], terminal_width=240)
+
+    assert implemented_result.exit_code == 0, implemented_result.output
+    assert "Current status: implemented" in implemented_result.output
+    assert "Next action: Run validation" in implemented_result.output
+    assert "--phase validate" in implemented_result.output
+    assert validated_result.exit_code == 0, validated_result.output
+    assert "Current status: validated" in validated_result.output
+    assert "Next action: Generate delivery report and commit/push" in validated_result.output
+    assert "--phase deliver" in validated_result.output
+    assert delivered_result.exit_code == 0, delivered_result.output
+    assert "Current status: delivered" in delivered_result.output
+    assert "Next action: No action needed" in delivered_result.output
+    assert "Required command: none" in delivered_result.output
+
+
+def test_work_prompt_creates_phase_prompt_file(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "implement"],
+        terminal_width=240,
+    )
+
+    prompt_path = _package_root(workspace, package.run_id) / "operator-prompt-implement.md"
+    assert result.exit_code == 0, result.output
+    assert "operator-prompt-implement.md" in result.output
+    assert prompt_path.exists()
+
+
+def test_work_prompt_rejects_unknown_phase(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "launch"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Unknown work prompt phase" in result.output
+
+
+def test_work_prompt_includes_scope_and_stop_rules(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "validate"],
+        terminal_width=240,
+    )
+
+    prompt = (_package_root(workspace, package.run_id) / "operator-prompt-validate.md").read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "src/web/App.razor" in prompt
+    assert "src/web/Nav.razor" in prompt
+    assert "DB, migrations, appsettings, secrets, scripts, backups, user data" in prompt
+    assert "dotnet-build-personalos" in prompt
+    assert "## Stop Conditions" in prompt
 
 
 def test_work_complete_updates_status_and_delivery_fields(tmp_path: Path, monkeypatch) -> None:
@@ -155,7 +288,7 @@ def test_work_status_shows_delivered_state(tmp_path: Path, monkeypatch) -> None:
     assert "Status: delivered" in status_result.output
     assert "Delivery commit: abc1234" in status_result.output
     assert "Validation: none (none)" in status_result.output
-    assert "Next action: Delivered." in status_result.output
+    assert "Next action: No action needed" in status_result.output
 
 
 def test_work_complete_fails_if_no_work_package_exists(tmp_path: Path, monkeypatch) -> None:
@@ -225,6 +358,8 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
 
     runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
     runner.invoke(app, ["work", "status", "--project", "sample", "--run", package.run_id])
+    runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id])
+    runner.invoke(app, ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "implement"])
     complete_work_package("sample", package.run_id, "abc1234", "Delivered", workspace_root=workspace)
 
     assert sentinel.read_text(encoding="utf-8") == before
@@ -313,8 +448,19 @@ def _only_work_run(workspace: Path) -> str:
     return run_ids[0]
 
 
+def _prepared_package(workspace: Path, tmp_path: Path):
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    import_result = runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
+    assert import_result.exit_code == 0, import_result.output
+    return load_work_package("sample", package.run_id, workspace_root=workspace)
+
+
+def _package_root(workspace: Path, run_id: str) -> Path:
+    return workspace / "runs" / "sample" / run_id / "artifacts" / "work-package"
+
+
 def _package_paths(workspace: Path, run_id: str) -> dict[str, Path]:
-    root = workspace / "runs" / "sample" / run_id / "artifacts" / "work-package"
+    root = _package_root(workspace, run_id)
     return {
         "json": root / "work-package.json",
         "markdown": root / "work-package.md",
