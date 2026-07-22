@@ -1,14 +1,19 @@
 # DevOrchestrator
 
-DevOrchestrator is an initial Python CLI for registering local software projects and producing safe, bounded project scan summaries.
+DevOrchestrator, or Devo, is a local development control room for AI-assisted software work. It records project context, runs, agent workflow state, approvals, validation evidence, Git delivery evidence, reports, and recovery notes.
 
-This version intentionally does not include autonomous agents, AI API integration, or a web UI.
+Devo is not the AI itself. ChatGPT plans and reviews, Codex implements and operates, and Devo manages the workflow guardrails and evidence trail. This version intentionally does not include autonomous agents, AI API integration, or a web UI.
 
 ## Project Memory
 
 Durable project direction is tracked in GitHub docs so DevOrchestrator can recover even if chat context is unavailable:
 
 - [Current state](docs/current-state.md)
+- [Devo vision](docs/devo-vision.md)
+- [Current capabilities](docs/current-capabilities.md)
+- [Agent workflow](docs/agent-workflow.md)
+- [Usability roadmap](docs/usability-roadmap.md)
+- [PersonalOS operating model](docs/personal-os-operating-model.md)
 - [Roadmap](docs/roadmap.md)
 - [How to use Devo](docs/how-to-use-devo.md)
 - [Token usage](docs/token-usage.md)

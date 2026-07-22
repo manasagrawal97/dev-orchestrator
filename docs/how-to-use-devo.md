@@ -13,6 +13,14 @@ Devo does not implement code by itself. It does not call AI by itself. It does n
 - Devo runtime artifacts live in `workspace/` and should not be committed.
 - Devo workspace/context is protected by scheduled Google Drive backup.
 
+For the plain-language product model, read:
+
+- [Devo vision](devo-vision.md)
+- [Current capabilities](current-capabilities.md)
+- [Agent workflow](agent-workflow.md)
+- [Usability roadmap](usability-roadmap.md)
+- [PersonalOS operating model](personal-os-operating-model.md)
+
 ## Typical Lifecycle
 
 1. Register the project.
@@ -30,6 +38,19 @@ Devo does not implement code by itself. It does not call AI by itself. It does n
 13. Refresh project context.
 14. Write a handoff report.
 15. Close the run when all tasks are resolved.
+
+## Practical PersonalOS Flow
+
+For current PersonalOS maintenance, use the simpler practical flow from [PersonalOS operating model](personal-os-operating-model.md):
+
+1. user gives a goal
+2. Codex/Devo proposes an exact work package
+3. user approves source edit
+4. Codex implements within scope
+5. user approves build validation
+6. Codex validates, commits, pushes, and gives a short final summary
+
+The target future flow is one bundled approval for low-risk batches, then implementation, validation, delivery, and final summary.
 
 ## Project Setup
 

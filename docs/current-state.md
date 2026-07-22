@@ -23,6 +23,8 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+
 The working loop is:
 
 1. ChatGPT helps plan, reason about risk, and choose the next safe step.
@@ -33,9 +35,10 @@ The working loop is:
 ## Latest State
 
 - Latest completed source task: TASK-037 validation approval matching for target build/test actions
+- Latest docs task: TASK-DEVO-048A documents Devo vision, current capabilities, agent workflow, usability roadmap, and PersonalOS operating model.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
-- Latest PersonalOS dogfood task: TASK-031 added `docs/current-state.md` in the PersonalOS repository through Devo-controlled docs-only scope.
+- Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Next recommended action: continue delivery-signal noise reduction, then add interrupted-work recovery/resume and handoff prompt generation.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
@@ -53,6 +56,7 @@ The working loop is:
 - TASK-030B registered DevOrchestrator's own validation commands for future dogfood evidence.
 - TASK-035 fixed Git delivery/status checks for registered repository paths with spaces and Git safe-directory ownership checks.
 - TASK-037 aligned validation-runner approval matching so exact `target_command` approvals remain supported and safely scoped `target_repo_build`, `target_repo_test`, and `target_repo_validation` approvals can authorize matching registered validation commands without duplicate approval friction.
+- TASK-DEVO-048A added plain-language product docs for what Devo is, how current agents work, what Devo can do today, how PersonalOS should be operated through Devo, and which usability improvements come next.
 
 ## Readiness Estimate
 
@@ -105,15 +109,19 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-030B DevOrchestrator validation registry setup
 - TASK-035 Git delivery path reliability for registered repositories with spaces
 - TASK-037 validation approval matching for target build/test actions
+- TASK-DEVO-048A Devo vision, capability, agent workflow, usability roadmap, and PersonalOS operating model docs
 
 ## Recovery Pointers
 
 If chat context is lost, start here:
 
 1. Read this file.
-2. Read `docs/roadmap.md`.
-3. Read `docs/operating-model.md`.
-4. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-5. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-6. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
-7. Continue from the latest planned next task.
+2. Read `docs/devo-vision.md`.
+3. Read `docs/current-capabilities.md`.
+4. Read `docs/agent-workflow.md`.
+5. Read `docs/roadmap.md`.
+6. Read `docs/operating-model.md`.
+7. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+8. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+9. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+10. Continue from the latest planned next task.
