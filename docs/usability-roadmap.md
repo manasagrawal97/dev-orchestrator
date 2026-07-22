@@ -18,6 +18,18 @@ The pain points are:
 
 This makes Devo safe but not yet smooth.
 
+## Visual Roadmap
+
+Source/freshness: this diagram reflects the usability direction as of TASK-DEVO-053A. Update it when dashboard work or direct model/agent adapters become active implementation tracks.
+
+```mermaid
+flowchart LR
+    Current["Current CLI control plane"] --> Packages["Work packages\nand approval bundles"]
+    Packages --> History["Work history\nand activity summaries"]
+    History --> Dashboard["Dashboard generated\nfrom Devo artifacts"]
+    Dashboard --> Agents["Direct agent execution\nthrough model adapters"]
+```
+
 ## Target Improvements
 
 ### Work Packages - MVP Added

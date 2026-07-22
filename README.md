@@ -13,6 +13,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Current capabilities](docs/current-capabilities.md)
 - [Agent workflow](docs/agent-workflow.md)
 - [Usability roadmap](docs/usability-roadmap.md)
+- [Visual strategy](docs/visual-strategy.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
 - [Roadmap](docs/roadmap.md)
 - [How to use Devo](docs/how-to-use-devo.md)

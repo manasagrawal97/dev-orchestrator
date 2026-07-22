@@ -15,6 +15,22 @@ The roles are:
 
 Devo should make AI-assisted development feel controlled instead of improvised.
 
+## Control Room Model
+
+Source/freshness: this diagram reflects the current Devo architecture described in this document and `docs/current-state.md` as of TASK-DEVO-053A. Update it when Devo adds a dashboard, direct model adapters, or a materially different control boundary.
+
+```mermaid
+flowchart LR
+    User["User"] --> ChatGPT["ChatGPT\nplans and reviews"]
+    ChatGPT --> Codex["Codex\nimplements and operates"]
+    Codex --> Target["Target projects\nsource repos"]
+    ChatGPT --> Devo["Devo\ncontrol room"]
+    Codex --> Devo
+    Devo --> Workspace["workspace/\nstate and evidence"]
+    Devo --> Policy["Policy, approvals,\nvalidation, reports"]
+    Devo -.-> Boundary["No AI calls or policy bypass"]
+```
+
 ## Why Devo Exists
 
 AI coding work can be useful, but it gets messy when the work spans many turns, crashes, approvals, builds, target repositories, and recovery steps.
@@ -79,4 +95,3 @@ For normal low-risk maintenance:
 7. Devo writes a compact final report.
 
 For risky work, Devo should still stop and ask. Good automation is not fewer rules; it is fewer repeated words around the same rules.
-

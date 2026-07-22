@@ -16,6 +16,20 @@ ChatGPT or Codex manually acts as that agent, then imports the output into Devo.
 
 Future Devo may run agents directly through model adapters. Later, agents could become separate automated workers. Today, they are structured roles that keep manual AI work consistent and recoverable.
 
+## Manual-Assisted Agent Flow
+
+Source/freshness: this diagram reflects the current file-based agent workflow as of TASK-DEVO-053A. Update it when Devo starts executing agents directly through model adapters.
+
+```mermaid
+flowchart TD
+    Goal["User goal"] --> Prompt["Devo generates\nagent prompt"]
+    Prompt --> Output["ChatGPT/Codex/manual\nagent output"]
+    Output --> Import["Devo imports\nstructured evidence"]
+    Import --> Gate["Policy, approval,\nor review gate"]
+    Gate --> Next["Next workflow step\nor stop condition"]
+    Next --> Prompt
+```
+
 ## Why Agents Exist
 
 Agents split development work into questions:
@@ -170,4 +184,3 @@ The next usability phase is to make work packages first-class. A package should 
 ### Phase 5: Direct Automated Agent Execution Later
 
 Later, Devo may call model adapters directly. Agents may become automated workers. That should happen only after the file-based workflow, safety rules, approvals, validation, and recovery trail are reliable.
-

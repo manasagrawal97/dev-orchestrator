@@ -7,6 +7,20 @@ DevOrchestrator recovery is intentionally split across GitHub and Google Drive D
 - The active workspace stays local at `E:\DevOrchestrator\workspace`.
 - Google Drive is backup storage only, not the active workspace.
 
+## Backup Flow
+
+Source/freshness: this diagram reflects the scheduled workspace backup flow as of TASK-DEVO-053A. Update it when backup destinations, retention behavior, or scheduler behavior changes.
+
+```mermaid
+flowchart LR
+    Schedule["Windows scheduled task\nevery 6 hours"] --> Script["backup-devo-workspace.ps1"]
+    Script --> Create["Create .incomplete\nbackup folder"]
+    Create --> Verify["Verify manifest\nand contents"]
+    Verify --> Complete["Rename to complete\nbackup folder"]
+    Complete --> Retention["Apply retention to\ncomplete normal backups"]
+    Create -.-> Incomplete["Interrupted or failed:\n.incomplete reported separately"]
+```
+
 ## Normal Manual Backup
 
 Run from the repository root:

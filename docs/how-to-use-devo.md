@@ -52,6 +52,20 @@ For current PersonalOS maintenance, use the simpler practical flow from [Persona
 
 The older two-stop flow, separate source approval followed by separate build approval, remains useful when a bundle is not available or the scope/risk changes.
 
+Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
+
+```mermaid
+flowchart LR
+    Start["work start"] --> Scope["import scope"]
+    Scope --> Bundle["request approval bundle"]
+    Bundle --> Approve["bundle approved"]
+    Approve --> Implement["implement approved scope"]
+    Implement --> Validate["registered validation"]
+    Validate --> Commit["commit and push"]
+    Commit --> Complete["work complete"]
+    Complete --> History["work list/history/activity"]
+```
+
 ## Project Setup
 
 ```powershell
