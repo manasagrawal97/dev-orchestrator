@@ -6,6 +6,14 @@ This document describes how to use Devo for PersonalOS maintenance and developme
 
 PersonalOS is a real target project with user data, database access, secrets, appsettings, migrations, backups, external integrations, and generated files. Devo should keep work scoped and recoverable.
 
+Current priority: PersonalOS is paused as the main development focus. Devo itself is the product priority. PersonalOS remains available as:
+
+- a real-world test project
+- a Devo workflow validation project
+- an occasional controlled batch target
+
+Use PersonalOS when Devo needs a realistic target to validate approvals, work packages, validation commands, reports, history, generated visuals, and recovery. Do not treat PersonalOS feature delivery as the default next step.
+
 ## One-Time Project Setup Expectations
 
 Before normal work:
@@ -21,6 +29,8 @@ Before normal work:
 This setup is already in place.
 
 ## Normal Low-Risk Batch Flow
+
+Run this flow only when a PersonalOS dogfood batch is explicitly selected and approved. Otherwise, prefer Devo product work.
 
 Current bundled flow:
 

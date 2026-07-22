@@ -27,6 +27,8 @@ DevOrchestrator is a deterministic local control plane. It records project conte
 
 For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
+Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
+
 The working loop is:
 
 1. ChatGPT helps plan, reason about risk, and choose the next safe step.
@@ -37,7 +39,7 @@ The working loop is:
 ## Latest State
 
 - Latest completed source task: TASK-DEVO-053B generated visual reports for work packages and project activity
-- Latest docs task: TASK-DEVO-053A adds a visual strategy and a few essential Mermaid diagrams for stable Devo concepts.
+- Latest docs task: TASK-DEVO-054A clarifies the CLI-first, local-first Devo roadmap and positions PersonalOS as a Devo validation target.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
@@ -66,15 +68,16 @@ The working loop is:
 - TASK-DEVO-052 adds `devo work list`, `devo work history`, and `devo project activity` for compact recent work-package, delivery, validation, context/report, Git status, and next-action summaries.
 - TASK-DEVO-053A adds `docs/visual-strategy.md` and a compact set of Mermaid diagrams for Devo architecture, agent workflow, work-package lifecycle, usability roadmap, and backup flow. Future dashboard visuals should be generated from Devo structured data/artifacts rather than manually maintained Mermaid.
 - TASK-DEVO-053B adds `devo visual work-package` and `devo visual project-activity` to generate compact Mermaid workspace artifacts from live Devo work-package and project activity data.
+- TASK-DEVO-054A documents the updated strategy: Devo is the main product priority, current development is CLI-first/local-first, PersonalOS is primarily a dogfood validation project, dashboard/UI is later, and direct AI/API agents are future optional scope.
 
 ## Readiness Estimate
 
-- Practical ready-before-PersonalOS-work target after TASK-030: around 92-94% complete.
-- Long-term product vision after TASK-030: around 50-55% complete.
+- Practical CLI product maturity after TASK-DEVO-053B: around 75-80% complete.
+- Long-term product vision, including dashboard and direct model adapters: around 50-55% complete.
 
 DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, create scoped work packages, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
-The next PersonalOS step should still be cautious: use Devo to select and execute one safe current-state documentation task before attempting deeper implementation work.
+The next product step should focus on Devo CLI maturity. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
 ## Completed Work
 
@@ -126,6 +129,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-DEVO-052 work history and project activity summary commands
 - TASK-DEVO-053A visual strategy and essential Mermaid diagrams
 - TASK-DEVO-053B generated visual reports for work packages and project activity
+- TASK-DEVO-054A CLI-first Devo roadmap and project-priority clarification
 
 ## Recovery Pointers
 

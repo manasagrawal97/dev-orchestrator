@@ -28,6 +28,8 @@ Do not add diagrams everywhere. A diagram should reduce confusion, show relation
 
 The future dashboard should generate visuals from Devo structured data and artifacts, not from manually maintained Mermaid source.
 
+Dashboard/UI is future scope. Do not start it too early; Devo's CLI workflows, reports, history, and generated visual artifacts should mature first.
+
 Generated visual reports are the bridge between static documentation diagrams and the future dashboard. Commands such as `devo visual work-package` and `devo visual project-activity` write Mermaid Markdown under `workspace/` from live Devo artifacts. Those generated files summarize current work-package and project activity state, so they should not be committed.
 
 Static Mermaid docs are for stable concepts. Generated Mermaid reports are for current project activity.

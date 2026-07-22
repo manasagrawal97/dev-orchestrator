@@ -18,19 +18,35 @@ The pain points are:
 
 This makes Devo safe but not yet smooth.
 
+The current focus is Devo product maturity, not PersonalOS feature delivery. PersonalOS remains useful as a real-world validation target, but the product being improved now is Devo itself.
+
 ## Visual Roadmap
 
 Source/freshness: this diagram reflects the usability direction as of TASK-DEVO-053A. Update it when dashboard work or direct model/agent adapters become active implementation tracks.
 
 ```mermaid
 flowchart LR
-    Current["Current CLI control plane"] --> Packages["Work packages\nand approval bundles"]
-    Packages --> History["Work history\nand activity summaries"]
-    History --> Dashboard["Dashboard generated\nfrom Devo artifacts"]
-    Dashboard --> Agents["Direct agent execution\nthrough model adapters"]
+    CLI["Phase 1\nCLI product maturity"] --> LocalAgents["Phase 2\nbetter local agent workflow"]
+    LocalAgents --> Visuals["Phase 3\ngenerated visual reports"]
+    Visuals --> Dashboard["Phase 4\ndashboard planning/MVP"]
+    Dashboard --> Agents["Phase 5\ndirect API agents/model adapters"]
 ```
 
 ## Target Improvements
+
+### CLI-First Product Maturity - Current Focus
+
+Devo should mature as a CLI-first, local-first product before UI or direct agent automation becomes the main work.
+
+Current development should improve:
+
+- status and next-action commands
+- work packages and approval bundles
+- operator prompts and handoff prompts
+- validation and delivery evidence
+- history, activity, generated visual reports, and recovery
+
+Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. No direct API tokens are required for current development.
 
 ### Work Packages - MVP Added
 
@@ -151,6 +167,8 @@ A future dashboard should show:
 
 The CLI should stay complete, but a UI would make Devo easier to operate.
 
+Do not start the dashboard too early. Generated visual reports and structured activity summaries should come first, because they prove the data model a dashboard would later render.
+
 ### Direct Model And Agent Adapters
 
 Later, Devo may run agents directly through model adapters.
@@ -165,12 +183,14 @@ That should come after:
 
 Direct agent execution should use the same policy, approval, validation, and evidence model. It should not be a bypass around it.
 
+Possible adapters include OpenAI, Claude, Gemini, and local models. API token cost should be explicit and controlled. Manual/Codex mode must remain supported.
+
 ## Near-Term Priority
 
 The best next usability improvements are:
 
-1. Expand work-package lanes for docs-only, validation-only, and recovery work.
-2. Make operator prompts and final report expectations tighter.
-3. Add global status/dashboard command.
-4. Add interrupted-work recovery/resume command.
-5. Add direct model adapters later.
+1. Improve CLI-first product maturity: global status/activity, clearer next actions, and tighter reports.
+2. Expand local agent workflow: handoff prompt generation, task templates, and interrupted-work recovery/resume.
+3. Expand generated visual reports only where they clarify current work.
+4. Plan dashboard/UI later from the structured Devo data model.
+5. Add direct model adapters later, after manual/Codex mode is smooth and cost controls are clear.

@@ -16,6 +16,8 @@ ChatGPT or Codex manually acts as that agent, then imports the output into Devo.
 
 Future Devo may run agents directly through model adapters. Later, agents could become separate automated workers. Today, they are structured roles that keep manual AI work consistent and recoverable.
 
+Current priority: keep the manual/Codex agent workflow excellent before adding direct API agents. Devo should reduce repeated prompting, improve operator prompts, store evidence, and make next actions obvious through CLI commands first. Direct OpenAI, Claude, Gemini, or local model adapters are later and optional; they should not make API token spend mandatory for normal development.
+
 ## Manual-Assisted Agent Flow
 
 Source/freshness: this diagram reflects the current file-based agent workflow as of TASK-DEVO-053A. Update it when Devo starts executing agents directly through model adapters.
@@ -177,10 +179,14 @@ Devo then added persistent project state, run state, task state, policy checks, 
 
 This is the current practical mode. Codex and ChatGPT act as the agents, create outputs, import evidence, and follow Devo's safety rails.
 
-### Phase 4: Work Packages And Approval Bundles
+### Phase 4: Work Packages, History, And Generated Visuals
 
-The next usability phase is to make work packages first-class. A package should contain scope, tasks, risks, validation, stop conditions, and delivery expectations. Approval bundles should let one approval cover scoped source edit plus scoped validation and optionally delivery, while still storing child approval records.
+This is the current product-maturity phase. Work packages, approval bundles, phase prompts, completion status, work history, project activity, and generated visual reports should make the CLI workflow smooth enough for repeated real use.
 
-### Phase 5: Direct Automated Agent Execution Later
+### Phase 5: Dashboard Planning And MVP
 
-Later, Devo may call model adapters directly. Agents may become automated workers. That should happen only after the file-based workflow, safety rules, approvals, validation, and recovery trail are reliable.
+The dashboard should come after CLI state and generated reports are reliable. It should read Devo structured data and artifacts instead of becoming a separate source of truth.
+
+### Phase 6: Direct Automated Agent Execution Later
+
+Later, Devo may call model adapters directly. Agents may become automated workers. That should happen only after the CLI-first file-based workflow, safety rules, approvals, validation, and recovery trail are reliable. Manual/Codex mode must remain available.

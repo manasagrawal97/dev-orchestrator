@@ -4,6 +4,18 @@ DevOrchestrator, or Devo, is a local development control room for AI-assisted so
 
 Devo is not the AI itself. ChatGPT plans and reviews, Codex implements and operates, and Devo manages the workflow guardrails and evidence trail. This version intentionally does not include autonomous agents, AI API integration, or a web UI.
 
+## Current Strategy
+
+Devo itself is the main product priority now. Target projects such as PersonalOS are primarily real-world test projects for proving Devo workflows, approvals, validation, delivery, reports, history, and recovery.
+
+The current strategy is CLI-first and local-first:
+
+- Codex/Desktop/CLI acts as the AI worker.
+- Devo CLI manages workflow, approvals, validation, delivery, reports, history, and generated visual artifacts.
+- No direct AI API tokens are required for current Devo development.
+- Manual/Codex mode must remain supported even after future model adapters exist.
+- Dashboard/UI work is later; the CLI should mature first.
+
 ## Project Memory
 
 Durable project direction is tracked in GitHub docs so DevOrchestrator can recover even if chat context is unavailable:
@@ -497,7 +509,7 @@ devo report handoff --project MyProject --run <runId> --write
 
 Use `--write` to store Markdown and JSON artifacts. Project and handoff reports are written under `workspace/projects/<projectName>/reports/`; run reports are written under `workspace/runs/<projectName>/<runId>/artifacts/reports/`. Report commands are read-only with respect to registered target projects and do not run validation, create approvals, push Git changes, call AI models, or modify workflow state.
 
-DevOrchestrator is now dogfooding these report and handoff commands through TASK-030 before resuming deeper PersonalOS work.
+DevOrchestrator now dogfoods these report and handoff commands on Devo itself and occasional controlled target-project batches. PersonalOS should validate Devo behavior, not drive the main roadmap.
 
 ## Environment Snapshot
 

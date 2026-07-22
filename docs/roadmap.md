@@ -1,31 +1,63 @@
 # DevOrchestrator Roadmap
 
+## Current Priority
+
+Devo itself is the main product priority now. PersonalOS is lower priority as an application target and should mainly be used as a real-world dogfood project for Devo workflows.
+
+The near-term strategy is CLI-first and local-first:
+
+- mature Devo's CLI workflow before starting a dashboard
+- let Codex/Desktop/CLI remain the AI worker
+- use Devo CLI for workflow, approvals, validation, delivery, reports, history, and generated visuals
+- avoid requiring direct OpenAI, Claude, Gemini, or local model API tokens for current development
+- keep manual/Codex mode supported even after future model adapters exist
+
 ## Immediate Planned Tasks
 
 - TASK-030C continue delivery secret-signal noise reduction
 - TASK-033 interrupted work recovery/resume command
 - TASK-038 Codex handoff prompt generator
-- TASK-039 global Devo status/dashboard command
+- TASK-039 global Devo status/activity command
 - TASK-036 run templates for common task types
 
-## Immediate Readiness Target
+## Updated Roadmap Phases
 
-DevOrchestrator is considered 90-95% ready for PersonalOS work when it has:
+### Phase 1: CLI Product Maturity
 
-- task selection
-- policy classification
-- approval gates
-- validation registry
-- safe validation runner
-- git delivery workflow
-- context update workflow
-- project/run/handoff report commands
-- one end-to-end dogfood run
+Make Devo pleasant and reliable as a local CLI product: status, next actions, work packages, approvals, validation, delivery, reports, history, generated visuals, recovery, and handoff prompts.
+
+### Phase 2: Better Local Agent Workflow
+
+Improve prompt generation, local operator handoff, task templates, interrupted-work recovery, and manual-assisted agent imports. Codex/Desktop/CLI remains the worker.
+
+### Phase 3: Generated Visual Reports
+
+Expand generated Mermaid or other artifact-backed visual summaries only where they reduce operator confusion. These visuals should be generated from Devo structured data, not maintained by hand.
+
+### Phase 4: Dashboard Planning And MVP
+
+Plan and build a dashboard only after the CLI state model is mature. The dashboard should read Devo artifacts and structured data rather than becoming a second source of truth.
+
+### Phase 5: Direct API Agents And Model Adapters
+
+Add optional OpenAI, Claude, Gemini, or local model adapters later. Direct API token usage should be deliberate, cost-controlled, and never required for normal manual/Codex operation.
+
+## Readiness Target
+
+DevOrchestrator is currently aimed at CLI product maturity, not "ready for PersonalOS feature work" as the main milestone. PersonalOS remains useful for dogfood validation when Devo needs a real target project.
+
+CLI maturity means:
+
+- Devo can start, guide, validate, complete, list, and recover work packages
+- approvals and validation are clear without repeated long prompts
+- generated reports and visuals make recent work understandable
+- recovery/handoff after crashes is boring and deterministic
+- target project work remains tightly scoped and auditable
 
 ## Rough Remaining Effort
 
-- Practical readiness remaining: around 8-18 focused hours.
-- Full long-term product vision: 80-150+ hours.
+- CLI product maturity remaining: around 12-25 focused hours.
+- Dashboard and direct-agent phases: later, after CLI workflows are genuinely smooth.
 
 ## Near-Term Direction
 
@@ -56,6 +88,10 @@ Added `docs/visual-strategy.md` plus a small set of high-value Mermaid diagrams 
 ### TASK-DEVO-053B Generated Visual Reports - Completed
 
 Added `devo visual work-package` and `devo visual project-activity` to generate compact Mermaid Markdown artifacts under `workspace/` from structured Devo run, work-package, validation, approval, and delivery data. Static Mermaid docs remain for stable concepts; generated visual reports cover live/current activity and create a bridge toward a future dashboard that can reuse the same data model.
+
+### TASK-DEVO-054A CLI-First Devo Roadmap - Completed
+
+Documented the updated strategic priority: Devo itself is the main product focus, PersonalOS is primarily a real-world validation target, current work should stay CLI-first/local-first, dashboard/UI comes later, and direct API/model agents are optional future scope with manual/Codex mode preserved.
 
 ### TASK-023 Safe Validation Runner
 
@@ -123,9 +159,11 @@ Reduced duplicate approval friction in the validation runner. Exact `target_comm
 
 ## Guiding Constraints
 
+- Devo product maturity comes before PersonalOS feature work.
 - Keep Devo deterministic first.
+- Stay CLI-first and local-first until the workflow is smooth.
 - Preserve target project safety.
-- Avoid AI API integration until file-based workflows are proven.
-- Avoid web UI until CLI workflows are stable.
+- Avoid AI API integration until CLI/manual workflows are proven and cost controls are clear.
+- Avoid web UI until CLI workflows, generated reports, and structured data are stable.
 - Prefer explicit approval records and evidence over implicit automation.
-- Reduce user friction with work packages, lanes, approval bundles, and compact operator prompts before adding direct model adapters.
+- Reduce user friction with work packages, lanes, approval bundles, compact operator prompts, history, activity, and recovery before adding direct model adapters.

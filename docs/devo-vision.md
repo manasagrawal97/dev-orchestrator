@@ -15,6 +15,21 @@ The roles are:
 
 Devo should make AI-assisted development feel controlled instead of improvised.
 
+## Current Product Priority
+
+Devo itself is now the main product to improve. Target projects are important because they keep Devo honest, but they are not the current product focus.
+
+PersonalOS remains the primary real-world test project. Use it to validate Devo workflows against a real app with real constraints: source edits, approvals, registered validation, delivery evidence, reports, generated visuals, and recovery. Do not treat PersonalOS feature work as the main priority unless a specific approved task says so.
+
+The current product strategy is CLI-first and local-first:
+
+- Codex/Desktop/CLI acts as the AI worker.
+- Devo CLI manages state, scope, policy, approvals, validation, delivery, reports, history, and recovery.
+- Current development does not require OpenAI, Claude, Gemini, or local model API tokens.
+- Direct model adapters are future scope and should be cost-controlled.
+- Manual/Codex mode must remain supported even after direct agents exist.
+- Dashboard/UI should come after the CLI workflow is mature enough to be worth visualizing.
+
 ## Control Room Model
 
 Source/freshness: this diagram reflects the current Devo architecture described in this document and `docs/current-state.md` as of TASK-DEVO-053A. Update it when Devo adds a dashboard, direct model adapters, or a materially different control boundary.
