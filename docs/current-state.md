@@ -34,7 +34,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-037 validation approval matching for target build/test actions
+- Latest completed source task: TASK-DEVO-048B work packages and approval bundles MVP
 - Latest docs task: TASK-DEVO-048A documents Devo vision, current capabilities, agent workflow, usability roadmap, and PersonalOS operating model.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -57,13 +57,14 @@ The working loop is:
 - TASK-035 fixed Git delivery/status checks for registered repository paths with spaces and Git safe-directory ownership checks.
 - TASK-037 aligned validation-runner approval matching so exact `target_command` approvals remain supported and safely scoped `target_repo_build`, `target_repo_test`, and `target_repo_validation` approvals can authorize matching registered validation commands without duplicate approval friction.
 - TASK-DEVO-048A added plain-language product docs for what Devo is, how current agents work, what Devo can do today, how PersonalOS should be operated through Devo, and which usability improvements come next.
+- TASK-DEVO-048B adds first-class work packages, the built-in `low-risk-ui-maintenance` lane, generated operator prompts, and approval bundles that create normal child approvals for scoped source edits and registered build validation.
 
 ## Readiness Estimate
 
 - Practical ready-before-PersonalOS-work target after TASK-030: around 92-94% complete.
 - Long-term product vision after TASK-030: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, create scoped work packages, bundle related approvals without bypassing child approval records, and complete a manual-assisted end-to-end dogfood run.
 
 The next PersonalOS step should still be cautious: use Devo to select and execute one safe current-state documentation task before attempting deeper implementation work.
 
@@ -110,6 +111,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-035 Git delivery path reliability for registered repositories with spaces
 - TASK-037 validation approval matching for target build/test actions
 - TASK-DEVO-048A Devo vision, capability, agent workflow, usability roadmap, and PersonalOS operating model docs
+- TASK-DEVO-048B work packages and approval bundles MVP
 
 ## Recovery Pointers
 

@@ -68,6 +68,21 @@ Devo can create approval requests, record approvals/rejections, store approval l
 
 Approvals are workflow evidence only. They do not grant operating system, GitHub, Codex, OpenAI, shell, or external-service permission.
 
+Approval bundles are now available for scoped work packages. A bundle creates normal child approvals for source edit and validation actions, and approving the bundle approves those children together only when none are rejected or blocked.
+
+## Work Packages
+
+Devo can create scoped work packages for bounded batches. The current MVP includes:
+
+- `devo work start`
+- `devo work import-scope`
+- `devo work status`
+- `devo work request-approval-bundle`
+- the built-in `low-risk-ui-maintenance` lane
+- generated `work-package.json`, `work-package.md`, and `operator-prompt.md`
+
+Work packages remain workspace artifacts. They do not modify target project files by themselves.
+
 ## Validation Registry
 
 Devo can register known validation commands for a project, including command id, command text, working directory, category, risk, approval requirement, and enabled/disabled state.
@@ -134,8 +149,7 @@ Current PersonalOS milestone:
 Devo is still too manual in these areas:
 
 - agent outputs are manually produced and imported
-- work packages are not first-class yet
-- approval bundles are not implemented yet
+- work packages and approval bundles exist only as MVP CLI flows
 - repeated safety text is still common
 - reports are useful but sometimes verbose
 - there is no dashboard UI
@@ -143,4 +157,3 @@ Devo is still too manual in these areas:
 - Devo does not implement code by itself
 
 These are product/workflow improvements, not reasons to bypass the current safety model.
-

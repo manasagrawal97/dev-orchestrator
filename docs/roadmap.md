@@ -2,7 +2,6 @@
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-048B work package and approval bundle design
 - TASK-030C continue delivery secret-signal noise reduction
 - TASK-033 interrupted work recovery/resume command
 - TASK-038 Codex handoff prompt generator
@@ -34,9 +33,9 @@ DevOrchestrator is considered 90-95% ready for PersonalOS work when it has:
 
 Added plain-language docs for Devo's vision, current capabilities, agent workflow, usability roadmap, and PersonalOS operating model. These docs explain that Devo is the manager/guard/record keeper, not the AI; that current agents are prompt roles, not autonomous bots; and that the next usability layer should focus on work packages, lanes, approval bundles, operator prompts, short final reports, and later dashboard/model adapters.
 
-### TASK-DEVO-048B Work Packages And Approval Bundles
+### TASK-DEVO-048B Work Packages And Approval Bundles - Completed
 
-Make the next usability layer concrete. A work package should capture one approved batch of related work, limited by scope, risk, and validation method rather than file count. Approval bundles should let one user approval cover scoped source edit plus scoped validation and optionally delivery while still storing child approval records and preserving policy checks.
+Added first-class work packages and approval bundles. A work package captures one approved batch of related work, limited by scope, risk, and validation method rather than file count. The MVP includes the `low-risk-ui-maintenance` lane, `work-package.json`, `work-package.md`, `operator-prompt.md`, scope import, and bundled approval commands. Approval bundles create normal child approval records for scoped source edit and registered build validation, so exact `target_command` approval remains supported and the validation runner still checks category, command id, command text, task, run, and project before execution.
 
 ### TASK-023 Safe Validation Runner
 

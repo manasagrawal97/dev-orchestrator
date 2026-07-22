@@ -44,13 +44,13 @@ For the plain-language product model, read:
 For current PersonalOS maintenance, use the simpler practical flow from [PersonalOS operating model](personal-os-operating-model.md):
 
 1. user gives a goal
-2. Codex/Devo proposes an exact work package
-3. user approves source edit
-4. Codex implements within scope
-5. user approves build validation
-6. Codex validates, commits, pushes, and gives a short final summary
+2. Codex/Devo creates a work package in the right lane
+3. Codex imports exact scope into the work package
+4. user approves the approval bundle when the scope is acceptable
+5. Codex implements within scope
+6. Codex validates with the registered command, commits, pushes, and gives a short final summary
 
-The target future flow is one bundled approval for low-risk batches, then implementation, validation, delivery, and final summary.
+The older two-stop flow, separate source approval followed by separate build approval, remains useful when a bundle is not available or the scope/risk changes.
 
 ## Project Setup
 
@@ -101,6 +101,22 @@ Implementation is performed outside Devo by a human or coding agent. Record comp
 ```powershell
 devo implementation report --project <name> --run <runId> --task <taskId> --file <completionReportFile>
 ```
+
+## Work Packages
+
+For small bounded batches, use the work-package flow instead of hand-assembling a run and approvals:
+
+```powershell
+devo work lanes
+devo work start --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
+devo work import-scope --project <name> --run <runId> --file <scopeMarkdownFile>
+devo work status --project <name> --run <runId>
+devo work request-approval-bundle --project <name> --run <runId> --task T001
+devo approval bundle-status --project <name> --run <runId> --bundle <bundleId>
+devo approval bundle-approve --project <name> --run <runId> --bundle <bundleId> --by Manas --note "Approved scope"
+```
+
+The scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
 
 ## Safety
 

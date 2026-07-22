@@ -351,6 +351,29 @@ devo approval list --project MyProject --run <runId>
 Approval records are written under `workspace/runs/<projectName>/<runId>/artifacts/approvals/` as `approvals-ledger.json`, `approval-<approvalId>.json`, and `approval-<approvalId>.md`. Each record stores task id/title, action type, risk level, policy reasons, matched signals, safety exclusions, requested/approved/rejected metadata, and a deterministic scope fingerprint. If task text, policy signals, or safety exclusions change later, a prior approval will not silently match the changed scope.
 
 High-risk workflow recommendations stop at `devo approval request` until a matching pending request is approved. Once a matching approval exists, `devo workflow next` and `devo workflow batch` can recommend the normal next command while showing the approval reference. Critical/blocked actions remain blocked for now; break-glass override and approval expiry are deferred.
+
+## Work Packages And Approval Bundles
+
+Work packages are a lighter-weight path for bounded maintenance batches. They create a run plus scoped artifacts under `workspace/runs/<projectName>/<runId>/artifacts/work-package/`: `work-package.json`, `work-package.md`, and `operator-prompt.md`. The MVP includes the built-in `low-risk-ui-maintenance` lane for UI-only, non-DB, non-config work validated by a registered build command.
+
+```powershell
+devo work lanes
+devo work start --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
+devo work import-scope --project MyProject --run <runId> --file E:\path\to\scope.md
+devo work status --project MyProject --run <runId>
+devo work request-approval-bundle --project MyProject --run <runId> --task T001
+```
+
+`devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
+
+Approval bundles are a convenience layer over normal Devo approvals, not a bypass. A bundle writes `approval-bundle-<bundleId>.json` and `.md` under `artifacts/approval-bundles/`, creates child approvals for the scoped source edit and registered validation command, and approves those child approvals together only when none are rejected or blocked.
+
+```powershell
+devo approval bundle-status --project MyProject --run <runId> --bundle <bundleId>
+devo approval bundle-approve --project MyProject --run <runId> --bundle <bundleId> --by "Your Name" --note "Approved scope"
+```
+
+Exact `target_command` approval remains supported for maximum precision. Bundled `target_repo_build` or `target_repo_test` child approvals still have to match the registered validation command category plus the exact command id and command text before the validation runner will execute them.
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.

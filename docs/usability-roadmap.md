@@ -11,7 +11,7 @@ The pain points are:
 - too much repeated prompt text
 - too much output and reporting
 - manual agent output imports
-- no first-class work package object
+- first-class work packages exist, but they are still MVP CLI flows
 - no saved working modes
 - no dashboard UI
 - no direct model/agent adapters
@@ -20,7 +20,7 @@ This makes Devo safe but not yet smooth.
 
 ## Target Improvements
 
-### Work Packages
+### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
 
@@ -49,7 +49,9 @@ The package should include:
 - stop conditions
 - delivery expectations
 
-### Saved Lanes
+The MVP writes `work-package.json`, `work-package.md`, and `operator-prompt.md` under the run workspace artifacts folder.
+
+### Saved Lanes - MVP Added
 
 A lane is a saved working mode.
 
@@ -65,7 +67,9 @@ The lane would store rules once:
 
 Then the user can say, "Use the low-risk UI maintenance lane," instead of repeating all rules.
 
-### Approval Bundles
+The first built-in lane is `low-risk-ui-maintenance`.
+
+### Approval Bundles - MVP Added
 
 An approval bundle lets one user approval cover a scoped group of actions:
 
@@ -110,12 +114,13 @@ Detailed reports should remain available as Devo artifacts, not pasted into ever
 
 ### One-Command Style Workflow
 
-The future target is command groups such as:
+The current MVP command group is:
 
 ```powershell
-devo work package create --project PersonalOS --goal "Improve operational UI guidance"
-devo work package approve --project PersonalOS --run <runId> --package <packageId>
-devo work package status --project PersonalOS --run <runId>
+devo work start --project PersonalOS --lane low-risk-ui-maintenance --goal "Improve operational UI guidance"
+devo work import-scope --project PersonalOS --run <runId> --file <scopeMarkdownFile>
+devo work request-approval-bundle --project PersonalOS --run <runId> --task T001
+devo approval bundle-approve --project PersonalOS --run <runId> --bundle <bundleId> --by Manas
 ```
 
 Devo should guide the user through the package rather than requiring them to remember every lower-level command.
@@ -152,11 +157,8 @@ Direct agent execution should use the same policy, approval, validation, and evi
 
 The best next usability improvements are:
 
-1. Work package artifact and commands.
-2. Lane definitions for common work modes.
-3. Approval bundles.
-4. Codex operator prompt generator.
-5. Short final report format.
-6. Global status/dashboard command.
-7. Direct model adapters later.
-
+1. Expand work-package lanes for docs-only, validation-only, and recovery work.
+2. Make operator prompts and final report expectations tighter.
+3. Add global status/dashboard command.
+4. Add interrupted-work recovery/resume command.
+5. Add direct model adapters later.

@@ -8,9 +8,13 @@ from rich.console import Console
 
 from .approvals import (
     DevoApprovalRecord,
+    approval_bundle_artifact_paths,
     approval_artifact_paths,
+    approve_approval_bundle,
     approve_approval,
+    create_approval_bundle,
     create_approval_request,
+    get_approval_bundle,
     get_approval_status,
     reject_approval,
 )
@@ -99,6 +103,13 @@ from .validation_registry import (
     suggest_validation_commands,
 )
 from .validation_runner import list_validation_history, run_validation_command, terminal_excerpt
+from .work_packages import (
+    import_work_scope,
+    list_lanes,
+    load_work_package,
+    start_work_package,
+    work_package_artifact_paths,
+)
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -112,6 +123,7 @@ audit_app = typer.Typer(help="Inspect final audit evidence.")
 task_app = typer.Typer(help='Manage run tasks.')
 policy_app = typer.Typer(help='Classify task risk and check policy gates.')
 approval_app = typer.Typer(help='Record and inspect Devo approval requests.')
+work_app = typer.Typer(help="Create and inspect scoped work packages.")
 backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state.")
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
@@ -127,6 +139,7 @@ app.add_typer(audit_app, name="audit")
 app.add_typer(task_app, name='task')
 app.add_typer(policy_app, name='policy')
 app.add_typer(approval_app, name='approval')
+app.add_typer(work_app, name="work")
 app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
@@ -237,6 +250,45 @@ def _print_approval_list(records: list[DevoApprovalRecord]) -> None:
         console.print(f"  Status: {record.status.value}")
         console.print(f"  Requested at: {record.requested_at.isoformat()}")
         console.print(f"  Scope fingerprint: {record.scope_fingerprint}")
+
+
+def _print_work_package(package: object) -> None:
+    paths = work_package_artifact_paths(package)
+    console.print(f"Work package: {getattr(package, 'run_id')}")
+    console.print(f"Project: {getattr(package, 'project')}")
+    console.print(f"Goal: {getattr(package, 'goal')}")
+    console.print(f"Lane: {getattr(package, 'lane')}")
+    console.print(f"Status: {getattr(package, 'status').value}")
+    console.print(f"Approval bundle: {getattr(package, 'approval_bundle_id') or 'none'}")
+    console.print("Proposed items:")
+    for item in getattr(package, "proposed_items") or ["none"]:
+        console.print(f"  - {item}")
+    console.print("Approved files:")
+    for file_path in getattr(package, "approved_files") or ["none"]:
+        console.print(f"  - {file_path}")
+    console.print("Validation commands:")
+    for command_id in getattr(package, "validation_commands") or ["none"]:
+        console.print(f"  - {command_id}")
+    console.print(f"JSON: {_named_path(paths['json'])}")
+    console.print(f"Markdown: {_named_path(paths['markdown'])}")
+    console.print(f"Operator prompt: {_named_path(paths['operator_prompt'])}")
+
+
+def _print_approval_bundle(bundle: object) -> None:
+    paths = approval_bundle_artifact_paths(bundle)
+    console.print(f"Approval bundle: {getattr(bundle, 'bundle_id')}")
+    console.print(f"Project: {getattr(bundle, 'project_name')}")
+    console.print(f"Run: {getattr(bundle, 'run_id')}")
+    console.print(f"Task: {getattr(bundle, 'task_id')}")
+    console.print(f"Status: {getattr(bundle, 'status').value}")
+    console.print("Child approvals:")
+    for approval_id in getattr(bundle, "child_approval_ids") or ["none"]:
+        console.print(f"  - {approval_id}")
+    console.print(f"Approved at: {getattr(bundle, 'approved_at').isoformat() if getattr(bundle, 'approved_at') else 'none'}")
+    console.print(f"Approved by: {getattr(bundle, 'approved_by') or 'none'}")
+    console.print(f"Approval note: {getattr(bundle, 'approval_note') or 'none'}")
+    console.print(f"JSON: {_named_path(paths['json'])}")
+    console.print(f"Markdown: {_named_path(paths['markdown'])}")
 def _print_policy_classification(classification: PolicyClassification) -> None:
     console.print(f"Project: {classification.project_name}")
     console.print(f"Run: {classification.run_id}")
@@ -1528,6 +1580,98 @@ def show_task_candidates(
     _print_task_selection(selection, include_skipped=include_skipped, output_format=output_format, candidates_only=True)
 
 
+@work_app.command("lanes")
+def list_work_package_lanes() -> None:
+    """List built-in work package lanes."""
+    for lane in list_lanes():
+        console.print(f"[bold]{lane.id}[/bold]")
+        console.print(f"  Name: {lane.name}")
+        console.print("  Allowed changes:")
+        for item in lane.allowed:
+            console.print(f"    - {item}")
+        console.print("  Forbidden changes:")
+        for item in lane.forbidden:
+            console.print(f"    - {item}")
+        console.print("  Default validation commands:")
+        for command_id in lane.default_validation_commands or ["none"]:
+            console.print(f"    - {command_id}")
+
+
+@work_app.command("start")
+def start_work(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    lane_id: str = typer.Option(..., "--lane", help="Work lane ID."),
+    goal: str = typer.Option(..., "--goal", help="Work package goal."),
+) -> None:
+    """Create a run and draft work package."""
+    try:
+        package = start_work_package(project_name=project_name, lane_id=lane_id, goal=goal)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--lane") from exc
+
+    _print_work_package(package)
+    console.print(
+        "Next command: "
+        f"devo work import-scope --project {project_name} --run {package.run_id} --file <scopeMarkdownFile>"
+    )
+
+
+@work_app.command("import-scope")
+def import_scope(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    scope_file: Path = typer.Option(..., "--file", exists=True, file_okay=True, dir_okay=False, readable=True, help="Scope markdown file."),
+) -> None:
+    """Import a reviewed markdown scope into a work package."""
+    try:
+        result = import_work_scope(project_name=project_name, run_id=run_id, scope_file=scope_file)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--file") from exc
+
+    console.print("Imported scope into work package.")
+    _print_work_package(result.package)
+    console.print(
+        "Next command: "
+        f"devo work request-approval-bundle --project {project_name} --run {run_id} --task T001"
+    )
+
+
+@work_app.command("status")
+def show_work_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show work package status and artifact paths."""
+    try:
+        package = load_work_package(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    _print_work_package(package)
+
+
+@work_app.command("request-approval-bundle")
+def request_work_approval_bundle(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    task_id: str = typer.Option(..., "--task", help="Task ID."),
+) -> None:
+    """Request the source-edit and validation approvals for a work package."""
+    try:
+        bundle = create_approval_bundle(project_name=project_name, run_id=run_id, task_id=task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+
+    _print_approval_bundle(bundle)
+    if bundle.status.value == "pending":
+        console.print(
+            "Next command: "
+            f"devo approval bundle-approve --project {project_name} --run {run_id} --bundle {bundle.bundle_id} --by <name>"
+        )
+    else:
+        console.print("Next command: none; at least one child approval is blocked or rejected.")
+
+
 @approval_app.command("request")
 def request_approval(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
@@ -1616,6 +1760,44 @@ def list_approvals(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
 
     _print_approval_list(records)
+
+
+@approval_app.command("bundle-status")
+def show_approval_bundle_status(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    bundle_id: str = typer.Option(..., "--bundle", help="Approval bundle ID."),
+) -> None:
+    """Show a work package approval bundle and child approval IDs."""
+    try:
+        bundle = get_approval_bundle(project_name=project_name, run_id=run_id, bundle_id=bundle_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--bundle") from exc
+
+    _print_approval_bundle(bundle)
+
+
+@approval_app.command("bundle-approve")
+def approve_requested_approval_bundle(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    bundle_id: str = typer.Option(..., "--bundle", help="Approval bundle ID."),
+    approved_by: str = typer.Option(..., "--by", help="Approver name."),
+    note: str | None = typer.Option(None, "--note", help="Optional approval note."),
+) -> None:
+    """Approve every pending child approval in a work package bundle."""
+    try:
+        bundle = approve_approval_bundle(
+            project_name=project_name,
+            run_id=run_id,
+            bundle_id=bundle_id,
+            approved_by=approved_by,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--bundle") from exc
+
+    _print_approval_bundle(bundle)
 @policy_app.command("classify")
 def classify_policy_task(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),

@@ -22,27 +22,26 @@ This setup is already in place.
 
 ## Normal Low-Risk Batch Flow
 
-Target future flow:
+Current bundled flow:
 
 1. User gives a goal.
-2. Codex and Devo propose an exact work package.
-3. User approves once with a bundled approval.
-4. Codex implements, validates, commits, and pushes.
-5. User receives a short final summary.
-
-Current practical flow until approval bundles exist:
-
-1. Codex creates or uses a Devo run.
-2. Codex inspects allowed files read-only.
-3. Codex requests source-edit approval.
-4. User approves source edit.
+2. Codex creates a Devo work package in the `low-risk-ui-maintenance` lane.
+3. Codex imports exact scope into the work package.
+4. User approves the approval bundle when the exact scope is acceptable.
 5. Codex implements inside scope.
 6. Codex runs safe pre-build checks.
-7. Codex requests build approval.
-8. User approves build.
-9. Codex runs the registered Devo build validation.
-10. If validation passes, Codex reports, commits, and pushes.
-11. User receives a short final summary.
+7. Codex runs the registered Devo build validation when the bundle's child validation approval matches.
+8. If validation passes, Codex reports, commits, and pushes.
+9. User receives a short final summary.
+
+Fallback practical flow when a bundle is not appropriate:
+
+1. Codex requests source-edit approval.
+2. User approves source edit.
+3. Codex implements inside scope.
+4. Codex requests build approval.
+5. User approves build.
+6. Codex validates, reports, commits, pushes, and summarizes.
 
 ## Risky Work Flow
 
@@ -69,8 +68,7 @@ For this work, Devo should produce requirements, a plan, a plan review, task dec
 For low-risk batches:
 
 - goal
-- approval of the proposed work package
-- approval of build validation until approval bundles exist
+- approval of the proposed approval bundle
 
 For risky work:
 
@@ -82,15 +80,15 @@ For risky work:
 
 ## How Many Approvals Should Be Normal
 
-Target future:
+Normal current target:
 
 - one bundled approval for a scoped low-risk batch
+- final summary
 
-Current practical:
+Fallback when scope or tool support requires it:
 
 - one source-edit approval
 - one build approval
-- final summary
 
 More approvals are appropriate only when scope expands or risk changes.
 
@@ -146,14 +144,13 @@ Rules:
 - no external APIs
 - registered build validation only after approval
 
-Current practical approval flow:
-
-1. source approval
-2. build approval
-3. final summary
-
-Future approval bundle flow:
+Normal approval bundle flow:
 
 1. one package approval
 2. final summary
 
+Fallback approval flow:
+
+1. source approval
+2. build approval
+3. final summary
