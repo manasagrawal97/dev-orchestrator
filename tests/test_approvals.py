@@ -35,6 +35,38 @@ def test_approval_request_creates_pending_approval_for_high_risk_task(tmp_path: 
     assert record.risk_level == "high"
 
 
+def test_approval_request_accepts_target_repo_docs_edit(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Update docs/current-state.md only."})
+
+    record = create_approval_request("sample", "run-1", "T001", "target_repo_docs_edit", workspace_root=workspace)
+
+    assert record.action_type == "target_repo_docs_edit"
+    assert record.risk_level == "medium"
+    assert record.approval_required is False
+    assert "target repo docs edit" in record.matched_signals
+
+
+def test_approval_record_stores_safety_exclusions_separately(tmp_path: Path, monkeypatch) -> None:
+    body = (
+        "Create/update docs/current-state.md only. "
+        "No code, DB, restore, build, test, scripts, migrations, secrets, generated files, "
+        "or local settings changes."
+    )
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": body})
+
+    record = create_approval_request("sample", "run-1", "T001", "target_repo_docs_edit", workspace_root=workspace)
+    paths = approval_artifact_paths(record, workspace_root=workspace)
+    markdown = paths["markdown"].read_text(encoding="utf-8")
+
+    assert "database or migration" not in record.matched_signals
+    assert "Database, app data, or migration work is high risk." not in record.policy_reasons
+    assert "target repo docs edit" in record.matched_signals
+    assert "database exclusion" in record.safety_exclusion_signals
+    assert "migration exclusion" in record.safety_exclusion_signals
+    assert "## Safety Exclusions" in markdown
+    assert "- database exclusion" in markdown
+
+
 def test_approval_request_creates_blocked_approval_for_critical_task(tmp_path: Path, monkeypatch) -> None:
     workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Run rm -rf during broad recursive delete."})
 

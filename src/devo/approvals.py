@@ -41,6 +41,7 @@ class DevoApprovalRecord(BaseModel):
     requested_reason: str | None = None
     policy_reasons: list[str] = Field(default_factory=list)
     matched_signals: list[str] = Field(default_factory=list)
+    safety_exclusion_signals: list[str] = Field(default_factory=list)
     scope_fingerprint: str
     approved_at: datetime | None = None
     approved_by: str | None = None
@@ -89,6 +90,7 @@ def create_approval_request(
         requested_reason=reason,
         policy_reasons=policy.reasons,
         matched_signals=policy.matched_risk_signals,
+        safety_exclusion_signals=policy.safety_exclusion_signals,
         scope_fingerprint=scope_fingerprint_for_policy(policy),
     )
     ledger = load_approval_ledger(project_name, run_id, workspace_root=root)
@@ -198,6 +200,8 @@ def scope_fingerprint_for_policy(policy: PolicyCheckResult) -> str:
         "action_type": policy.action_type,
         "risk_level": policy.risk_level,
         "policy_reasons": policy.reasons,
+        "matched_signals": policy.matched_risk_signals,
+        "safety_exclusion_signals": policy.safety_exclusion_signals,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -294,5 +298,7 @@ def _render_approval_markdown(record: DevoApprovalRecord) -> str:
     lines.extend(f"- {reason}" for reason in record.policy_reasons or ["none"])
     lines.extend(["", "## Matched Signals", ""])
     lines.extend(f"- {signal}" for signal in record.matched_signals or ["none"])
+    lines.extend(["", "## Safety Exclusions", ""])
+    lines.extend(f"- {signal}" for signal in record.safety_exclusion_signals or ["none"])
     lines.append("")
     return "\n".join(lines)

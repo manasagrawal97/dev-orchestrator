@@ -53,6 +53,44 @@ def test_policy_classify_high_risk_database_migration_task(tmp_path: Path, monke
     assert "database or migration" in classification.matched_risk_signals
 
 
+def test_policy_docs_only_exclusions_do_not_create_database_risk(tmp_path: Path, monkeypatch) -> None:
+    body = (
+        "Create/update docs/current-state.md only. "
+        "No code, DB, restore, build, test, scripts, migrations, secrets, generated files, "
+        "or local settings changes."
+    )
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": body})
+
+    classification = classify_task("sample", "run-1", "T001", workspace_root=workspace)
+
+    assert classification.risk_level == "low"
+    assert "database or migration" not in classification.matched_risk_signals
+    assert "Database, app data, or migration work is high risk." not in classification.reasons
+    assert "database exclusion" in classification.safety_exclusion_signals
+    assert "migration exclusion" in classification.safety_exclusion_signals
+    assert "build exclusion" in classification.safety_exclusion_signals
+    assert "test exclusion" in classification.safety_exclusion_signals
+    assert "restore exclusion" in classification.safety_exclusion_signals
+
+
+def test_policy_real_migration_task_remains_high_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Run database migration for the target project."})
+
+    classification = classify_task("sample", "run-1", "T001", workspace_root=workspace)
+
+    assert classification.risk_level == "high"
+    assert "database or migration" in classification.matched_risk_signals
+
+
+def test_policy_real_database_update_task_remains_high_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Run dotnet ef database update."})
+
+    classification = classify_task("sample", "run-1", "T001", workspace_root=workspace)
+
+    assert classification.risk_level == "high"
+    assert "database or migration" in classification.matched_risk_signals
+
+
 def test_policy_classify_high_risk_git_push_task(tmp_path: Path, monkeypatch) -> None:
     workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Run git push to publish changes to GitHub."})
 
@@ -88,6 +126,56 @@ def test_policy_check_implementation_prompt_for_low_risk_is_allowed(tmp_path: Pa
     assert result.allowed is True
     assert result.approval_required is False
     assert result.blocked is False
+
+
+def test_policy_check_target_repo_docs_edit_is_medium_and_allowed(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Update docs/current-state.md only."})
+
+    result = check_policy("sample", "run-1", "T001", action_type="target_repo_docs_edit", workspace_root=workspace)
+
+    assert result.action_type == "target_repo_docs_edit"
+    assert result.risk_level == "medium"
+    assert result.allowed is True
+    assert result.approval_required is False
+    assert "target repo docs edit" in result.matched_risk_signals
+
+
+def test_policy_target_repo_docs_edit_is_lower_risk_than_code_edit(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Update docs/current-state.md only."})
+
+    docs_result = check_policy("sample", "run-1", "T001", action_type="target_repo_docs_edit", workspace_root=workspace)
+    code_result = check_policy("sample", "run-1", "T001", action_type="target_repo_code_edit", workspace_root=workspace)
+
+    assert docs_result.risk_level == "medium"
+    assert code_result.risk_level == "high"
+    assert code_result.approval_required is True
+
+
+def test_policy_check_target_repo_code_edit_is_high_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Modify target project source."})
+
+    result = check_policy("sample", "run-1", "T001", action_type="target_repo_code_edit", workspace_root=workspace)
+
+    assert result.risk_level == "high"
+    assert result.approval_required is True
+    assert "target repo code edit" in result.matched_risk_signals
+
+
+def test_policy_check_target_repo_command_actions_are_high_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Read-only docs summary."})
+
+    for action_type in (
+        "target_repo_validation",
+        "target_repo_build",
+        "target_repo_test",
+        "target_repo_run",
+        "target_repo_migration",
+        "target_repo_database",
+        "target_repo_script",
+    ):
+        result = check_policy("sample", "run-1", "T001", action_type=action_type, workspace_root=workspace)
+        assert result.risk_level == "high"
+        assert result.approval_required is True
 
 
 def test_policy_check_implementation_for_high_risk_requires_approval(tmp_path: Path, monkeypatch) -> None:

@@ -2,11 +2,10 @@
 
 ## Immediate Planned Tasks
 
-- TASK-031 resume PersonalOS through Devo with one safe real task
 - TASK-030B register DevOrchestrator validation commands
-- TASK-030C reduce policy and secret-signal noise
+- TASK-030C continue delivery secret-signal noise reduction
 - TASK-033 interrupted work recovery/resume command
-- TASK-034 Codex handoff prompt generator
+- TASK-038 Codex handoff prompt generator
 - TASK-035 global Devo status/dashboard command
 - TASK-036 run templates for common task types
 - TASK-037 approval UX improvements
@@ -52,17 +51,17 @@ Added deterministic project, run, and handoff reports. Devo now summarizes proje
 
 Completed. DevOrchestrator ran a docs-only task through its own file-backed workflow, including manual-assisted agent artifacts, policy approval, implementation evidence, validation review, code review, final audit, task closure, run closure, delivery report, context refresh draft, and handoff report.
 
-### TASK-031 Resume PersonalOS Through Devo
+### TASK-031 Resume PersonalOS Through Devo - Completed
 
-Use Devo to select and execute one safe real PersonalOS task after validation runner and delivery workflow exist.
+Used Devo to execute one safe real PersonalOS task: a docs-only update to `docs/current-state.md`, with no code, database, restore/build/test, migration, script, secret, generated-file, or local-settings changes.
 
 ### TASK-030B Register DevOrchestrator Validation Commands
 
 Register focused and full pytest commands for DevOrchestrator so future runs can cite Devo validation evidence directly.
 
-### TASK-030C Reduce Policy And Secret-Signal Noise
+### TASK-030C Reduce Policy And Secret-Signal Noise - Partially Completed By TASK-034
 
-Refine policy and delivery checks using TASK-030 dogfood findings: safety-boundary text can trigger high-risk signals, and documented secret-signal names can create warning noise.
+Refine policy and delivery checks using dogfood findings. TASK-034 completed the policy portion by separating safety-boundary wording from positive risk evidence and by adding explicit target repository action hints. Delivery scanning for documented secret-signal names remains future work.
 
 ### TASK-032 Project Memory Handling - Current
 
@@ -72,7 +71,11 @@ Persist durable project memory, user-facing operating guidance, token-usage expe
 
 Add a read-only command that summarizes interrupted work and recommends the safest resume point.
 
-### TASK-034 Codex Handoff Prompt Generator
+### TASK-034 Docs-Only Target Policy/Action Handling - Completed
+
+Added explicit target repository action types, including medium-risk `target_repo_docs_edit` and high-risk target code/config/validation/build/test/run/migration/database/script actions. Policy classification now records safety exclusions such as "no DB/migrations/build/test/restore/secrets" separately from matched risk signals so docs-only scopes do not inherit misleading database risk.
+
+### TASK-038 Codex Handoff Prompt Generator
 
 Generate compact Codex-ready prompts from approved context, run state, task scope, policy, validation, and delivery evidence.
 

@@ -4,12 +4,12 @@ This plan captures likely next improvements so they survive chat or task context
 
 ## Immediate And Near-Term Tasks
 
-### TASK-031: Resume PersonalOS Through Devo
+### TASK-031: Resume PersonalOS Through Devo - Completed
 
 - Purpose: Use Devo to manage one safe current-state documentation task in PersonalOS.
 - Why it matters: Proves Devo on the original target project without jumping straight into risky implementation.
-- Rough scope: Generate or refresh project reports, select a low-risk docs task, record evidence, validate safely, and use Git delivery checks.
-- Priority: blocker for deeper PersonalOS work.
+- Completed scope: Added PersonalOS `docs/current-state.md` through a docs-only, explicitly bounded Devo workflow.
+- Priority: completed.
 
 ### TASK-030B: Register DevOrchestrator Validation Commands
 
@@ -18,11 +18,12 @@ This plan captures likely next improvements so they survive chat or task context
 - Rough scope: Suggest/write validation commands for focused pytest, full pytest, and possibly py_compile with appropriate risk metadata.
 - Priority: important.
 
-### TASK-030C: Reduce Policy And Secret-Signal Noise
+### TASK-030C: Reduce Policy And Secret-Signal Noise - Partially Completed
 
 - Purpose: Refine deterministic checks that produced noisy dogfood warnings.
 - Why it matters: TASK-030 showed useful false positives when safety-boundary wording triggered high-risk policy signals and README documentation triggered secret-signal warnings.
-- Rough scope: Improve policy parsing for out-of-scope wording and improve delivery scanning for documented signal names without weakening real secret detection.
+- Completed scope: TASK-034 added docs-only target action handling and separated safety exclusions from matched risk signals.
+- Remaining scope: Improve delivery scanning for documented signal names without weakening real secret detection.
 - Priority: important.
 
 ### TASK-033: Interrupted Work Recovery/Resume Command
@@ -32,7 +33,14 @@ This plan captures likely next improvements so they survive chat or task context
 - Rough scope: Inspect current project/run status, Git status, latest reports, open tasks, validation evidence, and workspace warnings; print a bounded resume summary.
 - Priority: important.
 
-### TASK-034: Codex Handoff Prompt Generator
+### TASK-034: Docs-Only Target Policy/Action Handling - Completed
+
+- Purpose: Make Devo policy checks distinguish docs-only target repository edits from target code/config/command work.
+- Why it matters: TASK-031 showed that explicit "no DB/migrations/build/test" safety wording should become boundary evidence, not misleading high-risk evidence.
+- Completed scope: Added target repository action hints and safety exclusion signals in policy and approval records.
+- Priority: completed.
+
+### TASK-038: Codex Handoff Prompt Generator
 
 - Purpose: Generate a compact Codex-ready prompt from approved context, run state, selected task, policy, validation, and delivery evidence.
 - Why it matters: Reduces token use and lowers the chance of missing constraints when handing work to Codex.

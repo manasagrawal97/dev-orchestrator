@@ -220,6 +220,9 @@ def _print_approval(record: DevoApprovalRecord) -> None:
     console.print("Matched signals:")
     for signal in record.matched_signals or ["none"]:
         console.print(f"  - {signal}")
+    console.print("Safety exclusions:")
+    for signal in record.safety_exclusion_signals or ["none"]:
+        console.print(f"  - {signal}")
 
 
 def _print_approval_list(records: list[DevoApprovalRecord]) -> None:
@@ -250,6 +253,9 @@ def _print_policy_classification(classification: PolicyClassification) -> None:
     console.print("Matched risk signals:")
     for signal in classification.matched_risk_signals or ["none"]:
         console.print(f"  - {signal}")
+    console.print("Safety exclusions:")
+    for signal in classification.safety_exclusion_signals or ["none"]:
+        console.print(f"  - {signal}")
     console.print(f"Safe action categories: {', '.join(classification.safe_action_categories) or 'none'}")
     console.print(f"Unsafe action categories: {', '.join(classification.unsafe_action_categories) or 'none'}")
     console.print(f"Recommended next command/action: {classification.recommended_next_command or 'none'}")
@@ -271,6 +277,9 @@ def _print_policy_check(result: PolicyCheckResult) -> None:
         console.print(f"  - {reason}")
     console.print("Matched risk signals:")
     for signal in result.matched_risk_signals or ["none"]:
+        console.print(f"  - {signal}")
+    console.print("Safety exclusions:")
+    for signal in result.safety_exclusion_signals or ["none"]:
         console.print(f"  - {signal}")
 
 

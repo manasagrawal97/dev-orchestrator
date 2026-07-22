@@ -24,6 +24,16 @@ ACTION_TYPES = {
     "implementation",
     "validation",
     "target_command",
+    "target_repo_docs_edit",
+    "target_repo_code_edit",
+    "target_repo_config_edit",
+    "target_repo_validation",
+    "target_repo_build",
+    "target_repo_test",
+    "target_repo_run",
+    "target_repo_migration",
+    "target_repo_database",
+    "target_repo_script",
     "git_commit",
     "git_push",
     "backup",
@@ -45,6 +55,7 @@ class PolicyClassification:
     blocked: bool
     reasons: list[str] = field(default_factory=list)
     matched_risk_signals: list[str] = field(default_factory=list)
+    safety_exclusion_signals: list[str] = field(default_factory=list)
     safe_action_categories: list[str] = field(default_factory=list)
     unsafe_action_categories: list[str] = field(default_factory=list)
     recommended_next_command: str | None = None
@@ -68,6 +79,7 @@ class PolicyCheckResult:
     risk_level: str
     reasons: list[str] = field(default_factory=list)
     matched_risk_signals: list[str] = field(default_factory=list)
+    safety_exclusion_signals: list[str] = field(default_factory=list)
     required_approval_note: str | None = None
     suggested_safer_alternative: str | None = None
 
@@ -140,6 +152,7 @@ def classify_task(
         blocked=blocked,
         reasons=_dedupe(reasons),
         matched_risk_signals=evaluation["matched_risk_signals"],
+        safety_exclusion_signals=evaluation["safety_exclusion_signals"],
         safe_action_categories=evaluation["safe_action_categories"],
         unsafe_action_categories=evaluation["unsafe_action_categories"],
         recommended_next_command=_recommended_command(project_name, run_id, task_id, risk_level),
@@ -161,6 +174,10 @@ def check_policy(
     risk_level = _max_risk(classification.risk_level, action_evaluation["risk_level"])
     reasons = [*classification.reasons, *action_evaluation["reasons"]]
     matched = [*classification.matched_risk_signals, *action_evaluation["matched_risk_signals"]]
+    safety_exclusions = [
+        *classification.safety_exclusion_signals,
+        *action_evaluation.get("safety_exclusion_signals", []),
+    ]
     approval_required = risk_level in {"high", "critical"}
     blocked = risk_level == "critical"
     allowed = not blocked and not approval_required
@@ -181,6 +198,7 @@ def check_policy(
         risk_level=risk_level,
         reasons=_dedupe(reasons),
         matched_risk_signals=_dedupe(matched),
+        safety_exclusion_signals=_dedupe(safety_exclusions),
         required_approval_note=(
             f"Approval required for {risk_level} risk {normalized_action} on task {task_id}."
             if approval_required
@@ -214,11 +232,16 @@ def _evaluate_text(text: str) -> dict[str, Any]:
     risk_level = "low"
     reasons: list[str] = []
     matched: list[str] = []
+    safety_exclusions: list[str] = []
     safe: list[str] = []
     unsafe: list[str] = []
+    risk_text, exclusion_texts = _split_risk_and_exclusion_text(text)
+
+    for exclusion_text in exclusion_texts:
+        safety_exclusions.extend(_safety_exclusion_signals(exclusion_text))
 
     for level, signal, pattern, category, reason in _risk_rules():
-        if re.search(pattern, text):
+        if re.search(pattern, risk_text):
             risk_level = _max_risk(risk_level, level)
             matched.append(signal)
             reasons.append(reason)
@@ -227,7 +250,7 @@ def _evaluate_text(text: str) -> dict[str, Any]:
             else:
                 unsafe.append(category)
 
-    explicit = _explicit_risk(text)
+    explicit = _explicit_risk(risk_text)
     if explicit:
         risk_level = _max_risk(risk_level, explicit)
         matched.append(f"explicit risk: {explicit}")
@@ -240,6 +263,7 @@ def _evaluate_text(text: str) -> dict[str, Any]:
         "risk_level": risk_level,
         "reasons": _dedupe(reasons),
         "matched_risk_signals": _dedupe(matched),
+        "safety_exclusion_signals": _dedupe(safety_exclusions),
         "safe_action_categories": _dedupe(safe),
         "unsafe_action_categories": _dedupe(unsafe),
     }
@@ -252,6 +276,16 @@ def _evaluate_action(action_type: str) -> dict[str, Any]:
         "implementation": ("medium", "implementation action", "local_mutation", "Implementation may modify files and needs evidence."),
         "validation": ("low", "validation review", "review", "Validation review is non-mutating when it only reviews evidence."),
         "target_command": ("high", "target command", "target_command", "Target project commands require approval."),
+        "target_repo_docs_edit": ("medium", "target repo docs edit", "target_repo_docs", "Docs-only target repository edits are medium risk and should stay path-scoped."),
+        "target_repo_code_edit": ("high", "target repo code edit", "target_project_mutation", "Target repository code edits are high risk."),
+        "target_repo_config_edit": ("high", "target repo config edit", "target_config", "Target repository configuration edits are high risk."),
+        "target_repo_validation": ("high", "target repo validation", "target_command", "Target project validation commands are high risk by default."),
+        "target_repo_build": ("high", "target repo build", "target_command", "Target project build commands are high risk by default."),
+        "target_repo_test": ("high", "target repo test", "target_command", "Target project test commands are high risk by default."),
+        "target_repo_run": ("high", "target repo run", "target_command", "Target project run commands are high risk by default."),
+        "target_repo_migration": ("high", "target repo migration", "database", "Target project migration work is high risk."),
+        "target_repo_database": ("high", "target repo database", "database", "Target project database work is high risk."),
+        "target_repo_script": ("high", "target repo script", "target_command", "Target project scripts are high risk by default."),
         "git_commit": ("medium", "git commit", "git", "Local commits are medium risk."),
         "git_push": ("high", "git push", "git", "Git push is high risk because it changes a remote."),
         "backup": ("high", "backup/export", "external_write", "Backups may write outside the local workspace."),
@@ -265,6 +299,7 @@ def _evaluate_action(action_type: str) -> dict[str, Any]:
         "risk_level": level,
         "reasons": [reason],
         "matched_risk_signals": [signal],
+        "safety_exclusion_signals": [],
         "unsafe_action_categories": [] if level == "low" else [category],
     }
 
@@ -273,12 +308,12 @@ def _risk_rules() -> list[tuple[str, str, str, str, str]]:
     return [
         ("critical", "broad recursive delete", r"\b(rm\s+-rf|remove-item\s+.*-recurse|broad recursive delete|delete unknown folders?)\b", "destructive", "Broad or unknown-scope delete operation detected."),
         ("critical", "secrets exposure", r"\b(copying? secrets?|expos(?:e|ing) secrets?|committing secrets?|credentials?|tokens?)\b", "secrets", "Secret or credential handling detected."),
-        ("critical", "production database", r"\bproduction database\b", "production_data", "Production database modification risk detected."),
+        ("critical", "production database", r"\b(update|modify|change|write|apply|migrate|run|execute)\b.{0,80}\bproduction database\b|\bproduction database\b.{0,80}\b(update|modify|change|write|apply|migrate|run|execute)\b", "production_data", "Production database modification risk detected."),
         ("critical", "approval bypass", r"\b(bypass(?:ing)? approval|force cleanup of invalid folders?|force-push|force push)\b", "policy_bypass", "Approval bypass or force operation detected."),
         ("high", "target project modification", r"\b(target project source modification|modify(?:ing)? target project|target repo modification|app code change|modify personalos repo)\b", "target_project_mutation", "Target project modification is high risk."),
-        ("high", "target build/test/restore", r"\b(target project build|target project test|target project restore|build/test/restore|package restore|dotnet restore|dotnet build|dotnet test)\b", "target_command", "Target project command execution is high risk."),
-        ("high", "database or migration", r"\b(database|dbcontext|migration|migrations|ef migration|appdata)\b", "database", "Database, app data, or migration work is high risk."),
-        ("high", "service control", r"\b(start/stop services?|start service|stop service|scheduler|scheduled task)\b", "service_or_scheduler", "Service or scheduler operations are high risk."),
+        ("high", "target build/test/restore", r"\b(target project build|target project test|target project restore|build/test/restore|package restore|dotnet restore|dotnet build|dotnet test|run restore|run build|run test)\b", "target_command", "Target project command execution is high risk."),
+        ("high", "database or migration", r"\b(database|dbcontext|migration|migrations|ef migration|dotnet ef database update|appdata)\b", "database", "Database, app data, or migration work is high risk."),
+        ("high", "service control", r"\b(start/stop services?|start service|stop service|run start\.bat|run stop\.bat|start\.bat|stop\.bat|scheduler|scheduled task)\b", "service_or_scheduler", "Service or scheduler operations are high risk."),
         ("high", "backup restore or cleanup", r"\b(backup restore|restore backup|cleanup|delete operation)\b", "restore_or_cleanup", "Restore or cleanup operation is high risk."),
         ("high", "git push", r"\b(git push|push to github|pushed? to main)\b", "git_remote", "Git push changes remote state and is high risk."),
         ("high", "external folder write", r"\b(google drive|external folder|external write|outside workspace)\b", "external_write", "External folder writes are high risk."),
@@ -294,6 +329,53 @@ def _risk_rules() -> list[tuple[str, str, str, str, str]]:
         ("low", "test temp dirs", r"\b(tests? against temp dirs?|basetemp)\b", "temp_tests", "Tests constrained to temp directories detected."),
         ("low", "readme update", r"\breadme updates?\b", "documentation", "README update detected."),
     ]
+
+
+def _split_risk_and_exclusion_text(text: str) -> tuple[str, list[str]]:
+    risk_chunks: list[str] = []
+    exclusion_chunks: list[str] = []
+    for chunk in _iter_policy_chunks(text):
+        if _is_safety_exclusion_chunk(chunk):
+            exclusion_chunks.append(chunk)
+        else:
+            risk_chunks.append(chunk)
+    return " ".join(risk_chunks), exclusion_chunks
+
+
+def _iter_policy_chunks(text: str) -> list[str]:
+    chunks = re.split(r"(?:[.;]|\s+-\s+|\n)+", text)
+    return [chunk.strip() for chunk in chunks if chunk.strip()]
+
+
+def _is_safety_exclusion_chunk(chunk: str) -> bool:
+    return bool(
+        re.search(
+            r"\b("
+            r"no|do not|don't|dont|without|excluded|excludes|forbidden|not allowed|"
+            r"out[- ]of[- ]scope|out of scope|prohibited|avoid"
+            r")\b",
+            chunk,
+        )
+    )
+
+
+def _safety_exclusion_signals(text: str) -> list[str]:
+    signals: list[str] = []
+    patterns = (
+        ("database exclusion", r"\b(database|db|dbcontext|appdata)\b"),
+        ("migration exclusion", r"\b(migration|migrations|ef migration)\b"),
+        ("build exclusion", r"\b(build|dotnet build)\b"),
+        ("test exclusion", r"\b(test|tests|dotnet test)\b"),
+        ("restore exclusion", r"\b(restore|dotnet restore)\b"),
+        ("run/script exclusion", r"\b(run|execute|script|start\.bat|stop\.bat)\b"),
+        ("secret/config exclusion", r"\b(secret|secrets|credential|credentials|token|tokens|appsettings|local settings|\.env)\b"),
+        ("generated-file exclusion", r"\b(generated|bin/|obj/|\.packages|logs?|backups?)\b"),
+        ("code exclusion", r"\b(code|source)\b"),
+    )
+    for signal, pattern in patterns:
+        if re.search(pattern, text):
+            signals.append(signal)
+    return signals
 
 
 def _explicit_risk(text: str) -> str | None:

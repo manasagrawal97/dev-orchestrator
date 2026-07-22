@@ -32,12 +32,13 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-030 dogfood report workflow documentation update
+- Latest completed source task: TASK-034 docs-only target policy/action handling
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
-- Latest pushed commit before TASK-032 docs work: `3985e70 docs: dogfood report workflow`
-- Next recommended action: TASK-031 resume PersonalOS through Devo with one safe current-state documentation task.
-- Recommended follow-up after TASK-031: TASK-030B register DevOrchestrator validation commands, then TASK-030C reduce policy and secret-signal noise.
+- Latest PersonalOS dogfood task: TASK-031 added `docs/current-state.md` in the PersonalOS repository through Devo-controlled docs-only scope.
+- Latest pushed commit before TASK-034 policy work: `29b2804 docs: add Devo user guide and future plan`
+- Next recommended action: TASK-030B register DevOrchestrator validation commands.
+- Recommended follow-up after TASK-030B: continue delivery-signal noise reduction, then add interrupted-work recovery/resume and handoff prompt generation.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - No PersonalOS repo files were modified by TASK-022.
@@ -45,6 +46,8 @@ The working loop is:
 - TASK-024 added non-mutating Git status, delivery-check, and delivery-report commands with risky-file and secret-signal checks.
 - TASK-025 added deterministic context-summary, context-refresh, context-apply, and context-history commands for append-only project context updates.
 - TASK-029 added deterministic project, run, and handoff reports for context recovery and work transfer.
+- TASK-031 used Devo to complete one safe PersonalOS docs-only current-state task.
+- TASK-034 improves docs-only target repository policy actions and records safety exclusions separately from matched risk signals.
 
 ## Readiness Estimate
 
@@ -92,6 +95,8 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-029 project/run report and handoff summary commands
 - TASK-030A DevOrchestrator self-onboarding as an approved Devo project
 - TASK-030 end-to-end DevOrchestrator dogfood run
+- TASK-031 PersonalOS current-state docs-only dogfood task
+- TASK-034 docs-only target policy/action handling
 
 ## Recovery Pointers
 
