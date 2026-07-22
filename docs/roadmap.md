@@ -5,7 +5,7 @@
 - TASK-030C continue delivery secret-signal noise reduction
 - TASK-033 interrupted work recovery/resume command
 - TASK-038 Codex handoff prompt generator
-- TASK-035 global Devo status/dashboard command
+- TASK-039 global Devo status/dashboard command
 - TASK-036 run templates for common task types
 - TASK-037 approval UX improvements
 
@@ -62,6 +62,10 @@ Registered DevOrchestrator validation commands in its Devo workspace registry: c
 
 Refine policy and delivery checks using dogfood findings. TASK-034 completed the policy portion by separating safety-boundary wording from positive risk evidence and by adding explicit target repository action hints. Delivery scanning for documented secret-signal names remains future work.
 
+### TASK-035 Git Delivery Path Reliability - Completed
+
+Fixed Devo Git status and delivery-check handling for registered repository paths that contain spaces and for Git safe-directory ownership checks. The Git subprocess wrapper now uses argument lists with a per-command `safe.directory` override for the registered repository path, preserves non-git/subdirectory failures, and reports a clearer diagnostic when a registered path is inside a Git work tree but is not the repository root.
+
 ### TASK-032 Project Memory Handling - Current
 
 Persist durable project memory, user-facing operating guidance, token-usage expectations, and future improvement plans so they survive chat context loss and can be recovered from GitHub plus workspace backups.
@@ -78,7 +82,7 @@ Added explicit target repository action types, including medium-risk `target_rep
 
 Generate compact Codex-ready prompts from approved context, run state, task scope, policy, validation, and delivery evidence.
 
-### TASK-035 Global Devo Status/Dashboard Command
+### TASK-039 Global Devo Status/Dashboard Command
 
 Show registered projects, active runs, warnings, approvals, validation state, and next actions in one command.
 

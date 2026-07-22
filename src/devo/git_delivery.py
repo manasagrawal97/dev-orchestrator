@@ -55,12 +55,23 @@ def get_git_repository_status(project_name: str, workspace_root: Path | None = N
         raise ValueError(msg)
 
     inside = _git(repo_path, ["rev-parse", "--is-inside-work-tree"])
-    if inside.returncode != 0 or inside.stdout.strip().lower() != "true":
+    if inside.returncode != 0:
+        detail = _git_error_detail(inside)
+        if "dubious ownership" in detail.lower():
+            msg = f"Git rejected repository access for project path due to dubious ownership: {repo_path}"
+            raise ValueError(msg)
         msg = f"Project path is not a git repository: {repo_path}"
         raise ValueError(msg)
+    if inside.stdout.strip().lower() != "true":
+        msg = f"Project path is not inside a git work tree: {repo_path}"
+        raise ValueError(msg)
     top_level = _git_value(repo_path, ["rev-parse", "--show-toplevel"])
-    if not top_level or Path(top_level).resolve() != repo_path:
-        msg = f"Project path is not a git repository: {repo_path}"
+    if not top_level:
+        msg = f"Could not determine git repository root for project path: {repo_path}"
+        raise ValueError(msg)
+    git_root = Path(top_level).resolve()
+    if git_root != repo_path:
+        msg = f"Project path is inside a git work tree but is not the repository root: {repo_path} (git root: {git_root})"
         raise ValueError(msg)
 
     warnings: list[str] = []
@@ -229,7 +240,8 @@ def create_delivery_report(
 
 
 def _git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=repo_path, capture_output=True, text=True, shell=False)
+    safe_directory = f"safe.directory={repo_path}"
+    return subprocess.run(["git", "-c", safe_directory, *args], cwd=repo_path, capture_output=True, text=True, shell=False)
 
 
 def _git_value(repo_path: Path, args: list[str]) -> str | None:
@@ -480,6 +492,10 @@ def _format_text_list(items: list[str]) -> list[str]:
 def _single_line(prefix: str, stdout: str, stderr: str) -> str:
     detail = " ".join((stdout or stderr or "").split())
     return f"{prefix}: {detail}" if detail else prefix
+
+
+def _git_error_detail(completed: subprocess.CompletedProcess[str]) -> str:
+    return " ".join((completed.stderr or completed.stdout or "").split())
 
 
 def _safe_int(value: str) -> int | None:

@@ -4,9 +4,10 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
-from devo.git_delivery import run_delivery_check
+from devo.git_delivery import get_git_repository_status, run_delivery_check
 from devo.main import app
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration, RunArtifactType, RunState, RunStatus, ValidationRunRecord, ValidationRunStatus, ValidationCommandCategory, ValidationRiskLevel
 
@@ -24,13 +25,24 @@ def test_git_status_works_on_temp_git_repo(tmp_path: Path, monkeypatch) -> None:
     assert str(repo) in result.output
 
 
+def test_git_status_works_on_temp_git_repo_with_spaces(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch, git=True, repo_name="repo with spaces")
+
+    result = runner.invoke(app, ["git", "status", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Working tree clean: True" in result.output
+    assert str(repo) in result.output
+
+
 def test_git_status_fails_safely_on_non_git_path(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch, git=False)
 
     result = runner.invoke(app, ["git", "status", "--project", "sample"], terminal_width=240)
 
     assert result.exit_code != 0
-    assert "Project path is not a git repository" in result.output
+    with pytest.raises(ValueError, match="Project path is inside a git work tree but is not the repository root"):
+        get_git_repository_status("sample", workspace_root=tmp_path / "workspace")
 
 
 def test_delivery_check_passes_for_clean_temp_repo(tmp_path: Path, monkeypatch) -> None:
@@ -41,6 +53,27 @@ def test_delivery_check_passes_for_clean_temp_repo(tmp_path: Path, monkeypatch) 
     assert result.exit_code == 0, result.output
     assert "Delivery readiness: ready" in result.output
     assert "git diff --check: passed" in result.output
+
+
+def test_delivery_check_passes_for_clean_temp_repo_with_spaces(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, git=True, repo_name="repo with spaces")
+
+    result = runner.invoke(app, ["git", "delivery-check", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Delivery readiness: ready" in result.output
+    assert "git diff --check: passed" in result.output
+
+
+def test_delivery_check_uses_registered_path_with_spaces_as_git_cwd(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch, git=True, repo_name="repo with spaces")
+    repo = _repo(tmp_path, "repo with spaces").resolve()
+
+    check = run_delivery_check("sample", workspace_root=tmp_path / "workspace")
+
+    assert check.repo_path == repo
+    assert check.status.current_branch == "main"
+    assert check.readiness.value == "ready"
 
 
 def test_delivery_check_detects_staged_normal_file(tmp_path: Path, monkeypatch) -> None:
@@ -180,10 +213,10 @@ def test_readme_documents_git_delivery_commands() -> None:
     assert "does not bypass external approval policies" in readme
 
 
-def _workspace(tmp_path: Path, monkeypatch, git: bool) -> tuple[Path, Path]:
+def _workspace(tmp_path: Path, monkeypatch, git: bool, repo_name: str = "repo") -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
-    repo = _repo(tmp_path)
+    repo = _repo(tmp_path, repo_name)
     repo.mkdir()
     (repo / "README.md").write_text("# Sample\n", encoding="utf-8")
     if git:
@@ -264,8 +297,8 @@ def _latest_report_payload(tmp_path: Path) -> dict[str, object]:
     return json.loads(next(report_dir.glob("git-delivery-report-*.json")).read_text(encoding="utf-8"))
 
 
-def _repo(tmp_path: Path) -> Path:
-    return tmp_path / "repo"
+def _repo(tmp_path: Path, repo_name: str = "repo") -> Path:
+    return tmp_path / repo_name
 
 
 def _git(cwd: Path, *args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:

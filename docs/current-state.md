@@ -32,11 +32,11 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-030B DevOrchestrator validation registry setup
+- Latest completed source task: TASK-035 Git delivery path reliability for registered repositories with spaces
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood task: TASK-031 added `docs/current-state.md` in the PersonalOS repository through Devo-controlled docs-only scope.
-- Latest pushed commit before TASK-030B registry work: `d955e95 fix: improve docs-only policy actions`
+- Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Next recommended action: continue delivery-signal noise reduction, then add interrupted-work recovery/resume and handoff prompt generation.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
@@ -51,6 +51,7 @@ The working loop is:
 - TASK-031 used Devo to complete one safe PersonalOS docs-only current-state task.
 - TASK-034 improves docs-only target repository policy actions and records safety exclusions separately from matched risk signals.
 - TASK-030B registered DevOrchestrator's own validation commands for future dogfood evidence.
+- TASK-035 fixed Git delivery/status checks for registered repository paths with spaces and Git safe-directory ownership checks.
 
 ## Readiness Estimate
 
@@ -101,6 +102,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-031 PersonalOS current-state docs-only dogfood task
 - TASK-034 docs-only target policy/action handling
 - TASK-030B DevOrchestrator validation registry setup
+- TASK-035 Git delivery path reliability for registered repositories with spaces
 
 ## Recovery Pointers
 
