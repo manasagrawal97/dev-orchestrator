@@ -21,7 +21,7 @@
 
 ## Current Operating Model
 
-DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, run validation commands, or bypass Codex/OpenAI/OS/GitHub security policy.
+DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
 The working loop is:
 
@@ -32,7 +32,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-035 Git delivery path reliability for registered repositories with spaces
+- Latest completed source task: TASK-037 validation approval matching for target build/test actions
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood task: TASK-031 added `docs/current-state.md` in the PersonalOS repository through Devo-controlled docs-only scope.
@@ -52,6 +52,7 @@ The working loop is:
 - TASK-034 improves docs-only target repository policy actions and records safety exclusions separately from matched risk signals.
 - TASK-030B registered DevOrchestrator's own validation commands for future dogfood evidence.
 - TASK-035 fixed Git delivery/status checks for registered repository paths with spaces and Git safe-directory ownership checks.
+- TASK-037 aligned validation-runner approval matching so exact `target_command` approvals remain supported and safely scoped `target_repo_build`, `target_repo_test`, and `target_repo_validation` approvals can authorize matching registered validation commands without duplicate approval friction.
 
 ## Readiness Estimate
 
@@ -103,6 +104,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-034 docs-only target policy/action handling
 - TASK-030B DevOrchestrator validation registry setup
 - TASK-035 Git delivery path reliability for registered repositories with spaces
+- TASK-037 validation approval matching for target build/test actions
 
 ## Recovery Pointers
 

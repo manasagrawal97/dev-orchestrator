@@ -7,7 +7,6 @@
 - TASK-038 Codex handoff prompt generator
 - TASK-039 global Devo status/dashboard command
 - TASK-036 run templates for common task types
-- TASK-037 approval UX improvements
 
 ## Immediate Readiness Target
 
@@ -90,9 +89,9 @@ Show registered projects, active runs, warnings, approvals, validation state, an
 
 Provide deterministic templates for docs-only tasks, safe bugfixes, validation-only work, recovery work, and larger feature planning.
 
-### TASK-037 Approval UX Improvements
+### TASK-037 Approval UX Improvements - Completed
 
-Improve approval summaries, pending-action display, and matched-signal explanations.
+Reduced duplicate approval friction in the validation runner. Exact `target_command` approval remains supported for maximum precision, and safely scoped `target_repo_build`, `target_repo_test`, and `target_repo_validation` approvals now authorize matching registered validation commands only when the category/action and exact command scope match.
 
 ## Guiding Constraints
 

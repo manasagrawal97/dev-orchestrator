@@ -9,16 +9,25 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .approvals import DevoApprovalStatus, load_approval_ledger
+from .approvals import DevoApprovalStatus, load_approval_ledger, scope_fingerprint_for_policy
+from .policy import check_policy
 from .projects import get_workspace_root
 from .runs import load_run, run_path
-from .schemas import ValidationCommand, ValidationRunRecord, ValidationRunStatus, ValidationRiskLevel
+from .schemas import ValidationCommand, ValidationCommandCategory, ValidationRunRecord, ValidationRunStatus, ValidationRiskLevel
 from .validation_registry import check_validation_command, get_validation_command
 
 VALIDATION_RUN_SCHEMA_VERSION = "1"
 VALIDATION_RUNS_DIR = "validation-runs"
 MAX_TERMINAL_OUTPUT_CHARS = 4000
 MAX_REPORT_OUTPUT_CHARS = 120_000
+EXACT_VALIDATION_APPROVAL_ACTIONS = {"validation", "target_command"}
+TARGET_REPO_VALIDATION_CATEGORIES = {
+    ValidationCommandCategory.BUILD,
+    ValidationCommandCategory.TEST,
+    ValidationCommandCategory.LINT,
+    ValidationCommandCategory.COMPILE,
+    ValidationCommandCategory.OTHER,
+}
 
 
 class ValidationRunResult:
@@ -284,18 +293,59 @@ def _find_validation_approval(
         ledger = load_approval_ledger(project_name, run_id, workspace_root=workspace_root)
     except ValueError:
         return None
-    required_fragments = [f"validation-command:{command.id}", f"command:{command.command}"]
     for approval in ledger.approvals.values():
         if approval.status != DevoApprovalStatus.APPROVED or approval.blocked:
             continue
+        if approval.project_name != project_name or approval.run_id != run_id:
+            continue
         if approval.task_id != task_id:
             continue
-        if approval.action_type not in {"validation", "target_command"}:
+        if not _approval_scope_is_current(workspace_root, project_name, run_id, task_id, approval.action_type, approval.scope_fingerprint):
             continue
         text = "\n".join(value or "" for value in (approval.requested_reason, approval.approval_note))
-        if all(fragment in text for fragment in required_fragments):
+        if _exact_validation_approval_matches(approval.action_type, text, command):
+            return approval.approval_id
+        if _target_repo_action_approval_matches(approval.action_type, text, command):
             return approval.approval_id
     return None
+
+
+def _approval_scope_is_current(
+    workspace_root: Path,
+    project_name: str,
+    run_id: str,
+    task_id: str,
+    action_type: str,
+    scope_fingerprint: str,
+) -> bool:
+    try:
+        policy = check_policy(project_name, run_id, task_id, action_type=action_type, workspace_root=workspace_root)
+    except ValueError:
+        return False
+    return scope_fingerprint_for_policy(policy) == scope_fingerprint
+
+
+def _exact_validation_approval_matches(action_type: str, text: str, command: ValidationCommand) -> bool:
+    if action_type not in EXACT_VALIDATION_APPROVAL_ACTIONS:
+        return False
+    required_fragments = [f"validation-command:{command.id}", f"command:{command.command}"]
+    return all(fragment in text for fragment in required_fragments)
+
+
+def _target_repo_action_approval_matches(action_type: str, text: str, command: ValidationCommand) -> bool:
+    if not _target_repo_action_covers_category(action_type, command.category):
+        return False
+    return command.id in text and command.command in text
+
+
+def _target_repo_action_covers_category(action_type: str, category: ValidationCommandCategory) -> bool:
+    if action_type == "target_repo_build":
+        return category == ValidationCommandCategory.BUILD
+    if action_type == "target_repo_test":
+        return category == ValidationCommandCategory.TEST
+    if action_type == "target_repo_validation":
+        return category in TARGET_REPO_VALIDATION_CATEGORIES
+    return False
 
 
 def _approval_block_reason(project_name: str, run_id: str | None, task_id: str | None, command: ValidationCommand) -> str:

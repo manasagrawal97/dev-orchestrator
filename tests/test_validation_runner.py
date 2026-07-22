@@ -219,6 +219,114 @@ def test_approval_id_is_recorded_when_approval_authorizes_command(tmp_path: Path
     assert data["approval_id"] == record.approval_id
 
 
+def test_target_repo_build_approval_authorizes_registered_build_command(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project build command."})
+    command_text = _python_command("print('build-approved')")
+    _add_command("build-high", command_text, risk="high", approval=True, category="build")
+    record = _approve_action(workspace, "target_repo_build", f"Approve registered build validation build-high: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "build-high"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: passed" in result.output
+    data = _latest_validation_json(workspace)
+    assert data["approval_id"] == record.approval_id
+
+
+def test_target_repo_build_approval_does_not_authorize_test_command(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project test command."})
+    command_text = _python_command("print('test-needs-test-approval')")
+    _add_command("test-high", command_text, risk="high", approval=True, category="test")
+    _approve_action(workspace, "target_repo_build", f"Approve registered test validation test-high: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "test-high"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: blocked" in result.output
+    assert "matching approved approval" in result.output
+
+
+def test_target_repo_test_approval_authorizes_registered_test_command(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project test command."})
+    command_text = _python_command("print('test-approved')")
+    _add_command("test-high", command_text, risk="high", approval=True, category="test")
+    record = _approve_action(workspace, "target_repo_test", f"Approve registered test validation test-high: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "test-high"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: passed" in result.output
+    data = _latest_validation_json(workspace)
+    assert data["approval_id"] == record.approval_id
+
+
+def test_target_repo_test_approval_does_not_authorize_build_command(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project build command."})
+    command_text = _python_command("print('build-needs-build-approval')")
+    _add_command("build-high", command_text, risk="high", approval=True, category="build")
+    _approve_action(workspace, "target_repo_test", f"Approve registered build validation build-high: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "build-high"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: blocked" in result.output
+    assert "matching approved approval" in result.output
+
+
+def test_target_repo_validation_approval_authorizes_safely_scoped_validation_command(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project lint command."})
+    command_text = _python_command("print('lint-approved')")
+    _add_command("lint-high", command_text, risk="high", approval=True, category="lint")
+    record = _approve_action(workspace, "target_repo_validation", f"Approve registered lint validation lint-high: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "lint-high"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: passed" in result.output
+    data = _latest_validation_json(workspace)
+    assert data["approval_id"] == record.approval_id
+
+
+def test_changed_command_text_does_not_reuse_old_target_repo_approval(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project build command."})
+    old_command = _python_command("print('old-build')")
+    new_command = _python_command("print('new-build')")
+    _add_command("build-high", new_command, risk="high", approval=True, category="build")
+    _approve_action(workspace, "target_repo_build", f"Approve registered build validation build-high: {old_command}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "build-high"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: blocked" in result.output
+    assert "matching approved approval" in result.output
+
+
+def test_disabled_high_risk_command_with_approval_still_requires_allow_disabled(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project build command."})
+    command_text = _python_command("print('disabled-build')")
+    _add_command("build-disabled", command_text, risk="high", approval=True, category="build", extra=["--disabled"])
+    _approve_action(workspace, "target_repo_build", f"Approve registered build validation build-disabled: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "build-disabled"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: blocked" in result.output
+    assert "disabled" in result.output.lower()
+
+
+def test_critical_command_remains_blocked_even_with_matching_approval(tmp_path: Path, monkeypatch) -> None:
+    workspace = _policy_workspace(tmp_path, monkeypatch, {"T001": "Validate target project build command."})
+    command_text = _python_command("print('critical-build')")
+    _add_command("critical-build", command_text, risk="critical", approval=True, category="build")
+    _approve_action(workspace, "target_repo_build", f"Approve registered build validation critical-build: {command_text}")
+
+    result = runner.invoke(app, ["validation", "run", "--project", "sample", "--run", "run-1", "--task", "T001", "--id", "critical-build"], terminal_width=240)
+
+    assert result.exit_code == 0
+    assert "Status: blocked" in result.output
+    assert "Critical-risk" in result.output
+
+
 def test_command_working_dir_missing_fails_safely(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     missing = tmp_path / "missing-workdir"
@@ -289,7 +397,7 @@ def _write_run(workspace: Path, project_path: Path) -> None:
     (run_dir / "run-state.json").write_text(state.model_dump_json(indent=2), encoding="utf-8")
 
 
-def _add_command(command_id: str, command: str, risk: str, approval: bool, extra: list[str] | None = None):
+def _add_command(command_id: str, command: str, risk: str, approval: bool, extra: list[str] | None = None, category: str = "test"):
     args = [
         "validation",
         "add",
@@ -302,7 +410,7 @@ def _add_command(command_id: str, command: str, risk: str, approval: bool, extra
         "--command",
         command,
         "--category",
-        "test",
+        category,
         "--risk",
         risk,
     ]
@@ -317,3 +425,30 @@ def _add_command(command_id: str, command: str, risk: str, approval: bool, extra
 def _python_command(code: str) -> str:
     escaped = code.replace('"', '\\"')
     return f'{sys.executable} -c "{escaped}"'
+
+
+def _approve_action(workspace: Path, action_type: str, reason: str):
+    record = create_approval_request(
+        "sample",
+        "run-1",
+        "T001",
+        action_type,
+        reason=reason,
+        workspace_root=workspace,
+    )
+    return approve_approval(
+        "sample",
+        "run-1",
+        record.approval_id,
+        approved_by="tester",
+        note=reason,
+        workspace_root=workspace,
+    )
+
+
+def _latest_validation_json(workspace: Path) -> dict:
+    path = max(
+        (workspace / "runs" / "sample" / "run-1" / "artifacts" / "validation-runs").glob("*/validation-run.json"),
+        key=lambda item: item.stat().st_mtime,
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
