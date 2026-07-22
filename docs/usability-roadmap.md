@@ -79,23 +79,31 @@ The package should include:
 
 The MVP writes `work-package.json`, `work-package.md`, and `operator-prompt.md` under the run workspace artifacts folder.
 
-### Saved Lanes - MVP Added
+### Saved Lanes - Expanded MVP Added
 
 A lane is a saved working mode.
 
-Example: `low-risk-ui-maintenance`
+Examples:
 
-The lane would store rules once:
+- `docs-only`
+- `low-risk-ui-maintenance`
+- `warning-cleanup`
+- `small-bugfix`
+- `small-feature`
+- `test-only`
+- `backup-maintenance`
+- `devo-internal-source`
 
-- allowed: existing Razor UI components
-- allowed: text/help-state/UI polish
-- forbidden: DB, migrations, appsettings, secrets, scripts, backups, app run, external APIs
-- validation: `git diff --check`, focused diff, delivery-check, registered build
-- delivery: commit and push after validation passes
+Each lane stores rules once:
 
-Then the user can say, "Use the low-risk UI maintenance lane," instead of repeating all rules.
+- allowed work types
+- forbidden work types
+- default validation command ids or categories
+- lane notes and stop conditions via generated scope templates
 
-The first built-in lane is `low-risk-ui-maintenance`.
+Then the user can say, "Use the warning-cleanup lane," or "Use the docs-only lane," instead of repeating all rules.
+
+Lanes are guidance and defaults. They do not bypass approval bundles, child approval records, validation command policy checks, or explicit approval for risky work.
 
 ### Approval Bundles - MVP Added
 
@@ -146,6 +154,7 @@ The current MVP command group is:
 
 ```powershell
 devo work start --project PersonalOS --lane low-risk-ui-maintenance --goal "Improve operational UI guidance"
+devo work scope-template --project PersonalOS --run <runId>
 devo work import-scope --project PersonalOS --run <runId> --file <scopeMarkdownFile>
 devo work request-approval-bundle --project PersonalOS --run <runId> --task T001
 devo approval bundle-approve --project PersonalOS --run <runId> --bundle <bundleId> --by Manas

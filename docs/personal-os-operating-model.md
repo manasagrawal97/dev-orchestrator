@@ -35,7 +35,7 @@ Run this flow only when a PersonalOS dogfood batch is explicitly selected and ap
 Current bundled flow:
 
 1. User gives a goal.
-2. Codex creates a Devo work package in the `low-risk-ui-maintenance` lane.
+2. Codex creates a Devo work package in the narrowest appropriate lane, usually `low-risk-ui-maintenance`, `docs-only`, `warning-cleanup`, `small-bugfix`, `small-feature`, or `test-only`.
 3. Devo generates a lane-aware scope template.
 4. Codex fills and imports exact scope into the work package.
 5. User approves the approval bundle when the exact scope is acceptable.
@@ -46,6 +46,8 @@ Current bundled flow:
 10. User receives a short final summary.
 
 Use `devo work scope-template --project PersonalOS --run <runId>` before importing scope. The generated template should be filled with the exact approved files, selected low-risk UI items, forbidden changes, validation command, delivery plan, and stop conditions.
+
+For PersonalOS, prefer `low-risk-ui-maintenance` for UI polish, `warning-cleanup` for mechanical analyzer fixes, `docs-only` for documentation updates, and `small-bugfix` or `small-feature` only when the approved scope remains non-DB/non-config and build-verifiable. The lane does not authorize DB, migrations, secrets, config, app run, external APIs, backup scripts, or broader behavior changes.
 
 Fallback practical flow when a bundle is not appropriate:
 

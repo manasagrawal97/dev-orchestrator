@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-056 work-package scope template command
+- Latest completed source task: TASK-DEVO-057 built-in work lanes
 - Latest docs task: TASK-DEVO-054A clarifies the CLI-first, local-first Devo roadmap and positions PersonalOS as a Devo validation target.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -71,13 +71,14 @@ The working loop is:
 - TASK-DEVO-054A documents the updated strategy: Devo is the main product priority, current development is CLI-first/local-first, PersonalOS is primarily a dogfood validation project, dashboard/UI is later, and direct AI/API agents are future optional scope.
 - TASK-DEVO-055 adds `devo doctor` and `devo doctor --project <project>` for read-only Devo/project health checks covering workspace, project registration, Git, validation registry, work packages, latest validation, generated visuals, backup inventory, scheduled backup task status when safely checkable, overall status, and suggested next action.
 - TASK-DEVO-056 adds `devo work scope-template` and `devo work scope-example --lane low-risk-ui-maintenance` so draft work packages can generate lane-aware scope Markdown with required import sections, allowed/forbidden defaults, validation command guidance, stop conditions, approval bundle notes, and final report expectations before scope import.
+- TASK-DEVO-057 adds more built-in work lanes: `docs-only`, `warning-cleanup`, `small-bugfix`, `small-feature`, `test-only`, `backup-maintenance`, and `devo-internal-source`, plus `devo work lane-show --lane <lane>` for inspecting lane rules.
 
 ## Readiness Estimate
 
 - Practical CLI product maturity after TASK-DEVO-053B: around 75-80% complete.
 - Long-term product vision, including dashboard and direct model adapters: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor health checks, create scoped work packages, generate lane-aware scope templates, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor health checks, create scoped work packages across multiple built-in lanes, generate lane-aware scope templates, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
 The next product step should focus on Devo CLI maturity. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 

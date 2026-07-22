@@ -23,9 +23,20 @@ from devo.schemas import (
     ValidationRunStatus,
 )
 from devo.validation_registry import add_validation_command
-from devo.work_packages import WorkPackageStatus, complete_work_package, list_lanes, load_work_package, save_work_package, start_work_package
+from devo.work_packages import WorkPackageStatus, complete_work_package, get_lane, list_lanes, load_work_package, save_work_package, start_work_package
 
 runner = CliRunner()
+
+BUILT_IN_LANE_IDS = {
+    "docs-only",
+    "low-risk-ui-maintenance",
+    "warning-cleanup",
+    "small-bugfix",
+    "small-feature",
+    "test-only",
+    "backup-maintenance",
+    "devo-internal-source",
+}
 
 
 def test_work_start_creates_run_and_draft_artifacts(tmp_path: Path, monkeypatch) -> None:
@@ -49,6 +60,51 @@ def test_work_start_creates_run_and_draft_artifacts(tmp_path: Path, monkeypatch)
     assert paths["operator_prompt"].exists()
     assert paths["scope_template"].name == "scope-template.md"
     assert "devo work scope-template" in result.output
+
+
+def test_all_built_in_lanes_load() -> None:
+    lanes = {lane.id: lane for lane in list_lanes()}
+
+    assert BUILT_IN_LANE_IDS.issubset(lanes)
+    for lane_id in BUILT_IN_LANE_IDS:
+        assert get_lane(lane_id).id == lane_id
+    assert lanes["docs-only"].default_validation_commands == ["git-diff-check"]
+    assert "No build required by default." in lanes["docs-only"].notes
+    assert lanes["low-risk-ui-maintenance"].default_validation_commands == ["dotnet-build-personalos"]
+
+
+def test_unknown_lane_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["work", "start", "--project", "sample", "--lane", "not-a-lane", "--goal", "Unknown"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Unknown work lane" in result.output
+
+
+def test_work_lanes_output_includes_all_built_in_lanes(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["work", "lanes"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    for lane_id in BUILT_IN_LANE_IDS:
+        assert lane_id in result.output
+
+
+def test_work_lane_show_includes_rules_and_validation_defaults() -> None:
+    result = runner.invoke(app, ["work", "lane-show", "--lane", "docs-only"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "docs-only" in result.output
+    assert "README.md" in result.output
+    assert "source code" in result.output
+    assert "git-diff-check" in result.output
+    assert "No build required by default." in result.output
 
 
 def test_work_import_scope_updates_package_and_tasks_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -128,6 +184,21 @@ def test_work_scope_template_includes_lane_rules_and_validation_command(tmp_path
     assert "- dotnet-build-personalos" in text
 
 
+def test_work_scope_template_includes_docs_only_defaults(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch, include_validation_command=False)
+    package = start_work_package("sample", "docs-only", "Update docs", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    text = (_package_root(workspace, package.run_id) / "scope-template.md").read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "- README.md" in text
+    assert "- docs/**" in text
+    assert "- source code" in text
+    assert "- git-diff-check" in text
+    assert "No build required by default." in text
+
+
 def test_work_scope_template_uses_placeholder_when_validation_command_unavailable(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch, include_validation_command=False)
     package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
@@ -147,6 +218,38 @@ def test_work_scope_template_fails_if_work_package_missing(tmp_path: Path, monke
 
     assert result.exit_code != 0
     assert "Work package not found" in result.output
+
+
+def test_work_scope_example_works_for_each_lane() -> None:
+    for lane in list_lanes():
+        result = runner.invoke(app, ["work", "scope-example", "--lane", lane.id], terminal_width=240)
+        assert result.exit_code == 0, result.output
+        assert "## Selected Items" in result.output
+        assert "## Exact Files" in result.output
+        assert "## Validation Command" in result.output
+
+
+def test_work_scope_template_uses_registered_category_defaults(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch, include_validation_command=False)
+    add_validation_command(
+        "sample",
+        "sample-build",
+        "Build sample",
+        "dotnet build Sample.slnx",
+        "build",
+        risk="high",
+        approval_required=True,
+        enabled=False,
+        workspace_root=workspace,
+    )
+    package = start_work_package("sample", "warning-cleanup", "Fix warnings", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    text = (_package_root(workspace, package.run_id) / "scope-template.md").read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "- sample-build" in text
+    assert "<project-build-command-id>" not in text
 
 
 def test_work_next_for_draft_status(tmp_path: Path, monkeypatch) -> None:

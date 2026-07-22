@@ -128,6 +128,7 @@ For small bounded batches, use the work-package flow instead of hand-assembling 
 
 ```powershell
 devo work lanes
+devo work lane-show --lane low-risk-ui-maintenance
 devo work start --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
 devo work scope-template --project <name> --run <runId>
 devo work import-scope --project <name> --run <runId> --file <scopeMarkdownFile>
@@ -147,6 +148,19 @@ devo work scope-example --lane low-risk-ui-maintenance
 ```
 
 Use `devo work scope-template` while the package is still draft. It writes `scope-template.md` under `workspace/runs/<project>/<runId>/artifacts/work-package/` with the required import sections, lane allowed/forbidden rules, validation command guidance, stop conditions, and final report expectations. The filled scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
+
+Built-in lanes:
+
+- `docs-only`: documentation and Mermaid changes only; default validation is `git diff --check` and no build by default.
+- `low-risk-ui-maintenance`: Razor UI help text, empty states, mechanical warning fixes, and display-only prompts using already-loaded data.
+- `warning-cleanup`: exact mechanical warning/analyzer cleanup, usually build-verified.
+- `small-bugfix`: one small focused fix with minimal tests when existing.
+- `small-feature`: one small approved feature or requirement inside approved files/modules.
+- `test-only`: tests and test helpers, without production source unless explicitly scoped.
+- `backup-maintenance`: Devo backup/recovery code, scripts, docs, and temp-directory tests; no real backup/restore by default.
+- `devo-internal-source`: DevOrchestrator source, tests, and docs; no PersonalOS changes or workspace artifacts in commits.
+
+Lanes describe the normal safe shape for a package. They do not bypass approval bundles, child approval records, validation command policy checks, or explicit stop conditions.
 
 `devo work next` reads the package state and shows the next action, required command, stop conditions, and whether user approval is needed. In draft state it suggests `devo work scope-template`. `devo work prompt --phase <phase>` writes a phase-specific Codex operator prompt under the work-package artifacts folder. Supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
 

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .projects import get_workspace_root
 from .runs import create_run, load_run, run_path, save_run_state
 from .scanner import load_registered_project
-from .schemas import RunArtifact, RunArtifactType, RunStatus, ValidationRunRecord
+from .schemas import RunArtifact, RunArtifactType, RunStatus, ValidationCommandCategory, ValidationRunRecord
 from .validation_registry import get_validation_command, list_validation_commands
 
 WORK_PACKAGE_SCHEMA_VERSION = "1"
@@ -43,6 +43,8 @@ class WorkLane(BaseModel):
     allowed: list[str] = Field(default_factory=list)
     forbidden: list[str] = Field(default_factory=list)
     default_validation_commands: list[str] = Field(default_factory=list)
+    default_validation_categories: list[str] = Field(default_factory=list)
+    require_registered_validation_command: bool = False
     notes: list[str] = Field(default_factory=list)
 
 
@@ -108,6 +110,31 @@ class WorkPackageScopeTemplate(BaseModel):
 
 
 BUILT_IN_LANES: dict[str, WorkLane] = {
+    "docs-only": WorkLane(
+        id="docs-only",
+        name="Docs only",
+        allowed=[
+            "README.md",
+            "docs/**",
+            "Markdown documentation",
+            "Mermaid diagrams in docs",
+            "non-source planning notes",
+        ],
+        forbidden=[
+            "source code",
+            "target project source files unless explicitly scoped",
+            "DB/migrations",
+            "secrets/appsettings/local settings",
+            "scripts/backups",
+            "generated files",
+            "build/test/app run unless explicitly requested",
+        ],
+        default_validation_commands=["git-diff-check"],
+        notes=[
+            "No build required by default.",
+            "Use git diff --check as the normal docs-only validation.",
+        ],
+    ),
     "low-risk-ui-maintenance": WorkLane(
         id="low-risk-ui-maintenance",
         name="Low-risk UI maintenance",
@@ -134,11 +161,128 @@ BUILT_IN_LANES: dict[str, WorkLane] = {
             "behavior-heavy refactors",
         ],
         default_validation_commands=["dotnet-build-personalos"],
+        require_registered_validation_command=True,
         notes=[
             "Prefer project validation command dotnet-build-personalos when present.",
             "If that command is not registered, import-scope must provide a validation command.",
         ],
-    )
+    ),
+    "warning-cleanup": WorkLane(
+        id="warning-cleanup",
+        name="Warning cleanup",
+        allowed=[
+            "small mechanical warning/analyzer fixes",
+            "source files needed for exact warning cleanup",
+            "docs update if needed",
+        ],
+        forbidden=[
+            "behavior refactors",
+            "DB/migrations",
+            "config/secrets",
+            "app run/external APIs",
+            "unrelated cleanup",
+        ],
+        default_validation_commands=["<project-build-command-id>"],
+        default_validation_categories=[ValidationCommandCategory.BUILD.value],
+        notes=["Prefer the registered project build validation command when available."],
+    ),
+    "small-bugfix": WorkLane(
+        id="small-bugfix",
+        name="Small bugfix",
+        allowed=[
+            "small focused source fix",
+            "minimal tests if existing",
+            "docs note if needed",
+        ],
+        forbidden=[
+            "DB schema changes",
+            "broad refactor",
+            "config/secrets",
+            "app run/external APIs unless explicitly approved",
+            "unrelated files",
+        ],
+        default_validation_commands=["<build-command-id>", "<targeted-test-command-id>"],
+        default_validation_categories=[ValidationCommandCategory.BUILD.value, ValidationCommandCategory.TEST.value],
+        notes=["Use build validation and targeted tests when registered and appropriate."],
+    ),
+    "small-feature": WorkLane(
+        id="small-feature",
+        name="Small feature",
+        allowed=[
+            "small feature within approved files/modules",
+            "UI/application changes",
+            "tests/docs if relevant",
+        ],
+        forbidden=[
+            "DB/migrations unless separate high-risk approval",
+            "config/secrets",
+            "broad architecture changes",
+            "external APIs unless explicitly approved",
+        ],
+        default_validation_commands=["<build-command-id>", "<test-command-id>"],
+        default_validation_categories=[ValidationCommandCategory.BUILD.value, ValidationCommandCategory.TEST.value],
+        notes=["Keep scope to one approved feature/requirement and validate with build plus tests when available."],
+    ),
+    "test-only": WorkLane(
+        id="test-only",
+        name="Test only",
+        allowed=[
+            "test files",
+            "test helpers",
+            "docs note if needed",
+        ],
+        forbidden=[
+            "production source changes unless explicitly approved",
+            "DB/migrations",
+            "config/secrets",
+            "app run/external APIs",
+        ],
+        default_validation_commands=["<targeted-test-command-id>", "<full-test-command-id>"],
+        default_validation_categories=[ValidationCommandCategory.TEST.value],
+        notes=["Prefer a targeted registered test command; use full tests only when registered and approved."],
+    ),
+    "backup-maintenance": WorkLane(
+        id="backup-maintenance",
+        name="Backup maintenance",
+        allowed=[
+            "Devo backup/recovery scripts",
+            "backup status/list/reporting code",
+            "recovery docs",
+            "tests using temp directories",
+        ],
+        forbidden=[
+            "real restore",
+            "deleting real backups",
+            "modifying live scheduler unless explicitly approved",
+            "creating real backup unless explicitly approved",
+            "PersonalOS changes",
+        ],
+        default_validation_commands=["backup-recovery-tests"],
+        default_validation_categories=[ValidationCommandCategory.TEST.value],
+        notes=["Validation should use temp directories only and must not touch real backups."],
+    ),
+    "devo-internal-source": WorkLane(
+        id="devo-internal-source",
+        name="DevOrchestrator internal source",
+        allowed=[
+            "DevOrchestrator source code",
+            "tests",
+            "docs",
+        ],
+        forbidden=[
+            "PersonalOS changes",
+            "workspace artifacts in commits",
+            ".venv/.env/.pytest_cache/pt-* folders",
+            "real backup/restore unless explicitly approved",
+        ],
+        default_validation_commands=["py-compile-core", "focused-tests", "full-pytest"],
+        default_validation_categories=[
+            ValidationCommandCategory.COMPILE.value,
+            ValidationCommandCategory.TEST.value,
+            ValidationCommandCategory.LINT.value,
+        ],
+        notes=["Use py_compile, focused tests, full suite, and git diff --check as appropriate for Devo source work."],
+    ),
 }
 
 REQUIRED_SCOPE_SECTIONS = {
@@ -405,6 +549,14 @@ def render_work_scope_template(package: WorkPackage, workspace_root: Path | None
     lines.extend(
         [
             "",
+            "## Lane Notes",
+            "",
+        ]
+    )
+    lines.extend(_template_items(lane.notes, ["Review lane constraints before requesting approval."]))
+    lines.extend(
+        [
+            "",
             "## Excluded Items",
             "",
             "- TODO: list intentionally excluded files, warnings, features, or behaviors",
@@ -472,6 +624,14 @@ def render_work_scope_example(lane_id: str) -> str:
             "- Run safe git status and diff checks before validation.",
             "- Run approved validation command through Devo.",
             "- Commit and push only approved files after validation passes.",
+            "",
+            "## Lane Notes",
+            "",
+        ]
+    )
+    lines.extend(_bullets(lane.notes))
+    lines.extend(
+        [
             "",
             "## Excluded Items",
             "",
@@ -776,22 +936,48 @@ def _normalize_validation_commands(items: list[str]) -> list[str]:
 
 
 def _default_validation_commands(project_name: str, lane: WorkLane, workspace_root: Path) -> list[str]:
-    registered = {command.id for command in list_validation_commands(project_name, workspace_root=workspace_root)}
-    defaults = [command_id for command_id in lane.default_validation_commands if command_id in registered]
-    return defaults
+    return _registered_lane_validation_commands(project_name, lane, workspace_root)
 
 
 def _scope_template_validation_commands(package: WorkPackage, lane: WorkLane, workspace_root: Path) -> list[str]:
     if package.validation_commands:
         return package.validation_commands
-    registered = {command.id for command in list_validation_commands(package.project, workspace_root=workspace_root)}
-    defaults = [command_id for command_id in lane.default_validation_commands if command_id in registered]
-    return defaults or ["<validation-command-id>"]
+    registered_defaults = _registered_lane_validation_commands(package.project, lane, workspace_root)
+    if registered_defaults:
+        return registered_defaults
+    if lane.require_registered_validation_command:
+        return ["<validation-command-id>"]
+    return lane.default_validation_commands or ["<validation-command-id>"]
+
+
+def _registered_lane_validation_commands(project_name: str, lane: WorkLane, workspace_root: Path) -> list[str]:
+    commands = list_validation_commands(project_name, workspace_root=workspace_root)
+    registered_by_id = {command.id: command for command in commands}
+    selected: list[str] = []
+    for command_id in lane.default_validation_commands:
+        if command_id in registered_by_id:
+            selected.append(command_id)
+    categories = set(lane.default_validation_categories)
+    for command in commands:
+        if command.category.value in categories:
+            selected.append(command.id)
+    return _dedupe(selected)
 
 
 def _template_items(existing_items: list[str], fallback_items: list[str]) -> list[str]:
     items = existing_items or fallback_items
     return _bullets(items)
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return deduped
 
 
 def _work_package_dir(workspace_root: Path, project_name: str, run_id: str) -> Path:

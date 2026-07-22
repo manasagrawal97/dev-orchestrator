@@ -384,6 +384,7 @@ Work packages are a lighter-weight path for bounded maintenance batches. They cr
 
 ```powershell
 devo work lanes
+devo work lane-show --lane low-risk-ui-maintenance
 devo work start --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
 devo work scope-template --project MyProject --run <runId>
 devo work import-scope --project MyProject --run <runId> --file E:\path\to\scope.md
@@ -401,6 +402,19 @@ devo work scope-example --lane low-risk-ui-maintenance
 ```
 
 `devo work scope-template` writes `scope-template.md` under the work-package artifacts folder with the required import sections plus lane-specific allowed/forbidden defaults. Codex or a human fills the template, then `devo work import-scope` imports it. `devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
+
+Built-in lanes currently include:
+
+- `docs-only`: README/docs/Markdown/Mermaid work; default validation is `git diff --check`, with no build required by default.
+- `low-risk-ui-maintenance`: UI-only Razor help text, empty states, mechanical analyzer fixes, and display-only prompts validated by a registered build command.
+- `warning-cleanup`: small mechanical analyzer/warning fixes validated by the project build command when available.
+- `small-bugfix`: focused source fixes with build and targeted tests when registered.
+- `small-feature`: one small approved feature or requirement, with build/tests as appropriate.
+- `test-only`: test files/helpers and docs notes, preferring targeted registered tests.
+- `backup-maintenance`: Devo backup/recovery scripts, status/reporting, recovery docs, and temp-directory tests only.
+- `devo-internal-source`: DevOrchestrator source, tests, and docs with py_compile, focused tests, full suite, and git diff checks.
+
+Lanes are reusable scope templates and defaults; they do not bypass policy, approvals, validation runner checks, Git delivery checks, or Codex/OS permissions. If a task needs DB, migrations, secrets, config, app run, external APIs, live scheduler changes, real backup/restore, or a broader risk class, the exact scope and approval must say so explicitly.
 
 Approval bundles are a convenience layer over normal Devo approvals, not a bypass. A bundle writes `approval-bundle-<bundleId>.json` and `.md` under `artifacts/approval-bundles/`, creates child approvals for the scoped source edit and registered validation command, and approves those child approvals together only when none are rejected or blocked.
 

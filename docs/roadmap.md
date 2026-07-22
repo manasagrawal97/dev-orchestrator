@@ -101,6 +101,10 @@ Added `devo doctor` and `devo doctor --project <project>` as compact read-only h
 
 Added `devo work scope-template` so draft work packages can generate lane-aware scope Markdown before import. The template includes required `import-scope` sections, `low-risk-ui-maintenance` allowed/forbidden defaults, validation command guidance that prefers registered `dotnet-build-personalos`, stop conditions, approval bundle notes, and final report expectations. `devo work next` and `devo work status` now suggest scope-template at draft stage, and `devo work scope-example --lane low-risk-ui-maintenance` provides a reference scope without requiring a real project.
 
+### TASK-DEVO-057 Built-In Work Lanes - Completed
+
+Added built-in lanes for `docs-only`, `warning-cleanup`, `small-bugfix`, `small-feature`, `test-only`, `backup-maintenance`, and `devo-internal-source` while preserving `low-risk-ui-maintenance`. Scope templates and examples now use lane-specific allowed/forbidden/default validation guidance, `devo work lanes` lists all lane rules, and `devo work lane-show --lane <lane>` shows one lane compactly. Lanes help prepare scope but do not bypass approval bundles, validation policy checks, or explicit risk approval.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

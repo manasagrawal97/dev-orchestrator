@@ -108,6 +108,7 @@ from .work_packages import (
     complete_work_package,
     generate_work_package_phase_prompt,
     generate_work_scope_template,
+    get_lane,
     get_work_package_next_step,
     import_work_scope,
     list_lanes,
@@ -330,6 +331,27 @@ def _print_work_next(package: object) -> None:
     console.print("Stop conditions:")
     for condition in next_step.stop_conditions or ["none"]:
         console.print(f"  - {condition}")
+
+
+def _print_work_lane(lane: object) -> None:
+    console.print(f"[bold]{getattr(lane, 'id')}[/bold]")
+    console.print(f"  Name: {getattr(lane, 'name')}")
+    console.print("  Allowed changes:")
+    for item in getattr(lane, "allowed") or ["none"]:
+        console.print(f"    - {item}")
+    console.print("  Forbidden changes:")
+    for item in getattr(lane, "forbidden") or ["none"]:
+        console.print(f"    - {item}")
+    console.print("  Default validation commands:")
+    for command_id in getattr(lane, "default_validation_commands") or ["none"]:
+        console.print(f"    - {command_id}")
+    console.print("  Default validation categories:")
+    for category in getattr(lane, "default_validation_categories") or ["none"]:
+        console.print(f"    - {category}")
+    console.print(f"  Requires registered validation command: {getattr(lane, 'require_registered_validation_command')}")
+    console.print("  Notes:")
+    for note in getattr(lane, "notes") or ["none"]:
+        console.print(f"    - {note}")
 
 
 def _print_work_summary_list(summaries: list[WorkPackageSummary], title: str, include_delivery: bool = False) -> None:
@@ -1698,17 +1720,20 @@ def show_task_candidates(
 def list_work_package_lanes() -> None:
     """List built-in work package lanes."""
     for lane in list_lanes():
-        console.print(f"[bold]{lane.id}[/bold]")
-        console.print(f"  Name: {lane.name}")
-        console.print("  Allowed changes:")
-        for item in lane.allowed:
-            console.print(f"    - {item}")
-        console.print("  Forbidden changes:")
-        for item in lane.forbidden:
-            console.print(f"    - {item}")
-        console.print("  Default validation commands:")
-        for command_id in lane.default_validation_commands or ["none"]:
-            console.print(f"    - {command_id}")
+        _print_work_lane(lane)
+
+
+@work_app.command("lane-show")
+def show_work_package_lane(
+    lane_id: str = typer.Option(..., "--lane", help="Work lane ID."),
+) -> None:
+    """Show one built-in work package lane."""
+    try:
+        lane = get_lane(lane_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--lane") from exc
+
+    _print_work_lane(lane)
 
 
 @work_app.command("list")
