@@ -36,7 +36,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-051 work-package next-action and phase prompts
+- Latest completed source task: TASK-DEVO-052 work history and project activity summaries
 - Latest docs task: TASK-DEVO-048A documents Devo vision, current capabilities, agent workflow, usability roadmap, and PersonalOS operating model.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -63,13 +63,14 @@ The working loop is:
 - TASK-DEVO-049 makes future scheduled backup installs run with hidden PowerShell mode and reports `.incomplete` backup folders separately as likely interrupted/failed backups.
 - TASK-DEVO-050 adds `devo work complete` and improves `devo work status` so delivered packages show approval bundle status, validation evidence, commit hash, delivery summary, final Git status, and next action.
 - TASK-DEVO-051 adds `devo work next` and `devo work prompt --phase <phase>` for scoped phase prompts covering scope, implement, validate, deliver, and complete.
+- TASK-DEVO-052 adds `devo work list`, `devo work history`, and `devo project activity` for compact recent work-package, delivery, validation, context/report, Git status, and next-action summaries.
 
 ## Readiness Estimate
 
 - Practical ready-before-PersonalOS-work target after TASK-030: around 92-94% complete.
 - Long-term product vision after TASK-030: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, create scoped work packages, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, create scoped work packages, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, and complete a manual-assisted end-to-end dogfood run.
 
 The next PersonalOS step should still be cautious: use Devo to select and execute one safe current-state documentation task before attempting deeper implementation work.
 
@@ -120,6 +121,7 @@ The next PersonalOS step should still be cautious: use Devo to select and execut
 - TASK-DEVO-049 scheduled backup visibility and incomplete reporting
 - TASK-DEVO-050 work-package completion status and final delivery summary
 - TASK-DEVO-051 work-package next-action and phase prompt commands
+- TASK-DEVO-052 work history and project activity summary commands
 
 ## Recovery Pointers
 

@@ -365,6 +365,9 @@ devo work next --project MyProject --run <runId>
 devo work prompt --project MyProject --run <runId> --phase implement
 devo work request-approval-bundle --project MyProject --run <runId> --task T001
 devo work complete --project MyProject --run <runId> --commit <commitHash> --message "Delivered summary"
+devo work list --project MyProject --limit 10
+devo work history --project MyProject --limit 10
+devo project activity --project MyProject --limit 10
 ```
 
 `devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
@@ -385,6 +388,9 @@ After implementation, registered validation, commit, and push, run `devo work co
 ```text
 work start -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
 ```
+
+For recent activity, `devo work list` shows compact open and recent work-package state, including approval bundle status, latest validation status, delivered commit, and next action. `devo work history` puts delivered/closed packages first and includes the delivery summary. `devo project activity` combines recent runs, delivered packages, latest validation runs, recent context/report artifacts, current Git delivery status, and a suggested next action.
+
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.

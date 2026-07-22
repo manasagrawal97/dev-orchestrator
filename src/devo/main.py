@@ -114,6 +114,7 @@ from .work_packages import (
     work_package_artifact_paths,
     work_package_next_action,
 )
+from .work_history import ProjectActivitySummary, WorkPackageSummary, build_project_activity_summary, list_work_package_summaries
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
 app = typer.Typer(help="DevOrchestrator local development CLI.")
@@ -302,6 +303,49 @@ def _print_work_next(package: object) -> None:
     console.print("Stop conditions:")
     for condition in next_step.stop_conditions or ["none"]:
         console.print(f"  - {condition}")
+
+
+def _print_work_summary_list(summaries: list[WorkPackageSummary], title: str, include_delivery: bool = False) -> None:
+    if not summaries:
+        console.print("[yellow]No runs found.[/yellow]")
+        return
+    console.print(f"[bold]{title}[/bold]")
+    for summary in summaries:
+        console.print(f"[bold]Run: {summary.run_id}[/bold]")
+        console.print(f"  Goal: {summary.goal}", soft_wrap=True)
+        console.print(f"  Lane: {summary.lane}")
+        console.print(f"  Status: {summary.status}")
+        console.print(f"  Has work package: {summary.has_work_package}")
+        console.print(f"  Approval bundle status: {summary.approval_bundle_status}")
+        console.print(f"  Latest validation: {summary.latest_validation_status}")
+        console.print(f"  Commit: {summary.commit_hash or 'none'}")
+        if include_delivery:
+            console.print(f"  Delivery summary: {summary.delivery_summary or 'none'}", soft_wrap=True)
+        console.print(f"  Next action: {summary.next_action}", soft_wrap=True)
+
+
+def _print_project_activity(summary: ProjectActivitySummary) -> None:
+    console.print(f"[bold]Project activity: {summary.project}[/bold]")
+    console.print(f"Current Git status: {summary.current_git_status}", soft_wrap=True)
+    console.print(f"Suggested next action: {summary.suggested_next_action}", soft_wrap=True)
+    console.print("Recent runs:")
+    for line in summary.recent_runs or ["none"]:
+        console.print(f"  - {line}", soft_wrap=True)
+    console.print("Delivered work packages:")
+    if summary.delivered_work_packages:
+        for item in summary.delivered_work_packages:
+            console.print(f"  - {item.run_id}: {item.delivery_summary or item.goal} ({item.commit_hash or 'no commit'})", soft_wrap=True)
+    else:
+        console.print("  - none")
+    console.print("Latest validation runs:")
+    for line in summary.latest_validation_runs or ["none"]:
+        console.print(f"  - {line}", soft_wrap=True)
+    console.print("Latest context updates:")
+    for line in summary.latest_context_updates or ["none"]:
+        console.print(f"  - {line}", soft_wrap=True)
+    console.print("Latest reports:")
+    for line in summary.latest_reports or ["none"]:
+        console.print(f"  - {line}", soft_wrap=True)
 
 
 def _print_approval_bundle(bundle: object) -> None:
@@ -600,6 +644,19 @@ def list_registered_projects() -> None:
         console.print(f"  Path: {project.path}", soft_wrap=True)
         console.print(f"  Looks like software project: {project.looks_like_software_project}")
         console.print(f"  Markers: {marker_text}")
+
+
+@project_app.command("activity")
+def show_project_activity(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """Show compact project activity across runs, work packages, validation, reports, and Git."""
+    try:
+        activity = build_project_activity_summary(project_name=project_name, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_project_activity(activity)
 
 
 @project_app.command("scan")
@@ -1625,6 +1682,32 @@ def list_work_package_lanes() -> None:
         console.print("  Default validation commands:")
         for command_id in lane.default_validation_commands or ["none"]:
             console.print(f"    - {command_id}")
+
+
+@work_app.command("list")
+def list_work_packages(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """List recent work packages and project runs."""
+    try:
+        summaries = list_work_package_summaries(project_name=project_name, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_work_summary_list(summaries, f"Recent work for {project_name}")
+
+
+@work_app.command("history")
+def show_work_history(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
+) -> None:
+    """Show delivery-focused work package history."""
+    try:
+        summaries = list_work_package_summaries(project_name=project_name, limit=limit, delivered_first=True)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_work_summary_list(summaries, f"Work history for {project_name}", include_delivery=True)
 
 
 @work_app.command("start")

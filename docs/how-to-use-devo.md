@@ -117,6 +117,9 @@ devo work request-approval-bundle --project <name> --run <runId> --task T001
 devo approval bundle-status --project <name> --run <runId> --bundle <bundleId>
 devo approval bundle-approve --project <name> --run <runId> --bundle <bundleId> --by Manas --note "Approved scope"
 devo work complete --project <name> --run <runId> --commit <commitHash> --message "<summary>"
+devo work list --project <name> --limit 10
+devo work history --project <name> --limit 10
+devo project activity --project <name> --limit 10
 ```
 
 The scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
@@ -130,6 +133,8 @@ work start -> import scope -> request approval bundle -> bundle approve -> promp
 ```
 
 `devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action and suggested next command so the final package state is obvious after a successful push.
+
+Use `devo work list` to see recent open and delivered work packages with approval, validation, commit, and next-action fields. Use `devo work history` when you mainly want delivered work and commit summaries. Use `devo project activity` for a compact project-level view across recent runs, delivered packages, validation runs, context updates, reports, current Git state, and the suggested next action.
 
 ## Safety
 

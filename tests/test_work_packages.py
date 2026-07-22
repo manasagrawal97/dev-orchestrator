@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -219,6 +220,88 @@ def test_work_prompt_includes_scope_and_stop_rules(tmp_path: Path, monkeypatch) 
     assert "## Stop Conditions" in prompt
 
 
+def test_work_list_shows_recent_work_packages_and_runs_without_package(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    run_without_package = create_run("sample", "Standalone planning run", workspace_root=workspace)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "list", "--project", "sample", "--limit", "10"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert package.run_id in result.output
+    assert "Fix small UI issues" in result.output
+    assert "Has work package: True" in result.output
+    assert run_without_package.run_id in result.output
+    assert "Standalone planning run" in result.output
+    assert "No work-package artifact found." in result.output
+
+
+def test_work_list_limit_is_respected(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    start_work_package("sample", "low-risk-ui-maintenance", "First package", workspace_root=workspace)
+    start_work_package("sample", "low-risk-ui-maintenance", "Second package", workspace_root=workspace)
+    start_work_package("sample", "low-risk-ui-maintenance", "Third package", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "list", "--project", "sample", "--limit", "2"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Run:") == 2
+    assert result.output.count("Goal:") == 2
+
+
+def test_work_history_prioritizes_delivered_packages(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    open_package = start_work_package("sample", "low-risk-ui-maintenance", "Open work", workspace_root=workspace)
+    delivered_package = start_work_package("sample", "low-risk-ui-maintenance", "Delivered work", workspace_root=workspace)
+    complete_work_package("sample", delivered_package.run_id, "abc1234", "Delivered polish", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "history", "--project", "sample", "--limit", "10"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.index(delivered_package.run_id) < result.output.index(open_package.run_id)
+    assert "Status: delivered" in result.output
+    assert "Commit: abc1234" in result.output
+    assert "Delivery summary: Delivered polish" in result.output
+
+
+def test_work_list_missing_optional_fields_do_not_crash(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    package_path = _package_paths(workspace, package.run_id)["json"]
+    data = json.loads(package_path.read_text(encoding="utf-8"))
+    data.pop("approval_bundle_status", None)
+    data.pop("commit_hash", None)
+    data.pop("delivery_summary", None)
+    package_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = runner.invoke(app, ["work", "list", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Approval bundle status: not available" in result.output
+    assert "Commit: none" in result.output
+
+
+def test_project_activity_includes_git_status_and_recent_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    complete_work_package("sample", package.run_id, "abc1234", "Delivered polish", workspace_root=workspace)
+    _write_validation_record(workspace, package.run_id, "20260722-100000-build", ValidationRunStatus.PASSED)
+
+    result = runner.invoke(app, ["project", "activity", "--project", "sample", "--limit", "5"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Project activity: sample" in result.output
+    assert "Current Git status: branch=" in result.output
+    assert "Recent runs:" in result.output
+    assert package.run_id in result.output
+    assert "Delivered work packages:" in result.output
+    assert "abc1234" in result.output
+    assert "Latest validation runs:" in result.output
+    assert "20260722-100000-build" in result.output
+    assert "Suggested next action:" in result.output
+
+
 def test_work_complete_updates_status_and_delivery_fields(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
@@ -360,6 +443,9 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
     runner.invoke(app, ["work", "status", "--project", "sample", "--run", package.run_id])
     runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id])
     runner.invoke(app, ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "implement"])
+    runner.invoke(app, ["work", "list", "--project", "sample"])
+    runner.invoke(app, ["work", "history", "--project", "sample"])
+    runner.invoke(app, ["project", "activity", "--project", "sample"])
     complete_work_package("sample", package.run_id, "abc1234", "Delivered", workspace_root=workspace)
 
     assert sentinel.read_text(encoding="utf-8") == before
@@ -510,3 +596,11 @@ def _write_git_delivery_report(workspace: Path, run_id: str) -> None:
         },
     }
     (delivery_dir / "git-delivery-report-20260722-100500.json").write_text(json.dumps(report), encoding="utf-8")
+
+
+def _init_git_repo(project_path: Path) -> None:
+    subprocess.run(["git", "init", "-b", "main"], cwd=project_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=project_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Tests"], cwd=project_path, check=True)
+    subprocess.run(["git", "add", "README.md"], cwd=project_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=project_path, check=True, capture_output=True, text=True)
