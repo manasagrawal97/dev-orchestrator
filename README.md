@@ -37,9 +37,22 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 
 ## How To Use Devo Day To Day
 
-Start with `devo report project --project <name>` or `devo report handoff --project <name>` to recover current state. Use `devo workflow status --project <name> --run <runId>` and `devo workflow next --project <name> --run <runId>` to find the next safe step. Let a human or coding agent perform implementation, then record evidence with Devo validation, review, delivery, context refresh, and handoff commands.
+Start with `devo doctor` to check Devo health, or `devo doctor --project <name>` to include one registered project. Then use `devo report project --project <name>` or `devo report handoff --project <name>` to recover current state. Use `devo workflow status --project <name> --run <runId>` and `devo workflow next --project <name> --run <runId>` to find the next safe step. Let a human or coding agent perform implementation, then record evidence with Devo validation, review, delivery, context refresh, and handoff commands.
 
 Devo keeps the workflow honest and recoverable; it does not call AI, implement code by itself, or bypass external security policy.
+
+## Doctor Health Check
+
+`devo doctor` is a compact read-only health check. It does not run build, test, backup, restore, app, migration, scheduler-update, or external API commands.
+
+```powershell
+devo doctor
+devo doctor --project PersonalOS
+```
+
+Without `--project`, doctor checks Devo-level health: workspace folders, optional current selection, Python environment basics, core docs, backup inventory when a backup root is discoverable, and scheduled backup task status when safely checkable on Windows.
+
+With `--project`, doctor also checks project registration, project path, Git status, validation registry, build-command presence, recent work-package counts, latest validation status, and generated visual report presence. Each check reports `OK`, `WARN`, `FAIL`, or `SKIP`, followed by an overall status and one suggested next action.
 
 ## If Context Is Lost
 

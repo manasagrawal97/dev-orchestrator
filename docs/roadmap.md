@@ -93,6 +93,10 @@ Added `devo visual work-package` and `devo visual project-activity` to generate 
 
 Documented the updated strategic priority: Devo itself is the main product focus, PersonalOS is primarily a real-world validation target, current work should stay CLI-first/local-first, dashboard/UI comes later, and direct API/model agents are optional future scope with manual/Codex mode preserved.
 
+### TASK-DEVO-055 Doctor Health Checks - Completed
+
+Added `devo doctor` and `devo doctor --project <project>` as compact read-only health checks. Doctor reports `OK`, `WARN`, `FAIL`, and `SKIP` categories for Devo workspace health, project registration/path/Git status, validation registry, recent work packages, latest validation, generated visuals, backup inventory, scheduled backup task status when safely checkable, overall status, and one suggested next action.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

@@ -47,6 +47,7 @@ from .context_updates import (
     refresh_project_context,
     render_context_update_markdown,
 )
+from .doctor import DoctorReport, run_doctor
 from .reports import (
     build_handoff_report,
     build_project_report,
@@ -154,6 +155,26 @@ app.add_typer(git_app, name="git")
 app.add_typer(report_app, name="report")
 app.add_typer(visual_app, name="visual")
 console = Console()
+
+
+def _print_doctor_report(report: DoctorReport) -> None:
+    title = "Devo doctor"
+    if report.project:
+        title = f"{title}: {report.project}"
+    console.print(f"[bold]{title}[/bold]")
+    for check in report.checks:
+        console.print(f"{check.status.value:<4} {check.name}: {check.detail}", soft_wrap=True)
+    console.print(f"Overall status: {report.overall_status.value}")
+    console.print(f"Suggested next action: {report.suggested_next_action}", soft_wrap=True)
+
+
+@app.command("doctor")
+def doctor(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name to include in health checks."),
+) -> None:
+    """Run read-only Devo and optional project health checks."""
+    report = run_doctor(project_name=project_name)
+    _print_doctor_report(report)
 
 
 

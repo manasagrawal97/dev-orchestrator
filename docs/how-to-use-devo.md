@@ -87,12 +87,16 @@ devo project approve-context <name>
 ## Daily Start
 
 ```powershell
+devo doctor
+devo doctor --project <name>
 devo report project --project <name>
 devo report handoff --project <name>
 devo workflow resume --project <name>  # planned future command, not implemented yet
 ```
 
-Until `devo workflow resume` exists, use project/handoff reports plus `devo workflow status` for any known active run.
+`devo doctor` checks Devo-level health. `devo doctor --project <name>` also checks the registered project path, Git status, validation registry, recent work packages, latest validation, generated visuals, and backup health where available. Doctor is read-only: it does not run build/test, backup/restore, app commands, migrations, scheduler updates, or external APIs.
+
+Until `devo workflow resume` exists, use doctor plus project/handoff reports and `devo workflow status` for any known active run.
 
 ## Run Work
 

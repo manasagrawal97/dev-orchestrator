@@ -61,9 +61,13 @@ The scheduled backup should not show a random terminal window after the task is 
 
 ```powershell
 .\scripts\recovery\check-devo-recovery-status.ps1
+devo doctor
+devo doctor --project DevOrchestrator
 ```
 
-The status script checks the Git repo, current branch and commit, `.venv`, `devo`, active workspace, latest backup, latest backup verification, scheduled task presence, latest backup age, normal retained backups, and protected backups.
+The status script is the fuller recovery audit. `devo doctor` is the compact CLI health check for normal use. It is read-only and reports `OK`, `WARN`, `FAIL`, or `SKIP` checks with an overall status and suggested next action.
+
+The status script checks the Git repo, current branch and commit, `.venv`, `devo`, active workspace, latest backup, latest backup verification, scheduled task presence, latest backup age, normal retained backups, and protected backups. Doctor checks Devo workspace health, optional project health, Git status, validation registry, recent work packages, latest validation, generated visual reports, backup inventory when discoverable, and scheduled backup task status when safely checkable on Windows.
 
 For a read-only backup inventory without recovery checks:
 
