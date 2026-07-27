@@ -27,6 +27,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Usability roadmap](docs/usability-roadmap.md)
 - [Visual strategy](docs/visual-strategy.md)
 - [UI/API architecture](docs/ui-architecture.md)
+- [UI MVP specification](docs/ui-mvp-spec.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
 - [Roadmap](docs/roadmap.md)
 - [How to use Devo](docs/how-to-use-devo.md)
@@ -482,7 +483,7 @@ devo work status --project MyProject --run <runId> --json
 devo doctor --project MyProject --json
 ```
 
-These commands are read-only. They prepare Devo for a future dashboard or local API server without building a UI yet. Future UI code should consume read models or API responses, not scrape raw `workspace/` folders directly. The planned local UI/API shape and safety model are documented in [docs/ui-architecture.md](docs/ui-architecture.md).
+These commands are read-only. They prepare Devo for a future dashboard or local API server without building a UI yet. Future UI code should consume read models or API responses, not scrape raw `workspace/` folders directly. The planned local UI/API shape and safety model are documented in [docs/ui-architecture.md](docs/ui-architecture.md), and the first read-only dashboard scope is defined in [docs/ui-mvp-spec.md](docs/ui-mvp-spec.md).
 
 ## Policy Gates
 

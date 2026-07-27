@@ -169,7 +169,7 @@ devo doctor --project DevOrchestrator --json
 
 These models summarize project, run, and work-package state without requiring a UI to scrape raw workspace folders. Dashboard/UI remains future scope; the read models are the stable data-contract bridge.
 
-The UI/API architecture plan is documented in [UI/API architecture](ui-architecture.md). The recommended path is a local-only read-only API first, then a read-only dashboard MVP, then controlled write actions only after the Devo approval and policy model is preserved in the UI.
+The UI/API architecture plan is documented in [UI/API architecture](ui-architecture.md). The first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md). The recommended path is a local-only read-only API first, then a read-only dashboard MVP, then controlled write actions only after the Devo approval and policy model is preserved in the UI.
 
 ### Approval Bundles - MVP Added
 
@@ -237,16 +237,17 @@ Devo should guide the user through the package rather than requiring them to rem
 A future dashboard should show:
 
 - registered projects
-- active runs
-- pending approvals
+- project overview and onboarding state
+- active runs and work packages
 - validation history
 - Git delivery readiness
-- latest handoff
+- backup health
+- generated report and visual links
 - next recommended action
 
 The CLI should stay complete, but a UI would make Devo easier to operate.
 
-Do not start the dashboard too early. UI-ready read models, generated visual reports, structured activity summaries, and the [UI/API architecture plan](ui-architecture.md) should come first, because they prove the data model and safety model a dashboard would later render.
+Do not start the dashboard too early. UI-ready read models, generated visual reports, structured activity summaries, the [UI/API architecture plan](ui-architecture.md), and the [UI MVP specification](ui-mvp-spec.md) should come first, because they prove the data model, page scope, and safety model a dashboard would later render.
 
 ### Direct Model And Agent Adapters
 

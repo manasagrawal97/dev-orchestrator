@@ -15,6 +15,8 @@ The UI should make Devo easier to understand at a glance:
 
 The CLI remains first-class. Every important workflow must continue to work from the CLI even after a UI exists.
 
+The first read-only dashboard scope is defined separately in `docs/ui-mvp-spec.md`.
+
 ## Recommended Architecture
 
 Devo core should stay Python. The CLI, future local API server, and future UI should all use the same Devo workflow, policy, approval, validation, report, and read-model logic.
@@ -145,6 +147,7 @@ Phase C: frontend scaffold
 Phase D: read-only dashboard MVP
 
 - show projects, current context, onboarding, doctor, activity, work package, validation, Git, backup, and visual-report links
+- follow the page and component scope in `docs/ui-mvp-spec.md`
 
 Phase E: visual diagrams and activity timeline
 

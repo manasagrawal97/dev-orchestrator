@@ -32,7 +32,7 @@ Dashboard/UI is future scope. Do not start it too early; Devo's CLI workflows, r
 
 Generated visual reports are one bridge between static documentation diagrams and the future dashboard. Commands such as `devo visual work-package` and `devo visual project-activity` write Mermaid Markdown under `workspace/` from live Devo artifacts. Those generated files summarize current work-package and project activity state, so they should not be committed.
 
-The more stable bridge is the UI-ready read-model layer in `src/devo/read_models.py`. Future dashboards or local API servers should consume read models/API responses first, and only render Mermaid or richer visuals from those structures. They should not scrape raw workspace folders or generated Markdown. The planned local UI/API architecture and safety boundaries are documented in `docs/ui-architecture.md`.
+The more stable bridge is the UI-ready read-model layer in `src/devo/read_models.py`. Future dashboards or local API servers should consume read models/API responses first, and only render Mermaid or richer visuals from those structures. They should not scrape raw workspace folders or generated Markdown. The planned local UI/API architecture and safety boundaries are documented in `docs/ui-architecture.md`, and the first read-only dashboard scope is documented in `docs/ui-mvp-spec.md`.
 
 Static Mermaid docs are for stable concepts. Generated Mermaid reports are for current project activity.
 
@@ -55,6 +55,7 @@ The intentionally small current set is:
 - `docs/how-to-use-devo.md`: work-package lifecycle and approval bundle flow
 - `docs/usability-roadmap.md`: usability roadmap from current CLI flow to dashboard and later direct agents
 - `docs/ui-architecture.md`: future local UI/API architecture, read-only dashboard scope, and safety model
+- `docs/ui-mvp-spec.md`: first dashboard pages, components, read-only actions, and deferred UI scope
 - `docs/recovery.md`: scheduled workspace backup flow
 
 This set should stay compact until a generated dashboard replaces hand-maintained diagrams.

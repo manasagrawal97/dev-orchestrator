@@ -20,6 +20,7 @@ For the plain-language product model, read:
 - [Agent workflow](agent-workflow.md)
 - [Usability roadmap](usability-roadmap.md)
 - [UI/API architecture](ui-architecture.md)
+- [UI MVP specification](ui-mvp-spec.md)
 - [PersonalOS operating model](personal-os-operating-model.md)
 
 ## Typical Lifecycle
@@ -232,7 +233,7 @@ devo work status --project <name> --run <runId> --json
 devo doctor --project <name> --json
 ```
 
-The read models summarize projects, runs, and work packages with UI-friendly fields such as onboarding status, doctor status, settings, Git status, validation registry, recent work packages, approval/validation/delivery state, next phase, next command, and stop conditions. Future UI/dashboard work should consume these read models through CLI JSON or a future API, not scrape raw workspace folders directly. The local UI/API plan is documented in [UI/API architecture](ui-architecture.md): read-only dashboard first, controlled actions later, and no bypass around Devo approval/policy checks.
+The read models summarize projects, runs, and work packages with UI-friendly fields such as onboarding status, doctor status, settings, Git status, validation registry, recent work packages, approval/validation/delivery state, next phase, next command, and stop conditions. Future UI/dashboard work should consume these read models through CLI JSON or a future API, not scrape raw workspace folders directly. The local UI/API plan is documented in [UI/API architecture](ui-architecture.md), and the first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md): read-only dashboard first, controlled actions later, and no bypass around Devo approval/policy checks.
 
 ## Safety
 
