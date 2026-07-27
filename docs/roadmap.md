@@ -36,7 +36,7 @@ Expand generated Mermaid or other artifact-backed visual summaries only where th
 
 ### Phase 4: Dashboard Planning And MVP
 
-Plan and build a dashboard only after the CLI state model is mature. The dashboard should read Devo artifacts and structured data rather than becoming a second source of truth.
+Plan and build a dashboard only after the CLI state model is mature. The dashboard should read Devo read models/API responses rather than becoming a second source of truth or scraping raw workspace folders directly.
 
 ### Phase 5: Direct API Agents And Model Adapters
 
@@ -128,6 +128,10 @@ Added `devo current`, improved `devo use` output, and taught common project/work
 ### TASK-DEVO-063 UI-Ready Read Models - Completed
 
 Added `src/devo/read_models.py` with read-only project, run, and work-package overview models that tolerate missing/older artifacts. Added JSON output for `devo project overview`, `devo project activity --json`, `devo work status --json`, and `devo doctor --json`. This creates a stable bridge for a future UI, local API server, or agent integration without building a dashboard yet. Future UI work should consume these read models/API responses rather than scraping raw workspace folders.
+
+### TASK-DEVO-064 UI/API Architecture Plan - Completed
+
+Added `docs/ui-architecture.md` to define the future UI/API architecture before UI implementation. The plan keeps Devo core in Python, recommends a local-only read-only FastAPI server before write actions, recommends a React/Vite dashboard after the API/read-model contract is stable, explains why Blazor should not be Devo's first UI stack, previews read-only endpoints backed by `ProjectOverview`, `RunOverview`, and `WorkPackageOverview`, and documents the safety model for future controlled actions.
 
 ### TASK-023 Safe Validation Runner
 

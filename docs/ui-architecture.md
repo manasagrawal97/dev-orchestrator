@@ -1,0 +1,182 @@
+# Devo UI/API Architecture
+
+## Purpose
+
+Devo's future UI is a personal, local control surface for inspecting and operating Devo. It is not a hosted product, and it should not replace the CLI.
+
+The UI should make Devo easier to understand at a glance:
+
+- what projects are registered
+- what the current project and run are
+- whether a project is ready for work
+- what work package is active
+- what validation and delivery evidence exists
+- what the next safe action is
+
+The CLI remains first-class. Every important workflow must continue to work from the CLI even after a UI exists.
+
+## Recommended Architecture
+
+Devo core should stay Python. The CLI, future local API server, and future UI should all use the same Devo workflow, policy, approval, validation, report, and read-model logic.
+
+The UI should not scrape raw `workspace/` files directly. It should consume structured read models or API responses built from:
+
+- `ProjectOverview`
+- `RunOverview`
+- `WorkPackageOverview`
+
+Those read models were added as the bridge between CLI artifacts and future UI/API surfaces.
+
+Recommended future backend:
+
+- local-only FastAPI server
+- bind to `127.0.0.1` by default
+- read-only first
+- reuse Devo Python modules directly
+- expose read-model endpoints before any write/action endpoints
+
+Recommended future frontend:
+
+- React/Vite dashboard
+- simple read-only status views first
+- React Flow or XYFlow later for interactive work-package and activity diagrams
+- Mermaid rendering may remain useful for documentation and generated Markdown previews
+
+Blazor should not be the first Devo UI choice. Devo is Python-based, so FastAPI can reuse the existing modules directly. Blazor would add cross-stack complexity to Devo itself. PersonalOS can remain a separate Blazor/MudBlazor app.
+
+## UI v1: Read-Only Dashboard
+
+UI v1 should be read-only. It should make current Devo state visible without letting the browser mutate projects, approvals, Git, backups, or target repositories.
+
+Suggested pages or sections:
+
+- projects overview
+- current project/run context
+- project onboarding status
+- doctor health summary
+- project settings summary
+- active work package
+- recent activity and work history
+- validation summary
+- Git delivery status
+- backup health summary
+- generated visual report links and previews
+
+Explicitly exclude from UI v1:
+
+- approval buttons
+- commit or push buttons
+- backup restore
+- delete operations
+- scheduler modification
+- running target app/build/test commands
+- direct AI/API agents
+
+## UI v2: Controlled Actions
+
+After the read-only dashboard is useful, controlled actions can be considered. Good candidates are actions that already have safe CLI workflows:
+
+- start a work package
+- generate a scope template
+- import a scope file
+- request an approval bundle
+- open generated reports
+- run safe read-only refresh/status commands
+
+Write actions must go through Devo's safety and approval model. A UI button should not bypass the same approval, validation, policy, and evidence checks that the CLI uses.
+
+## Safety Model
+
+The UI must stay local-first.
+
+Safety rules:
+
+- bind local services to `127.0.0.1` by default
+- do not bypass CLI approval checks
+- require explicit confirmation and Devo approval records for dangerous actions
+- call a Devo service/read-model layer instead of mutating workspace files directly
+- never expose secrets, `.env` values, appsettings secrets, local settings values, or private user data
+- keep target project source modifications human/Codex-controlled for now
+- do not run target app/build/test commands from UI v1
+- do not add direct AI/API agent execution in UI v1
+
+The browser should be a visibility layer first. Devo remains the control plane, and the CLI remains the reliable recovery path.
+
+## API Shape Preview
+
+Future read-only API endpoints should return the read models added in TASK-DEVO-063 or thin wrappers around them.
+
+Candidate endpoints:
+
+```text
+GET /api/projects
+GET /api/projects/{project}/overview
+GET /api/projects/{project}/activity
+GET /api/projects/{project}/doctor
+GET /api/projects/{project}/runs/{run}/overview
+GET /api/projects/{project}/runs/{run}/work-package
+GET /api/current
+GET /api/visuals/{project}
+GET /api/visuals/{project}/runs/{run}
+```
+
+Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
+
+## Implementation Phases
+
+Phase A: architecture docs
+
+- document the UI/API architecture and safety model
+- keep the implementation docs-only
+
+Phase B: local read-only API server
+
+- add a local FastAPI server
+- expose read-model endpoints
+- bind to `127.0.0.1` by default
+- do not add write endpoints yet
+
+Phase C: frontend scaffold
+
+- add a minimal React/Vite app
+- connect it to local read-only endpoints
+- keep the CLI as the primary workflow
+
+Phase D: read-only dashboard MVP
+
+- show projects, current context, onboarding, doctor, activity, work package, validation, Git, backup, and visual-report links
+
+Phase E: visual diagrams and activity timeline
+
+- render generated Mermaid reports or richer diagrams from read-model data
+- consider React Flow/XYFlow, D3, Cytoscape.js, Graphviz/DOT, or Mermaid depending on the view
+
+Phase F: controlled write actions
+
+- add narrowly scoped actions only after read-only views are stable
+- route writes through Devo approval and policy checks
+
+Phase G: optional API/model agents
+
+- add direct model adapters only after manual/Codex mode remains smooth and cost-controlled
+
+## Risks And Open Questions
+
+- final UI stack decision
+- packaging and start command for local use
+- local-only access and whether lightweight auth is needed later
+- performance on large workspaces
+- how to render Mermaid and generated visual reports cleanly
+- how to keep UI actions aligned with Devo approval records
+- how much write access belongs in UI v2
+- how to prevent accidental exposure of local secrets or private target-project data
+
+## Current Decision
+
+The next UI step is not to build a dashboard immediately. The current product direction is:
+
+1. keep Devo CLI-first and local-first
+2. mature read models and JSON summaries
+3. document the UI/API safety model
+4. add a local read-only API server later
+5. build a read-only dashboard after the API/read-model contract is stable

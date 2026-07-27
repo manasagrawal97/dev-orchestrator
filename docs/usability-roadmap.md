@@ -169,6 +169,8 @@ devo doctor --project DevOrchestrator --json
 
 These models summarize project, run, and work-package state without requiring a UI to scrape raw workspace folders. Dashboard/UI remains future scope; the read models are the stable data-contract bridge.
 
+The UI/API architecture plan is documented in [UI/API architecture](ui-architecture.md). The recommended path is a local-only read-only API first, then a read-only dashboard MVP, then controlled write actions only after the Devo approval and policy model is preserved in the UI.
+
 ### Approval Bundles - MVP Added
 
 An approval bundle lets one user approval cover a scoped group of actions:
@@ -244,7 +246,7 @@ A future dashboard should show:
 
 The CLI should stay complete, but a UI would make Devo easier to operate.
 
-Do not start the dashboard too early. UI-ready read models, generated visual reports, and structured activity summaries should come first, because they prove the data model a dashboard would later render.
+Do not start the dashboard too early. UI-ready read models, generated visual reports, structured activity summaries, and the [UI/API architecture plan](ui-architecture.md) should come first, because they prove the data model and safety model a dashboard would later render.
 
 ### Direct Model And Agent Adapters
 
