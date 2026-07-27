@@ -335,6 +335,114 @@ def test_work_next_for_validated_and_delivered_status(tmp_path: Path, monkeypatc
     assert "Required command: none" in delivered_result.output
 
 
+def test_work_resume_suggests_scope_template_when_scope_missing(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: scope" in result.output
+    assert "Next action: Generate and import scope" in result.output
+    assert "devo work scope-template --project sample" in result.output
+    assert "Do not implement until scope is imported" in result.output
+
+
+def test_work_resume_suggests_approval_bundle_when_scope_exists(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: approval-request" in result.output
+    assert "devo work request-approval-bundle --project sample" in result.output
+    assert "Do not implement until the bundle is approved" in result.output
+
+
+def test_work_resume_blocks_implementation_when_approval_pending(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+    bundle = create_approval_bundle("sample", package.run_id, "T001", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: approval" in result.output
+    assert "Approval status: pending" in result.output
+    assert "devo approval bundle-approve --project sample" in result.output
+    assert package.run_id in result.output
+    assert bundle.bundle_id in result.output
+    assert "Do not suggest or perform source edits yet" in result.output
+
+
+def test_work_resume_suggests_implementation_when_bundle_approved(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+    bundle = create_approval_bundle("sample", package.run_id, "T001", workspace_root=workspace)
+    approve_approval_bundle("sample", package.run_id, bundle.bundle_id, approved_by="Manas", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: implement" in result.output
+    assert "Approval status: approved" in result.output
+    assert "devo work prompt --project sample" in result.output
+    assert "--phase implement" in result.output
+    assert "Implement only the imported approved scope" in result.output
+    assert "DB, migrations, appsettings, secrets, scripts, backups, user data" in result.output
+
+
+def test_work_resume_suggests_delivery_after_validation_passes(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = _prepared_package(workspace, tmp_path)
+    bundle = create_approval_bundle("sample", package.run_id, "T001", workspace_root=workspace)
+    approve_approval_bundle("sample", package.run_id, bundle.bundle_id, approved_by="Manas", workspace_root=workspace)
+    _write_validation_record(workspace, package.run_id, "20260722-100000-build", ValidationRunStatus.PASSED)
+    _write_git_delivery_report(workspace, package.run_id)
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: deliver" in result.output
+    assert "Latest validation: 20260722-100000-build (passed)" in result.output
+    assert "Latest delivery status: ready; branch=master; head=def5678; clean=True" in result.output
+    assert "devo git delivery-check --project sample" in result.output
+    assert "devo work complete --project sample" in result.output
+
+
+def test_work_resume_says_no_action_needed_when_delivered(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "low-risk-ui-maintenance", "Fix small UI issues", workspace_root=workspace)
+    completed = complete_work_package("sample", package.run_id, "abc1234", "Delivered", workspace_root=workspace)
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", completed.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: done" in result.output
+    assert "Next action: No action needed" in result.output
+    assert "devo work history --project sample" in result.output
+    assert "No implementation, validation, or delivery action is needed" in result.output
+
+
+def test_work_resume_handles_older_package_missing_optional_fields(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    package = start_work_package("sample", "docs-only", "Update docs", workspace_root=workspace)
+    package_path = _package_paths(workspace, package.run_id)["json"]
+    data = json.loads(package_path.read_text(encoding="utf-8"))
+    data.pop("approval_bundle_status", None)
+    data.pop("validation_run_id", None)
+    data.pop("final_git_status", None)
+    package_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Next phase: scope" in result.output
+    assert "Lane: docs-only" in result.output
+    assert "source code" in result.output
+
+
 def test_work_prompt_creates_phase_prompt_file(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     package = _prepared_package(workspace, tmp_path)
@@ -606,6 +714,7 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
     runner.invoke(app, ["work", "import-scope", "--project", "sample", "--run", package.run_id, "--file", str(_scope_file(tmp_path))])
     runner.invoke(app, ["work", "status", "--project", "sample", "--run", package.run_id])
     runner.invoke(app, ["work", "next", "--project", "sample", "--run", package.run_id])
+    runner.invoke(app, ["work", "resume", "--project", "sample", "--run", package.run_id])
     runner.invoke(app, ["work", "scope-template", "--project", "sample", "--run", package.run_id])
     runner.invoke(app, ["work", "scope-example", "--lane", "low-risk-ui-maintenance"])
     runner.invoke(app, ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "implement"])

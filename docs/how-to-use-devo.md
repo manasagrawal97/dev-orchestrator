@@ -130,6 +130,7 @@ For small bounded batches, use the work-package flow instead of hand-assembling 
 devo work lanes
 devo work lane-show --lane low-risk-ui-maintenance
 devo work start --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
+devo work resume --project <name> --run <runId>
 devo work scope-template --project <name> --run <runId>
 devo work import-scope --project <name> --run <runId> --file <scopeMarkdownFile>
 devo work status --project <name> --run <runId>
@@ -162,12 +163,20 @@ Built-in lanes:
 
 Lanes describe the normal safe shape for a package. They do not bypass approval bundles, child approval records, validation command policy checks, or explicit stop conditions.
 
-`devo work next` reads the package state and shows the next action, required command, stop conditions, and whether user approval is needed. In draft state it suggests `devo work scope-template`. `devo work prompt --phase <phase>` writes a phase-specific Codex operator prompt under the work-package artifacts folder. Supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
+`devo work resume` is the preferred continuation command after a work package exists. It combines current state, lane rules, imported scope, approval bundle status, latest validation status, Git delivery evidence, exact next commands, Codex operator instructions, stop conditions, and final report expectations. It is read-only.
+
+`devo work next` reads the package state and shows a smaller next action, required command, stop conditions, and whether user approval is needed. In draft state it suggests `devo work scope-template`. `devo work prompt --phase <phase>` writes a phase-specific Codex operator prompt under the work-package artifacts folder. Supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
 
 The final low-risk package flow is:
 
 ```text
-work start -> scope-template -> fill scope -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
+work start -> work resume
+```
+
+`work resume` then guides the detailed loop:
+
+```text
+scope-template -> fill scope -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
 ```
 
 `devo work complete` records the delivered commit, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` shows those fields with a compact next action and suggested next command so the final package state is obvious after a successful push.

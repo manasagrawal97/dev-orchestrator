@@ -386,6 +386,7 @@ Work packages are a lighter-weight path for bounded maintenance batches. They cr
 devo work lanes
 devo work lane-show --lane low-risk-ui-maintenance
 devo work start --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
+devo work resume --project MyProject --run <runId>
 devo work scope-template --project MyProject --run <runId>
 devo work import-scope --project MyProject --run <runId> --file E:\path\to\scope.md
 devo work status --project MyProject --run <runId>
@@ -425,12 +426,20 @@ devo approval bundle-approve --project MyProject --run <runId> --bundle <bundleI
 
 Exact `target_command` approval remains supported for maximum precision. Bundled `target_repo_build` or `target_repo_test` child approvals still have to match the registered validation command category plus the exact command id and command text before the validation runner will execute them.
 
-`devo work next` prints the compact next action for the current package state, including required command, stop conditions, and whether user approval is needed. For draft packages it suggests `devo work scope-template` before import, which avoids hand-building inconsistent scope files. `devo work prompt --phase <phase>` writes a Codex-ready phase prompt under `operator-prompt-<phase>.md`; supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
+`devo work resume` is the easiest continuation command. It reads the work package, lane, imported scope, approval bundle status, latest validation evidence, and latest Git delivery evidence, then prints the current state, next phase, exact recommended commands, Codex operator instructions, lane rules, stop conditions, and final report expectations. It is read-only and does not implement, validate, approve, commit, push, or mutate the target project.
+
+`devo work next` prints a smaller next-action view for the current package state, including required command, stop conditions, and whether user approval is needed. For draft packages it suggests `devo work scope-template` before import, which avoids hand-building inconsistent scope files. `devo work prompt --phase <phase>` writes a Codex-ready phase prompt under `operator-prompt-<phase>.md`; supported phases are `scope`, `implement`, `validate`, `deliver`, and `complete`.
 
 After implementation, registered validation, commit, and push, run `devo work complete` to mark the package delivered. Completion stores the commit hash, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` then shows the compact final state, next action, and suggested next command. The intended low-risk package loop is:
 
 ```text
-work start -> scope-template -> fill scope -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
+work start -> work resume
+```
+
+`work resume` then guides the detailed loop:
+
+```text
+scope-template -> fill scope -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
 ```
 
 For recent activity, `devo work list` shows compact open and recent work-package state, including approval bundle status, latest validation status, delivered commit, and next action. `devo work history` puts delivered/closed packages first and includes the delivery summary. `devo project activity` combines recent runs, delivered packages, latest validation runs, recent context/report artifacts, current Git delivery status, and a suggested next action.

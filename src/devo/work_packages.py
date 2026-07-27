@@ -109,6 +109,24 @@ class WorkPackageScopeTemplate(BaseModel):
     template_text: str
 
 
+class WorkPackageResume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    package: WorkPackage
+    lane: WorkLane
+    approval_bundle_status: str | None = None
+    latest_validation_id: str | None = None
+    latest_validation_status: str | None = None
+    latest_delivery_status: str | None = None
+    next_phase: str
+    recommended_commands: list[str] = Field(default_factory=list)
+    operator_instructions: list[str] = Field(default_factory=list)
+    validation_guidance: list[str] = Field(default_factory=list)
+    stop_conditions: list[str] = Field(default_factory=list)
+    final_report_expectations: list[str] = Field(default_factory=list)
+    resume_text: str
+
+
 BUILT_IN_LANES: dict[str, WorkLane] = {
     "docs-only": WorkLane(
         id="docs-only",
@@ -508,6 +526,88 @@ def generate_work_scope_template(
     template_path.parent.mkdir(parents=True, exist_ok=True)
     template_path.write_text(template_text, encoding="utf-8")
     return WorkPackageScopeTemplate(template_path=template_path, template_text=template_text)
+
+
+def build_work_package_resume(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> WorkPackageResume:
+    root = workspace_root or get_workspace_root()
+    package = load_work_package(project_name, run_id, workspace_root=root)
+    lane = get_lane(package.lane)
+    validation = _latest_validation_record(project_name, run_id, root)
+    approval_status = _approval_bundle_status(package, root)
+    delivery_status = _latest_git_delivery_status(project_name, run_id, root)
+    next_phase = _resume_next_phase(package, approval_status, validation.status.value if validation else None)
+    commands = _resume_commands(package, next_phase)
+    instructions = _resume_operator_instructions(package, lane, next_phase, approval_status)
+    final_report = _resume_final_report_expectations(next_phase)
+    resume = WorkPackageResume(
+        package=package,
+        lane=lane,
+        approval_bundle_status=approval_status,
+        latest_validation_id=validation.validation_run_id if validation else None,
+        latest_validation_status=validation.status.value if validation else None,
+        latest_delivery_status=delivery_status,
+        next_phase=next_phase,
+        recommended_commands=commands,
+        operator_instructions=instructions,
+        validation_guidance=package.validation_commands or _scope_template_validation_commands(package, lane, root),
+        stop_conditions=_default_stop_conditions() if next_phase != "done" else [],
+        final_report_expectations=final_report,
+        resume_text="",
+    )
+    return resume.model_copy(update={"resume_text": render_work_package_resume(resume)})
+
+
+def render_work_package_resume(resume: WorkPackageResume) -> str:
+    package = resume.package
+    scope_status = "OK imported" if package.proposed_items and package.approved_files else "WARN missing"
+    approval_status = resume.approval_bundle_status or package.approval_bundle_status or "not requested"
+    validation_status = resume.latest_validation_status or package.validation_status or "not available"
+    validation_id = resume.latest_validation_id or package.validation_run_id or "none"
+    delivery_status = resume.latest_delivery_status or package.final_git_status or "not available"
+    lines = [
+        f"# Work Resume: {package.goal}",
+        "",
+        "## Current State",
+        "",
+        f"- Project: {package.project}",
+        f"- Run: {package.run_id}",
+        f"- Status: {package.status.value}",
+        f"- Lane: {package.lane} ({resume.lane.name})",
+        f"- Scope: {scope_status}",
+        f"- Approval bundle: {package.approval_bundle_id or 'none'}",
+        f"- Approval status: {approval_status}",
+        f"- Latest validation: {validation_id} ({validation_status})",
+        f"- Latest delivery status: {delivery_status}",
+        f"- Next phase: {resume.next_phase}",
+        f"- Next action: {_resume_next_action(resume.next_phase)}",
+        "",
+        "## Recommended Commands",
+        "",
+    ]
+    lines.extend(_bullets(resume.recommended_commands))
+    lines.extend(["", "## Operator Instructions", ""])
+    lines.extend(_bullets(resume.operator_instructions))
+    lines.extend(["", "## Imported Scope", ""])
+    lines.extend(["Selected items:"])
+    lines.extend(_bullets(package.proposed_items))
+    lines.extend(["", "Approved files:"])
+    lines.extend(_bullets(package.approved_files))
+    lines.extend(["", "## Allowed Changes", ""])
+    lines.extend(_bullets(package.allowed_changes or resume.lane.allowed))
+    lines.extend(["", "## Forbidden Changes", ""])
+    lines.extend(_bullets(package.forbidden_changes or resume.lane.forbidden))
+    lines.extend(["", "## Validation Guidance", ""])
+    lines.extend(_bullets(resume.validation_guidance))
+    lines.extend(["", "## Stop Conditions", ""])
+    lines.extend(_bullets(resume.stop_conditions))
+    lines.extend(["", "## Suggested Final Report", ""])
+    lines.extend(_bullets(resume.final_report_expectations))
+    lines.append("")
+    return "\n".join(lines)
 
 
 def render_work_scope_template(package: WorkPackage, workspace_root: Path | None = None) -> str:
@@ -1112,6 +1212,148 @@ def _default_stop_conditions() -> list[str]:
         "The change requires a behavior-heavy refactor or a different risk category.",
         "Validation fails or the validation method changes.",
         "Git is dirty in an unexpected way.",
+    ]
+
+
+def _resume_next_phase(package: WorkPackage, approval_status: str | None, validation_status: str | None) -> str:
+    if package.status in {WorkPackageStatus.DELIVERED, WorkPackageStatus.CLOSED}:
+        return "done"
+    if validation_status == "passed":
+        return "deliver"
+    if package.status == WorkPackageStatus.DRAFT or not package.proposed_items or not package.approved_files:
+        return "scope"
+    if package.status == WorkPackageStatus.SCOPE_PROPOSED and not package.approval_bundle_id:
+        return "approval-request"
+    if package.status == WorkPackageStatus.APPROVAL_REQUESTED and approval_status != "approved":
+        return "approval"
+    if package.status == WorkPackageStatus.APPROVED or approval_status == "approved":
+        return "implement"
+    if package.status == WorkPackageStatus.IMPLEMENTED:
+        return "validate"
+    if package.status == WorkPackageStatus.VALIDATED:
+        return "deliver"
+    return "inspect"
+
+
+def _resume_commands(package: WorkPackage, phase: str) -> list[str]:
+    if phase == "scope":
+        return [
+            f"devo work scope-template --project {package.project} --run {package.run_id}",
+            f"devo work import-scope --project {package.project} --run {package.run_id} --file <scopeMarkdownFile>",
+        ]
+    if phase == "approval-request":
+        return [f"devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001"]
+    if phase == "approval":
+        commands = []
+        if package.approval_bundle_id:
+            commands.append(
+                f"devo approval bundle-status --project {package.project} --run {package.run_id} --bundle {package.approval_bundle_id}"
+            )
+            commands.append(
+                f"devo approval bundle-approve --project {package.project} --run {package.run_id} --bundle {package.approval_bundle_id} --by <name>"
+            )
+        else:
+            commands.append(f"devo work request-approval-bundle --project {package.project} --run {package.run_id} --task T001")
+        return commands
+    if phase == "implement":
+        return [
+            _prompt_command(package, "implement"),
+            *_plain_phase_commands("implement", package),
+            _prompt_command(package, "validate"),
+        ]
+    if phase == "validate":
+        return [_prompt_command(package, "validate"), *_plain_phase_commands("validate", package)]
+    if phase == "deliver":
+        return [
+            f"devo git delivery-check --project {package.project} --run {package.run_id} --task T001",
+            f"devo git delivery-report --project {package.project} --run {package.run_id} --message \"<summary>\"",
+            _prompt_command(package, "deliver"),
+            _prompt_command(package, "complete"),
+            f"devo work complete --project {package.project} --run {package.run_id} --commit <commitHash> --message \"<summary>\"",
+        ]
+    if phase == "done":
+        return [
+            f"devo work history --project {package.project} --limit 10",
+            f"devo project activity --project {package.project} --limit 10",
+        ]
+    return [f"devo work status --project {package.project} --run {package.run_id}"]
+
+
+def _resume_next_action(phase: str) -> str:
+    actions = {
+        "scope": "Generate and import scope",
+        "approval-request": "Request approval bundle",
+        "approval": "Wait for or record approval bundle approval",
+        "implement": "Implement approved scope",
+        "validate": "Run validation",
+        "deliver": "Generate delivery evidence, commit/push, and complete work package",
+        "done": "No action needed",
+        "inspect": "Inspect work package state",
+    }
+    return actions.get(phase, "Inspect work package state")
+
+
+def _resume_operator_instructions(
+    package: WorkPackage,
+    lane: WorkLane,
+    phase: str,
+    approval_status: str | None,
+) -> list[str]:
+    if phase == "scope":
+        return [
+            "Generate the scope template, fill it from inspected facts, and import it.",
+            "Do not implement until scope is imported and the approval bundle is approved.",
+            f"Use lane `{lane.id}` allowed and forbidden rules.",
+        ]
+    if phase == "approval-request":
+        return [
+            "Scope is imported; request one approval bundle for task T001.",
+            "Do not implement until the bundle is approved.",
+        ]
+    if phase == "approval":
+        return [
+            f"Approval bundle status is {approval_status or 'unknown'}; user approval is needed before implementation.",
+            "Do not suggest or perform source edits yet.",
+        ]
+    if phase == "implement":
+        return [
+            "Implement only the imported approved scope.",
+            "Use only approved files/areas and lane-safe changes.",
+            "Run safe diff checks, then move to validation guidance.",
+        ]
+    if phase == "validate":
+        return [
+            "Run the registered validation command through Devo.",
+            "Do not bypass Devo validation gates.",
+            "If validation fails, stop and report the artifact path and error summary.",
+        ]
+    if phase == "deliver":
+        return [
+            "Validation evidence exists; prepare delivery evidence, commit/push approved files, then record completion.",
+            "Use `devo work complete` after the delivered commit hash is known.",
+        ]
+    if phase == "done":
+        return [
+            "Work package is already delivered or closed.",
+            "No implementation, validation, or delivery action is needed.",
+        ]
+    return ["Inspect work package status and artifacts before continuing."]
+
+
+def _plain_phase_commands(phase: str, package: WorkPackage) -> list[str]:
+    return [line.removeprefix("- ").strip() for line in _phase_commands(phase, package)]
+
+
+def _resume_final_report_expectations(phase: str) -> list[str]:
+    if phase == "done":
+        return ["no action needed", "delivered commit if available", "final status"]
+    return [
+        "current phase handled",
+        "commands run",
+        "files changed, or confirmation none changed",
+        "validation result and artifact path if validation ran",
+        "commit hash and push result if delivered",
+        "final Git status",
     ]
 
 

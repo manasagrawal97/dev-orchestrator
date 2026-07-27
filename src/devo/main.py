@@ -105,6 +105,7 @@ from .validation_registry import (
 )
 from .validation_runner import list_validation_history, run_validation_command, terminal_excerpt
 from .work_packages import (
+    build_work_package_resume,
     complete_work_package,
     generate_work_package_phase_prompt,
     generate_work_scope_template,
@@ -1858,6 +1859,20 @@ def show_work_next(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
 
     _print_work_next(package)
+
+
+@work_app.command("resume")
+def show_work_resume(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Run ID."),
+) -> None:
+    """Show a compact operator plan for resuming a work package."""
+    try:
+        resume = build_work_package_resume(project_name=project_name, run_id=run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(resume.resume_text)
 
 
 @work_app.command("prompt")
