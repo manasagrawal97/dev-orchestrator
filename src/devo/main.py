@@ -88,6 +88,7 @@ from .runs import (
     get_validation_status,
     import_implementation_completion_report,
     import_run_agent_output,
+    load_current_selection,
     list_run_tasks,
     mark_task_disposition,
     list_runs,
@@ -95,7 +96,7 @@ from .runs import (
     run_path,
     save_current_selection,
 )
-from .scanner import scan_registered_project
+from .scanner import load_registered_project, scan_registered_project
 from .task_selector import DEFAULT_STRATEGY, TaskSelection, list_task_candidates, select_next_task
 from .validation_registry import (
     add_validation_command,
@@ -203,11 +204,48 @@ def _print_project_onboarding(report: ProjectOnboardingReport) -> None:
         console.print(f"Report: {_named_path(report.report_path)}")
 
 
+def _resolve_project(project_name: str | None) -> str:
+    if project_name:
+        return project_name
+    selection = load_current_selection()
+    if not selection or not selection.project_name:
+        msg = "No project provided and no current project selected. Run: devo use --project <project>"
+        typer.echo(msg)
+        raise typer.BadParameter(msg, param_hint="--project")
+    console.print(f"Using current project: {selection.project_name}")
+    return selection.project_name
+
+
+def _resolve_project_run(project_name: str | None, run_id: str | None) -> tuple[str, str]:
+    selection = load_current_selection()
+    resolved_project = project_name or (selection.project_name if selection else None)
+    if not resolved_project:
+        msg = "No project provided and no current project selected. Run: devo use --project <project>"
+        typer.echo(msg)
+        raise typer.BadParameter(msg, param_hint="--project")
+    if not project_name:
+        console.print(f"Using current project: {resolved_project}")
+
+    resolved_run = run_id or (selection.run_id if selection and selection.project_name == resolved_project else None)
+    if not resolved_run:
+        msg = "No run provided and no current run selected. Run: devo use --project <project> --run <runId>"
+        typer.echo(msg)
+        raise typer.BadParameter(msg, param_hint="--run")
+    if not run_id:
+        console.print(f"Using current run: {resolved_run}")
+    return resolved_project, resolved_run
+
+
 @app.command("doctor")
 def doctor(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name to include in health checks."),
 ) -> None:
     """Run read-only Devo and optional project health checks."""
+    if project_name is None:
+        selection = load_current_selection()
+        if selection and selection.project_name:
+            project_name = selection.project_name
+            console.print(f"Using current project: {project_name}")
     report = run_doctor(project_name=project_name)
     _print_doctor_report(report)
 
@@ -729,11 +767,12 @@ def list_registered_projects() -> None:
 
 @project_app.command("onboard")
 def onboard_project(
-    project_name: str = typer.Option(..., "--project", help="Registered project name to inspect."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name to inspect."),
     write_suggestions: bool = typer.Option(False, "--write-suggestions", help="Write workspace onboarding report Markdown."),
     suggest_settings: bool = typer.Option(False, "--suggest-settings", help="Print suggested project settings without writing them."),
 ) -> None:
     """Show read-only project onboarding progress and the next setup action."""
+    project_name = _resolve_project(project_name)
     report = build_project_onboarding_report(
         project_name,
         include_suggested_settings=suggest_settings,
@@ -744,9 +783,10 @@ def onboard_project(
 
 @project_app.command("settings-show")
 def show_project_settings(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
 ) -> None:
     """Show workflow defaults for a registered project."""
+    project_name = _resolve_project(project_name)
     try:
         settings = load_project_settings(project_name)
         path = project_settings_path(project_name)
@@ -798,10 +838,11 @@ def set_project_settings(
 
 @project_app.command("activity")
 def show_project_activity(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
 ) -> None:
     """Show compact project activity across runs, work packages, validation, reports, and Git."""
+    project_name = _resolve_project(project_name)
     try:
         activity = build_project_activity_summary(project_name=project_name, limit=limit)
     except ValueError as exc:
@@ -1292,10 +1333,40 @@ def use_project_or_run(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--project") from exc
 
-    console.print(f"[green]Selected project[/green] {selection.project_name}")
-    if selection.run_id:
-        console.print(f"Run: {selection.run_id}")
+    console.print("[green]Current context updated.[/green]")
+    console.print(f"Current project: {selection.project_name}")
+    console.print(f"Project path: {selection.project_path}")
+    console.print(f"Current run: {selection.run_id or 'none'}")
+    if selection.run_path:
         console.print(f"Run path: {selection.run_path}")
+    console.print(f"Stored in: {get_workspace_root() / 'current.json'}")
+
+
+@app.command("current")
+def show_current_context() -> None:
+    """Show saved current project/run context and whether it still exists."""
+    selection = load_current_selection()
+    if not selection:
+        console.print("Current project: none")
+        console.print("Current run: none")
+        console.print("Next command: devo use --project <project>")
+        return
+    console.print(f"Current project: {selection.project_name}")
+    try:
+        load_registered_project(selection.project_name)
+        console.print(f"Project exists: yes")
+    except ValueError:
+        console.print("Project exists: no")
+    console.print(f"Project path: {selection.project_path}")
+    console.print(f"Current run: {selection.run_id or 'none'}")
+    if selection.run_id:
+        try:
+            load_run(selection.project_name, selection.run_id)
+            console.print("Run exists: yes")
+        except ValueError:
+            console.print("Run exists: no")
+    else:
+        console.print("Run exists: n/a")
     console.print(f"Stored in: {get_workspace_root() / 'current.json'}")
 
 
@@ -1839,10 +1910,11 @@ def show_work_package_lane(
 
 @work_app.command("list")
 def list_work_packages(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
 ) -> None:
     """List recent work packages and project runs."""
+    project_name = _resolve_project(project_name)
     try:
         summaries = list_work_package_summaries(project_name=project_name, limit=limit)
     except ValueError as exc:
@@ -1852,10 +1924,11 @@ def list_work_packages(
 
 @work_app.command("history")
 def show_work_history(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
 ) -> None:
     """Show delivery-focused work package history."""
+    project_name = _resolve_project(project_name)
     try:
         summaries = list_work_package_summaries(project_name=project_name, limit=limit, delivered_first=True)
     except ValueError as exc:
@@ -1865,7 +1938,7 @@ def show_work_history(
 
 @work_app.command("new")
 def new_work(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     goal: str = typer.Option(..., "--goal", help="Work package goal."),
     lane_id: str | None = typer.Option(None, "--lane", help="Work lane ID. Uses project default lane when omitted."),
     no_template: bool = typer.Option(False, "--no-template", help="Skip scope template generation."),
@@ -1875,6 +1948,7 @@ def new_work(
     """Create a run, draft work package, optional scope template, and resume guidance."""
     if no_template and force_template:
         raise typer.BadParameter("Use either --template or --no-template, not both.", param_hint="--template")
+    project_name = _resolve_project(project_name)
     try:
         settings = load_project_settings(project_name)
         selected_lane = lane_id or settings.default_lane
@@ -1929,10 +2003,11 @@ def start_work(
 
 @work_app.command("scope-template")
 def write_work_scope_template(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
 ) -> None:
     """Write a fill-in scope markdown template for a draft work package."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         result = generate_work_scope_template(project_name=project_name, run_id=run_id)
     except ValueError as exc:
@@ -1980,10 +2055,11 @@ def import_scope(
 
 @work_app.command("status")
 def show_work_status(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
 ) -> None:
     """Show work package status and artifact paths."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         package = load_work_package(project_name=project_name, run_id=run_id)
     except ValueError as exc:
@@ -1994,10 +2070,11 @@ def show_work_status(
 
 @work_app.command("next")
 def show_work_next(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
 ) -> None:
     """Show the next work-package action without mutating project files."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         package = load_work_package(project_name=project_name, run_id=run_id)
     except ValueError as exc:
@@ -2008,10 +2085,11 @@ def show_work_next(
 
 @work_app.command("resume")
 def show_work_resume(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
 ) -> None:
     """Show a compact operator plan for resuming a work package."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         resume = build_work_package_resume(project_name=project_name, run_id=run_id)
     except ValueError as exc:
@@ -2022,11 +2100,12 @@ def show_work_resume(
 
 @work_app.command("prompt")
 def write_work_prompt(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
     phase: str = typer.Option(..., "--phase", help="Prompt phase: scope, implement, validate, deliver, or complete."),
 ) -> None:
     """Write a phase-specific Codex operator prompt for a work package."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         result = generate_work_package_phase_prompt(project_name=project_name, run_id=run_id, phase=phase)
     except ValueError as exc:
@@ -2038,12 +2117,13 @@ def write_work_prompt(
 
 @work_app.command("complete")
 def complete_work(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
     commit_hash: str = typer.Option(..., "--commit", help="Delivered Git commit hash."),
     message: str = typer.Option(..., "--message", help="Short delivery summary."),
 ) -> None:
     """Mark a work package delivered after validation, commit, and push."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         package = complete_work_package(
             project_name=project_name,
@@ -2060,11 +2140,12 @@ def complete_work(
 
 @work_app.command("request-approval-bundle")
 def request_work_approval_bundle(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
     task_id: str = typer.Option(..., "--task", help="Task ID."),
 ) -> None:
     """Request the source-edit and validation approvals for a work package."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         bundle = create_approval_bundle(project_name=project_name, run_id=run_id, task_id=task_id)
     except ValueError as exc:
@@ -2082,10 +2163,11 @@ def request_work_approval_bundle(
 
 @visual_app.command("work-package")
 def write_work_package_visual(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
-    run_id: str = typer.Option(..., "--run", help="Run ID."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str | None = typer.Option(None, "--run", help="Run ID."),
 ) -> None:
     """Write a Mermaid work-package lifecycle visual artifact."""
+    project_name, run_id = _resolve_project_run(project_name, run_id)
     try:
         result = generate_work_package_visual(project_name=project_name, run_id=run_id)
     except ValueError as exc:
@@ -2095,10 +2177,11 @@ def write_work_package_visual(
 
 @visual_app.command("project-activity")
 def write_project_activity_visual(
-    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
 ) -> None:
     """Write a compact Mermaid project activity visual artifact."""
+    project_name = _resolve_project(project_name)
     try:
         result = generate_project_activity_visual(project_name=project_name, limit=limit)
     except ValueError as exc:

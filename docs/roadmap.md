@@ -121,6 +121,10 @@ Added `devo project settings-show` and `devo project settings-set` so each regis
 
 Added `devo project onboard --project <project>` as a read-only setup/status checklist. It reports registration, project path, scan, context status, validation registry, project settings, doctor summary, onboarding overall status, and the next setup command. `--suggest-settings` prints a suggested settings command without writing it, and `--write-suggestions` writes `workspace/projects/<project>/reports/onboarding-report.md` without modifying the target project. This reduces setup friction before `devo work new`.
 
+### TASK-DEVO-062 Current Context Shortcuts - Completed
+
+Added `devo current`, improved `devo use` output, and taught common project/work/visual commands to use saved current project/run context when `--project` or `--run` are omitted. Shortcuts now cover the prioritized work-package commands (`resume`, `status`, `next`, `scope-template`, `prompt`, `request-approval-bundle`, `complete`), `work new`, project onboarding/settings/activity, `doctor`, and generated visual reports. Commands print when current context is used and fail with clear `devo use` guidance when context is missing.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

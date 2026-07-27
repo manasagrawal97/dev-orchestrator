@@ -807,6 +807,15 @@ def save_current_selection(
     return selection
 
 
+def load_current_selection(workspace_root: Path | None = None) -> CurrentSelection | None:
+    root = workspace_root or get_workspace_root()
+    current_file = root / "current.json"
+    if not current_file.exists():
+        return None
+    data = json.loads(current_file.read_text(encoding="utf-8"))
+    return CurrentSelection.model_validate(data)
+
+
 def require_context_approved(project_name: str, workspace_root: Path | None = None) -> None:
     root = workspace_root or get_workspace_root()
     state = load_context_state(project_name, workspace_root=root)

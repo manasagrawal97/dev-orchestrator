@@ -42,6 +42,7 @@ Current development should improve:
 
 - status and next-action commands
 - guided project onboarding
+- current-context shortcuts
 - work packages and approval bundles
 - project workflow defaults
 - operator prompts and handoff prompts
@@ -138,6 +139,23 @@ devo project onboard --project PersonalOS --suggest-settings
 
 The command summarizes registration, path, scan, context approval, validation registry, project settings, doctor status, and the next setup action. It helps a user get from "registered project" to "ready for `work new`" without remembering every setup command. Settings still require an explicit `devo project settings-set` command; onboarding does not mutate target project files.
 
+### Current Context Shortcuts - MVP Added
+
+Saved context makes common commands feel less ceremonial:
+
+```powershell
+devo use --project DevOrchestrator
+devo work new --goal "Improve CLI defaults"
+devo use --project DevOrchestrator --run <runId>
+devo work resume
+devo work status
+devo work next
+devo project activity
+devo doctor
+```
+
+`devo current` shows the selected project/run and whether they still exist. Shortcuts print when they use saved context, and fail with `devo use` guidance when project or run context is missing.
+
 ### Approval Bundles - MVP Added
 
 An approval bundle lets one user approval cover a scoped group of actions:
@@ -188,6 +206,8 @@ The current MVP command group is:
 ```powershell
 devo work new --project PersonalOS --goal "Improve operational UI guidance"
 devo work new --project PersonalOS --lane low-risk-ui-maintenance --goal "Improve operational UI guidance"
+devo use --project PersonalOS --run <runId>
+devo work resume
 devo work resume --project PersonalOS --run <runId>
 devo work scope-template --project PersonalOS --run <runId>
 devo work import-scope --project PersonalOS --run <runId> --file <scopeMarkdownFile>

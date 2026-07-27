@@ -272,7 +272,14 @@ Select an active project or run:
 ```powershell
 devo use --project MyProject
 devo use --project MyProject --run <runId>
+devo current
+devo work resume
+devo work status
+devo project activity
+devo doctor
 ```
+
+Common project and work-package commands can use the saved current project/run when `--project` or `--run` are omitted. When Devo uses saved context, it prints `Using current project: ...` or `Using current run: ...`. If no current context exists, it tells you to run `devo use --project <project>` or `devo use --project <project> --run <runId>`.
 
 Registered projects are stored under:
 
