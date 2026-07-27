@@ -30,7 +30,9 @@ The future dashboard should generate visuals from Devo structured data and artif
 
 Dashboard/UI is future scope. Do not start it too early; Devo's CLI workflows, reports, history, and generated visual artifacts should mature first.
 
-Generated visual reports are the bridge between static documentation diagrams and the future dashboard. Commands such as `devo visual work-package` and `devo visual project-activity` write Mermaid Markdown under `workspace/` from live Devo artifacts. Those generated files summarize current work-package and project activity state, so they should not be committed.
+Generated visual reports are one bridge between static documentation diagrams and the future dashboard. Commands such as `devo visual work-package` and `devo visual project-activity` write Mermaid Markdown under `workspace/` from live Devo artifacts. Those generated files summarize current work-package and project activity state, so they should not be committed.
+
+The more stable bridge is the UI-ready read-model layer in `src/devo/read_models.py`. Future dashboards or local API servers should consume read models/API responses first, and only render Mermaid or richer visuals from those structures. They should not scrape raw workspace folders or generated Markdown.
 
 Static Mermaid docs are for stable concepts. Generated Mermaid reports are for current project activity.
 
@@ -63,4 +65,4 @@ Current generated visual artifacts:
 - `workspace/runs/<project>/<runId>/artifacts/visuals/work-package-flow.md`
 - `workspace/projects/<project>/visuals/project-activity.md`
 
-These reports should stay small and tolerate older runs with missing optional fields. Future dashboard work can reuse the same structured data model behind these reports instead of parsing the generated Markdown.
+These reports should stay small and tolerate older runs with missing optional fields. Future dashboard work can reuse the same read models behind these reports instead of parsing the generated Markdown.

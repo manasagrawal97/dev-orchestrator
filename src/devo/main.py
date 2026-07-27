@@ -58,6 +58,11 @@ from .reports import (
 from .projects import get_workspace_root, list_projects, register_project
 from .project_onboarding import ProjectOnboardingReport, build_project_onboarding_report
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
+from .read_models import (
+    ProjectOverview,
+    build_project_overview,
+    build_work_package_overview,
+)
 from .policy import (
     PolicyCheckResult,
     PolicyClassification,
@@ -204,7 +209,29 @@ def _print_project_onboarding(report: ProjectOnboardingReport) -> None:
         console.print(f"Report: {_named_path(report.report_path)}")
 
 
-def _resolve_project(project_name: str | None) -> str:
+def _print_project_overview(overview: ProjectOverview) -> None:
+    console.print(f"[bold]Project overview: {overview.project_name}[/bold]")
+    console.print(f"Project path: {overview.project_path or 'unknown'}", soft_wrap=True)
+    console.print(f"Current project: {overview.is_current_project}")
+    console.print(f"Current run: {overview.current_run_id or 'none'}")
+    console.print(f"Onboarding: {overview.onboarding_status}")
+    console.print(f"Doctor: {overview.doctor_overall_status}")
+    console.print(f"Default lane: {overview.settings_summary.get('default_lane') or 'none'}")
+    console.print(f"Git: {overview.git_summary.get('status', 'unknown')} branch={overview.git_summary.get('branch', 'unknown')}")
+    console.print(f"Validation commands: {overview.validation_registry_summary.get('command_count', 0)}")
+    console.print(f"Recent runs: {len(overview.recent_runs)}")
+    console.print(f"Recent work packages: {len(overview.recent_work_packages)}")
+    console.print(f"Suggested next action: {overview.suggested_next_action}", soft_wrap=True)
+
+
+def _print_json_model(model: object) -> None:
+    if hasattr(model, "model_dump_json"):
+        typer.echo(model.model_dump_json(indent=2))
+        return
+    typer.echo(json.dumps(model, indent=2, default=str))
+
+
+def _resolve_project(project_name: str | None, *, announce: bool = True) -> str:
     if project_name:
         return project_name
     selection = load_current_selection()
@@ -212,18 +239,19 @@ def _resolve_project(project_name: str | None) -> str:
         msg = "No project provided and no current project selected. Run: devo use --project <project>"
         typer.echo(msg)
         raise typer.BadParameter(msg, param_hint="--project")
-    console.print(f"Using current project: {selection.project_name}")
+    if announce:
+        console.print(f"Using current project: {selection.project_name}")
     return selection.project_name
 
 
-def _resolve_project_run(project_name: str | None, run_id: str | None) -> tuple[str, str]:
+def _resolve_project_run(project_name: str | None, run_id: str | None, *, announce: bool = True) -> tuple[str, str]:
     selection = load_current_selection()
     resolved_project = project_name or (selection.project_name if selection else None)
     if not resolved_project:
         msg = "No project provided and no current project selected. Run: devo use --project <project>"
         typer.echo(msg)
         raise typer.BadParameter(msg, param_hint="--project")
-    if not project_name:
+    if not project_name and announce:
         console.print(f"Using current project: {resolved_project}")
 
     resolved_run = run_id or (selection.run_id if selection and selection.project_name == resolved_project else None)
@@ -231,7 +259,7 @@ def _resolve_project_run(project_name: str | None, run_id: str | None) -> tuple[
         msg = "No run provided and no current run selected. Run: devo use --project <project> --run <runId>"
         typer.echo(msg)
         raise typer.BadParameter(msg, param_hint="--run")
-    if not run_id:
+    if not run_id and announce:
         console.print(f"Using current run: {resolved_run}")
     return resolved_project, resolved_run
 
@@ -239,14 +267,19 @@ def _resolve_project_run(project_name: str | None, run_id: str | None) -> tuple[
 @app.command("doctor")
 def doctor(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name to include in health checks."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Run read-only Devo and optional project health checks."""
     if project_name is None:
         selection = load_current_selection()
         if selection and selection.project_name:
             project_name = selection.project_name
-            console.print(f"Using current project: {project_name}")
+            if not json_output:
+                console.print(f"Using current project: {project_name}")
     report = run_doctor(project_name=project_name)
+    if json_output:
+        _print_json_model(report)
+        return
     _print_doctor_report(report)
 
 
@@ -836,13 +869,32 @@ def set_project_settings(
         console.print(f"[yellow]Warning:[/yellow] {warning}", soft_wrap=True)
 
 
+@project_app.command("overview")
+def show_project_overview(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show a UI-ready read model overview for one project."""
+    project_name = _resolve_project(project_name, announce=not json_output)
+    overview = build_project_overview(project_name=project_name, limit=limit)
+    if json_output:
+        _print_json_model(overview)
+        return
+    _print_project_overview(overview)
+
+
 @project_app.command("activity")
 def show_project_activity(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     limit: int = typer.Option(10, "--limit", min=1, help="Recent item limit."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show compact project activity across runs, work packages, validation, reports, and Git."""
-    project_name = _resolve_project(project_name)
+    project_name = _resolve_project(project_name, announce=not json_output)
+    if json_output:
+        _print_json_model(build_project_overview(project_name=project_name, limit=limit))
+        return
     try:
         activity = build_project_activity_summary(project_name=project_name, limit=limit)
     except ValueError as exc:
@@ -2057,9 +2109,13 @@ def import_scope(
 def show_work_status(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     run_id: str | None = typer.Option(None, "--run", help="Run ID."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
 ) -> None:
     """Show work package status and artifact paths."""
-    project_name, run_id = _resolve_project_run(project_name, run_id)
+    project_name, run_id = _resolve_project_run(project_name, run_id, announce=not json_output)
+    if json_output:
+        _print_json_model(build_work_package_overview(project_name=project_name, run_id=run_id))
+        return
     try:
         package = load_work_package(project_name=project_name, run_id=run_id)
     except ValueError as exc:

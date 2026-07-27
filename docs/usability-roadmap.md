@@ -47,7 +47,7 @@ Current development should improve:
 - project workflow defaults
 - operator prompts and handoff prompts
 - validation and delivery evidence
-- history, activity, generated visual reports, and recovery
+- history, activity, UI-ready read models, generated visual reports, and recovery
 
 Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. No direct API tokens are required for current development.
 
@@ -156,6 +156,19 @@ devo doctor
 
 `devo current` shows the selected project/run and whether they still exist. Shortcuts print when they use saved context, and fail with `devo use` guidance when project or run context is missing.
 
+### UI-Ready Read Models - MVP Added
+
+Before building a dashboard, Devo now exposes read-only overview models for future UI/API use:
+
+```powershell
+devo project overview --project DevOrchestrator --json
+devo project activity --project DevOrchestrator --json
+devo work status --run <runId> --json
+devo doctor --project DevOrchestrator --json
+```
+
+These models summarize project, run, and work-package state without requiring a UI to scrape raw workspace folders. Dashboard/UI remains future scope; the read models are the stable data-contract bridge.
+
 ### Approval Bundles - MVP Added
 
 An approval bundle lets one user approval cover a scoped group of actions:
@@ -231,7 +244,7 @@ A future dashboard should show:
 
 The CLI should stay complete, but a UI would make Devo easier to operate.
 
-Do not start the dashboard too early. Generated visual reports and structured activity summaries should come first, because they prove the data model a dashboard would later render.
+Do not start the dashboard too early. UI-ready read models, generated visual reports, and structured activity summaries should come first, because they prove the data model a dashboard would later render.
 
 ### Direct Model And Agent Adapters
 

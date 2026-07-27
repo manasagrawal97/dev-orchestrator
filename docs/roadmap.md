@@ -125,6 +125,10 @@ Added `devo project onboard --project <project>` as a read-only setup/status che
 
 Added `devo current`, improved `devo use` output, and taught common project/work/visual commands to use saved current project/run context when `--project` or `--run` are omitted. Shortcuts now cover the prioritized work-package commands (`resume`, `status`, `next`, `scope-template`, `prompt`, `request-approval-bundle`, `complete`), `work new`, project onboarding/settings/activity, `doctor`, and generated visual reports. Commands print when current context is used and fail with clear `devo use` guidance when context is missing.
 
+### TASK-DEVO-063 UI-Ready Read Models - Completed
+
+Added `src/devo/read_models.py` with read-only project, run, and work-package overview models that tolerate missing/older artifacts. Added JSON output for `devo project overview`, `devo project activity --json`, `devo work status --json`, and `devo doctor --json`. This creates a stable bridge for a future UI, local API server, or agent integration without building a dashboard yet. Future UI work should consume these read models/API responses rather than scraping raw workspace folders.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

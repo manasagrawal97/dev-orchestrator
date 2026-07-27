@@ -472,6 +472,17 @@ For recent activity, `devo work list` shows compact open and recent work-package
 
 `devo visual work-package` and `devo visual project-activity` generate Mermaid Markdown under `workspace/` from current Devo artifacts. Static Mermaid docs explain stable concepts; generated visual reports summarize live/current work and are not committed.
 
+UI-ready read models are available through JSON output:
+
+```powershell
+devo project overview --project MyProject --json
+devo project activity --project MyProject --json
+devo work status --project MyProject --run <runId> --json
+devo doctor --project MyProject --json
+```
+
+These commands are read-only. They prepare Devo for a future dashboard or local API server without building a UI yet. Future UI code should consume read models or API responses, not scrape raw `workspace/` folders directly.
+
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.

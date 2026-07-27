@@ -219,6 +219,20 @@ Use `devo work list` to see recent open and delivered work packages with approva
 
 Use `devo visual work-package` to write a Mermaid lifecycle artifact for one run at `workspace/runs/<project>/<runId>/artifacts/visuals/work-package-flow.md`. Use `devo visual project-activity` to write a compact recent activity diagram at `workspace/projects/<project>/visuals/project-activity.md`. These are generated workspace artifacts for current state, not hand-maintained docs.
 
+## UI-Ready JSON Summaries
+
+Devo has a read-only read-model layer for future UI/API work. It does not build a dashboard yet, and it does not mutate target projects.
+
+```powershell
+devo project overview --project <name>
+devo project overview --project <name> --json
+devo project activity --project <name> --json
+devo work status --project <name> --run <runId> --json
+devo doctor --project <name> --json
+```
+
+The read models summarize projects, runs, and work packages with UI-friendly fields such as onboarding status, doctor status, settings, Git status, validation registry, recent work packages, approval/validation/delivery state, next phase, next command, and stop conditions. Future UI/dashboard work should consume these read models through CLI JSON or a future API, not scrape raw workspace folders directly.
+
 ## Safety
 
 ```powershell
