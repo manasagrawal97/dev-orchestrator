@@ -74,6 +74,8 @@ flowchart LR
 devo project add --name <name> --path <path>
 devo project scan <name>
 devo project context-status <name>
+devo project settings-show --project <name>
+devo project settings-set --project <name> --default-lane <lane> --default-validation-command <commandId> --default-branch <branch>
 ```
 
 After scanning, generate/import ProjectContextDiscoveryAgent output, generate/import ProjectContextReviewerAgent output, then approve context:
@@ -96,7 +98,16 @@ devo report handoff --project <name>
 devo workflow resume --project <name>  # planned future command, not implemented yet
 ```
 
-`devo doctor` checks Devo-level health. `devo doctor --project <name>` also checks the registered project path, Git status, validation registry, recent work packages, latest validation, generated visuals, and backup health where available. Doctor is read-only: it does not run build/test, backup/restore, app commands, migrations, scheduler updates, or external APIs.
+`devo project settings-set` stores project workflow defaults in Devo workspace metadata, not in the target repo. Useful defaults include `default_lane`, `default_validation_command`, `default_full_test_command`, `default_branch`, automatic scope-template behavior, delivery mode, and notes.
+
+Examples:
+
+```powershell
+devo project settings-set --project DevOrchestrator --default-lane devo-internal-source --default-branch main
+devo project settings-set --project PersonalOS --default-lane low-risk-ui-maintenance --default-validation-command dotnet-build-personalos --default-branch master
+```
+
+`devo doctor` checks Devo-level health. `devo doctor --project <name>` also checks the registered project path, Git status, project settings, validation registry, recent work packages, latest validation, generated visuals, and backup health where available. Doctor is read-only: it does not run build/test, backup/restore, app commands, migrations, scheduler updates, or external APIs.
 
 Until `devo workflow resume` exists, use doctor plus project/handoff reports and `devo workflow status` for any known active run.
 
@@ -129,6 +140,7 @@ For small bounded batches, use the work-package flow instead of hand-assembling 
 ```powershell
 devo work lanes
 devo work lane-show --lane low-risk-ui-maintenance
+devo work new --project <name> --goal "<goal>"
 devo work new --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
 devo work start --project <name> --lane low-risk-ui-maintenance --goal "<goal>"
 devo work resume --project <name> --run <runId>
@@ -149,7 +161,7 @@ devo visual project-activity --project <name> --limit 10
 devo work scope-example --lane low-risk-ui-maintenance
 ```
 
-Use `devo work new` for normal new work. It creates a run, starts the work package, generates `scope-template.md`, and prints the resume command. Use `devo work start` plus `devo work scope-template` only when you need the lower-level steps separately. The filled scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
+Use `devo work new` for normal new work. It creates a run, starts the work package, generates `scope-template.md`, and prints the resume command. When `--lane` is omitted, it uses the project's configured `default_lane`; if no default lane exists, Devo asks for `--lane` instead of guessing. Use `--no-template` to skip template generation, or `--template` to force it when project settings disable automatic templates. Use `devo work start` plus `devo work scope-template` only when you need the lower-level steps separately. The filled scope Markdown must include selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. Work-package artifacts stay under `workspace/`; target project files are changed only later by Codex after approval.
 
 Built-in lanes:
 

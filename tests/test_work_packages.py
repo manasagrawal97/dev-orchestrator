@@ -86,6 +86,115 @@ def test_work_new_creates_run_package_template_and_resume_guidance(tmp_path: Pat
     assert run_id in result.output
 
 
+def test_work_new_uses_project_default_lane_when_lane_omitted(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    settings_result = runner.invoke(
+        app,
+        ["project", "settings-set", "--project", "sample", "--default-lane", "low-risk-ui-maintenance"],
+        terminal_width=240,
+    )
+    assert settings_result.exit_code == 0, settings_result.output
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--goal", "Bootstrap default lane work"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run_id = _only_work_run(workspace)
+    package = load_work_package("sample", run_id, workspace_root=workspace)
+    assert package.lane == "low-risk-ui-maintenance"
+    assert "Lane: low-risk-ui-maintenance" in result.output
+
+
+def test_work_new_explicit_lane_overrides_project_default_lane(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    settings_result = runner.invoke(
+        app,
+        ["project", "settings-set", "--project", "sample", "--default-lane", "docs-only"],
+        terminal_width=240,
+    )
+    assert settings_result.exit_code == 0, settings_result.output
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--lane", "low-risk-ui-maintenance", "--goal", "Explicit lane work"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run_id = _only_work_run(workspace)
+    package = load_work_package("sample", run_id, workspace_root=workspace)
+    assert package.lane == "low-risk-ui-maintenance"
+
+
+def test_work_new_fails_when_lane_missing_and_no_default_configured(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--goal", "Missing lane"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "No lane provided and no project default lane configured." in result.output
+
+
+def test_work_new_respects_auto_scope_template_setting(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    settings_result = runner.invoke(
+        app,
+        ["project", "settings-set", "--project", "sample", "--default-lane", "low-risk-ui-maintenance", "--no-auto-scope-template"],
+        terminal_width=240,
+    )
+    assert settings_result.exit_code == 0, settings_result.output
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--goal", "No automatic template"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run_id = _only_work_run(workspace)
+    assert "Scope template: skipped by project settings" in result.output
+    assert not (_package_root(workspace, run_id) / "scope-template.md").exists()
+
+
+def test_work_new_uses_project_default_validation_command_when_lane_default_missing(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch, include_validation_command=False)
+    settings_result = runner.invoke(
+        app,
+        [
+            "project",
+            "settings-set",
+            "--project",
+            "sample",
+            "--default-lane",
+            "low-risk-ui-maintenance",
+            "--default-validation-command",
+            "custom-build-command",
+        ],
+        terminal_width=240,
+    )
+    assert settings_result.exit_code == 0, settings_result.output
+    assert "no validation registry exists yet" in settings_result.output
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--goal", "Use default validation"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run_id = _only_work_run(workspace)
+    package = load_work_package("sample", run_id, workspace_root=workspace)
+    assert package.validation_commands == ["custom-build-command"]
+    assert "custom-build-command" in (_package_root(workspace, run_id) / "scope-template.md").read_text(encoding="utf-8")
+
+
 def test_work_new_print_resume_outputs_operator_plan(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
 

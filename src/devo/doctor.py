@@ -11,11 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import list_backup_inventory
 from .git_delivery import get_git_repository_status
+from .project_settings import load_project_settings, project_settings_path
 from .projects import get_workspace_root
 from .scanner import load_registered_project
 from .validation_registry import list_validation_commands, registry_path
 from .validation_runner import list_validation_history
 from .work_history import list_work_package_summaries
+from .work_packages import get_lane
 
 DEFAULT_BACKUP_ROOT = Path(r"G:\My Drive\Projects\Dev Orchestrator")
 SCHEDULED_BACKUP_TASK_NAME = "DevOrchestrator Workspace Backup"
@@ -110,9 +112,11 @@ def _project_checks(project_name: str, workspace_root: Path) -> list[DoctorCheck
     checks.append(DoctorCheck(name="Project registration", status=DoctorStatus.OK, detail=f"{project.name}: {project.path}"))
     project_path = Path(project.path)
     checks.append(_path_check("Project path exists", project_path, expect_dir=True, missing_status=DoctorStatus.FAIL))
+    current_branch: str | None = None
 
     try:
         git_status = get_git_repository_status(project_name, workspace_root=workspace_root)
+        current_branch = git_status.current_branch
         checks.append(
             DoctorCheck(
                 name="Project Git status",
@@ -126,6 +130,8 @@ def _project_checks(project_name: str, workspace_root: Path) -> list[DoctorCheck
         )
     except ValueError as exc:
         checks.append(DoctorCheck(name="Project Git status", status=DoctorStatus.FAIL, detail=str(exc)))
+
+    checks.extend(_project_settings_checks(project_name, workspace_root, current_branch=current_branch))
 
     validation_path = registry_path(project_name, workspace_root=workspace_root)
     try:
@@ -152,6 +158,88 @@ def _project_checks(project_name: str, workspace_root: Path) -> list[DoctorCheck
     checks.extend(_validation_history_checks(project_name, workspace_root))
     checks.extend(_visual_report_checks(project_name, workspace_root))
     return checks
+
+
+def _project_settings_checks(project_name: str, workspace_root: Path, current_branch: str | None) -> list[DoctorCheck]:
+    checks: list[DoctorCheck] = []
+    path: Path
+    try:
+        path = project_settings_path(project_name, workspace_root=workspace_root)
+        settings = load_project_settings(project_name, workspace_root=workspace_root)
+    except ValueError as exc:
+        return [DoctorCheck(name="Project settings", status=DoctorStatus.FAIL, detail=str(exc))]
+
+    checks.append(
+        DoctorCheck(
+            name="Project settings",
+            status=DoctorStatus.OK if path.exists() else DoctorStatus.WARN,
+            detail=str(path) if path.exists() else "No settings.json yet; using built-in defaults only.",
+        )
+    )
+
+    if settings.default_lane:
+        try:
+            lane = get_lane(settings.default_lane)
+        except ValueError:
+            checks.append(
+                DoctorCheck(
+                    name="Default work lane",
+                    status=DoctorStatus.FAIL,
+                    detail=f"Configured default lane is unknown: {settings.default_lane}",
+                )
+            )
+        else:
+            checks.append(DoctorCheck(name="Default work lane", status=DoctorStatus.OK, detail=f"{lane.id}: {lane.name}"))
+    else:
+        checks.append(
+            DoctorCheck(
+                name="Default work lane",
+                status=DoctorStatus.WARN,
+                detail="No default lane configured; devo work new requires --lane.",
+            )
+        )
+
+    checks.extend(_configured_validation_command_checks(project_name, workspace_root, settings.default_validation_command, "Default validation command"))
+    checks.extend(_configured_validation_command_checks(project_name, workspace_root, settings.default_full_test_command, "Default full test command"))
+
+    if settings.default_branch and current_branch:
+        status = DoctorStatus.OK if settings.default_branch == current_branch else DoctorStatus.WARN
+        detail = f"default={settings.default_branch}, current={current_branch}"
+    elif settings.default_branch:
+        status = DoctorStatus.SKIP
+        detail = f"default={settings.default_branch}; current Git branch unavailable."
+    else:
+        status = DoctorStatus.SKIP
+        detail = "No default branch configured."
+    checks.append(DoctorCheck(name="Default branch", status=status, detail=detail))
+    return checks
+
+
+def _configured_validation_command_checks(
+    project_name: str,
+    workspace_root: Path,
+    command_id: str | None,
+    name: str,
+) -> list[DoctorCheck]:
+    if not command_id:
+        return [DoctorCheck(name=name, status=DoctorStatus.SKIP, detail="Not configured.")]
+    path = registry_path(project_name, workspace_root=workspace_root)
+    try:
+        commands = list_validation_commands(project_name, workspace_root=workspace_root)
+    except ValueError as exc:
+        return [DoctorCheck(name=name, status=DoctorStatus.WARN, detail=str(exc))]
+    if not path.exists():
+        return [
+            DoctorCheck(
+                name=name,
+                status=DoctorStatus.WARN,
+                detail=f"{command_id} configured, but validation registry is missing.",
+            )
+        ]
+    command_ids = {command.id for command in commands}
+    if command_id not in command_ids:
+        return [DoctorCheck(name=name, status=DoctorStatus.FAIL, detail=f"Configured command is not registered: {command_id}")]
+    return [DoctorCheck(name=name, status=DoctorStatus.OK, detail=f"{command_id} is registered.")]
 
 
 def _work_package_checks(project_name: str, workspace_root: Path) -> list[DoctorCheck]:

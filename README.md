@@ -52,7 +52,7 @@ devo doctor --project PersonalOS
 
 Without `--project`, doctor checks Devo-level health: workspace folders, optional current selection, Python environment basics, core docs, backup inventory when a backup root is discoverable, and scheduled backup task status when safely checkable on Windows.
 
-With `--project`, doctor also checks project registration, project path, Git status, validation registry, build-command presence, recent work-package counts, latest validation status, and generated visual report presence. Each check reports `OK`, `WARN`, `FAIL`, or `SKIP`, followed by an overall status and one suggested next action.
+With `--project`, doctor also checks project registration, project path, Git status, project workflow settings, validation registry, build-command presence, recent work-package counts, latest validation status, and generated visual report presence. Each check reports `OK`, `WARN`, `FAIL`, or `SKIP`, followed by an overall status and one suggested next action.
 
 ## If Context Is Lost
 
@@ -91,6 +91,16 @@ Register a project:
 ```powershell
 devo project add --name MyProject --path E:\path\to\project
 ```
+
+Set project workflow defaults:
+
+```powershell
+devo project settings-show --project MyProject
+devo project settings-set --project DevOrchestrator --default-lane devo-internal-source --default-branch main
+devo project settings-set --project PersonalOS --default-lane low-risk-ui-maintenance --default-validation-command dotnet-build-personalos --default-branch master
+```
+
+Project settings are Devo workspace metadata. They do not modify the target project. Defaults can store the normal lane, validation command, full-test command, branch, scope-template behavior, delivery mode, and notes for a project.
 
 List registered projects:
 
@@ -385,6 +395,7 @@ Work packages are a lighter-weight path for bounded maintenance batches. They cr
 ```powershell
 devo work lanes
 devo work lane-show --lane low-risk-ui-maintenance
+devo work new --project MyProject --goal "Fix UI warning group"
 devo work new --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
 devo work start --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
 devo work resume --project MyProject --run <runId>
@@ -403,7 +414,7 @@ devo visual project-activity --project MyProject --limit 10
 devo work scope-example --lane low-risk-ui-maintenance
 ```
 
-`devo work new` is the shortest start command. It creates a run, starts a work package in the selected lane, generates `scope-template.md` by default, and prints the `devo work resume` command for the new run. It does not import scope, request approval, edit target project files, run validation, commit, or push.
+`devo work new` is the shortest start command. It creates a run, starts a work package in the selected lane, generates `scope-template.md` by default, and prints the `devo work resume` command for the new run. If `--lane` is omitted, Devo uses the project's configured `default_lane`; if neither exists, it fails clearly. `--no-template` skips template generation, and `--template` can force template generation when project settings disable automatic templates. It does not import scope, request approval, edit target project files, run validation, commit, or push.
 
 `devo work scope-template` writes `scope-template.md` under the work-package artifacts folder with the required import sections plus lane-specific allowed/forbidden defaults. Codex or a human fills the template, then `devo work import-scope` imports it. `devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
 

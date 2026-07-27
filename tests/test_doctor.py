@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -77,6 +78,74 @@ def test_project_doctor_handles_missing_validation_registry(tmp_path: Path, monk
     assert "WARN Validation registry" in result.output
     assert "0 command(s)" in result.output
     assert "Overall status:" in result.output
+
+
+def test_project_doctor_warns_when_default_lane_missing(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _quiet_optional_checks(monkeypatch, tmp_path)
+
+    result = runner.invoke(app, ["doctor", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "WARN Default work lane" in result.output
+    assert "No default lane configured" in result.output
+
+
+def test_project_doctor_reports_ok_when_default_lane_valid(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _quiet_optional_checks(monkeypatch, tmp_path)
+    (workspace / "projects" / "sample" / "settings.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "project_name": "sample",
+                "default_lane": "docs-only",
+                "allow_auto_scope_template": True,
+                "delivery_mode": "manual_commit_push",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "OK   Project settings" in result.output
+    assert "OK   Default work lane" in result.output
+    assert "docs-only" in result.output
+
+
+def test_project_doctor_reports_invalid_configured_validation_command(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _quiet_optional_checks(monkeypatch, tmp_path)
+    add_validation_command(
+        "sample",
+        "known-command",
+        "Known",
+        "git diff --check",
+        "lint",
+        workspace_root=workspace,
+    )
+    (workspace / "projects" / "sample" / "settings.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "project_name": "sample",
+                "default_lane": "docs-only",
+                "default_validation_command": "missing-command",
+                "allow_auto_scope_template": True,
+                "delivery_mode": "manual_commit_push",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["doctor", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "FAIL Default validation command" in result.output
+    assert "Configured command is not registered: missing-command" in result.output
+    assert "Overall status: FAIL" in result.output
 
 
 def test_doctor_reports_incomplete_backup_folders_as_warn(tmp_path: Path, monkeypatch) -> None:

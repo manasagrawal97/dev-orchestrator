@@ -56,6 +56,7 @@ from .reports import (
     write_report_artifacts,
 )
 from .projects import get_workspace_root, list_projects, register_project
+from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
 from .policy import (
     PolicyCheckResult,
     PolicyClassification,
@@ -170,6 +171,19 @@ def _print_doctor_report(report: DoctorReport) -> None:
         console.print(f"{check.status.value:<4} {check.name}: {check.detail}", soft_wrap=True)
     console.print(f"Overall status: {report.overall_status.value}")
     console.print(f"Suggested next action: {report.suggested_next_action}", soft_wrap=True)
+
+
+def _print_project_settings(settings: ProjectSettings, path: Path) -> None:
+    console.print(f"[bold]Project settings: {settings.project_name}[/bold]")
+    console.print(f"  Path: {_named_path(path)}")
+    console.print(f"  Default lane: {settings.default_lane or 'none'}")
+    console.print(f"  Default validation command: {settings.default_validation_command or 'none'}")
+    console.print(f"  Default full test command: {settings.default_full_test_command or 'none'}")
+    console.print(f"  Default branch: {settings.default_branch or 'none'}")
+    console.print(f"  Auto scope template: {settings.allow_auto_scope_template}")
+    console.print(f"  Delivery mode: {settings.delivery_mode.value}")
+    console.print(f"  Notes: {settings.notes or 'none'}", soft_wrap=True)
+    console.print(f"  Updated at: {settings.updated_at.isoformat()}")
 
 
 @app.command("doctor")
@@ -694,6 +708,60 @@ def list_registered_projects() -> None:
         console.print(f"  Path: {project.path}", soft_wrap=True)
         console.print(f"  Looks like software project: {project.looks_like_software_project}")
         console.print(f"  Markers: {marker_text}")
+
+
+@project_app.command("settings-show")
+def show_project_settings(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+) -> None:
+    """Show workflow defaults for a registered project."""
+    try:
+        settings = load_project_settings(project_name)
+        path = project_settings_path(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_project_settings(settings, path)
+
+
+@project_app.command("settings-set")
+def set_project_settings(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    default_lane: str | None = typer.Option(None, "--default-lane", help="Default work lane for devo work new."),
+    default_validation_command: str | None = typer.Option(None, "--default-validation-command", help="Default validation command ID."),
+    default_full_test_command: str | None = typer.Option(None, "--default-full-test-command", help="Default full test command ID."),
+    default_branch: str | None = typer.Option(None, "--default-branch", help="Expected delivery branch."),
+    allow_auto_scope_template: bool | None = typer.Option(
+        None,
+        "--allow-auto-scope-template/--no-auto-scope-template",
+        help="Enable or disable automatic scope-template generation in devo work new.",
+    ),
+    delivery_mode: str | None = typer.Option(None, "--delivery-mode", help="Delivery mode: manual_commit_push or approved_commit_push."),
+    notes: str | None = typer.Option(None, "--notes", help="Free-form project workflow note."),
+) -> None:
+    """Set workflow defaults for a registered project."""
+    if default_lane is not None:
+        try:
+            get_lane(default_lane)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--default-lane") from exc
+    try:
+        result = update_project_settings(
+            project_name,
+            default_lane=default_lane,
+            default_validation_command=default_validation_command,
+            default_full_test_command=default_full_test_command,
+            default_branch=default_branch,
+            allow_auto_scope_template=allow_auto_scope_template,
+            delivery_mode=delivery_mode,
+            notes=notes,
+        )
+    except ValueError as exc:
+        console.print(str(exc), soft_wrap=True)
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Updated project settings[/green] {project_name}")
+    _print_project_settings(result.settings, result.path)
+    for warning in result.warnings:
+        console.print(f"[yellow]Warning:[/yellow] {warning}", soft_wrap=True)
 
 
 @project_app.command("activity")
@@ -1767,28 +1835,40 @@ def show_work_history(
 def new_work(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),
     goal: str = typer.Option(..., "--goal", help="Work package goal."),
-    lane_id: str = typer.Option(..., "--lane", help="Work lane ID."),
+    lane_id: str | None = typer.Option(None, "--lane", help="Work lane ID. Uses project default lane when omitted."),
     no_template: bool = typer.Option(False, "--no-template", help="Skip scope template generation."),
+    force_template: bool = typer.Option(False, "--template", help="Generate a scope template even when project settings disable automatic templates."),
     print_resume: bool = typer.Option(False, "--print-resume", help="Print the full resume guidance after creation."),
 ) -> None:
     """Create a run, draft work package, optional scope template, and resume guidance."""
+    if no_template and force_template:
+        raise typer.BadParameter("Use either --template or --no-template, not both.", param_hint="--template")
     try:
-        package = start_work_package(project_name=project_name, lane_id=lane_id, goal=goal)
+        settings = load_project_settings(project_name)
+        selected_lane = lane_id or settings.default_lane
+        if not selected_lane:
+            raise ValueError("No lane provided and no project default lane configured.")
+        package = start_work_package(project_name=project_name, lane_id=selected_lane, goal=goal)
     except ValueError as exc:
-        hint = "--lane" if "Unknown work lane" in str(exc) else "--project"
+        hint = "--lane" if "lane" in str(exc).lower() else "--project"
+        console.print(str(exc), soft_wrap=True)
         raise typer.BadParameter(str(exc), param_hint=hint) from exc
 
     template_path = None
-    if not no_template:
+    template_skipped_reason = "skipped"
+    should_generate_template = not no_template and (force_template or settings.allow_auto_scope_template)
+    if should_generate_template:
         template = generate_work_scope_template(project_name=project_name, run_id=package.run_id)
         template_path = template.template_path
+    elif not no_template and not settings.allow_auto_scope_template:
+        template_skipped_reason = "skipped by project settings"
     resume = build_work_package_resume(project_name=project_name, run_id=package.run_id)
     next_step = get_work_package_next_step(package)
 
     console.print("[green]Created work package.[/green]")
     console.print(f"Run: {package.run_id}")
     console.print(f"Lane: {package.lane}")
-    console.print(f"Scope template: {_named_path(template_path) if template_path else 'skipped'}")
+    console.print(f"Scope template: {_named_path(template_path) if template_path else template_skipped_reason}")
     console.print(f"Next action: {next_step.next_action}")
     console.print(f"Suggested command: devo work resume --project {project_name} --run {package.run_id}")
     if print_resume:

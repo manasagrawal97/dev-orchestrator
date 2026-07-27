@@ -42,6 +42,7 @@ Current development should improve:
 
 - status and next-action commands
 - work packages and approval bundles
+- project workflow defaults
 - operator prompts and handoff prompts
 - validation and delivery evidence
 - history, activity, generated visual reports, and recovery
@@ -105,6 +106,26 @@ Then the user can say, "Use the warning-cleanup lane," or "Use the docs-only lan
 
 Lanes are guidance and defaults. They do not bypass approval bundles, child approval records, validation command policy checks, or explicit approval for risky work.
 
+### Project Workflow Defaults - MVP Added
+
+Project settings let each registered project remember its normal operating defaults:
+
+- default work lane
+- default validation command
+- default full-test command
+- default branch
+- automatic scope-template behavior
+- delivery mode
+- notes
+
+This lets a routine package start with:
+
+```powershell
+devo work new --project PersonalOS --goal "Prepare a small UI maintenance batch"
+```
+
+instead of repeating the lane and validation assumptions every time. Defaults are Devo workspace metadata and do not modify the target project.
+
 ### Approval Bundles - MVP Added
 
 An approval bundle lets one user approval cover a scoped group of actions:
@@ -153,6 +174,7 @@ Detailed reports should remain available as Devo artifacts, not pasted into ever
 The current MVP command group is:
 
 ```powershell
+devo work new --project PersonalOS --goal "Improve operational UI guidance"
 devo work new --project PersonalOS --lane low-risk-ui-maintenance --goal "Improve operational UI guidance"
 devo work resume --project PersonalOS --run <runId>
 devo work scope-template --project PersonalOS --run <runId>
@@ -161,7 +183,7 @@ devo work request-approval-bundle --project PersonalOS --run <runId> --task T001
 devo approval bundle-approve --project PersonalOS --run <runId> --bundle <bundleId> --by Manas
 ```
 
-Devo should guide the user through the package rather than requiring them to remember every lower-level command. `devo work new` creates the run/package/template in one step, and `devo work resume` reads state and evidence and tells Codex or the user the next safe phase and exact commands.
+Devo should guide the user through the package rather than requiring them to remember every lower-level command. `devo work new` creates the run/package/template in one step, uses a configured project default lane when `--lane` is omitted, and `devo work resume` reads state and evidence and tells Codex or the user the next safe phase and exact commands.
 
 ### Dashboard Or UI
 

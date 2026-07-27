@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from .projects import get_workspace_root
+from .project_settings import load_project_settings
 from .runs import create_run, load_run, run_path, save_run_state
 from .scanner import load_registered_project
 from .schemas import RunArtifact, RunArtifactType, RunStatus, ValidationCommandCategory, ValidationRunRecord
@@ -1036,7 +1037,13 @@ def _normalize_validation_commands(items: list[str]) -> list[str]:
 
 
 def _default_validation_commands(project_name: str, lane: WorkLane, workspace_root: Path) -> list[str]:
-    return _registered_lane_validation_commands(project_name, lane, workspace_root)
+    registered_defaults = _registered_lane_validation_commands(project_name, lane, workspace_root)
+    if registered_defaults:
+        return registered_defaults
+    settings_default = _project_default_validation_command(project_name, workspace_root)
+    if settings_default:
+        return [settings_default]
+    return []
 
 
 def _scope_template_validation_commands(package: WorkPackage, lane: WorkLane, workspace_root: Path) -> list[str]:
@@ -1045,9 +1052,20 @@ def _scope_template_validation_commands(package: WorkPackage, lane: WorkLane, wo
     registered_defaults = _registered_lane_validation_commands(package.project, lane, workspace_root)
     if registered_defaults:
         return registered_defaults
+    settings_default = _project_default_validation_command(package.project, workspace_root)
+    if settings_default:
+        return [settings_default]
     if lane.require_registered_validation_command:
         return ["<validation-command-id>"]
     return lane.default_validation_commands or ["<validation-command-id>"]
+
+
+def _project_default_validation_command(project_name: str, workspace_root: Path) -> str | None:
+    try:
+        settings = load_project_settings(project_name, workspace_root=workspace_root)
+    except ValueError:
+        return None
+    return settings.default_validation_command
 
 
 def _registered_lane_validation_commands(project_name: str, lane: WorkLane, workspace_root: Path) -> list[str]:
