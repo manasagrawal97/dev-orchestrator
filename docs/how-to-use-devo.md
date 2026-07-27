@@ -235,6 +235,36 @@ devo doctor --project <name> --json
 
 The read models summarize projects, runs, and work packages with UI-friendly fields such as onboarding status, doctor status, settings, Git status, validation registry, recent work packages, approval/validation/delivery state, next phase, next command, and stop conditions. Future UI/dashboard work should consume these read models through CLI JSON or a future API, not scrape raw workspace folders directly. The local UI/API plan is documented in [UI/API architecture](ui-architecture.md), and the first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md): read-only dashboard first, controlled actions later, and no bypass around Devo approval/policy checks.
 
+## Local Read-Only API
+
+The future dashboard can consume the same read models through a local-only FastAPI backend:
+
+```powershell
+devo api routes
+devo api serve
+```
+
+Default URL:
+
+```text
+http://127.0.0.1:8765
+```
+
+Useful MVP endpoints:
+
+```text
+GET /api/health
+GET /api/current
+GET /api/projects
+GET /api/projects/{project}/overview
+GET /api/projects/{project}/activity
+GET /api/projects/{project}/doctor
+GET /api/projects/{project}/runs/{run_id}/overview
+GET /api/projects/{project}/runs/{run_id}/work-package
+```
+
+The API is read-only in v1. It does not approve/reject, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs. `devo api serve` blocks non-local hosts for MVP safety.
+
 ## Safety
 
 ```powershell

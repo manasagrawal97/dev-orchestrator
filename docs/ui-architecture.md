@@ -29,7 +29,15 @@ The UI should not scrape raw `workspace/` files directly. It should consume stru
 
 Those read models were added as the bridge between CLI artifacts and future UI/API surfaces.
 
-Recommended future backend:
+Current backend bridge:
+
+- `devo api serve`
+- FastAPI app factory in `src/devo/api.py`
+- default URL `http://127.0.0.1:8765`
+- read-only JSON endpoints over Devo read models
+- non-local hosts blocked for MVP safety
+
+Recommended future backend direction:
 
 - local-only FastAPI server
 - bind to `127.0.0.1` by default
@@ -106,20 +114,19 @@ The browser should be a visibility layer first. Devo remains the control plane, 
 
 ## API Shape Preview
 
-Future read-only API endpoints should return the read models added in TASK-DEVO-063 or thin wrappers around them.
+MVP read-only API endpoints return the read models added in TASK-DEVO-063 or thin wrappers around them.
 
-Candidate endpoints:
+Current endpoints:
 
 ```text
+GET /api/health
+GET /api/current
 GET /api/projects
 GET /api/projects/{project}/overview
 GET /api/projects/{project}/activity
 GET /api/projects/{project}/doctor
-GET /api/projects/{project}/runs/{run}/overview
-GET /api/projects/{project}/runs/{run}/work-package
-GET /api/current
-GET /api/visuals/{project}
-GET /api/visuals/{project}/runs/{run}
+GET /api/projects/{project}/runs/{run_id}/overview
+GET /api/projects/{project}/runs/{run_id}/work-package
 ```
 
 Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
@@ -133,10 +140,10 @@ Phase A: architecture docs
 
 Phase B: local read-only API server
 
-- add a local FastAPI server
-- expose read-model endpoints
+- added a local FastAPI server
+- exposed read-model endpoints
 - bind to `127.0.0.1` by default
-- do not add write endpoints yet
+- no write endpoints
 
 Phase C: frontend scaffold
 

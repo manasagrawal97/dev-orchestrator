@@ -485,6 +485,23 @@ devo doctor --project MyProject --json
 
 These commands are read-only. They prepare Devo for a future dashboard or local API server without building a UI yet. Future UI code should consume read models or API responses, not scrape raw `workspace/` folders directly. The planned local UI/API shape and safety model are documented in [docs/ui-architecture.md](docs/ui-architecture.md), and the first read-only dashboard scope is defined in [docs/ui-mvp-spec.md](docs/ui-mvp-spec.md).
 
+## Local Read-Only API
+
+Devo can serve the same read models through a local-only FastAPI server for future dashboard work:
+
+```powershell
+devo api routes
+devo api serve
+```
+
+The default URL is `http://127.0.0.1:8765`. API v1 is read-only and blocks non-local hosts. It does not run validations, builds, tests, restores, commits, pushes, scheduler changes, target apps, or model/API agents.
+
+Example health endpoint:
+
+```text
+GET http://127.0.0.1:8765/api/health
+```
+
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.

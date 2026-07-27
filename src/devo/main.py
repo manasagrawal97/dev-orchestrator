@@ -149,6 +149,7 @@ workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
 git_app = typer.Typer(help="Inspect Git delivery readiness without mutating repositories.")
 report_app = typer.Typer(help="Generate deterministic project, run, and handoff reports.")
 visual_app = typer.Typer(help="Generate Mermaid visual report artifacts.")
+api_app = typer.Typer(help="Serve the local read-only Devo API.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -166,6 +167,7 @@ app.add_typer(workflow_app, name="workflow")
 app.add_typer(git_app, name="git")
 app.add_typer(report_app, name="report")
 app.add_typer(visual_app, name="visual")
+app.add_typer(api_app, name="api")
 console = Console()
 
 
@@ -229,6 +231,47 @@ def _print_json_model(model: object) -> None:
         typer.echo(model.model_dump_json(indent=2))
         return
     typer.echo(json.dumps(model, indent=2, default=str))
+
+
+@api_app.command("routes")
+def show_api_routes() -> None:
+    """Print available read-only API endpoints."""
+    from .api import API_ROUTES
+
+    console.print("[bold]Devo read-only API routes[/bold]")
+    for route in API_ROUTES:
+        console.print(f"  - {route}")
+
+
+@api_app.command("serve")
+def serve_api(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host. MVP allows only 127.0.0.1 or localhost."),
+    port: int = typer.Option(8765, "--port", min=1, max=65535, help="Bind port."),
+    reload: bool = typer.Option(False, "--reload", help="Enable uvicorn reload for local development."),
+) -> None:
+    """Start the local read-only API server."""
+    from .api import create_app, validate_api_host
+
+    try:
+        bind_host = validate_api_host(host)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]", soft_wrap=True)
+        raise typer.Exit(1) from exc
+
+    try:
+        import uvicorn
+    except ModuleNotFoundError as exc:
+        console.print("[red]uvicorn is not installed. Reinstall Devo dependencies first.[/red]")
+        raise typer.Exit(1) from exc
+
+    url_host = "127.0.0.1" if bind_host == "localhost" else bind_host
+    console.print("[bold]Starting Devo read-only API[/bold]")
+    console.print("Read-only: true")
+    console.print(f"URL: http://{url_host}:{port}")
+    if reload:
+        uvicorn.run("devo.api:create_app", host=bind_host, port=port, reload=True, factory=True)
+        return
+    uvicorn.run(create_app(), host=bind_host, port=port)
 
 
 def _resolve_project(project_name: str | None, *, announce: bool = True) -> str:

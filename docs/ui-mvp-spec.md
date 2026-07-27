@@ -206,6 +206,10 @@ Approval buttons are not part of UI v1. UI v1 may show approval state and copyab
 
 Future endpoints should use the read models from TASK-DEVO-063.
 
+API health:
+
+- `GET /api/health`
+
 Projects page:
 
 - `GET /api/projects`
@@ -233,6 +237,8 @@ Current context:
 - `GET /api/current`
 
 The browser should receive `ProjectOverview`, `RunOverview`, and `WorkPackageOverview` responses rather than parse raw files.
+
+The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. UI v1 should treat it as read-only and must not depend on write/action endpoints.
 
 ## Wireframe-Style Layout
 

@@ -137,6 +137,10 @@ Added `docs/ui-architecture.md` to define the future UI/API architecture before 
 
 Added `docs/ui-mvp-spec.md` to define the first UI before implementation. The MVP is a local read-only dashboard with Projects, Project Overview, Work Package/Run Detail, Activity/History, and Health pages. It defines reusable status and summary components, maps pages to future read-model/API endpoints, includes simple wireframes, allows only read-only actions such as refresh/select/copy/open report paths, and explicitly defers approvals, build/test execution, commit/push, backup restore/delete, scheduler management, target project edits, autonomous agents, and cloud/multi-user scope.
 
+### TASK-DEVO-065B Local Read-Only API Server - Completed
+
+Added `src/devo/api.py` with a FastAPI app factory and local read-only JSON endpoints for health, current context, registered projects, project overview, project activity, doctor, run overview, and work-package overview. Added `devo api serve` with default host `127.0.0.1`, non-local host blocking for MVP safety, and `devo api routes` for endpoint discovery. This is the backend bridge for the future UI and does not add frontend code or write/action endpoints.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

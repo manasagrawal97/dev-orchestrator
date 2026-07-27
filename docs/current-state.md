@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-063 UI-ready read models
+- Latest completed source task: TASK-DEVO-065B local read-only API server
 - Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -80,13 +80,14 @@ The working loop is:
 - TASK-DEVO-063 adds UI-ready read models in `src/devo/read_models.py` for project, run, and work-package overviews, plus JSON output for `devo project overview`, `devo project activity`, `devo work status`, and `devo doctor`. This prepares the future dashboard/API layer without building UI yet.
 - TASK-DEVO-064 adds `docs/ui-architecture.md` to document the local-first UI/API architecture, read-only dashboard v1 scope, controlled-action v2 scope, safety model, API endpoint preview, and phased UI implementation plan before any UI code is written.
 - TASK-DEVO-065A adds `docs/ui-mvp-spec.md` to define the first read-only dashboard pages, reusable components, allowed/forbidden UI v1 actions, future UI v2/v3 actions, approval UI design notes, API/read-model mapping, wireframes, success criteria, and deferred scope.
+- TASK-DEVO-065B adds a local-only FastAPI backend in `src/devo/api.py` plus `devo api serve` and `devo api routes`. The API binds to `127.0.0.1` by default, blocks non-local hosts for MVP, exposes read-only JSON endpoints backed by Devo read models, and does not run validation, build, test, restore, Git delivery, scheduler, target app, or model/API actions.
 
 ## Readiness Estimate
 
 - Practical CLI product maturity after TASK-DEVO-053B: around 75-80% complete.
 - Long-term product vision, including dashboard and direct model adapters: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, expose UI-ready JSON read models, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, expose UI-ready JSON read models and a local read-only API server, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
 The next product step should focus on Devo CLI maturity. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
@@ -152,6 +153,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-063 UI-ready read models
 - TASK-DEVO-064 UI/API architecture and safety model
 - TASK-DEVO-065A UI MVP specification
+- TASK-DEVO-065B local read-only API server
 
 ## Recovery Pointers
 
