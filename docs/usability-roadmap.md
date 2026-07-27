@@ -153,7 +153,7 @@ Detailed reports should remain available as Devo artifacts, not pasted into ever
 The current MVP command group is:
 
 ```powershell
-devo work start --project PersonalOS --lane low-risk-ui-maintenance --goal "Improve operational UI guidance"
+devo work new --project PersonalOS --lane low-risk-ui-maintenance --goal "Improve operational UI guidance"
 devo work resume --project PersonalOS --run <runId>
 devo work scope-template --project PersonalOS --run <runId>
 devo work import-scope --project PersonalOS --run <runId> --file <scopeMarkdownFile>
@@ -161,7 +161,7 @@ devo work request-approval-bundle --project PersonalOS --run <runId> --task T001
 devo approval bundle-approve --project PersonalOS --run <runId> --bundle <bundleId> --by Manas
 ```
 
-Devo should guide the user through the package rather than requiring them to remember every lower-level command. `devo work resume` is the current CLI-first version of that idea: after `work start`, it reads state and evidence and tells Codex or the user the next safe phase and exact commands.
+Devo should guide the user through the package rather than requiring them to remember every lower-level command. `devo work new` creates the run/package/template in one step, and `devo work resume` reads state and evidence and tells Codex or the user the next safe phase and exact commands.
 
 ### Dashboard Or UI
 

@@ -62,6 +62,88 @@ def test_work_start_creates_run_and_draft_artifacts(tmp_path: Path, monkeypatch)
     assert "devo work scope-template" in result.output
 
 
+def test_work_new_creates_run_package_template_and_resume_guidance(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--lane", "low-risk-ui-maintenance", "--goal", "Bootstrap UI work"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run_id = _only_work_run(workspace)
+    package = load_work_package("sample", run_id, workspace_root=workspace)
+    template_path = _package_root(workspace, run_id) / "scope-template.md"
+    assert package.status == WorkPackageStatus.DRAFT
+    assert package.goal == "Bootstrap UI work"
+    assert package.lane == "low-risk-ui-maintenance"
+    assert template_path.exists()
+    assert f"Run: {run_id}" in result.output
+    assert "Lane: low-risk-ui-maintenance" in result.output
+    assert "scope-template.md" in result.output
+    assert "devo work resume --project sample --run" in result.output
+    assert run_id in result.output
+
+
+def test_work_new_print_resume_outputs_operator_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--lane", "docs-only", "--goal", "Bootstrap docs work", "--print-resume"],
+        terminal_width=240,
+    )
+
+    run_id = _only_work_run(workspace)
+    assert result.exit_code == 0, result.output
+    assert "# Work Resume: Bootstrap docs work" in result.output
+    assert "Next phase: scope" in result.output
+    assert "devo work scope-template --project sample --run" in result.output
+    assert run_id in result.output
+
+
+def test_work_new_no_template_skips_template(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--lane", "low-risk-ui-maintenance", "--goal", "No template", "--no-template"],
+        terminal_width=240,
+    )
+
+    run_id = _only_work_run(workspace)
+    assert result.exit_code == 0, result.output
+    assert "Scope template: skipped" in result.output
+    assert not (_package_root(workspace, run_id) / "scope-template.md").exists()
+
+
+def test_work_new_validates_unknown_lane_clearly(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "sample", "--lane", "not-a-lane", "--goal", "Bad lane"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Unknown work lane" in result.output
+
+
+def test_work_new_fails_clearly_for_unknown_project(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DEVO_WORKSPACE", str(tmp_path / "workspace"))
+
+    result = runner.invoke(
+        app,
+        ["work", "new", "--project", "missing", "--lane", "docs-only", "--goal", "Missing project"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Registered project not found: missing" in result.output
+
+
 def test_all_built_in_lanes_load() -> None:
     lanes = {lane.id: lane for lane in list_lanes()}
 
@@ -720,6 +802,7 @@ def test_work_commands_do_not_modify_target_project_files(tmp_path: Path, monkey
     runner.invoke(app, ["work", "prompt", "--project", "sample", "--run", package.run_id, "--phase", "implement"])
     runner.invoke(app, ["work", "list", "--project", "sample"])
     runner.invoke(app, ["work", "history", "--project", "sample"])
+    runner.invoke(app, ["work", "new", "--project", "sample", "--lane", "docs-only", "--goal", "Read-only bootstrap"])
     runner.invoke(app, ["project", "activity", "--project", "sample"])
     complete_work_package("sample", package.run_id, "abc1234", "Delivered", workspace_root=workspace)
 

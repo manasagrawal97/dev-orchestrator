@@ -1763,6 +1763,39 @@ def show_work_history(
     _print_work_summary_list(summaries, f"Work history for {project_name}", include_delivery=True)
 
 
+@work_app.command("new")
+def new_work(
+    project_name: str = typer.Option(..., "--project", help="Registered project name."),
+    goal: str = typer.Option(..., "--goal", help="Work package goal."),
+    lane_id: str = typer.Option(..., "--lane", help="Work lane ID."),
+    no_template: bool = typer.Option(False, "--no-template", help="Skip scope template generation."),
+    print_resume: bool = typer.Option(False, "--print-resume", help="Print the full resume guidance after creation."),
+) -> None:
+    """Create a run, draft work package, optional scope template, and resume guidance."""
+    try:
+        package = start_work_package(project_name=project_name, lane_id=lane_id, goal=goal)
+    except ValueError as exc:
+        hint = "--lane" if "Unknown work lane" in str(exc) else "--project"
+        raise typer.BadParameter(str(exc), param_hint=hint) from exc
+
+    template_path = None
+    if not no_template:
+        template = generate_work_scope_template(project_name=project_name, run_id=package.run_id)
+        template_path = template.template_path
+    resume = build_work_package_resume(project_name=project_name, run_id=package.run_id)
+    next_step = get_work_package_next_step(package)
+
+    console.print("[green]Created work package.[/green]")
+    console.print(f"Run: {package.run_id}")
+    console.print(f"Lane: {package.lane}")
+    console.print(f"Scope template: {_named_path(template_path) if template_path else 'skipped'}")
+    console.print(f"Next action: {next_step.next_action}")
+    console.print(f"Suggested command: devo work resume --project {project_name} --run {package.run_id}")
+    if print_resume:
+        console.print("")
+        console.print(resume.resume_text)
+
+
 @work_app.command("start")
 def start_work(
     project_name: str = typer.Option(..., "--project", help="Registered project name."),

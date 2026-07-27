@@ -109,6 +109,10 @@ Added built-in lanes for `docs-only`, `warning-cleanup`, `small-bugfix`, `small-
 
 Added `devo work resume --project <project> --run <runId>` as the compact continuation command for work packages. Resume reads package state, lane, imported scope, approval bundle status, latest validation evidence, and latest Git delivery evidence, then prints the next phase, recommended commands, Codex operator instructions, stop conditions, and final report expectations. The simplified package loop is now `work start -> work resume`, with resume guiding scope, approval, implementation, validation, delivery, and completion phases.
 
+### TASK-DEVO-059 One-Command Work Bootstrap - Completed
+
+Added `devo work new --project <project> --goal "<goal>" --lane <lane>` to create the run, start the work package, generate `scope-template.md` by default, and print the resume command in one flow. The simplified start path is now `work new -> fill scope template -> import-scope -> request approval bundle -> work resume`, while lower-level `run create`, `work start`, and `scope-template` remain available for manual control.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

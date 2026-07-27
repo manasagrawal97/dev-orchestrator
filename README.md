@@ -385,6 +385,7 @@ Work packages are a lighter-weight path for bounded maintenance batches. They cr
 ```powershell
 devo work lanes
 devo work lane-show --lane low-risk-ui-maintenance
+devo work new --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
 devo work start --project MyProject --lane low-risk-ui-maintenance --goal "Fix UI warning group"
 devo work resume --project MyProject --run <runId>
 devo work scope-template --project MyProject --run <runId>
@@ -401,6 +402,8 @@ devo visual work-package --project MyProject --run <runId>
 devo visual project-activity --project MyProject --limit 10
 devo work scope-example --lane low-risk-ui-maintenance
 ```
+
+`devo work new` is the shortest start command. It creates a run, starts a work package in the selected lane, generates `scope-template.md` by default, and prints the `devo work resume` command for the new run. It does not import scope, request approval, edit target project files, run validation, commit, or push.
 
 `devo work scope-template` writes `scope-template.md` under the work-package artifacts folder with the required import sections plus lane-specific allowed/forbidden defaults. Codex or a human fills the template, then `devo work import-scope` imports it. `devo work import-scope` expects Markdown sections for selected items, exact files, allowed changes, forbidden changes, validation command, and delivery plan. It writes a deterministic `tasks.md` for `T001` so the normal policy and approval system remains in charge.
 
@@ -433,13 +436,13 @@ Exact `target_command` approval remains supported for maximum precision. Bundled
 After implementation, registered validation, commit, and push, run `devo work complete` to mark the package delivered. Completion stores the commit hash, delivery summary, latest validation run id/status when available, approval bundle status, final Git delivery status when available, and delivered timestamp. `devo work status` then shows the compact final state, next action, and suggested next command. The intended low-risk package loop is:
 
 ```text
-work start -> work resume
+work new -> work resume
 ```
 
 `work resume` then guides the detailed loop:
 
 ```text
-scope-template -> fill scope -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
+fill scope template -> import scope -> request approval bundle -> bundle approve -> prompt/implement -> prompt/validate -> prompt/deliver -> work complete -> final report
 ```
 
 For recent activity, `devo work list` shows compact open and recent work-package state, including approval bundle status, latest validation status, delivered commit, and next action. `devo work history` puts delivered/closed packages first and includes the delivery summary. `devo project activity` combines recent runs, delivered packages, latest validation runs, recent context/report artifacts, current Git delivery status, and a suggested next action.
