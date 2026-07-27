@@ -117,6 +117,10 @@ Added `devo work new --project <project> --goal "<goal>" --lane <lane>` to creat
 
 Added `devo project settings-show` and `devo project settings-set` so each registered project can store workflow defaults in Devo workspace metadata. Settings include default lane, default validation command, default full-test command, default branch, automatic scope-template behavior, delivery mode, and notes. `devo work new` now allows `--lane` to be omitted when `default_lane` is configured, and `devo doctor --project` checks settings readability, default lane validity, configured validation command IDs, and default branch mismatch when Git branch information is available.
 
+### TASK-DEVO-061 Guided Project Onboarding - Completed
+
+Added `devo project onboard --project <project>` as a read-only setup/status checklist. It reports registration, project path, scan, context status, validation registry, project settings, doctor summary, onboarding overall status, and the next setup command. `--suggest-settings` prints a suggested settings command without writing it, and `--write-suggestions` writes `workspace/projects/<project>/reports/onboarding-report.md` without modifying the target project. This reduces setup friction before `devo work new`.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

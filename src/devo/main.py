@@ -56,6 +56,7 @@ from .reports import (
     write_report_artifacts,
 )
 from .projects import get_workspace_root, list_projects, register_project
+from .project_onboarding import ProjectOnboardingReport, build_project_onboarding_report
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
 from .policy import (
     PolicyCheckResult,
@@ -184,6 +185,22 @@ def _print_project_settings(settings: ProjectSettings, path: Path) -> None:
     console.print(f"  Delivery mode: {settings.delivery_mode.value}")
     console.print(f"  Notes: {settings.notes or 'none'}", soft_wrap=True)
     console.print(f"  Updated at: {settings.updated_at.isoformat()}")
+
+
+def _print_project_onboarding(report: ProjectOnboardingReport) -> None:
+    console.print(f"[bold]Project onboarding: {report.project_name}[/bold]")
+    console.print(f"Onboarding overall status: {report.overall_status.value}")
+    console.print("Checklist:")
+    for check in report.checks:
+        console.print(f"  {check.status.value:<4} {check.name}: {check.detail}", soft_wrap=True)
+    if report.suggested_settings:
+        console.print("Suggested settings:")
+        console.print(f"  {report.suggested_settings.command}", soft_wrap=True)
+        for note in report.suggested_settings.notes:
+            console.print(f"  Note: {note}", soft_wrap=True)
+    console.print(f"Suggested next command: {report.suggested_next_command}", soft_wrap=True)
+    if report.report_path:
+        console.print(f"Report: {_named_path(report.report_path)}")
 
 
 @app.command("doctor")
@@ -708,6 +725,21 @@ def list_registered_projects() -> None:
         console.print(f"  Path: {project.path}", soft_wrap=True)
         console.print(f"  Looks like software project: {project.looks_like_software_project}")
         console.print(f"  Markers: {marker_text}")
+
+
+@project_app.command("onboard")
+def onboard_project(
+    project_name: str = typer.Option(..., "--project", help="Registered project name to inspect."),
+    write_suggestions: bool = typer.Option(False, "--write-suggestions", help="Write workspace onboarding report Markdown."),
+    suggest_settings: bool = typer.Option(False, "--suggest-settings", help="Print suggested project settings without writing them."),
+) -> None:
+    """Show read-only project onboarding progress and the next setup action."""
+    report = build_project_onboarding_report(
+        project_name,
+        include_suggested_settings=suggest_settings,
+        write_suggestions=write_suggestions,
+    )
+    _print_project_onboarding(report)
 
 
 @project_app.command("settings-show")

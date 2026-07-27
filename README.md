@@ -37,7 +37,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 
 ## How To Use Devo Day To Day
 
-Start with `devo doctor` to check Devo health, or `devo doctor --project <name>` to include one registered project. Then use `devo report project --project <name>` or `devo report handoff --project <name>` to recover current state. Use `devo workflow status --project <name> --run <runId>` and `devo workflow next --project <name> --run <runId>` to find the next safe step. Let a human or coding agent perform implementation, then record evidence with Devo validation, review, delivery, context refresh, and handoff commands.
+Start with `devo doctor` to check Devo health, or `devo doctor --project <name>` to include one registered project. For setup, use `devo project onboard --project <name>` to see registration, scan, context, validation, settings, doctor, and the next setup command in one checklist. Then use `devo report project --project <name>` or `devo report handoff --project <name>` to recover current state. Use `devo workflow status --project <name> --run <runId>` and `devo workflow next --project <name> --run <runId>` to find the next safe step. Let a human or coding agent perform implementation, then record evidence with Devo validation, review, delivery, context refresh, and handoff commands.
 
 Devo keeps the workflow honest and recoverable; it does not call AI, implement code by itself, or bypass external security policy.
 
@@ -95,10 +95,15 @@ devo project add --name MyProject --path E:\path\to\project
 Set project workflow defaults:
 
 ```powershell
+devo project onboard --project MyProject
+devo project onboard --project MyProject --suggest-settings
+devo project onboard --project MyProject --write-suggestions
 devo project settings-show --project MyProject
 devo project settings-set --project DevOrchestrator --default-lane devo-internal-source --default-branch main
 devo project settings-set --project PersonalOS --default-lane low-risk-ui-maintenance --default-validation-command dotnet-build-personalos --default-branch master
 ```
+
+`devo project onboard` is read-only by default. `--write-suggestions` writes `workspace/projects/<project>/reports/onboarding-report.md`; it still does not modify the target project. `--suggest-settings` prints a suggested `settings-set` command but does not write settings.
 
 Project settings are Devo workspace metadata. They do not modify the target project. Defaults can store the normal lane, validation command, full-test command, branch, scope-template behavior, delivery mode, and notes for a project.
 

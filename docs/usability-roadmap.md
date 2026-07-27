@@ -41,6 +41,7 @@ Devo should mature as a CLI-first, local-first product before UI or direct agent
 Current development should improve:
 
 - status and next-action commands
+- guided project onboarding
 - work packages and approval bundles
 - project workflow defaults
 - operator prompts and handoff prompts
@@ -125,6 +126,17 @@ devo work new --project PersonalOS --goal "Prepare a small UI maintenance batch"
 ```
 
 instead of repeating the lane and validation assumptions every time. Defaults are Devo workspace metadata and do not modify the target project.
+
+### Guided Project Onboarding - MVP Added
+
+Project setup now has a single read-only checklist:
+
+```powershell
+devo project onboard --project PersonalOS
+devo project onboard --project PersonalOS --suggest-settings
+```
+
+The command summarizes registration, path, scan, context approval, validation registry, project settings, doctor status, and the next setup action. It helps a user get from "registered project" to "ready for `work new`" without remembering every setup command. Settings still require an explicit `devo project settings-set` command; onboarding does not mutate target project files.
 
 ### Approval Bundles - MVP Added
 

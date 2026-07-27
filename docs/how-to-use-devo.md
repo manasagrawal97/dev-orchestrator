@@ -72,6 +72,7 @@ flowchart LR
 
 ```powershell
 devo project add --name <name> --path <path>
+devo project onboard --project <name>
 devo project scan <name>
 devo project context-status <name>
 devo project settings-show --project <name>
@@ -98,6 +99,8 @@ devo report handoff --project <name>
 devo workflow resume --project <name>  # planned future command, not implemented yet
 ```
 
+`devo project onboard --project <name>` is the compact setup checklist. It is read-only by default and reports registration, project path, scan, context approval, validation registry, project settings, doctor status, and the next setup command. Use `--suggest-settings` to print a suggested `settings-set` command without writing it. Use `--write-suggestions` to write `workspace/projects/<project>/reports/onboarding-report.md`; this still does not modify the target project.
+
 `devo project settings-set` stores project workflow defaults in Devo workspace metadata, not in the target repo. Useful defaults include `default_lane`, `default_validation_command`, `default_full_test_command`, `default_branch`, automatic scope-template behavior, delivery mode, and notes.
 
 Examples:
@@ -109,7 +112,7 @@ devo project settings-set --project PersonalOS --default-lane low-risk-ui-mainte
 
 `devo doctor` checks Devo-level health. `devo doctor --project <name>` also checks the registered project path, Git status, project settings, validation registry, recent work packages, latest validation, generated visuals, and backup health where available. Doctor is read-only: it does not run build/test, backup/restore, app commands, migrations, scheduler updates, or external APIs.
 
-Until `devo workflow resume` exists, use doctor plus project/handoff reports and `devo workflow status` for any known active run.
+For project setup, use `devo project onboard --project <name>` before `work new`. Until `devo workflow resume` exists, use doctor plus project/handoff reports and `devo workflow status` for any known active run.
 
 ## Run Work
 

@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-060 project workflow settings
+- Latest completed source task: TASK-DEVO-061 guided project onboarding
 - Latest docs task: TASK-DEVO-054A clarifies the CLI-first, local-first Devo roadmap and positions PersonalOS as a Devo validation target.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -75,13 +75,14 @@ The working loop is:
 - TASK-DEVO-058 adds `devo work resume --project <project> --run <runId>` to generate a compact read-only operator plan from work-package state, lane rules, imported scope, approval bundle status, latest validation, latest Git delivery evidence, recommended next commands, stop conditions, and final report expectations.
 - TASK-DEVO-059 adds `devo work new --project <project> --goal "<goal>" --lane <lane>` to create a run, start a work package, generate a scope template by default, and print resume guidance in one read-only bootstrap flow.
 - TASK-DEVO-060 adds project workflow settings with `devo project settings-show` and `devo project settings-set`. Settings can store default lane, validation command, full-test command, branch, automatic scope-template behavior, delivery mode, and notes. `devo work new` can now omit `--lane` when a project default lane is configured, and `devo doctor --project` checks settings health.
+- TASK-DEVO-061 adds `devo project onboard --project <project>` as a read-only setup checklist covering registration, path, scan, context, validation registry, project settings, doctor status, overall onboarding status, and the next setup command. Optional flags can print suggested settings or write a workspace-only onboarding report without modifying the target project.
 
 ## Readiness Estimate
 
 - Practical CLI product maturity after TASK-DEVO-053B: around 75-80% complete.
 - Long-term product vision, including dashboard and direct model adapters: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor health checks, store project workflow defaults, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
 The next product step should focus on Devo CLI maturity. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
@@ -142,6 +143,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-058 work resume guidance
 - TASK-DEVO-059 one-command work bootstrap
 - TASK-DEVO-060 project workflow settings
+- TASK-DEVO-061 guided project onboarding
 
 ## Recovery Pointers
 
