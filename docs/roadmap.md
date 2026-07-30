@@ -157,6 +157,10 @@ Polished the read-only dashboard with calmer visual spacing, more readable secti
 
 Added opt-in `include_timing=true` JSON timing metadata for project overview, doctor, and activity endpoints while keeping default responses unchanged. Bounded optional doctor scheduled-task checks, added a timeout for non-mutating Git reads, removed a duplicate doctor call from project overview onboarding status, and reused loaded run/validation data during activity summary generation. Persistent DB/SQLite caching was not added; a future workspace JSON snapshot cache can be considered only if profiling shows it is still needed.
 
+### TASK-DEVO-070 UI Launch And Status Helpers - Completed
+
+Added `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open` for safer local dashboard ergonomics. The helpers print local URLs, manual start commands, read-only safety notes, short-timeout reachability checks, and browser-open guidance. They do not start servers, stop processes, mutate workspace state, run validations/builds/tests, or add dashboard write actions. Start/stop scripts are deferred until process matching can be made narrow and boring.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

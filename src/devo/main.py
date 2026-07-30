@@ -103,6 +103,7 @@ from .runs import (
 )
 from .scanner import load_registered_project, scan_registered_project
 from .task_selector import DEFAULT_STRATEGY, TaskSelection, list_task_candidates, select_next_task
+from .ui_helpers import check_ui_status, open_ui_if_reachable, ui_urls
 from .validation_registry import (
     add_validation_command,
     check_validation_command,
@@ -150,6 +151,7 @@ git_app = typer.Typer(help="Inspect Git delivery readiness without mutating repo
 report_app = typer.Typer(help="Generate deterministic project, run, and handoff reports.")
 visual_app = typer.Typer(help="Generate Mermaid visual report artifacts.")
 api_app = typer.Typer(help="Serve the local read-only Devo API.")
+ui_app = typer.Typer(help="Inspect and open the local read-only Devo UI.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -168,6 +170,7 @@ app.add_typer(git_app, name="git")
 app.add_typer(report_app, name="report")
 app.add_typer(visual_app, name="visual")
 app.add_typer(api_app, name="api")
+app.add_typer(ui_app, name="ui")
 console = Console()
 
 
@@ -272,6 +275,52 @@ def serve_api(
         uvicorn.run("devo.api:create_app", host=bind_host, port=port, reload=True, factory=True)
         return
     uvicorn.run(create_app(), host=bind_host, port=port)
+
+
+@ui_app.command("info")
+def show_ui_info() -> None:
+    """Print local Devo UI/API URLs and manual start commands."""
+    urls = ui_urls()
+    console.print("[bold]Devo UI[/bold]")
+    console.print(f"API: {urls['api']}")
+    console.print(f"API health: {urls['api_health']}")
+    console.print(f"UI: {urls['ui']}")
+    console.print("")
+    console.print("Start commands:")
+    console.print("  devo api serve")
+    console.print("  cd ui")
+    console.print("  npm run dev")
+    console.print("")
+    console.print("UI v1 is read-only.")
+    console.print("No approval, build, test, commit, push, restore, scheduler, target app, or model-agent actions exist in UI v1.")
+
+
+@ui_app.command("urls")
+def show_ui_urls() -> None:
+    """Print only local Devo UI/API URLs."""
+    urls = ui_urls()
+    console.print(f"API: {urls['api']}")
+    console.print(f"UI: {urls['ui']}")
+
+
+@ui_app.command("status")
+def show_ui_status() -> None:
+    """Check whether the local API and UI dev server are reachable without starting them."""
+    console.print("[bold]Devo UI status[/bold]")
+    for endpoint in check_ui_status():
+        console.print(f"{endpoint.status:<4} {endpoint.name}: {endpoint.url} - {endpoint.detail}", soft_wrap=True)
+    console.print("Read-only: true")
+    console.print("This command does not start servers or mutate workspace state.")
+
+
+@ui_app.command("open")
+def open_ui() -> None:
+    """Open the local read-only UI if the UI dev server is already reachable."""
+    opened, message = open_ui_if_reachable()
+    if not opened:
+        console.print(f"[yellow]{message}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1)
+    console.print(message)
 
 
 def _resolve_project(project_name: str | None, *, announce: bool = True) -> str:

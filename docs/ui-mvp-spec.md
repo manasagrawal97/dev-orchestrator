@@ -145,6 +145,8 @@ Allowed read-only actions:
 - open or copy artifact/report path
 - view generated visual reports
 - view JSON/read-model data when useful
+- check UI/API reachability from the CLI with `devo ui status`
+- open the already-running local dashboard with `devo ui open`
 
 These actions do not mutate Devo state, target projects, Git, backups, scheduler configuration, or approval records.
 
@@ -247,6 +249,8 @@ The browser should receive `ProjectOverview`, `RunOverview`, and `WorkPackageOve
 The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. UI v1 should treat it as read-only and must not depend on write/action endpoints.
 
 The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, and Health pages. UI v1 remains read-only and exposes only selection/navigation, optional JSON details, report/path viewing where available, and copyable CLI commands. The dashboard distinguishes selected dashboard project/run from saved CLI current context so the user can inspect one project without accidentally implying that `devo use` has changed.
+
+Use `devo ui info` for local URLs and start commands, `devo ui status` to check whether the API/UI are reachable, and `devo ui open` to open the already-running UI. These helpers do not start servers automatically and do not add write actions.
 
 ## Wireframe-Style Layout
 

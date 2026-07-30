@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-069 read-model/API performance profiling
+- Latest completed source task: TASK-DEVO-070 UI launch/status helpers
 - Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -85,6 +85,7 @@ The working loop is:
 - TASK-DEVO-067 turns the scaffold into a useful read-only dashboard MVP. Projects, Project Overview, Work Package, Activity, and Health pages consume the local API/read models; the UI shows current context, project summaries, settings, Git, validation, backup, recent runs/work packages, lifecycle state, doctor checks, stop conditions, suggested next actions, optional JSON views, and copyable CLI commands only.
 - TASK-DEVO-068 polishes the read-only dashboard layout and loading behavior. It removes the "Local-first control room" wording from visible UI, separates dashboard project selection from saved CLI current context, adds section-level slow-loading hints for overview/doctor/activity-backed views, reduces Activity path noise, improves the missing work-package empty state with safe CLI commands, and keeps UI v1 free of approval/build/test/commit/push/restore/scheduler/model actions. Read-model snapshot caching and deeper endpoint profiling remain deferred.
 - TASK-DEVO-069 adds opt-in API timing breakdowns with `include_timing=true`, bounds slow optional doctor scheduled-task checks, adds a Git read timeout for non-mutating Git status calls, removes duplicate doctor work from project overview onboarding status, and reuses loaded run/validation data while building activity summaries. No DB/SQLite cache was added; persistent workspace JSON snapshot caching remains a future option if read-model performance still needs it.
+- TASK-DEVO-070 adds read-only UI helper commands: `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open`. These commands print local API/UI URLs, show manual start commands, check API/UI reachability with short timeouts, and open the UI only if it is already reachable. They do not start servers, mutate workspace state, run target commands, or add UI write actions.
 
 ## Readiness Estimate
 
@@ -160,6 +161,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-065B local read-only API server
 - TASK-DEVO-066 React/Vite UI scaffold
 - TASK-DEVO-067 read-only dashboard MVP
+- TASK-DEVO-070 UI launch/status helpers
 
 ## Recovery Pointers
 

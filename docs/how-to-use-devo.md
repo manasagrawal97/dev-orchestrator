@@ -277,7 +277,28 @@ The `_timing` object is omitted by default. This timing support is read-only and
 
 ## React UI Scaffold
 
-The first frontend scaffold is under `ui/`. It is read-only and uses the local API.
+The read-only dashboard is under `ui/` and uses the local API.
+
+Show URLs and start guidance:
+
+```powershell
+devo ui info
+devo ui urls
+```
+
+Check whether the local API/UI are already running:
+
+```powershell
+devo ui status
+```
+
+Open the UI in the default browser when the UI dev server is reachable:
+
+```powershell
+devo ui open
+```
+
+The UI helpers are read-only. They do not start servers, stop processes, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs.
 
 Start the API:
 

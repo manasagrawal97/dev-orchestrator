@@ -63,6 +63,7 @@ Current frontend bridge:
 - default API base `http://127.0.0.1:8765`
 - override API base with `VITE_DEVO_API_BASE`
 - read-only dashboard MVP with Projects, Project Overview, Work Package, Activity, and Health pages
+- helper commands: `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open`
 
 ## UI v1: Read-Only Dashboard
 
@@ -112,6 +113,7 @@ The UI must stay local-first.
 Safety rules:
 
 - bind local services to `127.0.0.1` by default
+- keep UI launch helpers local-only and read-only
 - do not bypass CLI approval checks
 - require explicit confirmation and Devo approval records for dangerous actions
 - call a Devo service/read-model layer instead of mutating workspace files directly
@@ -167,6 +169,7 @@ Phase D: read-only dashboard MVP
 
 - expanded the scaffold to show projects, current context, doctor, activity, work package lifecycle, validation, Git, backup, recent work, and copyable CLI commands
 - polished dashboard layout, section-level loading, quieter activity evidence, and dashboard-selection versus CLI-context labels
+- added helper commands for info/status/open without automatic server start or process stop
 - follow the page and component scope in `docs/ui-mvp-spec.md`
 
 Phase E: visual diagrams and activity timeline

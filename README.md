@@ -516,6 +516,17 @@ GET http://127.0.0.1:8765/api/health
 
 The read-only dashboard lives under `ui/`. It consumes the local API.
 
+UI helper commands:
+
+```powershell
+devo ui info
+devo ui urls
+devo ui status
+devo ui open
+```
+
+`devo ui status` checks whether the local API and UI dev server are reachable without starting them. `devo ui open` opens `http://127.0.0.1:5173` only when the UI is already reachable; otherwise it prints the manual start commands.
+
 Start the backend:
 
 ```powershell
