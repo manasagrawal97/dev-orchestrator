@@ -153,6 +153,10 @@ Expanded the React/Vite scaffold into a useful read-only dashboard. Projects, Pr
 
 Polished the read-only dashboard with calmer visual spacing, more readable section hierarchy, section-level loading hints for slow overview/doctor/activity-backed views, clearer dashboard selection versus CLI current context labels, quieter Activity report/context lists, and a better missing work-package empty state with safe CLI commands. The API now emits an `X-Devo-Elapsed-Ms` response header for lightweight endpoint timing during future profiling. DB-backed read-model caching and snapshot caching are intentionally deferred.
 
+### TASK-DEVO-069 Read-Model/API Performance Profiling - Completed
+
+Added opt-in `include_timing=true` JSON timing metadata for project overview, doctor, and activity endpoints while keeping default responses unchanged. Bounded optional doctor scheduled-task checks, added a timeout for non-mutating Git reads, removed a duplicate doctor call from project overview onboarding status, and reused loaded run/validation data during activity summary generation. Persistent DB/SQLite caching was not added; a future workspace JSON snapshot cache can be considered only if profiling shows it is still needed.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

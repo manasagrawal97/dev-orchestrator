@@ -37,6 +37,7 @@ Current backend bridge:
 - read-only JSON endpoints over Devo read models
 - non-local hosts blocked for MVP safety
 - lightweight `X-Devo-Elapsed-Ms` response header for spotting slow read-model endpoints
+- opt-in `include_timing=true` JSON timing breakdowns for overview, doctor, and activity endpoints
 
 Recommended future backend direction:
 
@@ -140,7 +141,7 @@ GET /api/projects/{project}/runs/{run_id}/work-package
 
 Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
 
-Some read models can be slower because they aggregate doctor checks, Git status, backup inventory or scheduled-task checks, activity scanning, and overview summaries. UI v1 should handle that with section-level loading states and slow-check hints. Read-model snapshot caching or DB-backed caching is deferred until the slow paths are profiled more deliberately.
+Some read models can be slower because they aggregate doctor checks, Git status, backup inventory or scheduled-task checks, activity scanning, and overview summaries. UI v1 should handle that with section-level loading states and slow-check hints. TASK-DEVO-069 added timing breakdowns and request-local duplicate-work reductions before any persistent cache. Read-model snapshot caching or DB-backed caching remains deferred until the slow paths are profiled more deliberately.
 
 ## Implementation Phases
 

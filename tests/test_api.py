@@ -91,6 +91,36 @@ def test_project_overview_returns_json_for_valid_project(tmp_path: Path, monkeyp
     assert data["project_name"] == "sample"
     assert data["validation_registry_summary"]["command_count"] == 1
     assert "suggested_next_action" in data
+    assert "_timing" not in data
+
+
+def test_project_overview_include_timing_returns_breakdown(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/overview?include_timing=true")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["project_name"] == "sample"
+    assert "_timing" in data
+    assert "total_ms" in data["_timing"]
+    assert "doctor_ms" in data["_timing"]
+    assert "activity_ms" in data["_timing"]
+
+
+def test_activity_and_doctor_include_timing_returns_metadata(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    activity = client.get("/api/projects/sample/activity?include_timing=true")
+    doctor = client.get("/api/projects/sample/doctor?include_timing=true")
+
+    assert activity.status_code == 200
+    assert activity.json()["_timing"]["activity_ms"] >= 0
+    assert doctor.status_code == 200
+    assert doctor.json()["_timing"]["total_ms"] >= 0
+    assert "backup_ms" in doctor.json()["_timing"]
 
 
 def test_unknown_project_returns_404(tmp_path: Path, monkeypatch) -> None:
@@ -141,6 +171,8 @@ def test_activity_and_doctor_endpoints_return_json(tmp_path: Path, monkeypatch) 
     assert doctor.status_code == 200
     assert doctor.json()["project"] == "sample"
     assert "overall_status" in doctor.json()
+    assert "_timing" not in activity.json()
+    assert "_timing" not in doctor.json()
 
 
 def test_endpoints_do_not_mutate_target_repo_or_workspace(tmp_path: Path, monkeypatch) -> None:

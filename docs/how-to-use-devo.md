@@ -265,6 +265,16 @@ GET /api/projects/{project}/runs/{run_id}/work-package
 
 The API is read-only in v1. It does not approve/reject, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs. `devo api serve` blocks non-local hosts for MVP safety. Responses include an `X-Devo-Elapsed-Ms` header to help identify slow read-model endpoints during dashboard review.
 
+For profiling slow local read models, add `include_timing=true` to selected endpoints:
+
+```text
+GET /api/projects/<project>/overview?include_timing=true
+GET /api/projects/<project>/doctor?include_timing=true
+GET /api/projects/<project>/activity?include_timing=true
+```
+
+The `_timing` object is omitted by default. This timing support is read-only and process-local; Devo has not added persistent DB or SQLite caching for dashboard data.
+
 ## React UI Scaffold
 
 The first frontend scaffold is under `ui/`. It is read-only and uses the local API.

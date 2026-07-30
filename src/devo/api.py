@@ -7,9 +7,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
-from .doctor import run_doctor
+from .doctor import run_doctor_with_timing
 from .projects import get_workspace_root, list_projects
-from .read_models import build_project_overview, build_run_overview, build_work_package_overview
+from .read_models import build_project_overview_with_timing, build_run_overview, build_work_package_overview
 from .runs import load_current_selection, load_run
 from .scanner import load_registered_project
 from .work_history import build_project_activity_summary
@@ -76,19 +76,22 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         }
 
     @api.get("/api/projects/{project}/overview")
-    def project_overview(project: str) -> dict[str, object]:
+    def project_overview(project: str, include_timing: bool = False) -> dict[str, object]:
         _require_project(project, root)
-        return _model_dump(build_project_overview(project, workspace_root=root))
+        overview, timing = build_project_overview_with_timing(project, workspace_root=root)
+        return _with_optional_timing(_model_dump(overview), timing, include_timing)
 
     @api.get("/api/projects/{project}/activity")
-    def project_activity(project: str, limit: int = 10) -> dict[str, object]:
+    def project_activity(project: str, limit: int = 10, include_timing: bool = False) -> dict[str, object]:
         _require_project(project, root)
-        return _model_dump(build_project_activity_summary(project, limit=limit, workspace_root=root))
+        activity, timing = _timed_model("activity_ms", lambda: build_project_activity_summary(project, limit=limit, workspace_root=root))
+        return _with_optional_timing(_model_dump(activity), timing, include_timing)
 
     @api.get("/api/projects/{project}/doctor")
-    def project_doctor(project: str) -> dict[str, object]:
+    def project_doctor(project: str, include_timing: bool = False) -> dict[str, object]:
         _require_project(project, root)
-        return _model_dump(run_doctor(project_name=project, workspace_root=root))
+        report, timing = run_doctor_with_timing(project_name=project, workspace_root=root)
+        return _with_optional_timing(_model_dump(report), timing, include_timing)
 
     @api.get("/api/projects/{project}/runs/{run_id}/overview")
     def run_overview(project: str, run_id: str) -> dict[str, object]:
@@ -180,3 +183,16 @@ def _model_dump(model: object) -> dict[str, object]:
     if hasattr(model, "model_dump"):
         return jsonable_encoder(model)
     return jsonable_encoder(model)
+
+
+def _with_optional_timing(data: dict[str, object], timing: dict[str, float], include_timing: bool) -> dict[str, object]:
+    if include_timing:
+        data["_timing"] = timing
+    return data
+
+
+def _timed_model(name: str, action):
+    started = perf_counter()
+    model = action()
+    elapsed = round((perf_counter() - started) * 1000, 1)
+    return model, {name: elapsed, "total_ms": elapsed}

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from time import perf_counter
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import list_backup_inventory
-from .doctor import run_doctor
+from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
 from .project_settings import load_project_settings, project_settings_path
@@ -79,29 +80,48 @@ class ProjectOverview(BaseModel):
 
 
 def build_project_overview(project_name: str, limit: int = 10, workspace_root: Path | None = None) -> ProjectOverview:
+    overview, _timing = build_project_overview_with_timing(project_name, limit=limit, workspace_root=workspace_root)
+    return overview
+
+
+def build_project_overview_with_timing(
+    project_name: str,
+    limit: int = 10,
+    workspace_root: Path | None = None,
+) -> tuple[ProjectOverview, dict[str, float]]:
     root = workspace_root or get_workspace_root()
     safe_limit = _safe_limit(limit)
-    selection = load_current_selection(workspace_root=root)
-    registration = _safe_project_registration(project_name, root)
-    onboarding = _safe_onboarding_status(project_name, root)
-    doctor = _safe_doctor_status(project_name, root)
-    activity = _safe_project_activity(project_name, safe_limit, root)
-    runs = _safe_recent_runs(project_name, safe_limit, root)
-    work = _safe_recent_work_packages(project_name, safe_limit, root)
-    return ProjectOverview(
-        project_name=project_name,
-        project_path=str(registration.path) if registration else None,
-        is_current_project=bool(selection and selection.project_name == project_name),
-        current_run_id=selection.run_id if selection and selection.project_name == project_name else None,
-        onboarding_status=onboarding,
-        doctor_overall_status=doctor,
-        settings_summary=_settings_summary(project_name, root),
-        git_summary=_git_summary(project_name, root),
-        validation_registry_summary=_validation_registry_summary(project_name, root),
-        backup_summary=_backup_summary(),
-        recent_runs=runs,
-        recent_work_packages=work,
-        suggested_next_action=activity.suggested_next_action if activity else _suggest_project_next_action(onboarding),
+    timing: dict[str, float] = {}
+    started = perf_counter()
+    selection = _timed("current_ms", timing, lambda: load_current_selection(workspace_root=root))
+    registration = _timed("registration_ms", timing, lambda: _safe_project_registration(project_name, root))
+    onboarding = _timed("onboarding_ms", timing, lambda: _safe_onboarding_status(project_name, root))
+    doctor = _timed("doctor_ms", timing, lambda: _safe_doctor_status(project_name, root))
+    activity = _timed("activity_ms", timing, lambda: _safe_project_activity(project_name, safe_limit, root))
+    runs = _timed("recent_runs_ms", timing, lambda: _safe_recent_runs(project_name, safe_limit, root))
+    work = _timed("recent_work_packages_ms", timing, lambda: _safe_recent_work_packages(project_name, safe_limit, root))
+    settings = _timed("settings_ms", timing, lambda: _settings_summary(project_name, root))
+    git = _timed("git_ms", timing, lambda: _git_summary(project_name, root))
+    validation = _timed("validation_registry_ms", timing, lambda: _validation_registry_summary(project_name, root))
+    backup = _timed("backup_ms", timing, _backup_summary)
+    timing["total_ms"] = _elapsed_ms(started)
+    return (
+        ProjectOverview(
+            project_name=project_name,
+            project_path=str(registration.path) if registration else None,
+            is_current_project=bool(selection and selection.project_name == project_name),
+            current_run_id=selection.run_id if selection and selection.project_name == project_name else None,
+            onboarding_status=onboarding,
+            doctor_overall_status=doctor,
+            settings_summary=settings,
+            git_summary=git,
+            validation_registry_summary=validation,
+            backup_summary=backup,
+            recent_runs=runs,
+            recent_work_packages=work,
+            suggested_next_action=activity.suggested_next_action if activity else _suggest_project_next_action(onboarding),
+        ),
+        timing,
     )
 
 
@@ -185,14 +205,15 @@ def _safe_project_registration(project_name: str, workspace_root: Path):
 
 def _safe_onboarding_status(project_name: str, workspace_root: Path) -> str:
     try:
-        return build_project_onboarding_report(project_name, workspace_root=workspace_root).overall_status.value
+        return build_project_onboarding_report(project_name, include_doctor=False, workspace_root=workspace_root).overall_status.value
     except Exception:
         return "unknown"
 
 
 def _safe_doctor_status(project_name: str, workspace_root: Path) -> str:
     try:
-        return run_doctor(project_name=project_name, workspace_root=workspace_root).overall_status.value
+        report, _timing = run_doctor_with_timing(project_name=project_name, workspace_root=workspace_root)
+        return report.overall_status.value
     except Exception:
         return "unknown"
 
@@ -349,3 +370,14 @@ def _suggest_project_next_action(onboarding_status: str) -> str:
 
 def _safe_limit(limit: int) -> int:
     return max(1, min(limit, 100))
+
+
+def _timed(name: str, timing: dict[str, float], action):
+    started = perf_counter()
+    result = action()
+    timing[name] = _elapsed_ms(started)
+    return result
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((perf_counter() - started) * 1000, 1)

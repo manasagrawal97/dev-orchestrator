@@ -6,6 +6,7 @@ import subprocess
 import sys
 from enum import StrEnum
 from pathlib import Path
+from time import perf_counter
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,6 +22,7 @@ from .work_packages import get_lane
 
 DEFAULT_BACKUP_ROOT = Path(r"G:\My Drive\Projects\Dev Orchestrator")
 SCHEDULED_BACKUP_TASK_NAME = "DevOrchestrator Workspace Backup"
+DEFAULT_OPTIONAL_CHECK_TIMEOUT_SECONDS = 2.0
 
 
 class DoctorStatus(StrEnum):
@@ -48,18 +50,29 @@ class DoctorReport(BaseModel):
 
 
 def run_doctor(project_name: str | None = None, workspace_root: Path | None = None) -> DoctorReport:
+    report, _timing = run_doctor_with_timing(project_name=project_name, workspace_root=workspace_root)
+    return report
+
+
+def run_doctor_with_timing(project_name: str | None = None, workspace_root: Path | None = None) -> tuple[DoctorReport, dict[str, float]]:
     root = workspace_root or get_workspace_root()
     checks: list[DoctorCheck] = []
-    checks.extend(_devo_checks(root))
-    checks.extend(_backup_checks())
+    timing: dict[str, float] = {}
+    started = perf_counter()
+    checks.extend(_timed("devo_ms", timing, lambda: _devo_checks(root)))
+    checks.extend(_timed("backup_ms", timing, _backup_checks))
     if project_name:
-        checks.extend(_project_checks(project_name, root))
+        checks.extend(_timed("project_ms", timing, lambda: _project_checks(project_name, root)))
     overall = _overall_status(checks)
-    return DoctorReport(
-        project=project_name,
-        checks=checks,
-        overall_status=overall,
-        suggested_next_action=_suggested_next_action(checks, overall),
+    timing["total_ms"] = _elapsed_ms(started)
+    return (
+        DoctorReport(
+            project=project_name,
+            checks=checks,
+            overall_status=overall,
+            suggested_next_action=_suggested_next_action(checks, overall),
+        ),
+        timing,
     )
 
 
@@ -129,7 +142,9 @@ def _project_checks(project_name: str, workspace_root: Path) -> list[DoctorCheck
             )
         )
     except ValueError as exc:
-        checks.append(DoctorCheck(name="Project Git status", status=DoctorStatus.FAIL, detail=str(exc)))
+        detail = str(exc)
+        status = DoctorStatus.WARN if "timed out" in detail.lower() else DoctorStatus.FAIL
+        checks.append(DoctorCheck(name="Project Git status", status=status, detail=detail))
 
     checks.extend(_project_settings_checks(project_name, workspace_root, current_branch=current_branch))
 
@@ -347,13 +362,20 @@ def _scheduled_task_check() -> DoctorCheck:
         "$info = Get-ScheduledTaskInfo -TaskName $task.TaskName; "
         "'present; state=' + $task.State + '; next=' + $info.NextRunTime + '; last=' + $info.LastRunTime + '; result=' + $info.LastTaskResult }"
     )
+    timeout = _optional_check_timeout_seconds()
     try:
         completed = subprocess.run(
             [str(powershell), "-NoProfile", "-Command", command],
             check=False,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return DoctorCheck(
+            name="Backup scheduled task",
+            status=DoctorStatus.SKIP,
+            detail=f"Scheduled task check timed out after {timeout:g}s; optional check skipped.",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return DoctorCheck(name="Backup scheduled task", status=DoctorStatus.SKIP, detail=f"Could not inspect scheduled task: {exc}")
@@ -402,3 +424,24 @@ def _suggested_next_action(checks: list[DoctorCheck], overall: DoctorStatus) -> 
     if overall == DoctorStatus.OK:
         return "No action needed."
     return "Review skipped optional checks if you expected them to be configured."
+
+
+def _timed(name: str, timing: dict[str, float], action):
+    started = perf_counter()
+    result = action()
+    timing[name] = _elapsed_ms(started)
+    return result
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((perf_counter() - started) * 1000, 1)
+
+
+def _optional_check_timeout_seconds() -> float:
+    raw = os.environ.get("DEVO_DOCTOR_OPTIONAL_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_OPTIONAL_CHECK_TIMEOUT_SECONDS
+    try:
+        return max(0.5, min(float(raw), 30.0))
+    except ValueError:
+        return DEFAULT_OPTIONAL_CHECK_TIMEOUT_SECONDS

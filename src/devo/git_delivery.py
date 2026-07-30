@@ -28,6 +28,7 @@ from .validation_runner import list_validation_history
 
 MAX_SECRET_SCAN_BYTES = 512_000
 GIT_DELIVERY_DIR = "git-delivery"
+GIT_READ_TIMEOUT_SECONDS = 8
 
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("OPENAI_API_KEY", re.compile(r"OPENAI_API_KEY", re.IGNORECASE)),
@@ -241,7 +242,14 @@ def create_delivery_report(
 
 def _git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     safe_directory = f"safe.directory={repo_path}"
-    return subprocess.run(["git", "-c", safe_directory, *args], cwd=repo_path, capture_output=True, text=True, shell=False)
+    command = ["git", "-c", safe_directory, *args]
+    try:
+        return subprocess.run(command, cwd=repo_path, capture_output=True, text=True, shell=False, timeout=GIT_READ_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        detail = stderr or stdout or f"git {' '.join(args)} timed out after {GIT_READ_TIMEOUT_SECONDS}s"
+        return subprocess.CompletedProcess(command, 124, stdout=stdout, stderr=detail)
 
 
 def _git_value(repo_path: Path, args: list[str]) -> str | None:

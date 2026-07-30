@@ -178,6 +178,30 @@ def test_doctor_handles_missing_optional_backup_config_without_crashing(tmp_path
     assert "Overall status:" in result.output
 
 
+def test_doctor_skips_slow_scheduled_task_check(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    fake_powershell = tmp_path / "Windows" / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    fake_powershell.parent.mkdir(parents=True)
+    fake_powershell.write_text("", encoding="utf-8")
+    monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
+    monkeypatch.delenv("DEVO_DOCTOR_SKIP_SCHEDULED_TASK", raising=False)
+    monkeypatch.setenv("DEVO_DOCTOR_OPTIONAL_TIMEOUT_SECONDS", "0.5")
+    monkeypatch.setenv("SystemRoot", str(tmp_path / "Windows"))
+    monkeypatch.setattr("devo.doctor.platform.system", lambda: "Windows")
+
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="powershell", timeout=0.5)
+
+    monkeypatch.setattr("devo.doctor.subprocess.run", raise_timeout)
+
+    result = runner.invoke(app, ["doctor"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "SKIP Backup scheduled task" in result.output
+    assert "timed out" in result.output
+
+
 def test_doctor_does_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
     _workspace_root, project_path = _workspace(tmp_path, monkeypatch)
     _quiet_optional_checks(monkeypatch, tmp_path)

@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-068 dashboard UI polish and slow-loading behavior
+- Latest completed source task: TASK-DEVO-069 read-model/API performance profiling
 - Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -84,6 +84,7 @@ The working loop is:
 - TASK-DEVO-066 adds a React/Vite/TypeScript frontend scaffold under `ui/`. It is read-only, defaults to `http://127.0.0.1:8765` via `VITE_DEVO_API_BASE`, includes Projects and Health pages with live API calls, placeholder pages for Project Overview, Work Package, and Activity, and provides no approval/build/test/commit/push/restore/scheduler/model actions.
 - TASK-DEVO-067 turns the scaffold into a useful read-only dashboard MVP. Projects, Project Overview, Work Package, Activity, and Health pages consume the local API/read models; the UI shows current context, project summaries, settings, Git, validation, backup, recent runs/work packages, lifecycle state, doctor checks, stop conditions, suggested next actions, optional JSON views, and copyable CLI commands only.
 - TASK-DEVO-068 polishes the read-only dashboard layout and loading behavior. It removes the "Local-first control room" wording from visible UI, separates dashboard project selection from saved CLI current context, adds section-level slow-loading hints for overview/doctor/activity-backed views, reduces Activity path noise, improves the missing work-package empty state with safe CLI commands, and keeps UI v1 free of approval/build/test/commit/push/restore/scheduler/model actions. Read-model snapshot caching and deeper endpoint profiling remain deferred.
+- TASK-DEVO-069 adds opt-in API timing breakdowns with `include_timing=true`, bounds slow optional doctor scheduled-task checks, adds a Git read timeout for non-mutating Git status calls, removes duplicate doctor work from project overview onboarding status, and reuses loaded run/validation data while building activity summaries. No DB/SQLite cache was added; persistent workspace JSON snapshot caching remains a future option if read-model performance still needs it.
 
 ## Readiness Estimate
 

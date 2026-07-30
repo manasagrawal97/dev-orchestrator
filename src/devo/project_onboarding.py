@@ -61,6 +61,7 @@ def build_project_onboarding_report(
     project_name: str,
     *,
     include_suggested_settings: bool = False,
+    include_doctor: bool = True,
     write_suggestions: bool = False,
     workspace_root: Path | None = None,
 ) -> ProjectOnboardingReport:
@@ -143,14 +144,15 @@ def build_project_onboarding_report(
         )
     )
 
-    doctor_detail = _doctor_status(project_name, root)
-    checks.append(
-        OnboardingCheck(
-            name="Doctor",
-            status=OnboardingCheckStatus.OK if doctor_detail.startswith("OK") else OnboardingCheckStatus.WARN,
-            detail=doctor_detail,
+    if include_doctor:
+        doctor_detail = _doctor_status(project_name, root)
+        checks.append(
+            OnboardingCheck(
+                name="Doctor",
+                status=OnboardingCheckStatus.OK if doctor_detail.startswith("OK") else OnboardingCheckStatus.WARN,
+                detail=doctor_detail,
+            )
         )
-    )
 
     suggested_settings = (
         suggest_project_settings(project_name, scan_categories=scan_categories, validation_ids=validation_ids, workspace_root=root)

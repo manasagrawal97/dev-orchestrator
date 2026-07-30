@@ -54,7 +54,8 @@ def list_work_package_summaries(
     root = workspace_root or get_workspace_root()
     safe_limit = _safe_limit(limit)
     runs = sorted(list_runs(project_name, workspace_root=root), key=lambda item: item.updated_at, reverse=True)
-    summaries = [_summary_for_run(project_name, run.run_id, root) for run in runs]
+    validations = _latest_validations_by_run(project_name, root)
+    summaries = [_summary_for_run(project_name, run, root, validations) for run in runs]
     if delivered_first:
         summaries = sorted(
             summaries,
@@ -74,7 +75,15 @@ def build_project_activity_summary(
     root = workspace_root or get_workspace_root()
     safe_limit = _safe_limit(limit)
     runs = sorted(list_runs(project_name, workspace_root=root), key=lambda item: item.updated_at, reverse=True)
-    work_summaries = list_work_package_summaries(project_name, limit=max(safe_limit, 25), delivered_first=True, workspace_root=root)
+    validations = _latest_validations_by_run(project_name, root)
+    work_summaries = [_summary_for_run(project_name, run, root, validations) for run in runs]
+    work_summaries = sorted(
+        work_summaries,
+        key=lambda item: (
+            item.status not in {WorkPackageStatus.DELIVERED.value, WorkPackageStatus.CLOSED.value},
+            -item.updated_at.timestamp(),
+        ),
+    )[: max(safe_limit, 25)]
     delivered = [item for item in work_summaries if item.status in {WorkPackageStatus.DELIVERED.value, WorkPackageStatus.CLOSED.value}]
     open_packages = [
         item
@@ -96,15 +105,14 @@ def build_project_activity_summary(
     )
 
 
-def _summary_for_run(project_name: str, run_id: str, workspace_root: Path) -> WorkPackageSummary:
-    run_state = next(run for run in list_runs(project_name, workspace_root=workspace_root) if run.run_id == run_id)
-    validation = _latest_validation_for_run(project_name, run_id, workspace_root)
+def _summary_for_run(project_name: str, run_state, workspace_root: Path, validations_by_run: dict[str, object | None]) -> WorkPackageSummary:
+    validation = validations_by_run.get(run_state.run_id)
     try:
-        package = load_work_package(project_name, run_id, workspace_root=workspace_root)
+        package = load_work_package(project_name, run_state.run_id, workspace_root=workspace_root)
     except ValueError:
         return WorkPackageSummary(
             project=project_name,
-            run_id=run_id,
+            run_id=run_state.run_id,
             goal=run_state.goal,
             status=f"run:{run_state.status.value}",
             has_work_package=False,
@@ -140,6 +148,18 @@ def _latest_validation_for_run(project_name: str, run_id: str, workspace_root: P
     if not records:
         return None
     return sorted(records, key=lambda item: item.started_at, reverse=True)[0]
+
+
+def _latest_validations_by_run(project_name: str, workspace_root: Path) -> dict[str, object]:
+    try:
+        records = list_validation_history(project_name, workspace_root=workspace_root)
+    except ValueError:
+        return {}
+    latest: dict[str, object] = {}
+    for record in sorted(records, key=lambda item: item.started_at, reverse=True):
+        if record.run_id and record.run_id not in latest:
+            latest[record.run_id] = record
+    return latest
 
 
 def _validation_status_text(record: object | None) -> str:

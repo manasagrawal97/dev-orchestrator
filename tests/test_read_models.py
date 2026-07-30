@@ -6,7 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from devo.main import app
-from devo.read_models import build_project_overview, build_run_overview, build_work_package_overview
+from devo.read_models import build_project_overview, build_project_overview_with_timing, build_run_overview, build_work_package_overview
 from devo.runs import create_run, save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 from devo.validation_registry import add_validation_command
@@ -29,6 +29,17 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.validation_registry_summary["command_count"] == 1
     assert overview.recent_runs[0].run_id == package.run_id
     assert overview.recent_work_packages[0].run_id == package.run_id
+
+
+def test_project_overview_with_timing_does_not_change_model_shape(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+
+    overview, timing = build_project_overview_with_timing("sample", workspace_root=workspace)
+
+    assert overview.project_name == "sample"
+    assert "total_ms" in timing
+    assert "doctor_ms" in timing
+    assert "_timing" not in overview.model_dump()
 
 
 def test_project_overview_handles_missing_optional_settings_validation_and_backup(tmp_path: Path, monkeypatch) -> None:

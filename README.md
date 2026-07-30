@@ -496,6 +496,15 @@ devo api serve
 
 The default URL is `http://127.0.0.1:8765`. API v1 is read-only and blocks non-local hosts. It does not run validations, builds, tests, restores, commits, pushes, scheduler changes, target apps, or model/API agents.
 API responses include a lightweight `X-Devo-Elapsed-Ms` header to help identify slow read-model endpoints during dashboard review.
+Slow read-model endpoints can also return an opt-in JSON timing breakdown:
+
+```text
+GET /api/projects/DevOrchestrator/overview?include_timing=true
+GET /api/projects/PersonalOS/doctor?include_timing=true
+GET /api/projects/PersonalOS/activity?include_timing=true
+```
+
+Timing metadata is omitted by default. It is read-only diagnostic data; Devo does not add DB-backed dashboard caching yet.
 
 Example health endpoint:
 
