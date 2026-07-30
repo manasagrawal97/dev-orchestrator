@@ -68,6 +68,7 @@ export function ProjectsPage({ selectedProject, onSelectProject }: ProjectsPageP
             <span className="project-card-title">{project.name}</span>
             <StatusBadge status={project.path_exists ? 'OK' : 'FAIL'} />
             <span className="project-path">{project.path}</span>
+            <span className="card-action">Open overview</span>
           </button>
         ))}
       </div>

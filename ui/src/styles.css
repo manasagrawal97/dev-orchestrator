@@ -134,6 +134,12 @@ button {
   font-size: 13px;
 }
 
+.context-panel small {
+  margin-top: 6px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
 .content-shell {
   min-width: 0;
   padding: 24px 28px 40px;
@@ -184,6 +190,14 @@ button {
   gap: 14px;
 }
 
+.dashboard-grid,
+.two-column {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
 .project-card,
 .summary-card {
   min-height: 124px;
@@ -216,6 +230,12 @@ button {
   color: #64748b;
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.card-action {
+  color: #116a4b;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .summary-card h3 {
@@ -298,6 +318,231 @@ button {
   cursor: pointer;
 }
 
+.panel {
+  min-width: 0;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.panel h3 {
+  margin: 0 0 12px;
+  color: #334155;
+  font-size: 15px;
+}
+
+.key-value-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.key-value-list div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.key-value-list dt {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.key-value-list dd {
+  min-width: 0;
+  margin: 0;
+  color: #172033;
+  overflow-wrap: anywhere;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #e6edf5;
+}
+
+th {
+  color: #475569;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+td {
+  color: #26364d;
+  overflow-wrap: anywhere;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.link-button {
+  padding: 0;
+  color: #116a4b;
+  font-weight: 800;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.list-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.work-row,
+.activity-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  background: #f8fafc;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.work-row {
+  cursor: pointer;
+}
+
+.work-row span,
+.activity-item strong {
+  color: #172033;
+  font-weight: 800;
+}
+
+.work-row small,
+.activity-item span {
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
+.plain-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.plain-list li {
+  overflow-wrap: anywhere;
+}
+
+.field-label {
+  display: grid;
+  gap: 6px;
+  max-width: 720px;
+  margin-bottom: 16px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.field-label select {
+  min-height: 40px;
+  padding: 8px 10px;
+  color: #172033;
+  background: #ffffff;
+  border: 1px solid #b8c7da;
+  border-radius: 8px;
+}
+
+.lifecycle-stepper {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lifecycle-step {
+  display: grid;
+  gap: 6px;
+  min-height: 72px;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.lifecycle-step span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+  background: #e2e8f0;
+  border-radius: 50%;
+}
+
+.lifecycle-step strong {
+  font-size: 13px;
+}
+
+.lifecycle-step.complete {
+  border-color: #9ad8bb;
+}
+
+.lifecycle-step.complete span {
+  color: #075e43;
+  background: #c7f2dc;
+}
+
+.lifecycle-step.current {
+  border-color: #2aa876;
+  box-shadow: 0 0 0 3px rgba(42, 168, 118, 0.14);
+}
+
+.lifecycle-step.current span {
+  color: #ffffff;
+  background: #2aa876;
+}
+
+.json-details {
+  margin-top: 16px;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.json-details summary {
+  padding: 12px 14px;
+  color: #116a4b;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.json-details pre {
+  max-height: 360px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  color: #e5e7eb;
+  background: #101828;
+  border-radius: 0 0 8px 8px;
+}
+
 .muted,
 .error-text {
   padding: 14px;
@@ -314,6 +559,11 @@ button {
   color: #8a1f1f;
   background: #fff1f1;
   border-color: #f2b8b8;
+}
+
+.compact {
+  margin: 0;
+  padding: 10px;
 }
 
 @media (max-width: 760px) {
@@ -339,5 +589,9 @@ button {
 
   .content-shell {
     padding: 20px 16px 32px;
+  }
+
+  .key-value-list div {
+    grid-template-columns: 1fr;
   }
 }

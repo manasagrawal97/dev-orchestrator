@@ -520,7 +520,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The scaffold includes Projects and Health pages with live API calls, plus placeholder Project Overview, Work Package, and Activity pages for the next dashboard task. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, and scheduler work.
+Open `http://127.0.0.1:5173`. The dashboard includes read-only Projects, Project Overview, Work Package, Activity, and Health pages backed by the local API. It shows current context, project health, settings, Git, validation, backup, recent runs/work packages, activity, doctor checks, lifecycle state, and copyable CLI commands. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, and scheduler work.
 
 ## Policy Gates
 

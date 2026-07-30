@@ -80,12 +80,28 @@ export interface ProjectOverview {
 export interface ProjectActivity {
   project: string;
   recent_runs: string[];
-  delivered_work_packages: Array<Record<string, unknown>>;
+  delivered_work_packages: WorkPackageActivitySummary[];
   latest_validation_runs: string[];
   latest_context_updates: string[];
   latest_reports: string[];
   current_git_status: string;
   suggested_next_action: string;
+}
+
+export interface WorkPackageActivitySummary {
+  project: string;
+  run_id: string;
+  goal: string;
+  lane: string;
+  status: string;
+  has_work_package: boolean;
+  approval_bundle_status: string;
+  latest_validation_status: string;
+  latest_validation_run_id: string | null;
+  commit_hash: string | null;
+  delivery_summary: string | null;
+  next_action: string;
+  updated_at: string;
 }
 
 export interface DoctorCheck {

@@ -289,7 +289,7 @@ Open:
 http://127.0.0.1:5173
 ```
 
-The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
+The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 includes read-only Projects, Project Overview, Work Package, Activity, and Health pages. It can display read models and copy CLI commands, but it does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
 
 ## Safety
 

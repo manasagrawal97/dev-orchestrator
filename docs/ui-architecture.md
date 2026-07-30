@@ -60,7 +60,7 @@ Current frontend bridge:
 - default dev URL `http://127.0.0.1:5173`
 - default API base `http://127.0.0.1:8765`
 - override API base with `VITE_DEVO_API_BASE`
-- read-only navigation shell with Projects, Project Overview, Work Package, Activity, and Health pages
+- read-only dashboard MVP with Projects, Project Overview, Work Package, Activity, and Health pages
 
 ## UI v1: Read-Only Dashboard
 
@@ -161,7 +161,7 @@ Phase C: frontend scaffold
 
 Phase D: read-only dashboard MVP
 
-- expand the scaffold to show projects, current context, onboarding, doctor, activity, work package, validation, Git, backup, and visual-report links
+- expanded the scaffold to show projects, current context, doctor, activity, work package lifecycle, validation, Git, backup, recent work, and copyable CLI commands
 - follow the page and component scope in `docs/ui-mvp-spec.md`
 
 Phase E: visual diagrams and activity timeline

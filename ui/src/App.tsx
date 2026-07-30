@@ -20,6 +20,7 @@ const pages: Array<{ id: PageId; label: string }> = [
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>('projects');
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const [current, setCurrent] = useState<CurrentContext | null>(null);
 
   useEffect(() => {
@@ -31,6 +32,9 @@ export default function App() {
           setCurrent(data);
           if (data.project) {
             setSelectedProject(data.project);
+          }
+          if (data.run) {
+            setSelectedRun(data.run);
           }
         }
       })
@@ -48,7 +52,13 @@ export default function App() {
 
   function selectProject(project: string) {
     setSelectedProject(project);
+    setSelectedRun(null);
     setActivePage('overview');
+  }
+
+  function selectRun(runId: string) {
+    setSelectedRun(runId);
+    setActivePage('work');
   }
 
   return (
@@ -82,7 +92,8 @@ export default function App() {
             <span>Current project</span>
             <strong>{current?.project ?? selectedProject ?? 'none'}</strong>
             <span>Current run</span>
-            <strong>{current?.run ?? 'none'}</strong>
+            <strong>{current?.run ?? selectedRun ?? 'none'}</strong>
+            {!current?.project ? <small>Select a project or run `devo use --project &lt;project&gt;`.</small> : null}
           </div>
         </aside>
 
@@ -98,10 +109,17 @@ export default function App() {
           </div>
 
           {activePage === 'projects' ? <ProjectsPage selectedProject={selectedProject} onSelectProject={selectProject} /> : null}
-          {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} /> : null}
-          {activePage === 'work' ? <WorkPackagePage selectedProject={selectedProject} /> : null}
+          {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} onSelectRun={selectRun} /> : null}
+          {activePage === 'work' ? (
+            <WorkPackagePage
+              selectedProject={selectedProject}
+              selectedRun={selectedRun}
+              onSelectRun={setSelectedRun}
+              onOpenRun={selectRun}
+            />
+          ) : null}
           {activePage === 'activity' ? <ActivityPage selectedProject={selectedProject} /> : null}
-          {activePage === 'health' ? <HealthPage /> : null}
+          {activePage === 'health' ? <HealthPage selectedProject={selectedProject} /> : null}
         </main>
       </div>
     </div>

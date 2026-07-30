@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-066 React/Vite UI scaffold
+- Latest completed source task: TASK-DEVO-067 read-only dashboard MVP
 - Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -82,13 +82,14 @@ The working loop is:
 - TASK-DEVO-065A adds `docs/ui-mvp-spec.md` to define the first read-only dashboard pages, reusable components, allowed/forbidden UI v1 actions, future UI v2/v3 actions, approval UI design notes, API/read-model mapping, wireframes, success criteria, and deferred scope.
 - TASK-DEVO-065B adds a local-only FastAPI backend in `src/devo/api.py` plus `devo api serve` and `devo api routes`. The API binds to `127.0.0.1` by default, blocks non-local hosts for MVP, exposes read-only JSON endpoints backed by Devo read models, and does not run validation, build, test, restore, Git delivery, scheduler, target app, or model/API actions.
 - TASK-DEVO-066 adds a React/Vite/TypeScript frontend scaffold under `ui/`. It is read-only, defaults to `http://127.0.0.1:8765` via `VITE_DEVO_API_BASE`, includes Projects and Health pages with live API calls, placeholder pages for Project Overview, Work Package, and Activity, and provides no approval/build/test/commit/push/restore/scheduler/model actions.
+- TASK-DEVO-067 turns the scaffold into a useful read-only dashboard MVP. Projects, Project Overview, Work Package, Activity, and Health pages consume the local API/read models; the UI shows current context, project summaries, settings, Git, validation, backup, recent runs/work packages, lifecycle state, doctor checks, stop conditions, suggested next actions, optional JSON views, and copyable CLI commands only.
 
 ## Readiness Estimate
 
 - Practical CLI product maturity after TASK-DEVO-053B: around 75-80% complete.
 - Long-term product vision, including dashboard and direct model adapters: around 50-55% complete.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, expose UI-ready JSON read models and a local read-only API server, provide a read-only React/Vite dashboard scaffold, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, expose UI-ready JSON read models and a local read-only API server, provide a read-only React/Vite dashboard MVP, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
 The next product step should focus on Devo CLI maturity. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
@@ -156,6 +157,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-065A UI MVP specification
 - TASK-DEVO-065B local read-only API server
 - TASK-DEVO-066 React/Vite UI scaffold
+- TASK-DEVO-067 read-only dashboard MVP
 
 ## Recovery Pointers
 

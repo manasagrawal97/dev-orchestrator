@@ -145,6 +145,10 @@ Added `src/devo/api.py` with a FastAPI app factory and local read-only JSON endp
 
 Added the first React/Vite/TypeScript frontend scaffold under `ui/`. The scaffold consumes the local read-only API, defaults to `http://127.0.0.1:8765`, can be started with `npm run dev`, and includes a read-only dashboard shell with Projects, Project Overview, Work Package, Activity, and Health navigation. Projects and Health make live read-only API calls; the other pages are placeholders for the next dashboard implementation. No write/action UI, approval buttons, validation/build/test controls, commit/push controls, backup restore/delete controls, scheduler controls, target app execution, or model/API calls were added.
 
+### TASK-DEVO-067 Read-Only Dashboard MVP - Completed
+
+Expanded the React/Vite scaffold into a useful read-only dashboard. Projects, Project Overview, Work Package, Activity, and Health pages now consume the local API/read models, show loading/error/empty states, expose status badges, summary cards, current context, project settings, Git/validation/backup summaries, recent runs/work packages, activity/history, doctor checks, lifecycle state, stop conditions, suggested next actions, optional JSON details, and copyable CLI commands. The dashboard still has no approval buttons, validation/build/test execution, commit/push controls, backup restore/delete controls, scheduler controls, target project edits, app runs, or model/API calls.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

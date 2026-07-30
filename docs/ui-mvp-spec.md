@@ -240,7 +240,7 @@ The browser should receive `ProjectOverview`, `RunOverview`, and `WorkPackageOve
 
 The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. UI v1 should treat it as read-only and must not depend on write/action endpoints.
 
-The first frontend scaffold is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. The scaffold currently includes live Projects and Health pages plus placeholder Project Overview, Work Package, and Activity pages.
+The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, and Health pages. UI v1 remains read-only and exposes only selection/navigation, optional JSON details, report/path viewing where available, and copyable CLI commands.
 
 ## Wireframe-Style Layout
 
