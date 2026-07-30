@@ -51,6 +51,8 @@ Current development should improve:
 
 Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. No direct API tokens are required for current development.
 
+The long-term direction is documented in `docs/devo-company-model.md`: Devo should become a local software-development company operating system around AI workers. The next major usability layer should support project brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

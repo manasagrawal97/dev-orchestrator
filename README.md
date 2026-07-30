@@ -16,12 +16,15 @@ The current strategy is CLI-first and local-first:
 - Manual/Codex mode must remain supported even after future model adapters exist.
 - Dashboard/UI work stays read-only for now; the CLI remains the execution and recovery path.
 
+The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred.
+
 ## Project Memory
 
 Durable project direction is tracked in GitHub docs so DevOrchestrator can recover even if chat context is unavailable:
 
 - [Current state](docs/current-state.md)
 - [Devo vision](docs/devo-vision.md)
+- [Company-model vision](docs/devo-company-model.md)
 - [Current capabilities](docs/current-capabilities.md)
 - [Agent workflow](docs/agent-workflow.md)
 - [Usability roadmap](docs/usability-roadmap.md)

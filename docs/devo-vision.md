@@ -15,6 +15,8 @@ The roles are:
 
 Devo should make AI-assisted development feel controlled instead of improvised.
 
+For the fuller long-term company-model vision, including blueprint/backlog/batch queues and future worker backends, see `docs/devo-company-model.md`.
+
 ## Current Product Priority
 
 Devo itself is now the main product to improve. Target projects are important because they keep Devo honest, but they are not the current product focus.

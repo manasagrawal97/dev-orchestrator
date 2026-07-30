@@ -13,6 +13,8 @@ The UI should make Devo easier to understand at a glance:
 - what validation and delivery evidence exists
 - what the next safe action is
 
+The broader product direction is documented in `docs/devo-company-model.md`. The UI should eventually show project brief, blueprint, backlog, batch, execution queue, and progress state for the Devo company-model workflow. It should not become a general AI chat or IDE clone.
+
 The CLI remains first-class. Every important workflow must continue to work from the CLI even after a UI exists.
 
 The first read-only dashboard scope is defined separately in `docs/ui-mvp-spec.md`.
@@ -214,6 +216,7 @@ Phase F: controlled write actions
 Phase G: optional API/model agents
 
 - add direct model adapters only after manual/Codex mode remains smooth and cost-controlled
+- keep Codex CLI as the default personal/local worker and treat API/model agents as optional adapters
 
 ## Risks And Open Questions
 

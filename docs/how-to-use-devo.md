@@ -13,9 +13,12 @@ Devo does not implement code by itself. It does not call AI by itself. It does n
 - Devo runtime artifacts live in `workspace/` and should not be committed.
 - Devo workspace/context is protected by scheduled Google Drive backup.
 
+Longer term, Devo should work like a local software-development company operating system: the user discusses a project with ChatGPT, pastes the final brief into Devo, Devo creates blueprint/backlog/tasks, the user approves a batch, Codex executes approved tasks, and Devo tracks progress, validation, commits, reports, and resume points.
+
 For the plain-language product model, read:
 
 - [Devo vision](devo-vision.md)
+- [Company-model vision](devo-company-model.md)
 - [Current capabilities](current-capabilities.md)
 - [Agent workflow](agent-workflow.md)
 - [Usability roadmap](usability-roadmap.md)

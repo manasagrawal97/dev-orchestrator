@@ -18,6 +18,8 @@ Future Devo may run agents directly through model adapters. Later, agents could 
 
 Current priority: keep the manual/Codex agent workflow excellent before adding direct API agents. Devo should reduce repeated prompting, improve operator prompts, store evidence, and make next actions obvious through CLI commands first. Direct OpenAI, Claude, Gemini, or local model adapters are later and optional; they should not make API token spend mandatory for normal development.
 
+The long-term model is documented in `docs/devo-company-model.md`: an agent is the role contract, while a worker backend can be manual operation, Codex CLI, ChatGPT API, Claude API, Gemini API, a local model, or another future adapter. Codex CLI should remain the default worker for personal/local development.
+
 ## Manual-Assisted Agent Flow
 
 Source/freshness: this diagram reflects the current file-based agent workflow as of TASK-DEVO-053A. Update it when Devo starts executing agents directly through model adapters.

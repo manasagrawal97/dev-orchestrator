@@ -30,6 +30,8 @@ Make Devo pleasant and reliable as a local CLI product: status, next actions, wo
 
 Improve prompt generation, local operator handoff, task templates, interrupted-work recovery, and manual-assisted agent imports. Codex/Desktop/CLI remains the worker.
 
+The long-term agent model is documented in `docs/devo-company-model.md`: Devo owns role contracts and workflow state, while worker backends such as manual operation, Codex CLI, API models, or local models can be attached later. Codex CLI should be the default personal/local worker.
+
 ### Phase 3: Generated Visual Reports
 
 Expand generated Mermaid or other artifact-backed visual summaries only where they reduce operator confusion. These visuals should be generated from Devo structured data, not maintained by hand.
@@ -37,6 +39,8 @@ Expand generated Mermaid or other artifact-backed visual summaries only where th
 ### Phase 4: Read-Only Dashboard MVP And Polish
 
 Keep improving the local read-only dashboard after the CLI state model is mature enough to support it. The dashboard reads Devo read models/API responses rather than becoming a second source of truth or scraping raw workspace folders directly. Controlled write actions remain deferred until read-only views, performance, and safety boundaries are boring.
+
+After TASK-DEVO-073A, the next product direction is brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. These should extend Devo's company-model workflow rather than turn Devo into a general AI chat clone.
 
 ### Phase 5: Direct API Agents And Model Adapters
 
@@ -173,6 +177,10 @@ Added `POST /api/actions/execute` for four confirmed workspace-only actions: gen
 
 Added `work.new.create` to the controlled UI action executor. The dashboard can now create a Devo run/work-package draft from the Action Safety page, using an explicit lane or the project's default lane, and can generate the initial scope template unless the user disables it. The action returns the run id, lane, optional scope-template path, and `devo work resume` command. It writes Devo workspace artifacts only and does not modify target repositories or add approval, validation/build/test, Git delivery, restore/delete, scheduler, target app, or model/API execution.
 
+### TASK-DEVO-073A Company-Model Vision - Completed
+
+Added `docs/devo-company-model.md` to define Devo as a local software-development company operating system around AI workers, not a Codex/Cursor/Claude Code replacement. The doc maps company roles to Devo roles, explains current deterministic responsibility separation, defines future agent contracts versus worker backends, records Codex CLI as the default personal/local worker strategy, describes the final brief-to-blueprint-to-backlog-to-batch-to-Codex workflow, and explicitly defers general AI chat, paid API agents by default, autonomous unapproved execution, and public SaaS/multi-user deployment.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.
@@ -245,5 +253,6 @@ Reduced duplicate approval friction in the validation runner. Exact `target_comm
 - Preserve target project safety.
 - Avoid AI API integration until CLI/manual workflows are proven and cost controls are clear.
 - Keep web UI read-only until CLI workflows, generated reports, structured data, and endpoint performance are stable.
+- Build toward project brief, blueprint, backlog, task, batch, queue, and progress concepts before general chat or direct API agents.
 - Prefer explicit approval records and evidence over implicit automation.
 - Reduce user friction with work packages, lanes, approval bundles, compact operator prompts, history, activity, and recovery before adding direct model adapters.

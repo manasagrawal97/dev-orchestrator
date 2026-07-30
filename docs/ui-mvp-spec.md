@@ -14,6 +14,8 @@ It helps the user inspect and understand Devo state:
 
 It does not replace the CLI. It does not execute risky actions. UI v1 is read-only.
 
+The longer-term UI should follow the company-model vision in `docs/devo-company-model.md`: project brief, blueprint, backlog, batches, queue, and progress views around Codex-powered execution. It should not become a general chat clone.
+
 ## UI MVP Principles
 
 - CLI remains first-class.

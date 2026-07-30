@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -39,7 +39,7 @@ The working loop is:
 ## Latest State
 
 - Latest completed source task: TASK-DEVO-073 controlled UI work bootstrap action
-- Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
+- Latest docs task: TASK-DEVO-073A defines the Devo company-model vision and future agent workflow.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
@@ -89,6 +89,7 @@ The working loop is:
 - TASK-DEVO-071 adds `src/devo/ui_actions.py`, read-only API endpoints for UI action safety metadata, and an informational Action Safety dashboard page. UI v1 can show which actions are read-only, workspace-safe candidates, approval-required deferred actions, or dangerous blocked actions, but it still does not execute approvals, validation, build/test, commit/push, backup restore/delete, scheduler modification, target app runs, or model/API agents.
 - TASK-DEVO-072 adds the first controlled UI v2 workspace-safe actions through `POST /api/actions/execute`. The only executable actions are generating a work scope template, generating a work-package visual, generating a project activity visual, and writing an onboarding report. Each requires explicit confirmation and writes Devo workspace artifacts only; target repositories, approvals, validation/build/test, Git delivery, backup restore/delete, scheduler controls, target app runs, and model/API agents remain unavailable in the UI.
 - TASK-DEVO-073 adds `work.new.create` to the controlled UI action executor. The Action Safety page can now create a Devo run/work-package draft, use an explicit lane or project default lane, optionally generate the scope template, and return a resume command. This writes Devo workspace artifacts only and does not modify target repositories or add approval/build/test/commit/push/restore/scheduler/model controls.
+- TASK-DEVO-073A adds `docs/devo-company-model.md` to define the long-term Devo vision as a local software-development company operating system around AI workers. It documents the company-role analogy, current deterministic responsibility model, future agent contract/worker backend model, Codex CLI default worker strategy, final brief-to-blueprint-to-backlog-to-batch-to-Codex workflow, and deferred AI API/general chat/SaaS scope.
 
 ## Readiness Estimate
 
@@ -168,6 +169,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-071 controlled UI action safety model
 - TASK-DEVO-072 first workspace-safe UI actions
 - TASK-DEVO-073 controlled UI work bootstrap action
+- TASK-DEVO-073A Devo company-model vision
 
 ## Recovery Pointers
 
@@ -175,13 +177,14 @@ If chat context is lost, start here:
 
 1. Read this file.
 2. Read `docs/devo-vision.md`.
-3. Read `docs/current-capabilities.md`.
-4. Read `docs/agent-workflow.md`.
-5. Read `docs/ui-architecture.md` when continuing UI/API planning.
-6. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
-7. Read `docs/roadmap.md`.
-8. Read `docs/operating-model.md`.
-9. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-10. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-11. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
-12. Continue from the latest planned next task.
+3. Read `docs/devo-company-model.md`.
+4. Read `docs/current-capabilities.md`.
+5. Read `docs/agent-workflow.md`.
+6. Read `docs/ui-architecture.md` when continuing UI/API planning.
+7. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
+8. Read `docs/roadmap.md`.
+9. Read `docs/operating-model.md`.
+10. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+11. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+12. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+13. Continue from the latest planned next task.
