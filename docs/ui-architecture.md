@@ -115,6 +115,15 @@ TASK-DEVO-071 adds the first controlled UI action safety model before any execut
 
 The dashboard may display this metadata, but UI v1 must not execute these actions.
 
+TASK-DEVO-072 starts UI v2 with the smallest workspace-safe execution set. The only browser-triggered actions currently enabled are:
+
+- generate work scope template
+- generate work-package visual report
+- generate project activity visual report
+- write onboarding report
+
+Each goes through `POST /api/actions/execute`, requires `confirm: true`, validates the registered project and run when needed, and writes Devo workspace artifacts only. Target repositories are not modified.
+
 ## Safety Model
 
 The UI must stay local-first.
@@ -152,11 +161,12 @@ GET /api/projects/{project}/runs/{run_id}/work-package
 GET /api/actions
 GET /api/actions/allowed
 GET /api/actions/{action_id}
+POST /api/actions/execute
 ```
 
 Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
 
-The `/api/actions*` endpoints are metadata endpoints. They describe read-only actions available now, workspace-only candidates for later, approval-required deferred actions, and dangerous blocked actions. They do not execute actions.
+The `/api/actions*` GET endpoints are metadata endpoints. They describe read-only actions available now, workspace-only actions available through the controlled executor, approval-required deferred actions, and dangerous blocked actions. `POST /api/actions/execute` executes only the four approved workspace-safe artifact generation actions and returns a structured `OK`, `WARN`, `FAIL`, or `BLOCKED` result.
 
 Some read models can be slower because they aggregate doctor checks, Git status, backup inventory or scheduled-task checks, activity scanning, and overview summaries. UI v1 should handle that with section-level loading states and slow-check hints. TASK-DEVO-069 added timing breakdowns and request-local duplicate-work reductions before any persistent cache. Read-model snapshot caching or DB-backed caching remains deferred until the slow paths are profiled more deliberately.
 
@@ -197,7 +207,7 @@ Phase F: controlled write actions
 - add narrowly scoped actions only after read-only views are stable
 - route writes through Devo approval and policy checks
 - keep action execution behind the UI action safety model
-- start with workspace-safe actions only after the read-only dashboard remains stable
+- start with confirmed workspace-safe artifact generation actions only
 - keep approval, validation, Git delivery, restore/delete, scheduler, target app, and model/API actions deferred until their UI safety and audit model is designed
 
 Phase G: optional API/model agents

@@ -648,6 +648,56 @@ tr:last-child td {
   margin-top: 22px;
 }
 
+.action-execute-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.action-execute-panel p {
+  margin: 0;
+  color: #556174;
+  line-height: 1.45;
+}
+
+.action-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.field-label input {
+  min-height: 40px;
+  padding: 8px 10px;
+  color: #172033;
+  background: #ffffff;
+  border: 1px solid #b8c7da;
+  border-radius: 8px;
+}
+
+.confirm-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.confirm-row input {
+  width: 16px;
+  height: 16px;
+}
+
+.action-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
 .action-group-heading,
 .action-card-title {
   display: flex;
@@ -718,6 +768,24 @@ tr:last-child td {
   background: #202938;
   border-radius: 6px;
   overflow-wrap: anywhere;
+}
+
+.secondary-action-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  color: #075e43;
+  font-weight: 800;
+  background: #dff7ea;
+  border: 1px solid #9ad8bb;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.secondary-action-button:disabled {
+  color: #7a8ba0;
+  background: #eef2f7;
+  border-color: #cbd5e1;
+  cursor: not-allowed;
 }
 
 .quiet-details summary {

@@ -128,7 +128,7 @@ export default function App() {
           ) : null}
           {activePage === 'activity' ? <ActivityPage selectedProject={selectedProject} /> : null}
           {activePage === 'health' ? <HealthPage selectedProject={selectedProject} /> : null}
-          {activePage === 'actions' ? <ActionSafetyPage /> : null}
+          {activePage === 'actions' ? <ActionSafetyPage selectedProject={selectedProject} selectedRun={selectedRun} /> : null}
         </main>
       </div>
     </div>

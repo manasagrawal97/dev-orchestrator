@@ -6,6 +6,8 @@ import type {
   ProjectOverview,
   ProjectsResponse,
   RunOverview,
+  UiActionExecuteRequest,
+  UiActionExecutionResult,
   UiActionMetadata,
   UiActionsResponse,
   WorkPackageOverview
@@ -31,6 +33,24 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const responseBody = await response.text();
+    throw new Error(`POST ${path} failed: ${response.status} ${responseBody}`);
+  }
+
+  return (await response.json()) as T;
+}
+
 export const devoApi = {
   baseUrl: API_BASE,
   getHealth: () => getJson<ApiHealth>('/api/health'),
@@ -45,5 +65,6 @@ export const devoApi = {
     getJson<WorkPackageOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/work-package`),
   getUiActions: () => getJson<UiActionsResponse>('/api/actions'),
   getAllowedUiActions: () => getJson<UiActionsResponse>('/api/actions/allowed'),
-  getUiAction: (actionId: string) => getJson<UiActionMetadata>(`/api/actions/${encodeURIComponent(actionId)}`)
+  getUiAction: (actionId: string) => getJson<UiActionMetadata>(`/api/actions/${encodeURIComponent(actionId)}`),
+  executeUiAction: (request: UiActionExecuteRequest) => postJson<UiActionExecutionResult>('/api/actions/execute', request)
 };

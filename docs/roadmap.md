@@ -165,6 +165,10 @@ Added `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open` for s
 
 Added `src/devo/ui_actions.py` with UI action categories for `read_only`, `workspace_safe`, `approval_required`, and `dangerous_deferred`. The local API now exposes read-only action metadata through `/api/actions`, `/api/actions/allowed`, and `/api/actions/{action_id}`, and the dashboard has an informational Action Safety page. UI v1 still does not execute actions; it only explains which actions are available as read-only views, which workspace-only actions may be UI v2 candidates, and which approval, validation, Git delivery, restore/delete, scheduler, target app, and model/API actions are deferred or blocked.
 
+### TASK-DEVO-072 First Workspace-Safe UI Actions - Completed
+
+Added `POST /api/actions/execute` for four confirmed workspace-only actions: generate work scope template, generate work-package visual, generate project activity visual, and write onboarding report. The Action Safety dashboard page now exposes controls only for those actions, requires project/run inputs where needed, and requires confirmation that the action writes Devo workspace artifacts only. Approval, validation/build/test, commit/push, backup restore/delete, scheduler modification, target app run, and model/API actions remain blocked or deferred.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

@@ -1,13 +1,32 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
+
+from .project_onboarding import build_project_onboarding_report
+from .projects import get_workspace_root
+from .runs import load_run
+from .scanner import load_registered_project
+from .visual_reports import generate_project_activity_visual, generate_work_package_visual
+from .work_packages import generate_work_scope_template
 
 UiActionCategory = Literal["read_only", "workspace_safe", "approval_required", "dangerous_deferred"]
 UiActionStatus = Literal["available", "read_only", "planned", "deferred", "blocked"]
 UiRiskLevel = Literal["none", "low", "medium", "high", "critical"]
+UiActionResultStatus = Literal["OK", "WARN", "FAIL", "BLOCKED"]
 
 UI_MODE_READ_ONLY = "read_only"
+UI_MODE_CONTROLLED_WORKSPACE = "controlled_workspace"
+CURRENT_UI_MODE = UI_MODE_CONTROLLED_WORKSPACE
+EXECUTABLE_WORKSPACE_SAFE_ACTIONS = {
+    "work.scope_template.generate",
+    "visual.work_package.generate",
+    "visual.project_activity.generate",
+    "onboarding.report.write",
+}
 
 
 @dataclass(frozen=True)
@@ -28,6 +47,25 @@ class UiActionMetadata:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+class UiActionExecuteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str
+    project: str | None = None
+    run_id: str | None = None
+    confirm: bool = False
+
+
+class UiActionExecutionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: UiActionResultStatus
+    action_id: str
+    message: str
+    artifact_path: Path | None = None
+    suggested_next_command: str | None = None
 
 
 ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
@@ -101,8 +139,8 @@ ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
         mutates_target_project=False,
         requires_approval=False,
         risk_level="low",
-        status="planned",
-        reason="Useful UI v2 candidate, but UI v1 remains read-only.",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; writes Devo workspace artifacts only.",
         required_cli_command="devo work scope-template --project <project> --run <runId>",
     ),
     UiActionMetadata(
@@ -116,8 +154,8 @@ ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
         mutates_target_project=False,
         requires_approval=False,
         risk_level="low",
-        status="planned",
-        reason="Workspace-only generated report; deferred until UI v2 action execution exists.",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; writes Devo workspace artifacts only.",
         required_cli_command="devo visual work-package --project <project> --run <runId>",
     ),
     UiActionMetadata(
@@ -131,8 +169,8 @@ ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
         mutates_target_project=False,
         requires_approval=False,
         risk_level="low",
-        status="planned",
-        reason="Workspace-only generated report; deferred until UI v2 action execution exists.",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; writes Devo workspace artifacts only.",
         required_cli_command="devo visual project-activity --project <project>",
     ),
     UiActionMetadata(
@@ -146,8 +184,8 @@ ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
         mutates_target_project=False,
         requires_approval=False,
         risk_level="low",
-        status="planned",
-        reason="Workspace-only report write; deferred until UI v2 action execution exists.",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; writes Devo workspace artifacts only.",
         required_cli_command="devo project onboard --project <project> --write-suggestions",
     ),
     UiActionMetadata(
@@ -320,10 +358,113 @@ def get_ui_action(action_id: str) -> UiActionMetadata | None:
 
 
 def is_action_allowed(action: UiActionMetadata, *, ui_mode: str = UI_MODE_READ_ONLY) -> bool:
-    if ui_mode != UI_MODE_READ_ONLY:
-        return False
-    return action.allowed_in_ui_v1 and action.category == "read_only" and not action.mutates_workspace and not action.mutates_target_project
+    if ui_mode == UI_MODE_READ_ONLY:
+        return action.allowed_in_ui_v1 and action.category == "read_only" and not action.mutates_workspace and not action.mutates_target_project
+    if ui_mode == UI_MODE_CONTROLLED_WORKSPACE:
+        read_only_allowed = action.allowed_in_ui_v1 and action.category == "read_only"
+        workspace_allowed = action.id in EXECUTABLE_WORKSPACE_SAFE_ACTIONS and action.category == "workspace_safe"
+        return (read_only_allowed or workspace_allowed) and not action.mutates_target_project
+    return False
 
 
-def list_allowed_ui_actions(*, ui_mode: str = UI_MODE_READ_ONLY) -> list[UiActionMetadata]:
+def list_allowed_ui_actions(*, ui_mode: str = CURRENT_UI_MODE) -> list[UiActionMetadata]:
     return [action for action in ACTION_REGISTRY if is_action_allowed(action, ui_mode=ui_mode)]
+
+
+def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path | None = None) -> UiActionExecutionResult:
+    root = workspace_root or get_workspace_root()
+    action = get_ui_action(request.action_id)
+    if not action:
+        raise ValueError(f"Unknown UI action: {request.action_id}")
+
+    if action.category == "read_only":
+        return UiActionExecutionResult(
+            status="BLOCKED",
+            action_id=action.id,
+            message="Read-only actions do not need execution. Use the matching GET endpoint instead.",
+            suggested_next_command=action.required_cli_command,
+        )
+    if action.category in {"approval_required", "dangerous_deferred"}:
+        return UiActionExecutionResult(
+            status="BLOCKED",
+            action_id=action.id,
+            message=f"{action.label} is {action.status}; UI execution is not available for this risk category.",
+            suggested_next_command=action.required_cli_command,
+        )
+    if action.id not in EXECUTABLE_WORKSPACE_SAFE_ACTIONS:
+        return UiActionExecutionResult(
+            status="BLOCKED",
+            action_id=action.id,
+            message="This workspace-safe action is not enabled for UI execution yet.",
+            suggested_next_command=action.required_cli_command,
+        )
+    if not request.confirm:
+        return UiActionExecutionResult(
+            status="BLOCKED",
+            action_id=action.id,
+            message='confirm=true is required because this action writes Devo workspace artifacts only.',
+            suggested_next_command=action.required_cli_command,
+        )
+
+    project_name = _require_project_name(request.project)
+    load_registered_project(project_name, workspace_root=root)
+    run_id = request.run_id.strip() if request.run_id else None
+    if action.id in {"work.scope_template.generate", "visual.work_package.generate"}:
+        run_id = _require_run_id(run_id, action.id)
+        load_run(project_name, run_id, workspace_root=root)
+
+    if action.id == "work.scope_template.generate":
+        template = generate_work_scope_template(project_name, run_id or "", workspace_root=root)
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Generated work scope template under the Devo workspace.",
+            artifact_path=template.template_path,
+            suggested_next_command=f"devo work import-scope --project {project_name} --run {run_id} --file {template.template_path}",
+        )
+    if action.id == "visual.work_package.generate":
+        visual = generate_work_package_visual(project_name, run_id or "", workspace_root=root)
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Generated work-package visual report under the Devo workspace.",
+            artifact_path=visual.path,
+            suggested_next_command=f"devo visual work-package --project {project_name} --run {run_id}",
+        )
+    if action.id == "visual.project_activity.generate":
+        visual = generate_project_activity_visual(project_name, workspace_root=root)
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Generated project activity visual report under the Devo workspace.",
+            artifact_path=visual.path,
+            suggested_next_command=f"devo visual project-activity --project {project_name}",
+        )
+    if action.id == "onboarding.report.write":
+        report = build_project_onboarding_report(
+            project_name,
+            include_suggested_settings=True,
+            write_suggestions=True,
+            workspace_root=root,
+        )
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Wrote onboarding report under the Devo workspace.",
+            artifact_path=report.report_path,
+            suggested_next_command=f"devo project onboard --project {project_name} --write-suggestions",
+        )
+
+    return UiActionExecutionResult(status="FAIL", action_id=action.id, message="No executor is registered for this action.")
+
+
+def _require_project_name(project_name: str | None) -> str:
+    if not project_name or not project_name.strip():
+        raise ValueError("project is required for this UI action.")
+    return project_name.strip()
+
+
+def _require_run_id(run_id: str | None, action_id: str) -> str:
+    if not run_id or not run_id.strip():
+        raise ValueError(f"run_id is required for {action_id}.")
+    return run_id.strip()

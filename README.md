@@ -494,7 +494,7 @@ devo api routes
 devo api serve
 ```
 
-The default URL is `http://127.0.0.1:8765`. API v1 is read-only and blocks non-local hosts. It does not run validations, builds, tests, restores, commits, pushes, scheduler changes, target apps, or model/API agents.
+The default URL is `http://127.0.0.1:8765`. API v1 started read-only and still blocks non-local hosts. UI v2 now adds a tiny controlled workspace-safe action endpoint that can write Devo workspace artifacts only after confirmation. It does not run validations, builds, tests, restores, commits, pushes, scheduler changes, target apps, or model/API agents.
 API responses include a lightweight `X-Devo-Elapsed-Ms` header to help identify slow read-model endpoints during dashboard review.
 Slow read-model endpoints can also return an opt-in JSON timing breakdown:
 
@@ -518,9 +518,10 @@ UI action safety metadata is also available through read-only endpoints:
 GET /api/actions
 GET /api/actions/allowed
 GET /api/actions/{action_id}
+POST /api/actions/execute
 ```
 
-These endpoints describe which dashboard actions are read-only now, which workspace-only actions are candidates for a later UI v2, and which approval/delivery/restore/scheduler/model actions are deferred or blocked. They do not execute actions.
+These endpoints describe which dashboard actions are read-only now, which workspace-only actions are available through the controlled executor, and which approval/delivery/restore/scheduler/model actions are deferred or blocked. `POST /api/actions/execute` is limited to `work.scope_template.generate`, `visual.work_package.generate`, `visual.project_activity.generate`, and `onboarding.report.write`; it requires `confirm: true` and never modifies target repositories.
 
 ## React UI Scaffold
 
@@ -551,7 +552,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes read-only Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages backed by the local API. It shows dashboard selection separately from saved CLI current context, uses section-level loading for slower project overview and doctor checks, keeps raw paths tucked behind quieter activity sections, shows UI action safety metadata, and provides copyable CLI commands for safe continuation. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, scheduler work, and model/API agents.
+Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages backed by the local API. It shows dashboard selection separately from saved CLI current context, uses section-level loading for slower project overview and doctor checks, keeps raw paths tucked behind quieter activity sections, shows UI action safety metadata, provides copyable CLI commands, and can generate the four approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, scheduler work, target app runs, and model/API agents.
 
 ## Policy Gates
 

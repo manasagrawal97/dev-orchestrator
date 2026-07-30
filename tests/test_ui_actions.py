@@ -5,7 +5,9 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from devo.api import create_app
+from devo.schemas import ContextState, ContextStatus, ProjectRegistration
 from devo.ui_actions import get_ui_action, is_action_allowed, list_allowed_ui_actions, list_ui_actions
+from devo.work_packages import start_work_package
 
 
 def test_action_registry_loads() -> None:
@@ -53,7 +55,7 @@ def test_actions_endpoint_returns_metadata(tmp_path: Path, monkeypatch) -> None:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["ui_mode"] == "read_only"
+    assert data["ui_mode"] == "controlled_workspace"
     assert data["count"] >= 10
     assert any(action["id"] == "validation.run" for action in data["actions"])
 
@@ -81,7 +83,7 @@ def test_unknown_action_returns_404(tmp_path: Path, monkeypatch) -> None:
     assert response.json()["detail"]["error"] == "action_not_found"
 
 
-def test_allowed_actions_exclude_dangerous_and_workspace_safe(tmp_path: Path, monkeypatch) -> None:
+def test_allowed_actions_include_controlled_workspace_safe_but_exclude_dangerous(tmp_path: Path, monkeypatch) -> None:
     workspace = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
 
@@ -92,20 +94,132 @@ def test_allowed_actions_exclude_dangerous_and_workspace_safe(tmp_path: Path, mo
     action_ids = {action["id"] for action in data["actions"]}
     assert "project.overview.view" in action_ids
     assert "doctor.view" in action_ids
-    assert "work.scope_template.generate" not in action_ids
+    assert "work.scope_template.generate" in action_ids
+    assert "visual.project_activity.generate" in action_ids
+    assert "work.new.create" not in action_ids
     assert "git.push" not in action_ids
-    assert all(not action["mutates_workspace"] for action in data["actions"])
     assert all(not action["mutates_target_project"] for action in data["actions"])
 
 
 def test_list_allowed_ui_actions_matches_read_only_boundary() -> None:
-    allowed = list_allowed_ui_actions()
+    allowed = list_allowed_ui_actions(ui_mode="read_only")
 
     assert allowed
     assert all(action.category == "read_only" for action in allowed)
     assert all(action.allowed_in_ui_v1 for action in allowed)
     assert all(not action.mutates_workspace for action in allowed)
     assert all(not action.mutates_target_project for action in allowed)
+
+
+def test_execute_endpoint_requires_confirm_true(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.scope_template.generate", "project": "sample", "run_id": package.run_id, "confirm": False},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "BLOCKED"
+    assert "confirm=true" in data["message"]
+
+
+def test_execute_allowed_workspace_safe_action_generates_artifact(tmp_path: Path, monkeypatch) -> None:
+    workspace, target, package = _registered_workspace(tmp_path, monkeypatch)
+    sentinel = target / "README.md"
+    before_target = sentinel.read_text(encoding="utf-8")
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.scope_template.generate", "project": "sample", "run_id": package.run_id, "confirm": True},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["artifact_path"].endswith("scope-template.md")
+    assert Path(data["artifact_path"]).exists()
+    assert sentinel.read_text(encoding="utf-8") == before_target
+
+
+def test_execute_project_activity_visual_returns_artifact(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "visual.project_activity.generate", "project": "sample", "confirm": True},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["artifact_path"].endswith("project-activity.md")
+    assert Path(data["artifact_path"]).exists()
+
+
+def test_execute_missing_project_or_run_returns_clear_error(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    missing_project = client.post(
+        "/api/actions/execute",
+        json={"action_id": "visual.project_activity.generate", "confirm": True},
+    )
+    missing_run = client.post(
+        "/api/actions/execute",
+        json={"action_id": "visual.work_package.generate", "project": "sample", "confirm": True},
+    )
+
+    assert missing_project.status_code == 400
+    assert missing_project.json()["detail"]["error"] == "action_invalid"
+    assert "project is required" in missing_project.json()["detail"]["message"]
+    assert missing_run.status_code == 400
+    assert "run_id is required" in missing_run.json()["detail"]["message"]
+
+
+def test_execute_approval_required_action_is_blocked(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "validation.run", "project": "sample", "run_id": package.run_id, "confirm": True},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "BLOCKED"
+    assert "not available" in data["message"]
+
+
+def test_execute_dangerous_action_is_blocked(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "git.push", "project": "sample", "confirm": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "BLOCKED"
+
+
+def test_execute_unknown_action_returns_404(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "missing.action", "project": "sample", "confirm": True},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"] == "action_not_found"
 
 
 def test_action_endpoints_do_not_mutate_workspace_or_target_repo(tmp_path: Path, monkeypatch) -> None:
@@ -132,6 +246,34 @@ def _workspace(tmp_path: Path, monkeypatch) -> Path:
     workspace.mkdir()
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
     return workspace
+
+
+def _registered_workspace(tmp_path: Path, monkeypatch):
+    workspace = _workspace(tmp_path, monkeypatch)
+    target = tmp_path / "target-project"
+    target.mkdir()
+    (target / "README.md").write_text("# Target\n", encoding="utf-8")
+    project_dir = workspace / "projects" / "sample"
+    context_dir = project_dir / "context"
+    approvals_dir = project_dir / "approvals"
+    context_dir.mkdir(parents=True)
+    approvals_dir.mkdir(parents=True)
+    (project_dir / "project.json").write_text(
+        ProjectRegistration(
+            name="sample",
+            path=target,
+            looks_like_software_project=True,
+            detected_markers=["README.md"],
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    (context_dir / "context-state.json").write_text(
+        ContextState(project_name="sample", project_path=target, status=ContextStatus.CONTEXT_APPROVED).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    (approvals_dir / "context-approval.json").write_text("{}", encoding="utf-8")
+    package = start_work_package("sample", "docs-only", "Generate workspace artifact", workspace_root=workspace)
+    return workspace, target, package
 
 
 def _workspace_snapshot(workspace: Path) -> dict[str, str]:

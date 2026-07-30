@@ -138,3 +138,18 @@ export interface UiActionsResponse {
   count: number;
   actions: UiActionMetadata[];
 }
+
+export interface UiActionExecuteRequest {
+  action_id: string;
+  project?: string | null;
+  run_id?: string | null;
+  confirm: boolean;
+}
+
+export interface UiActionExecutionResult {
+  status: 'OK' | 'WARN' | 'FAIL' | 'BLOCKED';
+  action_id: string;
+  message: string;
+  artifact_path: string | null;
+  suggested_next_command: string | null;
+}
