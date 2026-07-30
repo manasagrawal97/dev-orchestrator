@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from time import perf_counter
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -39,6 +40,13 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+
+    @api.middleware("http")
+    async def add_elapsed_header(request: Request, call_next):  # type: ignore[no-untyped-def]
+        started = perf_counter()
+        response = await call_next(request)
+        response.headers["X-Devo-Elapsed-Ms"] = f"{(perf_counter() - started) * 1000:.1f}"
+        return response
 
     @api.get("/api/health")
     def health() -> dict[str, object]:

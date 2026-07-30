@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { devoApi } from '../api/client';
 import { CommandCopyBox } from '../components/CommandCopyBox';
 import { JsonDetails } from '../components/JsonDetails';
+import { LoadingState } from '../components/SectionState';
 import { StatusBadge } from '../components/StatusBadge';
 import { SummaryCard } from '../components/SummaryCard';
 import type { ApiHealth, DoctorReport } from '../types/devo';
@@ -81,6 +82,7 @@ export function HealthPage({ selectedProject }: HealthPageProps) {
 
       {!selectedProject ? <p className="muted">Select a project to load project doctor checks.</p> : null}
       {doctorError ? <p className="error-text">{doctorError}</p> : null}
+      {selectedProject && !doctor && !doctorError ? <LoadingState message="Loading project doctor checks..." /> : null}
 
       {doctor ? (
         <>

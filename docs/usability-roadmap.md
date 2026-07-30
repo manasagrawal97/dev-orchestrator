@@ -169,7 +169,7 @@ devo doctor --project DevOrchestrator --json
 
 These models summarize project, run, and work-package state without requiring a UI to scrape raw workspace folders. Dashboard/UI remains future scope; the read models are the stable data-contract bridge.
 
-The UI/API architecture plan is documented in [UI/API architecture](ui-architecture.md). The first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md). Devo now has a local-only read-only API backend (`devo api serve`) and a React/Vite read-only dashboard MVP under `ui/`, so the recommended path is: deepen dashboard read-model coverage, keep the CLI complete, then add controlled write actions only after the Devo approval and policy model is preserved in the UI.
+The UI/API architecture plan is documented in [UI/API architecture](ui-architecture.md). The first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md). Devo now has a local-only read-only API backend (`devo api serve`) and a polished React/Vite read-only dashboard MVP under `ui/`, so the recommended path is: improve read-model performance and coverage, keep the CLI complete, then add controlled write actions only after the Devo approval and policy model is preserved in the UI.
 
 ### Approval Bundles - MVP Added
 
@@ -248,6 +248,8 @@ A future dashboard should show:
 The CLI should stay complete, but a UI would make Devo easier to operate.
 
 Do not turn the scaffold into a write/action dashboard too early. UI-ready read models, generated visual reports, structured activity summaries, the [UI/API architecture plan](ui-architecture.md), and the [UI MVP specification](ui-mvp-spec.md) should keep shaping the dashboard, because they prove the data model, page scope, and safety model a fuller UI would later render.
+
+The current dashboard polish direction is calmer layout, clearer selected-dashboard-project versus CLI-current-context labeling, section-level loading for slow overview/doctor checks, quieter Activity evidence lists, and safe CLI command suggestions for missing work-package artifacts. Read-model snapshot caching is a future performance task, not part of the first polish pass.
 
 ### Direct Model And Agent Adapters
 

@@ -65,7 +65,7 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">Local-first control room</p>
+          <p className="eyebrow">DevOrchestrator</p>
           <h1>Devo Dashboard</h1>
         </div>
         <div className="api-pill">
@@ -89,22 +89,28 @@ export default function App() {
             ))}
           </nav>
           <div className="context-panel">
-            <span>Current project</span>
-            <strong>{current?.project ?? selectedProject ?? 'none'}</strong>
-            <span>Current run</span>
-            <strong>{current?.run ?? selectedRun ?? 'none'}</strong>
+            <span>Dashboard selection</span>
+            <strong>{selectedProject ?? 'none'}</strong>
+            <span>Selected run</span>
+            <strong>{selectedRun ?? 'none'}</strong>
+          </div>
+          <div className="context-panel cli-context">
+            <span>CLI current context</span>
+            <strong>{current?.project ?? 'none'}</strong>
+            <span>CLI current run</span>
+            <strong>{current?.run ?? 'none'}</strong>
             {!current?.project ? <small>Select a project or run `devo use --project &lt;project&gt;`.</small> : null}
           </div>
         </aside>
 
         <main className="content-shell">
           <section className="readonly-banner">
-            <strong>Read-only UI v1.</strong>
-            <span>Use CLI/Codex for approvals, work execution, validation, commit, push, restore, and scheduler changes.</span>
+            <strong>Read-only dashboard.</strong>
+            <span>Use CLI/Codex for approvals, validation, delivery, restore, and scheduler changes.</span>
           </section>
 
           <div className="page-title">
-            <p className="eyebrow">Dashboard scaffold</p>
+            <p className="eyebrow">Dashboard</p>
             <h2>{pageTitle}</h2>
           </div>
 

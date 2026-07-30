@@ -24,6 +24,8 @@ It does not replace the CLI. It does not execute risky actions. UI v1 is read-on
 - Clear status badges and next actions matter more than fancy design.
 - Missing older artifacts should show `unknown`, `SKIP`, or a helpful empty state instead of breaking the page.
 - Links to reports, visuals, and commands should help the user return to the CLI quickly.
+- Slow sections should show local loading hints instead of blocking the full page.
+- Raw artifact paths should remain accessible, but they should not dominate the first visual scan.
 
 ## UI MVP Pages
 
@@ -218,6 +220,10 @@ Projects page:
 Project Overview:
 
 - `GET /api/projects/{project}/overview`
+- `GET /api/projects/{project}/activity`
+- `GET /api/projects/{project}/doctor`
+
+Project Overview should render the selected project shell immediately and fill in slower sections independently. Doctor, backup, Git, and activity-backed summaries may take longer on large workspaces, so section-level loading states should explain that some health checks can take longer.
 
 Work Detail:
 
@@ -240,7 +246,7 @@ The browser should receive `ProjectOverview`, `RunOverview`, and `WorkPackageOve
 
 The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. UI v1 should treat it as read-only and must not depend on write/action endpoints.
 
-The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, and Health pages. UI v1 remains read-only and exposes only selection/navigation, optional JSON details, report/path viewing where available, and copyable CLI commands.
+The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, and Health pages. UI v1 remains read-only and exposes only selection/navigation, optional JSON details, report/path viewing where available, and copyable CLI commands. The dashboard distinguishes selected dashboard project/run from saved CLI current context so the user can inspect one project without accidentally implying that `devo use` has changed.
 
 ## Wireframe-Style Layout
 

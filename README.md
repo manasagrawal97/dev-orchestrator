@@ -2,7 +2,7 @@
 
 DevOrchestrator, or Devo, is a local development control room for AI-assisted software work. It records project context, runs, agent workflow state, approvals, validation evidence, Git delivery evidence, reports, and recovery notes.
 
-Devo is not the AI itself. ChatGPT plans and reviews, Codex implements and operates, and Devo manages the workflow guardrails and evidence trail. This version intentionally does not include autonomous agents, AI API integration, or a web UI.
+Devo is not the AI itself. ChatGPT plans and reviews, Codex implements and operates, and Devo manages the workflow guardrails and evidence trail. This version intentionally does not include autonomous agents or AI API integration. It now includes a local read-only API and dashboard for inspecting Devo state.
 
 ## Current Strategy
 
@@ -14,7 +14,7 @@ The current strategy is CLI-first and local-first:
 - Devo CLI manages workflow, approvals, validation, delivery, reports, history, and generated visual artifacts.
 - No direct AI API tokens are required for current Devo development.
 - Manual/Codex mode must remain supported even after future model adapters exist.
-- Dashboard/UI work is later; the CLI should mature first.
+- Dashboard/UI work stays read-only for now; the CLI remains the execution and recovery path.
 
 ## Project Memory
 
@@ -303,7 +303,7 @@ The scanner walks the registered project in read-only mode and records bounded m
 
 Agents are prompt-only role definitions in this version. Each agent is a YAML contract that describes its purpose, allowed inputs, expected outputs, workflow rules, approval requirements, and next state. DevOrchestrator can list these definitions, show their details, and generate a bounded ProjectContextDiscoveryAgent prompt from `scan-result.json`.
 
-No AI model is called yet. No autonomous agent workflow, Codex integration, code modification, or web UI is implemented.
+No AI model is called yet. No autonomous agent workflow, Codex integration, or code modification is implemented. The local dashboard is read-only and does not execute workflow actions.
 
 ## Context Lifecycle
 
@@ -333,7 +333,7 @@ workspace/runs/<projectName>/<runId>/
 
 Each run includes `goal.md`, `run-state.json`, and folders for artifacts, prompts, validation, reviews, logs, and approvals. Active project/run selection is stored in `workspace/current.json`.
 
-This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, ImplementationCoordinatorAgent, ValidatorAgent, CodeReviewerAgent, and FinalAuditorAgent workflow. It does not execute implementations, run tests automatically, inspect diffs automatically, apply fixes, call AI models, integrate Codex, or provide a web UI.
+This version creates runs and supports prompt-only IdeaAnalystAgent, RequirementsAgent, PlannerAgent, PlanReviewerAgent, TaskDecomposerAgent, ImplementationCoordinatorAgent, ValidatorAgent, CodeReviewerAgent, and FinalAuditorAgent workflow. It does not execute implementations, run tests automatically, inspect diffs automatically, apply fixes, call AI models, or integrate Codex. The local dashboard only reads and displays Devo state.
 
 ## Run-Level Agent Workflow
 
@@ -383,7 +383,7 @@ RUN_CREATED -> IDEA_ANALYSIS_DRAFTED -> REQUIREMENTS_DRAFTED -> PLAN_DRAFTED -> 
 
 `devo task status` and `devo task list` show both formal closure state and disposition state. `devo run artifacts <runId> --project MyProject` shows `goal.md`, `run-state.json`, imported artifacts including `idea-analysis`, `requirements`, `plan`, `plan-review`, `tasks`, `task-ledger.json` when present, `run-summary.md` when present, implementation briefs, completion reports, validation reports, code review reports, final audit reports, and closure records grouped by task id, plus every generated prompt.
 
-RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. Task selection requires approved project context, an existing run, and `tasks.md`; it skips formal closures and resolved dispositions, skips blocked tasks when blocker metadata is present, warns on unknown statuses, and does not invent missing risk or priority. Run closure requires approved project context, an existing run, `tasks.md`, and no unresolved tasks. This version does not implement automatic next-run creation, automatic validation runners, automatic diff extraction, fix, AI model calls, or a web UI.
+RequirementsAgent import requires IdeaAnalystAgent output unless `--allow-missing-idea-analysis` is explicitly provided. PlannerAgent requires imported requirements and will not run directly from `RUN_CREATED` or `IDEA_ANALYSIS_DRAFTED`. PlanReviewerAgent requires imported PlannerAgent output. TaskDecomposerAgent requires a reviewed plan and will not run directly from `REQUIREMENTS_DRAFTED` or `PLAN_DRAFTED`. ImplementationCoordinatorAgent requires `TASKS_DRAFTED`, a provided `--task`, and a task id that exists in `tasks.md`. Implementation completion reporting requires an existing implementation brief for the selected task. ValidatorAgent requires `IMPLEMENTATION_REPORTED`, an implementation brief, and a completion report for the selected task. CodeReviewerAgent requires `VALIDATION_REVIEWED`, an implementation brief, a completion report, and a validation report for the selected task. FinalAuditorAgent requires `CODE_REVIEWED`, an implementation brief, a completion report, a validation report, and a code review report for the selected task. Task closure requires `FINAL_AUDITED`, a final audit report, and a closeable final decision. Task disposition requires an approved project context, an existing run, and a task id from `tasks.md`; `covered_by` also requires `--covered-by`, and all non-`open` dispositions require `--note`. Task selection requires approved project context, an existing run, and `tasks.md`; it skips formal closures and resolved dispositions, skips blocked tasks when blocker metadata is present, warns on unknown statuses, and does not invent missing risk or priority. Run closure requires approved project context, an existing run, `tasks.md`, and no unresolved tasks. This version does not implement automatic next-run creation, automatic validation runners, automatic diff extraction, fixes, AI model calls, or dashboard write actions.
 
 ## Approval Ledger
 
@@ -483,11 +483,11 @@ devo work status --project MyProject --run <runId> --json
 devo doctor --project MyProject --json
 ```
 
-These commands are read-only. They prepare Devo for a future dashboard or local API server without building a UI yet. Future UI code should consume read models or API responses, not scrape raw `workspace/` folders directly. The planned local UI/API shape and safety model are documented in [docs/ui-architecture.md](docs/ui-architecture.md), and the first read-only dashboard scope is defined in [docs/ui-mvp-spec.md](docs/ui-mvp-spec.md).
+These commands are read-only. They provide the data contract for the local API and dashboard. UI code should consume read models or API responses, not scrape raw `workspace/` folders directly. The local UI/API shape and safety model are documented in [docs/ui-architecture.md](docs/ui-architecture.md), and the first read-only dashboard scope is defined in [docs/ui-mvp-spec.md](docs/ui-mvp-spec.md).
 
 ## Local Read-Only API
 
-Devo can serve the same read models through a local-only FastAPI server for future dashboard work:
+Devo serves the same read models through a local-only FastAPI server for dashboard work:
 
 ```powershell
 devo api routes
@@ -495,6 +495,7 @@ devo api serve
 ```
 
 The default URL is `http://127.0.0.1:8765`. API v1 is read-only and blocks non-local hosts. It does not run validations, builds, tests, restores, commits, pushes, scheduler changes, target apps, or model/API agents.
+API responses include a lightweight `X-Devo-Elapsed-Ms` header to help identify slow read-model endpoints during dashboard review.
 
 Example health endpoint:
 
@@ -504,7 +505,7 @@ GET http://127.0.0.1:8765/api/health
 
 ## React UI Scaffold
 
-The first dashboard scaffold lives under `ui/`. It is read-only and consumes the local API.
+The read-only dashboard lives under `ui/`. It consumes the local API.
 
 Start the backend:
 
@@ -520,7 +521,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes read-only Projects, Project Overview, Work Package, Activity, and Health pages backed by the local API. It shows current context, project health, settings, Git, validation, backup, recent runs/work packages, activity, doctor checks, lifecycle state, and copyable CLI commands. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, and scheduler work.
+Open `http://127.0.0.1:5173`. The dashboard includes read-only Projects, Project Overview, Work Package, Activity, and Health pages backed by the local API. It shows dashboard selection separately from saved CLI current context, uses section-level loading for slower project overview and doctor checks, keeps raw paths tucked behind quieter activity sections, and provides copyable CLI commands for safe continuation. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, and scheduler work.
 
 ## Policy Gates
 

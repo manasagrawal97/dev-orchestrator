@@ -34,9 +34,9 @@ Improve prompt generation, local operator handoff, task templates, interrupted-w
 
 Expand generated Mermaid or other artifact-backed visual summaries only where they reduce operator confusion. These visuals should be generated from Devo structured data, not maintained by hand.
 
-### Phase 4: Dashboard Planning And MVP
+### Phase 4: Read-Only Dashboard MVP And Polish
 
-Plan and build a dashboard only after the CLI state model is mature. The dashboard should read Devo read models/API responses rather than becoming a second source of truth or scraping raw workspace folders directly. The first UI MVP is specified as a local read-only dashboard before any controlled write actions.
+Keep improving the local read-only dashboard after the CLI state model is mature enough to support it. The dashboard reads Devo read models/API responses rather than becoming a second source of truth or scraping raw workspace folders directly. Controlled write actions remain deferred until read-only views, performance, and safety boundaries are boring.
 
 ### Phase 5: Direct API Agents And Model Adapters
 
@@ -149,6 +149,10 @@ Added the first React/Vite/TypeScript frontend scaffold under `ui/`. The scaffol
 
 Expanded the React/Vite scaffold into a useful read-only dashboard. Projects, Project Overview, Work Package, Activity, and Health pages now consume the local API/read models, show loading/error/empty states, expose status badges, summary cards, current context, project settings, Git/validation/backup summaries, recent runs/work packages, activity/history, doctor checks, lifecycle state, stop conditions, suggested next actions, optional JSON details, and copyable CLI commands. The dashboard still has no approval buttons, validation/build/test execution, commit/push controls, backup restore/delete controls, scheduler controls, target project edits, app runs, or model/API calls.
 
+### TASK-DEVO-068 Dashboard Loading And Layout Polish - Completed
+
+Polished the read-only dashboard with calmer visual spacing, more readable section hierarchy, section-level loading hints for slow overview/doctor/activity-backed views, clearer dashboard selection versus CLI current context labels, quieter Activity report/context lists, and a better missing work-package empty state with safe CLI commands. The API now emits an `X-Devo-Elapsed-Ms` response header for lightweight endpoint timing during future profiling. DB-backed read-model caching and snapshot caching are intentionally deferred.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.
@@ -220,6 +224,6 @@ Reduced duplicate approval friction in the validation runner. Exact `target_comm
 - Stay CLI-first and local-first until the workflow is smooth.
 - Preserve target project safety.
 - Avoid AI API integration until CLI/manual workflows are proven and cost controls are clear.
-- Avoid web UI until CLI workflows, generated reports, and structured data are stable.
+- Keep web UI read-only until CLI workflows, generated reports, structured data, and endpoint performance are stable.
 - Prefer explicit approval records and evidence over implicit automation.
 - Reduce user friction with work packages, lanes, approval bundles, compact operator prompts, history, activity, and recovery before adding direct model adapters.

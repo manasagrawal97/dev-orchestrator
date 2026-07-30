@@ -36,6 +36,7 @@ Current backend bridge:
 - default URL `http://127.0.0.1:8765`
 - read-only JSON endpoints over Devo read models
 - non-local hosts blocked for MVP safety
+- lightweight `X-Devo-Elapsed-Ms` response header for spotting slow read-model endpoints
 
 Recommended future backend direction:
 
@@ -139,6 +140,8 @@ GET /api/projects/{project}/runs/{run_id}/work-package
 
 Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
 
+Some read models can be slower because they aggregate doctor checks, Git status, backup inventory or scheduled-task checks, activity scanning, and overview summaries. UI v1 should handle that with section-level loading states and slow-check hints. Read-model snapshot caching or DB-backed caching is deferred until the slow paths are profiled more deliberately.
+
 ## Implementation Phases
 
 Phase A: architecture docs
@@ -162,6 +165,7 @@ Phase C: frontend scaffold
 Phase D: read-only dashboard MVP
 
 - expanded the scaffold to show projects, current context, doctor, activity, work package lifecycle, validation, Git, backup, recent work, and copyable CLI commands
+- polished dashboard layout, section-level loading, quieter activity evidence, and dashboard-selection versus CLI-context labels
 - follow the page and component scope in `docs/ui-mvp-spec.md`
 
 Phase E: visual diagrams and activity timeline
@@ -184,6 +188,7 @@ Phase G: optional API/model agents
 - packaging and start command for local use
 - local-only access and whether lightweight auth is needed later
 - performance on large workspaces
+- whether read-model snapshot caching is needed after profiling
 - how to render Mermaid and generated visual reports cleanly
 - how to keep UI actions aligned with Devo approval records
 - how much write access belongs in UI v2
@@ -191,10 +196,10 @@ Phase G: optional API/model agents
 
 ## Current Decision
 
-The next UI step is not to build a dashboard immediately. The current product direction is:
+The current UI direction is:
 
 1. keep Devo CLI-first and local-first
-2. mature read models and JSON summaries
-3. document the UI/API safety model
-4. add a local read-only API server later
-5. build a read-only dashboard after the API/read-model contract is stable
+2. keep UI v1 read-only
+3. improve dashboard clarity, loading behavior, and read-model performance
+4. defer read-model snapshot caching until slow paths are profiled
+5. defer controlled write actions until the approval/policy model is preserved in the UI

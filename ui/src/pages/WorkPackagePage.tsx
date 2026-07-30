@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { devoApi } from '../api/client';
 import { CommandCopyBox } from '../components/CommandCopyBox';
+import { EmptyState, LoadingState } from '../components/SectionState';
 import { JsonDetails } from '../components/JsonDetails';
 import { KeyValueList } from '../components/KeyValueList';
 import { LifecycleStepper } from '../components/LifecycleStepper';
@@ -19,16 +20,22 @@ export function WorkPackagePage({ selectedProject, selectedRun, onSelectRun, onO
   const [overview, setOverview] = useState<ProjectOverview | null>(null);
   const [run, setRun] = useState<RunOverview | null>(null);
   const [work, setWork] = useState<WorkPackageOverview | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedProject) {
       setOverview(null);
+      setOverviewLoading(false);
+      setOverviewError(null);
       return;
     }
 
     let active = true;
+    setOverviewLoading(true);
+    setOverviewError(null);
     devoApi
       .getProjectOverview(selectedProject)
       .then((data) => {
@@ -43,6 +50,12 @@ export function WorkPackagePage({ selectedProject, selectedRun, onSelectRun, onO
       .catch(() => {
         if (active) {
           setOverview(null);
+          setOverviewError('Could not load recent runs for this project.');
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setOverviewLoading(false);
         }
       });
     return () => {
@@ -90,8 +103,20 @@ export function WorkPackagePage({ selectedProject, selectedRun, onSelectRun, onO
     return <p className="muted">Select a project before viewing work package details.</p>;
   }
 
+  if (!selectedRun && !availableRuns.length && overviewLoading) {
+    return <LoadingState message={`Loading runs for ${selectedProject}...`} />;
+  }
+
+  if (overviewError && !selectedRun) {
+    return <p className="error-text">{overviewError}</p>;
+  }
+
   if (!selectedRun && !availableRuns.length) {
-    return <p className="muted">No runs found for {selectedProject}.</p>;
+    return (
+      <EmptyState message={`No runs found for ${selectedProject}.`}>
+        <CommandCopyBox command={`devo work new --project ${selectedProject} --goal "<goal>"`} />
+      </EmptyState>
+    );
   }
 
   return (
@@ -114,7 +139,7 @@ export function WorkPackagePage({ selectedProject, selectedRun, onSelectRun, onO
         </label>
       ) : null}
 
-      {loading ? <p className="muted">Loading run details...</p> : null}
+      {loading ? <LoadingState message="Loading run details..." /> : null}
       {error ? <p className="error-text">{error}</p> : null}
 
       {run && work ? (
@@ -182,6 +207,16 @@ export function WorkPackagePage({ selectedProject, selectedRun, onSelectRun, onO
 
           <JsonDetails data={{ run, work }} label="View run/work-package JSON" />
         </>
+      ) : null}
+
+      {run && work && work.scope_status === 'missing work-package artifact' ? (
+        <EmptyState message="No work-package artifact found for this run. Older runs may predate Devo work-package mode.">
+          <div className="command-stack">
+            <CommandCopyBox command={`devo project activity --project ${selectedProject}`} />
+            <CommandCopyBox command={`devo work list --project ${selectedProject}`} />
+            <CommandCopyBox command={`devo work new --project ${selectedProject} --goal "<goal>"`} />
+          </div>
+        </EmptyState>
       ) : null}
     </section>
   );

@@ -1,6 +1,6 @@
 :root {
-  color: #1f2937;
-  background: #eef2f7;
+  color: #202733;
+  background: #f3f5f8;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -30,11 +30,11 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  min-height: 88px;
-  padding: 18px 28px;
-  color: #ffffff;
-  background: #172033;
-  border-bottom: 4px solid #2aa876;
+  min-height: 92px;
+  padding: 20px 32px;
+  color: #f8fafc;
+  background: #202938;
+  border-bottom: 1px solid #d7dee8;
 }
 
 .topbar h1,
@@ -45,7 +45,7 @@ button {
 }
 
 .topbar h1 {
-  font-size: 28px;
+  font-size: 27px;
   line-height: 1.2;
 }
 
@@ -59,7 +59,7 @@ button {
 }
 
 .topbar .eyebrow {
-  color: #a8c7ff;
+  color: #bac5d3;
 }
 
 .api-pill {
@@ -67,7 +67,7 @@ button {
   gap: 2px;
   min-width: 220px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.07);
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
 }
@@ -86,13 +86,13 @@ button {
 .body-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-  min-height: calc(100vh - 88px);
+  min-height: calc(100vh - 92px);
 }
 
 .sidebar {
-  padding: 20px 16px;
-  background: #ffffff;
-  border-right: 1px solid #d9e1ea;
+  padding: 24px 18px;
+  background: #fbfcfe;
+  border-right: 1px solid #dde4ee;
 }
 
 .sidebar nav {
@@ -104,7 +104,7 @@ button {
   width: 100%;
   min-height: 40px;
   padding: 9px 11px;
-  color: #334155;
+  color: #3f4b5f;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
@@ -114,19 +114,27 @@ button {
 
 .nav-button:hover,
 .nav-button.active {
-  color: #10233f;
-  background: #eaf1fb;
-  border-color: #b8c7da;
+  color: #172033;
+  background: #eef3f8;
+  border-color: #c7d1df;
 }
 
 .context-panel {
   display: grid;
   gap: 4px;
   margin-top: 24px;
-  padding: 12px;
-  background: #f6f8fb;
-  border: 1px solid #d9e1ea;
+  padding: 14px;
+  background: #f4f7fa;
+  border: 1px solid #dce4ee;
   border-radius: 8px;
+}
+
+.context-panel + .context-panel {
+  margin-top: 12px;
+}
+
+.cli-context {
+  background: #ffffff;
 }
 
 .context-panel strong {
@@ -142,19 +150,20 @@ button {
 
 .content-shell {
   min-width: 0;
-  padding: 24px 28px 40px;
+  padding: 30px 36px 48px;
 }
 
 .readonly-banner {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-bottom: 20px;
-  padding: 12px 14px;
-  color: #3b2f00;
-  background: #fff4cc;
-  border: 1px solid #e8c65b;
+  margin-bottom: 26px;
+  padding: 11px 14px;
+  color: #3f4b5f;
+  background: #ffffff;
+  border: 1px solid #d7dee8;
   border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
 }
 
 .readonly-banner span {
@@ -162,11 +171,11 @@ button {
 }
 
 .page-title {
-  margin-bottom: 20px;
+  margin-bottom: 26px;
 }
 
 .page-title h2 {
-  font-size: 24px;
+  font-size: 25px;
   line-height: 1.25;
 }
 
@@ -175,7 +184,7 @@ button {
   align-items: end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 22px;
 }
 
 .section-heading p {
@@ -187,25 +196,30 @@ button {
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
+  gap: 18px;
 }
 
 .dashboard-grid,
 .two-column {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 14px;
-  margin-top: 16px;
+  gap: 18px;
+  margin-top: 22px;
+}
+
+section > .summary-card,
+section > .state-block {
+  margin-top: 22px;
 }
 
 .project-card,
 .summary-card {
   min-height: 124px;
-  padding: 16px;
+  padding: 18px;
   background: #ffffff;
-  border: 1px solid #d8e0eb;
+  border: 1px solid #dfe6ef;
   border-radius: 8px;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 10px 26px rgba(16, 24, 40, 0.04);
 }
 
 .project-card {
@@ -239,14 +253,14 @@ button {
 }
 
 .summary-card h3 {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   color: #475569;
   font-size: 14px;
 }
 
 .summary-value {
   color: #172033;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 700;
 }
 
@@ -295,9 +309,9 @@ button {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-top: 18px;
-  padding: 10px;
-  background: #101828;
+  margin-top: 16px;
+  padding: 11px;
+  background: #202938;
   border-radius: 8px;
 }
 
@@ -320,9 +334,9 @@ button {
 
 .panel {
   min-width: 0;
-  padding: 16px;
+  padding: 18px;
   background: #ffffff;
-  border: 1px solid #d8e0eb;
+  border: 1px solid #dfe6ef;
   border-radius: 8px;
 }
 
@@ -404,7 +418,7 @@ tr:last-child td {
 
 .list-stack {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .work-row,
@@ -437,7 +451,7 @@ tr:last-child td {
 
 .plain-list {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   padding-left: 18px;
 }
@@ -520,7 +534,7 @@ tr:last-child td {
 }
 
 .json-details {
-  margin-top: 16px;
+  margin-top: 22px;
   background: #ffffff;
   border: 1px solid #d8e0eb;
   border-radius: 8px;
@@ -549,6 +563,91 @@ tr:last-child td {
   background: #ffffff;
   border: 1px solid #d8e0eb;
   border-radius: 8px;
+}
+
+.state-block {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 14px;
+  color: #556174;
+  background: #f8fafc;
+  border: 1px solid #dfe6ef;
+  border-radius: 8px;
+}
+
+.state-block p {
+  margin: 0;
+}
+
+.state-block small {
+  display: block;
+  margin-top: 4px;
+  color: #758195;
+  line-height: 1.4;
+}
+
+.loading-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  background: #7a8ba0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(122, 139, 160, 0.14);
+}
+
+.empty-state {
+  margin-top: 18px;
+}
+
+.error-state {
+  color: #8a1f1f;
+  background: #fff7f7;
+  border-color: #f2caca;
+}
+
+.activity-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.activity-list li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf1f6;
+}
+
+.activity-list li:last-child {
+  border-bottom: 0;
+}
+
+.activity-list strong {
+  color: #253247;
+  font-size: 13px;
+}
+
+.activity-list small {
+  color: #697689;
+  overflow-wrap: anywhere;
+}
+
+.quiet-panel {
+  background: #fbfcfe;
+}
+
+.quiet-details summary {
+  color: #445369;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.command-stack {
+  display: grid;
+  gap: 10px;
+  width: 100%;
 }
 
 .muted {

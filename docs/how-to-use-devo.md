@@ -223,7 +223,7 @@ Use `devo visual work-package` to write a Mermaid lifecycle artifact for one run
 
 ## UI-Ready JSON Summaries
 
-Devo has a read-only read-model layer for future UI/API work. It does not build a dashboard yet, and it does not mutate target projects.
+Devo has a read-only read-model layer for UI/API work. It powers the local dashboard and does not mutate target projects.
 
 ```powershell
 devo project overview --project <name>
@@ -233,11 +233,11 @@ devo work status --project <name> --run <runId> --json
 devo doctor --project <name> --json
 ```
 
-The read models summarize projects, runs, and work packages with UI-friendly fields such as onboarding status, doctor status, settings, Git status, validation registry, recent work packages, approval/validation/delivery state, next phase, next command, and stop conditions. Future UI/dashboard work should consume these read models through CLI JSON or a future API, not scrape raw workspace folders directly. The local UI/API plan is documented in [UI/API architecture](ui-architecture.md), and the first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md): read-only dashboard first, controlled actions later, and no bypass around Devo approval/policy checks.
+The read models summarize projects, runs, and work packages with UI-friendly fields such as onboarding status, doctor status, settings, Git status, validation registry, recent work packages, approval/validation/delivery state, next phase, next command, and stop conditions. Dashboard work should consume these read models through CLI JSON or the local API, not scrape raw workspace folders directly. The local UI/API plan is documented in [UI/API architecture](ui-architecture.md), and the first dashboard scope is documented in [UI MVP specification](ui-mvp-spec.md): read-only dashboard first, controlled actions later, and no bypass around Devo approval/policy checks.
 
 ## Local Read-Only API
 
-The future dashboard can consume the same read models through a local-only FastAPI backend:
+The dashboard consumes the same read models through a local-only FastAPI backend:
 
 ```powershell
 devo api routes
@@ -263,7 +263,7 @@ GET /api/projects/{project}/runs/{run_id}/overview
 GET /api/projects/{project}/runs/{run_id}/work-package
 ```
 
-The API is read-only in v1. It does not approve/reject, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs. `devo api serve` blocks non-local hosts for MVP safety.
+The API is read-only in v1. It does not approve/reject, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs. `devo api serve` blocks non-local hosts for MVP safety. Responses include an `X-Devo-Elapsed-Ms` header to help identify slow read-model endpoints during dashboard review.
 
 ## React UI Scaffold
 
@@ -289,7 +289,7 @@ Open:
 http://127.0.0.1:5173
 ```
 
-The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 includes read-only Projects, Project Overview, Work Package, Activity, and Health pages. It can display read models and copy CLI commands, but it does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
+The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 includes read-only Projects, Project Overview, Work Package, Activity, and Health pages. It distinguishes dashboard selection from saved CLI current context, uses section-level loading hints for slower overview/doctor checks, keeps Activity evidence quieter by default, and can display read models and copy CLI commands. It does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
 
 ## Safety
 
