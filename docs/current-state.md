@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -39,12 +39,12 @@ The working loop is:
 ## Latest State
 
 - Latest completed source task: TASK-DEVO-073 controlled UI work bootstrap action
-- Latest docs task: TASK-DEVO-073A defines the Devo company-model vision and future agent workflow.
+- Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: continue delivery-signal noise reduction, then add interrupted-work recovery/resume and handoff prompt generation.
+- Next recommended action: start TASK-DEVO-074 Project Brief + Blueprint data model, following `docs/remaining-roadmap.md`.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -90,15 +90,18 @@ The working loop is:
 - TASK-DEVO-072 adds the first controlled UI v2 workspace-safe actions through `POST /api/actions/execute`. The only executable actions are generating a work scope template, generating a work-package visual, generating a project activity visual, and writing an onboarding report. Each requires explicit confirmation and writes Devo workspace artifacts only; target repositories, approvals, validation/build/test, Git delivery, backup restore/delete, scheduler controls, target app runs, and model/API agents remain unavailable in the UI.
 - TASK-DEVO-073 adds `work.new.create` to the controlled UI action executor. The Action Safety page can now create a Devo run/work-package draft, use an explicit lane or project default lane, optionally generate the scope template, and return a resume command. This writes Devo workspace artifacts only and does not modify target repositories or add approval/build/test/commit/push/restore/scheduler/model controls.
 - TASK-DEVO-073A adds `docs/devo-company-model.md` to define the long-term Devo vision as a local software-development company operating system around AI workers. It documents the company-role analogy, current deterministic responsibility model, future agent contract/worker backend model, Codex CLI default worker strategy, final brief-to-blueprint-to-backlog-to-batch-to-Codex workflow, and deferred AI API/general chat/SaaS scope.
+- TASK-DEVO-073B adds `docs/remaining-roadmap.md` as the active remaining roadmap. It prioritizes Project Brief, Blueprint, Backlog, Batch, Progress, Execution Queue, and Codex handoff work before broader UI actions, direct API agents, or PersonalOS feature work.
 
 ## Readiness Estimate
 
-- Practical CLI product maturity after TASK-DEVO-053B: around 75-80% complete.
-- Long-term product vision, including dashboard and direct model adapters: around 50-55% complete.
+- Practical personal-use Devo after TASK-DEVO-073B: around 65-70% complete.
+- Long-term ideal Devo, including dashboard maturity and optional worker/model adapters: around 40-45% complete.
+
+The next personal-use completion target is brief intake, blueprint/backlog, batch approval, Codex handoff, progress tracking, UI progress visibility, and one dogfood end-to-end run. At that point Devo can be considered around 80-85% complete for personal use.
 
 DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
-The next product step should focus on Devo CLI maturity. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
+The next product step should focus on the planning pipeline in `docs/remaining-roadmap.md`. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
 ## Completed Work
 
@@ -170,6 +173,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-072 first workspace-safe UI actions
 - TASK-DEVO-073 controlled UI work bootstrap action
 - TASK-DEVO-073A Devo company-model vision
+- TASK-DEVO-073B remaining roadmap reprioritization
 
 ## Recovery Pointers
 
@@ -178,13 +182,14 @@ If chat context is lost, start here:
 1. Read this file.
 2. Read `docs/devo-vision.md`.
 3. Read `docs/devo-company-model.md`.
-4. Read `docs/current-capabilities.md`.
-5. Read `docs/agent-workflow.md`.
-6. Read `docs/ui-architecture.md` when continuing UI/API planning.
-7. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
-8. Read `docs/roadmap.md`.
-9. Read `docs/operating-model.md`.
-10. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-11. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-12. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
-13. Continue from the latest planned next task.
+4. Read `docs/remaining-roadmap.md`.
+5. Read `docs/current-capabilities.md`.
+6. Read `docs/agent-workflow.md`.
+7. Read `docs/ui-architecture.md` when continuing UI/API planning.
+8. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
+9. Read `docs/roadmap.md`.
+10. Read `docs/operating-model.md`.
+11. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+12. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+13. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+14. Continue from the latest planned next task.

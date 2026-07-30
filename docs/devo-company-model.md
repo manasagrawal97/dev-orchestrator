@@ -10,6 +10,8 @@ The product shape is closer to a software-development company operating system f
 
 The product name remains Devo / DevOrchestrator.
 
+The implementation order for the remaining company-model work is tracked in `docs/remaining-roadmap.md`.
+
 ## Company Analogy
 
 Devo models the responsibilities of a small software company:

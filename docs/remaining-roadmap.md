@@ -1,0 +1,173 @@
+# Remaining Devo Roadmap
+
+## Purpose
+
+This document is the current source of truth for remaining Devo product work after TASK-DEVO-073A. It reprioritizes future tasks around the final desired workflow instead of around isolated CLI or dashboard conveniences.
+
+Product name: Devo / DevOrchestrator.
+
+Devo is not a replacement for Codex, Cursor, Claude Code, or ChatGPT. Devo is a local-first software-development company operating system around AI workers. Codex CLI/Desktop remains the default personal/local worker. Direct API/model agents are optional future scope, not the default path.
+
+## Current Completed Capabilities
+
+Devo already has:
+
+- project registration, scanning, and context lifecycle
+- runs and work packages
+- lanes, scope templates, `work resume`, and `work new`
+- approvals, approval bundles, and policy gates
+- validation command registry and validation runner
+- Git delivery checks and delivery reports
+- project, run, handoff, history, and activity reports
+- backup, recovery, and doctor health checks
+- generated visual reports
+- current project/run context shortcuts
+- project settings and guided onboarding
+- UI-ready read models and JSON output
+- local read-only FastAPI API
+- React dashboard MVP
+- UI polish and API/read-model performance work
+- UI helper commands for dashboard URLs/status/open
+- UI action safety model
+- limited workspace-safe UI actions
+- company-model vision docs
+
+These capabilities make Devo a useful local control plane today, but the product is not yet centered enough around brief intake, durable planning, batch queues, and visible progress.
+
+## Final Target Workflow
+
+The intended workflow is:
+
+1. Discuss the project with ChatGPT or another advisor.
+2. Paste the final project brief into Devo.
+3. Devo stores the project brief.
+4. Devo creates blueprint, backlog, and task artifacts using templates and/or Codex CLI planning handoff prompts.
+5. The user approves the plan or a batch.
+6. Codex executes approved tasks.
+7. Devo tracks validation, delivery, commits, progress, reports, and evidence.
+8. The user reviews completed batches when free.
+9. Devo resumes the approved queue when Codex usage resets or the user returns.
+
+This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo as the manager, memory, safety, and progress system.
+
+## Reprioritized Phases
+
+### Phase 1: Planning Pipeline Foundation
+
+- Project Brief model
+- Blueprint model
+- Backlog/task model
+- Dependency, risk, and lane mapping
+- Batch model
+- Progress model
+
+### Phase 2: Codex Handoff And Execution Queue
+
+- Codex handoff prompt generation
+- task execution prompt generation
+- batch execution prompt generation
+- queue state machine
+- pause/resume
+- usage-limit pause reason
+- blocked task handling
+
+### Phase 3: UI Planning And Progress Pages
+
+- Planning Intake page
+- Blueprint page
+- Backlog page
+- Batch Queue page
+- Progress dashboard
+- Review Batch page
+
+### Phase 4: Controlled Workflow Actions
+
+- create brief from UI
+- approve blueprint
+- approve batch
+- generate Codex prompt
+- mark task or batch reviewed
+- controlled request approval bundle
+- controlled validation display
+- no commit, push, build, or test buttons until the safety model matures
+
+### Phase 5: Worker And Agent Architecture
+
+- manual worker mode
+- Codex CLI handoff mode
+- Codex CLI worker adapter
+- optional model/API adapters
+- future actual AI agents by role
+
+### Phase 6: Future Polish And Advanced Capabilities
+
+- persistent read-model snapshot cache if needed
+- better report viewer
+- better visuals and progress charts
+- backup page polish
+- packaging and start/stop improvements
+- notifications
+- mobile-friendly UI
+- optional general planning chat
+
+## Specific Next Task Order
+
+1. TASK-DEVO-074: Project Brief + Blueprint data model - add durable brief and blueprint artifacts/read models.
+2. TASK-DEVO-075: Backlog/task data model - add structured backlog, task, dependency, lane, and risk records.
+3. TASK-DEVO-076: Blueprint-to-backlog planning handoff prompt - generate Codex-friendly planning prompts from a brief/blueprint.
+4. TASK-DEVO-077: Batch model and batch selection - group backlog tasks into approved execution batches.
+5. TASK-DEVO-078: Progress calculation and project completion percent - calculate transparent progress across blueprint, backlog, batches, and tasks.
+6. TASK-DEVO-079: Execution queue state machine - track queued, active, paused, blocked, validating, delivered, reviewed, and completed work.
+7. TASK-DEVO-080: Codex handoff prompts for next task/batch - generate exact execution prompts for Codex/manual workers.
+8. TASK-DEVO-081: UI Planning Intake page - add read/write-safe brief intake around Devo workspace artifacts.
+9. TASK-DEVO-082: UI Blueprint/Backlog pages - expose the new planning artifacts visually.
+10. TASK-DEVO-083: UI Batch Queue and Progress dashboard - show queue state, progress, next action, and review needs.
+11. TASK-DEVO-084: Batch approval/review workflow - support approval and post-delivery review around batches.
+12. TASK-DEVO-085: End-to-end workflow dogfood run on DevOrchestrator - prove brief -> blueprint -> backlog -> batch -> Codex handoff -> validation -> delivery -> review.
+13. TASK-DEVO-086: Codex CLI worker adapter design doc - design controlled future automation without implementing it prematurely.
+14. TASK-DEVO-087: Optional Codex CLI worker MVP - add a bounded adapter only after the manual handoff flow is solid.
+15. TASK-DEVO-088: Agent worker abstraction - define the stable worker interface for manual, Codex CLI, and future model adapters.
+16. TASK-DEVO-089+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
+
+## Intentionally Deprioritized Now
+
+- PersonalOS feature work
+- full AI chat inside Devo
+- OpenAI, Claude, Gemini, or local model API agents
+- replacing Codex, Cursor, Claude Code, or ChatGPT
+- fully autonomous unapproved execution
+- commit, push, build, or test buttons in the UI
+- backup restore/delete UI
+- scheduler modification UI
+- public SaaS or multi-user deployment
+- persistent DB/SQLite cache unless performance demands it
+
+## Completion Estimate
+
+Current estimate:
+
+- Practical personal-use Devo: around 65-70% complete.
+- Long-term ideal Devo: around 40-45% complete.
+
+The completion target for returning more focus to other projects is:
+
+- brief intake
+- blueprint/backlog
+- batch approval
+- Codex handoff
+- progress tracking
+- UI progress visibility
+- one dogfood end-to-end run
+
+At that point Devo can be considered around 80-85% complete for personal use.
+
+## Decision Rules For Future Task Selection
+
+- Prefer features that move toward the final brief -> blueprint -> backlog -> batch -> execution queue workflow.
+- Avoid unrelated UI buttons.
+- Avoid premature API-agent work.
+- Keep Codex CLI/manual mode first-class.
+- Every new workflow feature must preserve safety, audit trail, and target repository boundaries.
+- UI actions must go through the action safety model.
+- Workspace-safe actions are acceptable before target-mutating actions.
+- Target-mutating actions require explicit approval and mature safety design.

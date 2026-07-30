@@ -19,6 +19,7 @@ For the plain-language product model, read:
 
 - [Devo vision](devo-vision.md)
 - [Company-model vision](devo-company-model.md)
+- [Remaining roadmap](remaining-roadmap.md)
 - [Current capabilities](current-capabilities.md)
 - [Agent workflow](agent-workflow.md)
 - [Usability roadmap](usability-roadmap.md)

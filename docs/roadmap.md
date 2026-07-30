@@ -12,39 +12,50 @@ The near-term strategy is CLI-first and local-first:
 - avoid requiring direct OpenAI, Claude, Gemini, or local model API tokens for current development
 - keep manual/Codex mode supported even after future model adapters exist
 
+The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes older isolated task ordering and prioritizes the final workflow: project brief -> blueprint -> backlog -> batch -> execution queue -> Codex handoff -> validation/delivery/progress -> review/resume.
+
 ## Immediate Planned Tasks
 
-- TASK-030C continue delivery secret-signal noise reduction
-- TASK-033 interrupted work recovery/resume command
-- TASK-038 Codex handoff prompt generator
-- TASK-039 global Devo status/activity command
-- TASK-036 run templates for common task types
+- TASK-DEVO-074 Project Brief + Blueprint data model
+- TASK-DEVO-075 Backlog/task data model
+- TASK-DEVO-076 Blueprint-to-backlog planning handoff prompt
+- TASK-DEVO-077 Batch model and batch selection
+- TASK-DEVO-078 Progress calculation and project completion percent
+- TASK-DEVO-079 Execution queue state machine
+- TASK-DEVO-080 Codex handoff prompts for next task/batch
+- TASK-DEVO-081 UI Planning Intake page
+- TASK-DEVO-082 UI Blueprint/Backlog pages
+- TASK-DEVO-083 UI Batch Queue and Progress dashboard
 
 ## Updated Roadmap Phases
 
-### Phase 1: CLI Product Maturity
+### Phase 1: Planning Pipeline Foundation
 
-Make Devo pleasant and reliable as a local CLI product: status, next actions, work packages, approvals, validation, delivery, reports, history, generated visuals, recovery, and handoff prompts.
+Add durable Project Brief, Blueprint, Backlog/task, dependency, risk/lane mapping, Batch, and Progress models. This is the next foundation because Devo's final workflow starts with a user-approved brief and turns it into auditable planning artifacts.
 
-### Phase 2: Better Local Agent Workflow
+### Phase 2: Codex Handoff And Execution Queue
 
-Improve prompt generation, local operator handoff, task templates, interrupted-work recovery, and manual-assisted agent imports. Codex/Desktop/CLI remains the worker.
+Generate structured Codex handoff prompts, task prompts, and batch prompts from approved planning artifacts. Add the execution queue state machine, pause/resume, usage-limit pause reasons, and blocked task handling. Codex/Desktop/CLI remains the default worker.
 
 The long-term agent model is documented in `docs/devo-company-model.md`: Devo owns role contracts and workflow state, while worker backends such as manual operation, Codex CLI, API models, or local models can be attached later. Codex CLI should be the default personal/local worker.
 
-### Phase 3: Generated Visual Reports
+### Phase 3: UI Planning And Progress Pages
 
-Expand generated Mermaid or other artifact-backed visual summaries only where they reduce operator confusion. These visuals should be generated from Devo structured data, not maintained by hand.
+Add Planning Intake, Blueprint, Backlog, Batch Queue, Progress dashboard, and Review Batch pages. These pages should visualize Devo's planning and queue state before adding dangerous UI actions.
 
-### Phase 4: Read-Only Dashboard MVP And Polish
+### Phase 4: Controlled Workflow Actions
 
-Keep improving the local read-only dashboard after the CLI state model is mature enough to support it. The dashboard reads Devo read models/API responses rather than becoming a second source of truth or scraping raw workspace folders directly. Controlled write actions remain deferred until read-only views, performance, and safety boundaries are boring.
+Add controlled workflow actions such as create brief, approve blueprint, approve batch, generate Codex prompt, mark task/batch reviewed, request approval bundle, and display validation evidence. Do not add commit, push, build, or test buttons until the safety model matures.
 
-After TASK-DEVO-073A, the next product direction is brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. These should extend Devo's company-model workflow rather than turn Devo into a general AI chat clone.
+After TASK-DEVO-073B, the next product direction is documented in `docs/remaining-roadmap.md`: brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. These should extend Devo's company-model workflow rather than turn Devo into a general AI chat clone.
 
-### Phase 5: Direct API Agents And Model Adapters
+### Phase 5: Worker And Agent Architecture
 
-Add optional OpenAI, Claude, Gemini, or local model adapters later. Direct API token usage should be deliberate, cost-controlled, and never required for normal manual/Codex operation.
+Keep manual worker mode and Codex CLI handoff mode first-class. Design and add a Codex CLI worker adapter only after manual handoff is solid. Optional OpenAI, Claude, Gemini, local model, or other adapters remain later and cost-controlled.
+
+### Phase 6: Future Polish And Advanced Capabilities
+
+Add persistent read-model snapshots only if needed, better report viewing, better visuals/progress charts, backup page polish, packaging/start-stop improvements, notifications, mobile-friendly UI, and optional general planning chat.
 
 ## Readiness Target
 
@@ -180,6 +191,10 @@ Added `work.new.create` to the controlled UI action executor. The dashboard can 
 ### TASK-DEVO-073A Company-Model Vision - Completed
 
 Added `docs/devo-company-model.md` to define Devo as a local software-development company operating system around AI workers, not a Codex/Cursor/Claude Code replacement. The doc maps company roles to Devo roles, explains current deterministic responsibility separation, defines future agent contracts versus worker backends, records Codex CLI as the default personal/local worker strategy, describes the final brief-to-blueprint-to-backlog-to-batch-to-Codex workflow, and explicitly defers general AI chat, paid API agents by default, autonomous unapproved execution, and public SaaS/multi-user deployment.
+
+### TASK-DEVO-073B Remaining Roadmap Reprioritization - Completed
+
+Added `docs/remaining-roadmap.md` as the durable source of truth for the remaining product sequence. The roadmap centers Devo on project brief intake, blueprint/backlog/task models, batch selection, execution queue state, Codex handoff prompts, progress tracking, planning/progress UI pages, and later worker adapters. It intentionally deprioritizes PersonalOS feature work, general AI chat, direct API agents, autonomous unapproved execution, risky UI action buttons, scheduler/backup mutation UI, public SaaS, and persistent DB caching unless performance demands it.
 
 ### TASK-023 Safe Validation Runner
 
