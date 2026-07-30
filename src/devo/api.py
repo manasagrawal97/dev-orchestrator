@@ -12,6 +12,7 @@ from .projects import get_workspace_root, list_projects
 from .read_models import build_project_overview_with_timing, build_run_overview, build_work_package_overview
 from .runs import load_current_selection, load_run
 from .scanner import load_registered_project
+from .ui_actions import UI_MODE_READ_ONLY, get_ui_action, list_allowed_ui_actions, list_ui_actions
 from .work_history import build_project_activity_summary
 
 APP_NAME = "DevOrchestrator API"
@@ -24,6 +25,9 @@ API_ROUTES = (
     "GET /api/projects/{project}/doctor",
     "GET /api/projects/{project}/runs/{run_id}/overview",
     "GET /api/projects/{project}/runs/{run_id}/work-package",
+    "GET /api/actions",
+    "GET /api/actions/allowed",
+    "GET /api/actions/{action_id}",
 )
 LOCAL_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
 LOCAL_FRONTEND_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
@@ -104,6 +108,23 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         _require_project(project, root)
         _require_run(project, run_id, root)
         return _model_dump(build_work_package_overview(project, run_id, workspace_root=root))
+
+    @api.get("/api/actions")
+    def ui_actions() -> dict[str, object]:
+        actions = [action.to_dict() for action in list_ui_actions()]
+        return {"ui_mode": UI_MODE_READ_ONLY, "count": len(actions), "actions": actions}
+
+    @api.get("/api/actions/allowed")
+    def allowed_ui_actions() -> dict[str, object]:
+        actions = [action.to_dict() for action in list_allowed_ui_actions(ui_mode=UI_MODE_READ_ONLY)]
+        return {"ui_mode": UI_MODE_READ_ONLY, "count": len(actions), "actions": actions}
+
+    @api.get("/api/actions/{action_id}")
+    def ui_action(action_id: str) -> dict[str, object]:
+        action = get_ui_action(action_id)
+        if not action:
+            raise HTTPException(status_code=404, detail={"error": "action_not_found", "message": f"Unknown UI action: {action_id}"})
+        return action.to_dict()
 
     return api
 

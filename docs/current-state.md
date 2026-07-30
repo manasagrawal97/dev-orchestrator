@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-070 UI launch/status helpers
+- Latest completed source task: TASK-DEVO-071 controlled UI action safety model
 - Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -86,6 +86,7 @@ The working loop is:
 - TASK-DEVO-068 polishes the read-only dashboard layout and loading behavior. It removes the "Local-first control room" wording from visible UI, separates dashboard project selection from saved CLI current context, adds section-level slow-loading hints for overview/doctor/activity-backed views, reduces Activity path noise, improves the missing work-package empty state with safe CLI commands, and keeps UI v1 free of approval/build/test/commit/push/restore/scheduler/model actions. Read-model snapshot caching and deeper endpoint profiling remain deferred.
 - TASK-DEVO-069 adds opt-in API timing breakdowns with `include_timing=true`, bounds slow optional doctor scheduled-task checks, adds a Git read timeout for non-mutating Git status calls, removes duplicate doctor work from project overview onboarding status, and reuses loaded run/validation data while building activity summaries. No DB/SQLite cache was added; persistent workspace JSON snapshot caching remains a future option if read-model performance still needs it.
 - TASK-DEVO-070 adds read-only UI helper commands: `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open`. These commands print local API/UI URLs, show manual start commands, check API/UI reachability with short timeouts, and open the UI only if it is already reachable. They do not start servers, mutate workspace state, run target commands, or add UI write actions.
+- TASK-DEVO-071 adds `src/devo/ui_actions.py`, read-only API endpoints for UI action safety metadata, and an informational Action Safety dashboard page. UI v1 can show which actions are read-only, workspace-safe candidates, approval-required deferred actions, or dangerous blocked actions, but it still does not execute approvals, validation, build/test, commit/push, backup restore/delete, scheduler modification, target app runs, or model/API agents.
 
 ## Readiness Estimate
 
@@ -162,6 +163,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-066 React/Vite UI scaffold
 - TASK-DEVO-067 read-only dashboard MVP
 - TASK-DEVO-070 UI launch/status helpers
+- TASK-DEVO-071 controlled UI action safety model
 
 ## Recovery Pointers
 

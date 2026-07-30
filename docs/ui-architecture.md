@@ -106,6 +106,15 @@ After the read-only dashboard is useful, controlled actions can be considered. G
 
 Write actions must go through Devo's safety and approval model. A UI button should not bypass the same approval, validation, policy, and evidence checks that the CLI uses.
 
+TASK-DEVO-071 adds the first controlled UI action safety model before any executable UI buttons. Actions are classified as:
+
+- `read_only`: available in UI v1 for viewing state or copying commands.
+- `workspace_safe`: possible UI v2 candidates that may write Devo workspace artifacts only, such as scope templates or generated visuals.
+- `approval_required`: deferred actions that need explicit approval and audit design, such as requesting approvals or running validation.
+- `dangerous_deferred`: blocked/deferred actions such as commit, push, backup restore/delete, scheduler modification, target app run, or model/API agent execution.
+
+The dashboard may display this metadata, but UI v1 must not execute these actions.
+
 ## Safety Model
 
 The UI must stay local-first.
@@ -114,6 +123,7 @@ Safety rules:
 
 - bind local services to `127.0.0.1` by default
 - keep UI launch helpers local-only and read-only
+- use the UI action metadata layer for future actions instead of ad hoc browser-side file mutations
 - do not bypass CLI approval checks
 - require explicit confirmation and Devo approval records for dangerous actions
 - call a Devo service/read-model layer instead of mutating workspace files directly
@@ -139,9 +149,14 @@ GET /api/projects/{project}/activity
 GET /api/projects/{project}/doctor
 GET /api/projects/{project}/runs/{run_id}/overview
 GET /api/projects/{project}/runs/{run_id}/work-package
+GET /api/actions
+GET /api/actions/allowed
+GET /api/actions/{action_id}
 ```
 
 Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
+
+The `/api/actions*` endpoints are metadata endpoints. They describe read-only actions available now, workspace-only candidates for later, approval-required deferred actions, and dangerous blocked actions. They do not execute actions.
 
 Some read models can be slower because they aggregate doctor checks, Git status, backup inventory or scheduled-task checks, activity scanning, and overview summaries. UI v1 should handle that with section-level loading states and slow-check hints. TASK-DEVO-069 added timing breakdowns and request-local duplicate-work reductions before any persistent cache. Read-model snapshot caching or DB-backed caching remains deferred until the slow paths are profiled more deliberately.
 
@@ -181,6 +196,9 @@ Phase F: controlled write actions
 
 - add narrowly scoped actions only after read-only views are stable
 - route writes through Devo approval and policy checks
+- keep action execution behind the UI action safety model
+- start with workspace-safe actions only after the read-only dashboard remains stable
+- keep approval, validation, Git delivery, restore/delete, scheduler, target app, and model/API actions deferred until their UI safety and audit model is designed
 
 Phase G: optional API/model agents
 

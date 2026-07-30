@@ -116,3 +116,25 @@ export interface DoctorReport {
   overall_status: StatusTone;
   suggested_next_action: string;
 }
+
+export interface UiActionMetadata {
+  id: string;
+  label: string;
+  category: 'read_only' | 'workspace_safe' | 'approval_required' | 'dangerous_deferred';
+  description: string;
+  allowed_in_ui_v1: boolean;
+  allowed_in_ui_v2_candidate: boolean;
+  mutates_workspace: boolean;
+  mutates_target_project: boolean;
+  requires_approval: boolean;
+  risk_level: 'none' | 'low' | 'medium' | 'high' | 'critical';
+  status: 'available' | 'read_only' | 'planned' | 'deferred' | 'blocked';
+  reason: string;
+  required_cli_command: string | null;
+}
+
+export interface UiActionsResponse {
+  ui_mode: string;
+  count: number;
+  actions: UiActionMetadata[];
+}

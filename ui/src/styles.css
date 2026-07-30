@@ -638,6 +638,88 @@ tr:last-child td {
   background: #fbfcfe;
 }
 
+.safety-banner {
+  margin-top: 0;
+}
+
+.action-group-stack {
+  display: grid;
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.action-group-heading,
+.action-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.action-group-heading span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  min-height: 24px;
+  padding: 2px 8px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 900;
+  background: #eef2f7;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+}
+
+.action-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.action-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.action-card p {
+  margin: 0;
+  color: #556174;
+  line-height: 1.45;
+}
+
+.action-card-title strong {
+  min-width: 0;
+  color: #172033;
+  overflow-wrap: anywhere;
+}
+
+.compact-list {
+  gap: 6px;
+}
+
+.compact-list div {
+  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
+}
+
+.action-reason {
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.inline-command {
+  display: block;
+  padding: 9px 10px;
+  color: #eef2ff;
+  background: #202938;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
 .quiet-details summary {
   color: #445369;
   font-weight: 800;

@@ -161,6 +161,10 @@ Added opt-in `include_timing=true` JSON timing metadata for project overview, do
 
 Added `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open` for safer local dashboard ergonomics. The helpers print local URLs, manual start commands, read-only safety notes, short-timeout reachability checks, and browser-open guidance. They do not start servers, stop processes, mutate workspace state, run validations/builds/tests, or add dashboard write actions. Start/stop scripts are deferred until process matching can be made narrow and boring.
 
+### TASK-DEVO-071 Controlled UI Action Safety Model - Completed
+
+Added `src/devo/ui_actions.py` with UI action categories for `read_only`, `workspace_safe`, `approval_required`, and `dangerous_deferred`. The local API now exposes read-only action metadata through `/api/actions`, `/api/actions/allowed`, and `/api/actions/{action_id}`, and the dashboard has an informational Action Safety page. UI v1 still does not execute actions; it only explains which actions are available as read-only views, which workspace-only actions may be UI v2 candidates, and which approval, validation, Git delivery, restore/delete, scheduler, target app, and model/API actions are deferred or blocked.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { devoApi } from './api/client';
+import { ActionSafetyPage } from './pages/ActionSafetyPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { HealthPage } from './pages/HealthPage';
 import { ProjectOverviewPage } from './pages/ProjectOverviewPage';
@@ -7,14 +8,15 @@ import { ProjectsPage } from './pages/ProjectsPage';
 import { WorkPackagePage } from './pages/WorkPackagePage';
 import type { CurrentContext } from './types/devo';
 
-type PageId = 'projects' | 'overview' | 'work' | 'activity' | 'health';
+type PageId = 'projects' | 'overview' | 'work' | 'activity' | 'health' | 'actions';
 
 const pages: Array<{ id: PageId; label: string }> = [
   { id: 'projects', label: 'Projects' },
   { id: 'overview', label: 'Project Overview' },
   { id: 'work', label: 'Work Package' },
   { id: 'activity', label: 'Activity' },
-  { id: 'health', label: 'Health' }
+  { id: 'health', label: 'Health' },
+  { id: 'actions', label: 'Action Safety' }
 ];
 
 export default function App() {
@@ -126,6 +128,7 @@ export default function App() {
           ) : null}
           {activePage === 'activity' ? <ActivityPage selectedProject={selectedProject} /> : null}
           {activePage === 'health' ? <HealthPage selectedProject={selectedProject} /> : null}
+          {activePage === 'actions' ? <ActionSafetyPage /> : null}
         </main>
       </div>
     </div>

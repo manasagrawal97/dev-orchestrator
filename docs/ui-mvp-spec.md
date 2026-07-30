@@ -115,6 +115,21 @@ Sections:
 
 Primary user question: "Is anything broken or risky?"
 
+### F. Action Safety Page
+
+Shows UI action safety metadata without executing actions.
+
+Sections:
+
+- current UI mode
+- read-only actions available now
+- workspace-safe candidates for a future UI v2
+- approval-required deferred actions
+- dangerous blocked/deferred actions
+- reason and risk level for each action
+
+Primary user question: "What could the UI safely do later, and what is intentionally blocked?"
+
 ## Sections And Components
 
 Reusable UI components:
@@ -147,6 +162,7 @@ Allowed read-only actions:
 - view JSON/read-model data when useful
 - check UI/API reachability from the CLI with `devo ui status`
 - open the already-running local dashboard with `devo ui open`
+- view action safety metadata
 
 These actions do not mutate Devo state, target projects, Git, backups, scheduler configuration, or approval records.
 
@@ -174,12 +190,14 @@ Possible UI v2 actions:
 
 - generate scope template
 - start work package draft
-- request approval bundle
+- generate workspace visual reports
+- write onboarding report
 - open reports/visuals
 - run safe refresh actions
 
 Possible UI v3 actions:
 
+- request approval bundle
 - approve/reject through Devo approval system
 - run approved validation commands
 - mark work complete
@@ -187,6 +205,8 @@ Possible UI v3 actions:
 - perform controlled write actions with explicit confirmation
 
 All future write actions must route through Devo's policy, approval, validation, and evidence model.
+
+TASK-DEVO-071 adds a backend action metadata registry for this boundary. UI v1 may render the registry and `/api/actions/allowed`, but it must not execute workspace-safe, approval-required, or dangerous/deferred actions.
 
 ## Approval UI Design
 
@@ -240,15 +260,21 @@ Health:
 
 - `GET /api/projects/{project}/doctor`
 
+Action Safety:
+
+- `GET /api/actions`
+- `GET /api/actions/allowed`
+- `GET /api/actions/{action_id}`
+
 Current context:
 
 - `GET /api/current`
 
 The browser should receive `ProjectOverview`, `RunOverview`, and `WorkPackageOverview` responses rather than parse raw files.
 
-The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. UI v1 should treat it as read-only and must not depend on write/action endpoints.
+The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. UI v1 should treat it as read-only and must not depend on write/action execution endpoints. The action safety endpoints are metadata only.
 
-The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, and Health pages. UI v1 remains read-only and exposes only selection/navigation, optional JSON details, report/path viewing where available, and copyable CLI commands. The dashboard distinguishes selected dashboard project/run from saved CLI current context so the user can inspect one project without accidentally implying that `devo use` has changed.
+The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages. UI v1 remains read-only and exposes only selection/navigation, optional JSON details, action safety metadata, report/path viewing where available, and copyable CLI commands. The dashboard distinguishes selected dashboard project/run from saved CLI current context so the user can inspect one project without accidentally implying that `devo use` has changed.
 
 Use `devo ui info` for local URLs and start commands, `devo ui status` to check whether the API/UI are reachable, and `devo ui open` to open the already-running UI. These helpers do not start servers automatically and do not add write actions.
 

@@ -512,6 +512,16 @@ Example health endpoint:
 GET http://127.0.0.1:8765/api/health
 ```
 
+UI action safety metadata is also available through read-only endpoints:
+
+```text
+GET /api/actions
+GET /api/actions/allowed
+GET /api/actions/{action_id}
+```
+
+These endpoints describe which dashboard actions are read-only now, which workspace-only actions are candidates for a later UI v2, and which approval/delivery/restore/scheduler/model actions are deferred or blocked. They do not execute actions.
+
 ## React UI Scaffold
 
 The read-only dashboard lives under `ui/`. It consumes the local API.
@@ -541,7 +551,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes read-only Projects, Project Overview, Work Package, Activity, and Health pages backed by the local API. It shows dashboard selection separately from saved CLI current context, uses section-level loading for slower project overview and doctor checks, keeps raw paths tucked behind quieter activity sections, and provides copyable CLI commands for safe continuation. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, and scheduler work.
+Open `http://127.0.0.1:5173`. The dashboard includes read-only Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages backed by the local API. It shows dashboard selection separately from saved CLI current context, uses section-level loading for slower project overview and doctor checks, keeps raw paths tucked behind quieter activity sections, shows UI action safety metadata, and provides copyable CLI commands for safe continuation. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, scheduler work, and model/API agents.
 
 ## Policy Gates
 

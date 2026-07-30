@@ -6,6 +6,8 @@ import type {
   ProjectOverview,
   ProjectsResponse,
   RunOverview,
+  UiActionMetadata,
+  UiActionsResponse,
   WorkPackageOverview
 } from '../types/devo';
 
@@ -40,5 +42,8 @@ export const devoApi = {
   getRunOverview: (project: string, runId: string) =>
     getJson<RunOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/overview`),
   getWorkPackageOverview: (project: string, runId: string) =>
-    getJson<WorkPackageOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/work-package`)
+    getJson<WorkPackageOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/work-package`),
+  getUiActions: () => getJson<UiActionsResponse>('/api/actions'),
+  getAllowedUiActions: () => getJson<UiActionsResponse>('/api/actions/allowed'),
+  getUiAction: (actionId: string) => getJson<UiActionMetadata>(`/api/actions/${encodeURIComponent(actionId)}`)
 };

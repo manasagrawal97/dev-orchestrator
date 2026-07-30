@@ -261,9 +261,14 @@ GET /api/projects/{project}/activity
 GET /api/projects/{project}/doctor
 GET /api/projects/{project}/runs/{run_id}/overview
 GET /api/projects/{project}/runs/{run_id}/work-package
+GET /api/actions
+GET /api/actions/allowed
+GET /api/actions/{action_id}
 ```
 
 The API is read-only in v1. It does not approve/reject, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs. `devo api serve` blocks non-local hosts for MVP safety. Responses include an `X-Devo-Elapsed-Ms` header to help identify slow read-model endpoints during dashboard review.
+
+The action metadata endpoints describe UI safety boundaries only. `/api/actions/allowed` returns actions allowed in current read-only UI mode, while `/api/actions` also includes workspace-safe candidates for future UI v2 and deferred/blocked approval, validation, Git, backup, scheduler, target app, and model/API actions.
 
 For profiling slow local read models, add `include_timing=true` to selected endpoints:
 
@@ -320,7 +325,7 @@ Open:
 http://127.0.0.1:5173
 ```
 
-The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 includes read-only Projects, Project Overview, Work Package, Activity, and Health pages. It distinguishes dashboard selection from saved CLI current context, uses section-level loading hints for slower overview/doctor checks, keeps Activity evidence quieter by default, and can display read models and copy CLI commands. It does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
+The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 includes read-only Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages. It distinguishes dashboard selection from saved CLI current context, uses section-level loading hints for slower overview/doctor checks, keeps Activity evidence quieter by default, can display read models and copy CLI commands, and shows action safety metadata for future UI v2 planning. It does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
 
 ## Safety
 
