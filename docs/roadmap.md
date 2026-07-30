@@ -141,6 +141,10 @@ Added `docs/ui-mvp-spec.md` to define the first UI before implementation. The MV
 
 Added `src/devo/api.py` with a FastAPI app factory and local read-only JSON endpoints for health, current context, registered projects, project overview, project activity, doctor, run overview, and work-package overview. Added `devo api serve` with default host `127.0.0.1`, non-local host blocking for MVP safety, and `devo api routes` for endpoint discovery. This is the backend bridge for the future UI and does not add frontend code or write/action endpoints.
 
+### TASK-DEVO-066 React UI Scaffold - Completed
+
+Added the first React/Vite/TypeScript frontend scaffold under `ui/`. The scaffold consumes the local read-only API, defaults to `http://127.0.0.1:8765`, can be started with `npm run dev`, and includes a read-only dashboard shell with Projects, Project Overview, Work Package, Activity, and Health navigation. Projects and Health make live read-only API calls; the other pages are placeholders for the next dashboard implementation. No write/action UI, approval buttons, validation/build/test controls, commit/push controls, backup restore/delete controls, scheduler controls, target app execution, or model/API calls were added.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

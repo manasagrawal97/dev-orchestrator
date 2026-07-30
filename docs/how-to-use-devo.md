@@ -265,6 +265,32 @@ GET /api/projects/{project}/runs/{run_id}/work-package
 
 The API is read-only in v1. It does not approve/reject, run validation/build/test/app commands, restore/delete backups, modify scheduler settings, commit, push, edit target files, or call model APIs. `devo api serve` blocks non-local hosts for MVP safety.
 
+## React UI Scaffold
+
+The first frontend scaffold is under `ui/`. It is read-only and uses the local API.
+
+Start the API:
+
+```powershell
+devo api serve
+```
+
+Start the UI:
+
+```powershell
+cd ui
+npm install
+npm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. UI v1 does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
+
 ## Safety
 
 ```powershell

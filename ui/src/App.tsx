@@ -1,0 +1,109 @@
+import { useEffect, useMemo, useState } from 'react';
+import { devoApi } from './api/client';
+import { ActivityPage } from './pages/ActivityPage';
+import { HealthPage } from './pages/HealthPage';
+import { ProjectOverviewPage } from './pages/ProjectOverviewPage';
+import { ProjectsPage } from './pages/ProjectsPage';
+import { WorkPackagePage } from './pages/WorkPackagePage';
+import type { CurrentContext } from './types/devo';
+
+type PageId = 'projects' | 'overview' | 'work' | 'activity' | 'health';
+
+const pages: Array<{ id: PageId; label: string }> = [
+  { id: 'projects', label: 'Projects' },
+  { id: 'overview', label: 'Project Overview' },
+  { id: 'work', label: 'Work Package' },
+  { id: 'activity', label: 'Activity' },
+  { id: 'health', label: 'Health' }
+];
+
+export default function App() {
+  const [activePage, setActivePage] = useState<PageId>('projects');
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
+  const [current, setCurrent] = useState<CurrentContext | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    devoApi
+      .getCurrent()
+      .then((data) => {
+        if (active) {
+          setCurrent(data);
+          if (data.project) {
+            setSelectedProject(data.project);
+          }
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setCurrent(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const pageTitle = useMemo(() => pages.find((page) => page.id === activePage)?.label ?? 'Projects', [activePage]);
+
+  function selectProject(project: string) {
+    setSelectedProject(project);
+    setActivePage('overview');
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Local-first control room</p>
+          <h1>Devo Dashboard</h1>
+        </div>
+        <div className="api-pill">
+          <span>API</span>
+          <strong>{devoApi.baseUrl}</strong>
+        </div>
+      </header>
+
+      <div className="body-shell">
+        <aside className="sidebar" aria-label="Dashboard navigation">
+          <nav>
+            {pages.map((page) => (
+              <button
+                className={page.id === activePage ? 'nav-button active' : 'nav-button'}
+                key={page.id}
+                type="button"
+                onClick={() => setActivePage(page.id)}
+              >
+                {page.label}
+              </button>
+            ))}
+          </nav>
+          <div className="context-panel">
+            <span>Current project</span>
+            <strong>{current?.project ?? selectedProject ?? 'none'}</strong>
+            <span>Current run</span>
+            <strong>{current?.run ?? 'none'}</strong>
+          </div>
+        </aside>
+
+        <main className="content-shell">
+          <section className="readonly-banner">
+            <strong>Read-only UI v1.</strong>
+            <span>Use CLI/Codex for approvals, work execution, validation, commit, push, restore, and scheduler changes.</span>
+          </section>
+
+          <div className="page-title">
+            <p className="eyebrow">Dashboard scaffold</p>
+            <h2>{pageTitle}</h2>
+          </div>
+
+          {activePage === 'projects' ? <ProjectsPage selectedProject={selectedProject} onSelectProject={selectProject} /> : null}
+          {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} /> : null}
+          {activePage === 'work' ? <WorkPackagePage selectedProject={selectedProject} /> : null}
+          {activePage === 'activity' ? <ActivityPage selectedProject={selectedProject} /> : null}
+          {activePage === 'health' ? <HealthPage /> : null}
+        </main>
+      </div>
+    </div>
+  );
+}

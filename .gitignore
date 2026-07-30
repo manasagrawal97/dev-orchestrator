@@ -18,6 +18,11 @@ ENV/
 build/
 dist/
 *.egg-info/
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/coverage/
+ui/*.tsbuildinfo
 
 # Local DevOrchestrator workspace data
 workspace/

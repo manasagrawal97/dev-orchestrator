@@ -54,6 +54,14 @@ Recommended future frontend:
 
 Blazor should not be the first Devo UI choice. Devo is Python-based, so FastAPI can reuse the existing modules directly. Blazor would add cross-stack complexity to Devo itself. PersonalOS can remain a separate Blazor/MudBlazor app.
 
+Current frontend bridge:
+
+- React/Vite/TypeScript scaffold in `ui/`
+- default dev URL `http://127.0.0.1:5173`
+- default API base `http://127.0.0.1:8765`
+- override API base with `VITE_DEVO_API_BASE`
+- read-only navigation shell with Projects, Project Overview, Work Package, Activity, and Health pages
+
 ## UI v1: Read-Only Dashboard
 
 UI v1 should be read-only. It should make current Devo state visible without letting the browser mutate projects, approvals, Git, backups, or target repositories.
@@ -147,13 +155,13 @@ Phase B: local read-only API server
 
 Phase C: frontend scaffold
 
-- add a minimal React/Vite app
-- connect it to local read-only endpoints
+- added a minimal React/Vite app
+- connected Projects and Health to local read-only endpoints
 - keep the CLI as the primary workflow
 
 Phase D: read-only dashboard MVP
 
-- show projects, current context, onboarding, doctor, activity, work package, validation, Git, backup, and visual-report links
+- expand the scaffold to show projects, current context, onboarding, doctor, activity, work package, validation, Git, backup, and visual-report links
 - follow the page and component scope in `docs/ui-mvp-spec.md`
 
 Phase E: visual diagrams and activity timeline

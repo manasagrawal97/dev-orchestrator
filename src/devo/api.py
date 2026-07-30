@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 
 from .doctor import run_doctor
 from .projects import get_workspace_root, list_projects
@@ -24,12 +25,20 @@ API_ROUTES = (
     "GET /api/projects/{project}/runs/{run_id}/work-package",
 )
 LOCAL_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
+LOCAL_FRONTEND_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 
 
 def create_app(workspace_root: Path | None = None) -> FastAPI:
     """Create the local read-only Devo API app without starting a server."""
     root = workspace_root or get_workspace_root()
     api = FastAPI(title=APP_NAME, version="0.1.0")
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(LOCAL_FRONTEND_ORIGINS),
+        allow_credentials=False,
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     @api.get("/api/health")
     def health() -> dict[str, object]:

@@ -502,6 +502,26 @@ Example health endpoint:
 GET http://127.0.0.1:8765/api/health
 ```
 
+## React UI Scaffold
+
+The first dashboard scaffold lives under `ui/`. It is read-only and consumes the local API.
+
+Start the backend:
+
+```powershell
+devo api serve
+```
+
+Start the frontend:
+
+```powershell
+cd ui
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. The scaffold includes Projects and Health pages with live API calls, plus placeholder Project Overview, Work Package, and Activity pages for the next dashboard task. CLI/Codex remains the execution path for approvals, validation, commit, push, restore, and scheduler work.
+
 ## Policy Gates
 
 Policy commands classify task risk and check whether a task/action can proceed before implementation or execution. They are deterministic and read existing run artifacts, task text, task ledger state, and known action hints. They do not call AI, run target project commands, modify registered projects, or store approvals.
