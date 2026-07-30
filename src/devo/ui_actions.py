@@ -7,11 +7,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from .project_onboarding import build_project_onboarding_report
+from .project_settings import load_project_settings
 from .projects import get_workspace_root
 from .runs import load_run
 from .scanner import load_registered_project
 from .visual_reports import generate_project_activity_visual, generate_work_package_visual
-from .work_packages import generate_work_scope_template
+from .work_packages import generate_work_scope_template, start_work_package
 
 UiActionCategory = Literal["read_only", "workspace_safe", "approval_required", "dangerous_deferred"]
 UiActionStatus = Literal["available", "read_only", "planned", "deferred", "blocked"]
@@ -26,6 +27,7 @@ EXECUTABLE_WORKSPACE_SAFE_ACTIONS = {
     "visual.work_package.generate",
     "visual.project_activity.generate",
     "onboarding.report.write",
+    "work.new.create",
 }
 
 
@@ -55,7 +57,10 @@ class UiActionExecuteRequest(BaseModel):
     action_id: str
     project: str | None = None
     run_id: str | None = None
+    goal: str | None = None
+    lane: str | None = None
     confirm: bool = False
+    no_template: bool = False
 
 
 class UiActionExecutionResult(BaseModel):
@@ -64,6 +69,9 @@ class UiActionExecutionResult(BaseModel):
     status: UiActionResultStatus
     action_id: str
     message: str
+    project: str | None = None
+    run_id: str | None = None
+    lane: str | None = None
     artifact_path: Path | None = None
     suggested_next_command: str | None = None
 
@@ -199,8 +207,8 @@ ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
         mutates_target_project=False,
         requires_approval=False,
         risk_level="low",
-        status="planned",
-        reason="Creates Devo workspace artifacts only, but is intentionally outside UI v1.",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; creates Devo run and work-package artifacts only.",
         required_cli_command='devo work new --project <project> --goal "<goal>" --lane <lane>',
     ),
     UiActionMetadata(
@@ -413,12 +421,16 @@ def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path |
         run_id = _require_run_id(run_id, action.id)
         load_run(project_name, run_id, workspace_root=root)
 
+    if action.id == "work.new.create":
+        return _execute_work_new(request, project_name, root, action)
     if action.id == "work.scope_template.generate":
         template = generate_work_scope_template(project_name, run_id or "", workspace_root=root)
         return UiActionExecutionResult(
             status="OK",
             action_id=action.id,
             message="Generated work scope template under the Devo workspace.",
+            project=project_name,
+            run_id=run_id,
             artifact_path=template.template_path,
             suggested_next_command=f"devo work import-scope --project {project_name} --run {run_id} --file {template.template_path}",
         )
@@ -428,6 +440,8 @@ def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path |
             status="OK",
             action_id=action.id,
             message="Generated work-package visual report under the Devo workspace.",
+            project=project_name,
+            run_id=run_id,
             artifact_path=visual.path,
             suggested_next_command=f"devo visual work-package --project {project_name} --run {run_id}",
         )
@@ -437,6 +451,7 @@ def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path |
             status="OK",
             action_id=action.id,
             message="Generated project activity visual report under the Devo workspace.",
+            project=project_name,
             artifact_path=visual.path,
             suggested_next_command=f"devo visual project-activity --project {project_name}",
         )
@@ -451,11 +466,47 @@ def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path |
             status="OK",
             action_id=action.id,
             message="Wrote onboarding report under the Devo workspace.",
+            project=project_name,
             artifact_path=report.report_path,
             suggested_next_command=f"devo project onboard --project {project_name} --write-suggestions",
         )
 
     return UiActionExecutionResult(status="FAIL", action_id=action.id, message="No executor is registered for this action.")
+
+
+def _execute_work_new(
+    request: UiActionExecuteRequest,
+    project_name: str,
+    workspace_root: Path,
+    action: UiActionMetadata,
+) -> UiActionExecutionResult:
+    goal = _clean_required(request.goal, "goal")
+    settings = load_project_settings(project_name, workspace_root=workspace_root)
+    selected_lane = _clean_optional(request.lane) or settings.default_lane
+    if not selected_lane:
+        return UiActionExecutionResult(
+            status="FAIL",
+            action_id=action.id,
+            message="No lane provided and no project default lane configured.",
+            project=project_name,
+            suggested_next_command=f"devo project settings-set --project {project_name} --default-lane <lane>",
+        )
+
+    package = start_work_package(project_name=project_name, lane_id=selected_lane, goal=goal, workspace_root=workspace_root)
+    artifact_path = None
+    if not request.no_template:
+        template = generate_work_scope_template(project_name=project_name, run_id=package.run_id, workspace_root=workspace_root)
+        artifact_path = template.template_path
+    return UiActionExecutionResult(
+        status="OK",
+        action_id=action.id,
+        message="Created Devo run and work-package draft under the Devo workspace.",
+        project=project_name,
+        run_id=package.run_id,
+        lane=package.lane,
+        artifact_path=artifact_path,
+        suggested_next_command=f"devo work resume --project {project_name} --run {package.run_id}",
+    )
 
 
 def _require_project_name(project_name: str | None) -> str:
@@ -468,3 +519,17 @@ def _require_run_id(run_id: str | None, action_id: str) -> str:
     if not run_id or not run_id.strip():
         raise ValueError(f"run_id is required for {action_id}.")
     return run_id.strip()
+
+
+def _clean_required(value: str | None, field_name: str) -> str:
+    cleaned = _clean_optional(value)
+    if not cleaned:
+        raise ValueError(f"{field_name} is required for this UI action.")
+    return cleaned
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None

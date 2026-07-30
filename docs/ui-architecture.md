@@ -117,12 +117,13 @@ The dashboard may display this metadata, but UI v1 must not execute these action
 
 TASK-DEVO-072 starts UI v2 with the smallest workspace-safe execution set. The only browser-triggered actions currently enabled are:
 
+- create work-package draft
 - generate work scope template
 - generate work-package visual report
 - generate project activity visual report
 - write onboarding report
 
-Each goes through `POST /api/actions/execute`, requires `confirm: true`, validates the registered project and run when needed, and writes Devo workspace artifacts only. Target repositories are not modified.
+Each goes through `POST /api/actions/execute`, requires `confirm: true`, validates the registered project and run when needed, and writes Devo workspace artifacts only. `work.new.create` creates a run/work-package draft and optional scope template, using an explicit lane or the project's default lane. Target repositories are not modified.
 
 ## Safety Model
 
@@ -166,7 +167,7 @@ POST /api/actions/execute
 
 Early endpoints should be read-only and tolerant of older or missing workspace artifacts. Prefer `unknown`, `null`, or `SKIP` style values over server errors for optional fields.
 
-The `/api/actions*` GET endpoints are metadata endpoints. They describe read-only actions available now, workspace-only actions available through the controlled executor, approval-required deferred actions, and dangerous blocked actions. `POST /api/actions/execute` executes only the four approved workspace-safe artifact generation actions and returns a structured `OK`, `WARN`, `FAIL`, or `BLOCKED` result.
+The `/api/actions*` GET endpoints are metadata endpoints. They describe read-only actions available now, workspace-only actions available through the controlled executor, approval-required deferred actions, and dangerous blocked actions. `POST /api/actions/execute` executes only the approved workspace-safe work bootstrap/artifact generation actions and returns a structured `OK`, `WARN`, `FAIL`, or `BLOCKED` result.
 
 Some read models can be slower because they aggregate doctor checks, Git status, backup inventory or scheduled-task checks, activity scanning, and overview summaries. UI v1 should handle that with section-level loading states and slow-check hints. TASK-DEVO-069 added timing breakdowns and request-local duplicate-work reductions before any persistent cache. Read-model snapshot caching or DB-backed caching remains deferred until the slow paths are profiled more deliberately.
 

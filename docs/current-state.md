@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-072 first workspace-safe UI actions
+- Latest completed source task: TASK-DEVO-073 controlled UI work bootstrap action
 - Latest docs task: TASK-DEVO-065A defines the read-only Devo UI MVP specification before UI implementation.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
@@ -88,6 +88,7 @@ The working loop is:
 - TASK-DEVO-070 adds read-only UI helper commands: `devo ui info`, `devo ui urls`, `devo ui status`, and `devo ui open`. These commands print local API/UI URLs, show manual start commands, check API/UI reachability with short timeouts, and open the UI only if it is already reachable. They do not start servers, mutate workspace state, run target commands, or add UI write actions.
 - TASK-DEVO-071 adds `src/devo/ui_actions.py`, read-only API endpoints for UI action safety metadata, and an informational Action Safety dashboard page. UI v1 can show which actions are read-only, workspace-safe candidates, approval-required deferred actions, or dangerous blocked actions, but it still does not execute approvals, validation, build/test, commit/push, backup restore/delete, scheduler modification, target app runs, or model/API agents.
 - TASK-DEVO-072 adds the first controlled UI v2 workspace-safe actions through `POST /api/actions/execute`. The only executable actions are generating a work scope template, generating a work-package visual, generating a project activity visual, and writing an onboarding report. Each requires explicit confirmation and writes Devo workspace artifacts only; target repositories, approvals, validation/build/test, Git delivery, backup restore/delete, scheduler controls, target app runs, and model/API agents remain unavailable in the UI.
+- TASK-DEVO-073 adds `work.new.create` to the controlled UI action executor. The Action Safety page can now create a Devo run/work-package draft, use an explicit lane or project default lane, optionally generate the scope template, and return a resume command. This writes Devo workspace artifacts only and does not modify target repositories or add approval/build/test/commit/push/restore/scheduler/model controls.
 
 ## Readiness Estimate
 
@@ -166,6 +167,7 @@ The next product step should focus on Devo CLI maturity. PersonalOS should be us
 - TASK-DEVO-070 UI launch/status helpers
 - TASK-DEVO-071 controlled UI action safety model
 - TASK-DEVO-072 first workspace-safe UI actions
+- TASK-DEVO-073 controlled UI work bootstrap action
 
 ## Recovery Pointers
 

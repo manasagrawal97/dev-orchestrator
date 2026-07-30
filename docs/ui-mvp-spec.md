@@ -164,6 +164,7 @@ Allowed read-only actions:
 - open the already-running local dashboard with `devo ui open`
 - view action safety metadata
 - generate approved workspace-only artifacts after confirmation:
+  - work-package draft
   - work scope template
   - work-package visual report
   - project activity visual report
@@ -193,10 +194,10 @@ If a user needs one of these actions, the UI should show the CLI command or expl
 
 Possible UI v2 actions:
 
+- start work package draft - added in TASK-DEVO-073
 - generate scope template - added in TASK-DEVO-072
 - generate workspace visual reports - added in TASK-DEVO-072
 - write onboarding report - added in TASK-DEVO-072
-- start work package draft
 - open reports/visuals
 - run safe refresh actions
 
@@ -211,7 +212,7 @@ Possible UI v3 actions:
 
 All future write actions must route through Devo's policy, approval, validation, and evidence model.
 
-TASK-DEVO-071 adds a backend action metadata registry for this boundary. TASK-DEVO-072 adds `POST /api/actions/execute` for the first four confirmed workspace-safe artifact generation actions. Approval-required and dangerous/deferred actions still must not execute from the UI.
+TASK-DEVO-071 adds a backend action metadata registry for this boundary. TASK-DEVO-072 adds `POST /api/actions/execute` for the first confirmed workspace-safe artifact generation actions. TASK-DEVO-073 adds the controlled `work.new.create` work bootstrap action. Approval-required and dangerous/deferred actions still must not execute from the UI.
 
 ## Approval UI Design
 
@@ -278,9 +279,9 @@ Current context:
 
 The browser should receive `ProjectOverview`, `RunOverview`, and `WorkPackageOverview` responses rather than parse raw files.
 
-The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. The original dashboard endpoints are read-only. The action safety GET endpoints are metadata. `POST /api/actions/execute` is the only action execution endpoint and is limited to confirmed workspace-only artifact generation.
+The first backend is available through `devo api serve` at `http://127.0.0.1:8765` by default. The original dashboard endpoints are read-only. The action safety GET endpoints are metadata. `POST /api/actions/execute` is the only action execution endpoint and is limited to confirmed workspace-only work bootstrap and artifact generation.
 
-The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages. The dashboard exposes selection/navigation, optional JSON details, action safety metadata, confirmed workspace-only artifact generation controls, report/path viewing where available, and copyable CLI commands. The dashboard distinguishes selected dashboard project/run from saved CLI current context so the user can inspect one project without accidentally implying that `devo use` has changed.
+The first frontend dashboard is available under `ui/`. Start it with `npm run dev` from that folder after the API is running. It includes API-backed Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages. The dashboard exposes selection/navigation, optional JSON details, action safety metadata, confirmed workspace-only work bootstrap/artifact generation controls, report/path viewing where available, and copyable CLI commands. The dashboard distinguishes selected dashboard project/run from saved CLI current context so the user can inspect one project without accidentally implying that `devo use` has changed.
 
 Use `devo ui info` for local URLs and start commands, `devo ui status` to check whether the API/UI are reachable, and `devo ui open` to open the already-running UI. These helpers do not start servers automatically and do not add write actions.
 

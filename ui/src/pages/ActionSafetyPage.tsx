@@ -9,7 +9,7 @@ import type { UiActionExecutionResult, UiActionMetadata, UiActionsResponse } fro
 
 const CATEGORY_LABELS: Record<UiActionMetadata['category'], string> = {
   read_only: 'Read-only',
-  workspace_safe: 'Workspace-safe candidates',
+  workspace_safe: 'Workspace-safe actions',
   approval_required: 'Approval-required deferred',
   dangerous_deferred: 'Dangerous deferred'
 };
@@ -18,9 +18,21 @@ const EXECUTABLE_WORKSPACE_ACTIONS = new Set([
   'work.scope_template.generate',
   'visual.work_package.generate',
   'visual.project_activity.generate',
-  'onboarding.report.write'
+  'onboarding.report.write',
+  'work.new.create'
 ]);
 const RUN_REQUIRED_ACTIONS = new Set(['work.scope_template.generate', 'visual.work_package.generate']);
+const BUILT_IN_LANES = [
+  { id: '', label: 'Use project default lane' },
+  { id: 'devo-internal-source', label: 'devo-internal-source' },
+  { id: 'low-risk-ui-maintenance', label: 'low-risk-ui-maintenance' },
+  { id: 'docs-only', label: 'docs-only' },
+  { id: 'warning-cleanup', label: 'warning-cleanup' },
+  { id: 'small-bugfix', label: 'small-bugfix' },
+  { id: 'small-feature', label: 'small-feature' },
+  { id: 'test-only', label: 'test-only' },
+  { id: 'backup-maintenance', label: 'backup-maintenance' }
+];
 
 interface ActionSafetyPageProps {
   selectedProject: string | null;
@@ -36,6 +48,9 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [result, setResult] = useState<UiActionExecutionResult | null>(null);
   const [executeError, setExecuteError] = useState<string | null>(null);
+  const [newGoal, setNewGoal] = useState('');
+  const [newLane, setNewLane] = useState('');
+  const [generateScopeTemplate, setGenerateScopeTemplate] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -94,6 +109,10 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
     return !RUN_REQUIRED_ACTIONS.has(action.id) || Boolean(runInput.trim());
   }
 
+  function canCreateWorkPackage() {
+    return confirmed && Boolean(projectInput.trim()) && Boolean(newGoal.trim()) && runningActionId === null;
+  }
+
   async function executeAction(action: UiActionMetadata) {
     setRunningActionId(action.id);
     setResult(null);
@@ -113,6 +132,30 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
     }
   }
 
+  async function createWorkPackage() {
+    setRunningActionId('work.new.create');
+    setResult(null);
+    setExecuteError(null);
+    try {
+      const data = await devoApi.executeUiAction({
+        action_id: 'work.new.create',
+        project: projectInput.trim(),
+        goal: newGoal.trim(),
+        lane: newLane || null,
+        confirm: confirmed,
+        no_template: !generateScopeTemplate
+      });
+      setResult(data);
+      if (data.run_id) {
+        setRunInput(data.run_id);
+      }
+    } catch (err) {
+      setExecuteError(err instanceof Error ? err.message : 'Work package creation failed.');
+    } finally {
+      setRunningActionId(null);
+    }
+  }
+
   return (
     <section>
       <div className="section-heading">
@@ -121,8 +164,8 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
       </div>
 
       <section className="readonly-banner safety-banner">
-        <strong>Informational only.</strong>
-        <span>This page describes action safety boundaries. It does not execute, approve, validate, commit, push, restore, or modify schedulers.</span>
+        <strong>Controlled workspace-only actions.</strong>
+        <span>This page can generate approved Devo workspace artifacts. It does not approve, validate, commit, push, restore, modify schedulers, touch target projects, or call model APIs.</span>
       </section>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -139,8 +182,63 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
             <SummaryCard title="Blocked/deferred dangerous actions" value={blockedCount} />
           </div>
 
+          <section className="panel action-confirm-panel">
+            <label className="confirm-row">
+              <input checked={confirmed} type="checkbox" onChange={(event) => setConfirmed(event.target.checked)} />
+              <span>I understand this creates or writes Devo workspace artifacts only and does not modify the target project.</span>
+            </label>
+          </section>
+
+          {executeError ? <p className="error-text compact">{executeError}</p> : null}
+          {result ? (
+            <div className="action-result">
+              <p>
+                <StatusBadge status={result.status} /> {result.message}
+              </p>
+              {result.run_id ? <p className="project-path">Run: {result.run_id}</p> : null}
+              {result.lane ? <p className="project-path">Lane: {result.lane}</p> : null}
+              {result.artifact_path ? <p className="project-path">Artifact: {result.artifact_path}</p> : null}
+              {result.suggested_next_command ? <CommandCopyBox command={result.suggested_next_command} /> : null}
+            </div>
+          ) : null}
+
           <section className="panel action-execute-panel">
-            <h3>Controlled workspace-safe execution</h3>
+            <h3>New Work Package</h3>
+            <p>
+              Create a Devo run and draft work package. This writes workspace records only; implementation, approvals, validation, commit, and
+              push stay in CLI/Codex.
+            </p>
+            <label className="field-label wide-field">
+              Goal
+              <input value={newGoal} onChange={(event) => setNewGoal(event.target.value)} placeholder="Prepare a small UI polish batch" />
+            </label>
+            <div className="action-form-grid">
+              <label className="field-label">
+                Lane
+                <select value={newLane} onChange={(event) => setNewLane(event.target.value)}>
+                  {BUILT_IN_LANES.map((lane) => (
+                    <option key={lane.label} value={lane.id}>
+                      {lane.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="confirm-row checkbox-field">
+                <input
+                  checked={generateScopeTemplate}
+                  type="checkbox"
+                  onChange={(event) => setGenerateScopeTemplate(event.target.checked)}
+                />
+                <span>Generate scope template</span>
+              </label>
+            </div>
+            <button className="secondary-action-button primary-safe-action" disabled={!canCreateWorkPackage()} type="button" onClick={() => void createWorkPackage()}>
+              {runningActionId === 'work.new.create' ? 'Creating...' : 'Create work package'}
+            </button>
+          </section>
+
+          <section className="panel action-execute-panel">
+            <h3>Controlled workspace-safe artifact generation</h3>
             <p>
               These controls can write Devo workspace artifacts only. They do not touch target repositories, run validation, commit, push,
               restore backups, modify schedulers, run target apps, or call model APIs.
@@ -155,20 +253,6 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
                 <input value={runInput} onChange={(event) => setRunInput(event.target.value)} placeholder="Required for run-specific actions" />
               </label>
             </div>
-            <label className="confirm-row">
-              <input checked={confirmed} type="checkbox" onChange={(event) => setConfirmed(event.target.checked)} />
-              <span>I understand this writes Devo workspace artifacts only.</span>
-            </label>
-            {executeError ? <p className="error-text compact">{executeError}</p> : null}
-            {result ? (
-              <div className="action-result">
-                <p>
-                  <StatusBadge status={result.status} /> {result.message}
-                </p>
-                {result.artifact_path ? <p className="project-path">Artifact: {result.artifact_path}</p> : null}
-                {result.suggested_next_command ? <CommandCopyBox command={result.suggested_next_command} /> : null}
-              </div>
-            ) : null}
           </section>
 
           <div className="action-group-stack">
@@ -210,7 +294,7 @@ export function ActionSafetyPage({ selectedProject, selectedRun }: ActionSafetyP
                       </dl>
                       <p className="action-reason">{action.reason}</p>
                       {action.required_cli_command ? <code className="inline-command">{action.required_cli_command}</code> : null}
-                      {EXECUTABLE_WORKSPACE_ACTIONS.has(action.id) ? (
+                      {EXECUTABLE_WORKSPACE_ACTIONS.has(action.id) && action.id !== 'work.new.create' ? (
                         <button
                           className="secondary-action-button"
                           disabled={!canExecute(action) || runningActionId !== null}

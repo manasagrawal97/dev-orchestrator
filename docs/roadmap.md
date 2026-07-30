@@ -169,6 +169,10 @@ Added `src/devo/ui_actions.py` with UI action categories for `read_only`, `works
 
 Added `POST /api/actions/execute` for four confirmed workspace-only actions: generate work scope template, generate work-package visual, generate project activity visual, and write onboarding report. The Action Safety dashboard page now exposes controls only for those actions, requires project/run inputs where needed, and requires confirmation that the action writes Devo workspace artifacts only. Approval, validation/build/test, commit/push, backup restore/delete, scheduler modification, target app run, and model/API actions remain blocked or deferred.
 
+### TASK-DEVO-073 UI Work Bootstrap Action - Completed
+
+Added `work.new.create` to the controlled UI action executor. The dashboard can now create a Devo run/work-package draft from the Action Safety page, using an explicit lane or the project's default lane, and can generate the initial scope template unless the user disables it. The action returns the run id, lane, optional scope-template path, and `devo work resume` command. It writes Devo workspace artifacts only and does not modify target repositories or add approval, validation/build/test, Git delivery, restore/delete, scheduler, target app, or model/API execution.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

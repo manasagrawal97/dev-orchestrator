@@ -143,13 +143,19 @@ export interface UiActionExecuteRequest {
   action_id: string;
   project?: string | null;
   run_id?: string | null;
+  goal?: string | null;
+  lane?: string | null;
   confirm: boolean;
+  no_template?: boolean;
 }
 
 export interface UiActionExecutionResult {
   status: 'OK' | 'WARN' | 'FAIL' | 'BLOCKED';
   action_id: string;
   message: string;
+  project: string | null;
+  run_id: string | null;
+  lane: string | null;
   artifact_path: string | null;
   suggested_next_command: string | null;
 }

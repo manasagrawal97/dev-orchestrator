@@ -5,9 +5,10 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from devo.api import create_app
+from devo.project_settings import update_project_settings
 from devo.schemas import ContextState, ContextStatus, ProjectRegistration
 from devo.ui_actions import get_ui_action, is_action_allowed, list_allowed_ui_actions, list_ui_actions
-from devo.work_packages import start_work_package
+from devo.work_packages import load_work_package, start_work_package
 
 
 def test_action_registry_loads() -> None:
@@ -96,7 +97,7 @@ def test_allowed_actions_include_controlled_workspace_safe_but_exclude_dangerous
     assert "doctor.view" in action_ids
     assert "work.scope_template.generate" in action_ids
     assert "visual.project_activity.generate" in action_ids
-    assert "work.new.create" not in action_ids
+    assert "work.new.create" in action_ids
     assert "git.push" not in action_ids
     assert all(not action["mutates_target_project"] for action in data["actions"])
 
@@ -143,6 +144,137 @@ def test_execute_allowed_workspace_safe_action_generates_artifact(tmp_path: Path
     assert data["artifact_path"].endswith("scope-template.md")
     assert Path(data["artifact_path"]).exists()
     assert sentinel.read_text(encoding="utf-8") == before_target
+
+
+def test_execute_work_new_requires_confirm_true(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.new.create", "project": "sample", "goal": "New package", "lane": "docs-only", "confirm": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "BLOCKED"
+    assert "confirm=true" in response.json()["message"]
+
+
+def test_execute_work_new_creates_run_and_package_with_explicit_lane(tmp_path: Path, monkeypatch) -> None:
+    workspace, target, _package = _registered_workspace(tmp_path, monkeypatch)
+    sentinel = target / "README.md"
+    before_target = sentinel.read_text(encoding="utf-8")
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={
+            "action_id": "work.new.create",
+            "project": "sample",
+            "goal": "Create from UI",
+            "lane": "low-risk-ui-maintenance",
+            "confirm": True,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["project"] == "sample"
+    assert data["lane"] == "low-risk-ui-maintenance"
+    assert data["run_id"]
+    assert data["artifact_path"].endswith("scope-template.md")
+    assert "devo work resume --project sample --run" in data["suggested_next_command"]
+    package = load_work_package("sample", data["run_id"], workspace_root=workspace)
+    assert package.goal == "Create from UI"
+    assert package.lane == "low-risk-ui-maintenance"
+    assert Path(data["artifact_path"]).exists()
+    assert sentinel.read_text(encoding="utf-8") == before_target
+
+
+def test_execute_work_new_uses_project_default_lane_when_lane_omitted(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    update_project_settings("sample", default_lane="docs-only", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.new.create", "project": "sample", "goal": "Default lane package", "confirm": True},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["lane"] == "docs-only"
+    package = load_work_package("sample", data["run_id"], workspace_root=workspace)
+    assert package.lane == "docs-only"
+
+
+def test_execute_work_new_missing_goal_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.new.create", "project": "sample", "lane": "docs-only", "confirm": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "action_invalid"
+    assert "goal is required" in response.json()["detail"]["message"]
+
+
+def test_execute_work_new_missing_lane_and_default_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.new.create", "project": "sample", "goal": "Missing lane", "confirm": True},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "FAIL"
+    assert "No lane provided" in data["message"]
+    assert "devo project settings-set --project sample --default-lane <lane>" == data["suggested_next_command"]
+
+
+def test_execute_work_new_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    workspace = _workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "work.new.create", "project": "missing", "goal": "Unknown project", "lane": "docs-only", "confirm": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "action_invalid"
+    assert "Registered project not found" in response.json()["detail"]["message"]
+
+
+def test_execute_work_new_no_template_skips_scope_template(tmp_path: Path, monkeypatch) -> None:
+    workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={
+            "action_id": "work.new.create",
+            "project": "sample",
+            "goal": "No template package",
+            "lane": "docs-only",
+            "confirm": True,
+            "no_template": True,
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["artifact_path"] is None
+    assert not (workspace / "runs" / "sample" / data["run_id"] / "artifacts" / "work-package" / "scope-template.md").exists()
 
 
 def test_execute_project_activity_visual_returns_artifact(tmp_path: Path, monkeypatch) -> None:
