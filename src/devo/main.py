@@ -58,12 +58,18 @@ from .reports import (
 from .projects import get_workspace_root, list_projects, register_project
 from .project_onboarding import ProjectOnboardingReport, build_project_onboarding_report
 from .project_planning import (
+    BacklogTask,
+    ProjectBacklog,
     ProjectBlueprint,
     ProjectBrief,
+    approve_project_backlog,
     approve_project_blueprint,
     approve_project_brief,
+    create_project_backlog,
     create_project_blueprint,
     create_project_brief,
+    get_backlog_task,
+    load_project_backlog,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
@@ -270,6 +276,52 @@ def _print_project_blueprint(blueprint: ProjectBlueprint | None, project_name: s
     console.print(f"Epics: {len(blueprint.epics)}")
     console.print(f"JSON: {_named_path(paths.blueprint_json)}")
     console.print(f"Markdown: {_named_path(paths.blueprint_markdown)}")
+
+
+def _print_project_backlog(backlog: ProjectBacklog | None, project_name: str) -> None:
+    paths = planning_artifact_paths(project_name)
+    if not backlog:
+        console.print(f"[yellow]Project backlog not found for {project_name}.[/yellow]")
+        console.print(f"Suggested next command: devo project backlog-create --project {project_name}")
+        return
+    console.print(f"[bold]Project backlog: {project_name}[/bold]")
+    console.print(f"Title: {backlog.title}")
+    console.print(f"Status: {backlog.status}")
+    console.print(f"Tasks: {backlog.task_count}")
+    console.print(f"Ready: {backlog.ready_task_count}")
+    console.print(f"Blocked: {backlog.blocked_task_count}")
+    console.print(f"Completed: {backlog.completed_task_count}")
+    console.print(f"JSON: {_named_path(paths.backlog_json)}")
+    console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
+
+
+def _print_backlog_task(task: BacklogTask) -> None:
+    console.print(f"[bold]Backlog task: {task.id}[/bold]")
+    console.print(f"Title: {task.title}")
+    console.print(f"Status: {task.status}")
+    console.print(f"Lane: {task.lane}")
+    console.print(f"Risk: {task.risk_level}")
+    console.print(f"Milestone: {task.milestone_id or 'none'}")
+    console.print(f"Epic: {task.epic_id or 'none'}")
+    console.print(f"Summary: {task.summary}", soft_wrap=True)
+    console.print("Dependencies:")
+    for dependency in task.dependencies or ["none"]:
+        console.print(f"  - {dependency}")
+    console.print("Acceptance criteria:")
+    for item in task.acceptance_criteria or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Validation expectations:")
+    for item in task.validation_expectations or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Allowed scope:")
+    for item in task.allowed_scope or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Forbidden scope:")
+    for item in task.forbidden_scope or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Notes:")
+    for item in task.notes or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
 
 
 def _print_json_model(model: object) -> None:
@@ -1116,7 +1168,101 @@ def approve_blueprint_command(
     console.print(f"Title: {blueprint.title}")
     console.print(f"JSON: {_named_path(paths.blueprint_json)}")
     console.print(f"Markdown: {_named_path(paths.blueprint_markdown)}")
-    console.print("Suggested next command: backlog creation is TASK-DEVO-075.")
+    console.print(f"Suggested next command: devo project backlog-create --project {project_name}")
+
+
+@project_app.command("backlog-create")
+def create_backlog_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Create or update a deterministic draft Backlog from the current Blueprint."""
+    project_name = _resolve_project(project_name)
+    try:
+        backlog, paths = create_project_backlog(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Project backlog saved[/green] {project_name}")
+    console.print(f"Title: {backlog.title}")
+    console.print(f"Status: {backlog.status}")
+    console.print(f"Tasks: {backlog.task_count}")
+    console.print(f"Ready: {backlog.ready_task_count}")
+    console.print(f"Blocked: {backlog.blocked_task_count}")
+    console.print(f"Completed: {backlog.completed_task_count}")
+    console.print(f"JSON: {_named_path(paths.backlog_json)}")
+    console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
+    console.print(f"Suggested next command: devo project backlog-approve --project {project_name}")
+
+
+@project_app.command("backlog-show")
+def show_backlog_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the current Backlog summary without mutating it."""
+    project_name = _resolve_project(project_name)
+    try:
+        load_registered_project(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_project_backlog(load_project_backlog(project_name), project_name)
+
+
+@project_app.command("backlog-approve")
+def approve_backlog_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Mark the current Backlog approved without approving implementation work."""
+    project_name = _resolve_project(project_name)
+    try:
+        backlog, paths = approve_project_backlog(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Project backlog approved[/green] {project_name}")
+    console.print(f"Title: {backlog.title}")
+    console.print(f"Tasks: {backlog.task_count}")
+    console.print(f"Ready: {backlog.ready_task_count}")
+    console.print(f"JSON: {_named_path(paths.backlog_json)}")
+    console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
+    console.print("Suggested next command: batch creation is TASK-DEVO-077.")
+
+
+@project_app.command("task-list")
+def list_backlog_tasks_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List tasks from the current Backlog without mutating it."""
+    project_name = _resolve_project(project_name)
+    try:
+        backlog = load_project_backlog(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    if not backlog:
+        console.print(f"[yellow]Project backlog not found for {project_name}.[/yellow]")
+        console.print(f"Suggested next command: devo project backlog-create --project {project_name}")
+        return
+    console.print(f"[bold]Backlog tasks: {project_name}[/bold]")
+    if not backlog.tasks:
+        console.print("[yellow]No tasks recorded.[/yellow]")
+        return
+    for task in backlog.tasks:
+        console.print(
+            f"{task.id} | {task.status} | lane={task.lane} | risk={task.risk_level} | "
+            f"milestone={task.milestone_id or 'none'} | epic={task.epic_id or 'none'} | {task.title}",
+            soft_wrap=True,
+        )
+
+
+@project_app.command("task-show")
+def show_backlog_task_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    task_id: str = typer.Option(..., "--task", help="Backlog task id."),
+) -> None:
+    """Show one Backlog task without mutating it."""
+    project_name = _resolve_project(project_name)
+    try:
+        task = get_backlog_task(project_name, task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+    _print_backlog_task(task)
 
 
 @project_app.command("activity")

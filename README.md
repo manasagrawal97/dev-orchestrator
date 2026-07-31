@@ -124,7 +124,19 @@ devo project blueprint-show --project MyProject
 devo project blueprint-approve --project MyProject
 ```
 
-Project Brief and Blueprint artifacts are stored under `workspace/projects/<project>/planning/`. They are deterministic Devo workspace artifacts only. This does not create backlog/tasks/batches yet, does not call AI, does not call Codex CLI, and does not modify the target project.
+Project Brief and Blueprint artifacts are stored under `workspace/projects/<project>/planning/`. They are deterministic Devo workspace artifacts only. This does not create batches or execution queues, does not call AI, does not call Codex CLI, and does not modify the target project.
+
+Create the first deterministic backlog/task placeholders from an approved blueprint:
+
+```powershell
+devo project backlog-create --project MyProject
+devo project backlog-show --project MyProject
+devo project task-list --project MyProject
+devo project task-show --project MyProject --task T001
+devo project backlog-approve --project MyProject
+```
+
+Backlog artifacts are also stored under `workspace/projects/<project>/planning/` as `backlog.json` and `backlog.md`. TASK-DEVO-075 creates template-based starter tasks from blueprint milestones/epics only. It does not create batches, run an execution queue, call AI, call Codex CLI, approve implementation, or modify the target project.
 
 List registered projects:
 

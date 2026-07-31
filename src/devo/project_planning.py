@@ -14,6 +14,8 @@ PROJECT_BRIEF_JSON = "project-brief.json"
 PROJECT_BRIEF_MD = "project-brief.md"
 BLUEPRINT_JSON = "blueprint.json"
 BLUEPRINT_MD = "blueprint.md"
+BACKLOG_JSON = "backlog.json"
+BACKLOG_MD = "backlog.md"
 PLANNING_SCHEMA_VERSION = "1"
 
 
@@ -78,6 +80,45 @@ class ProjectBlueprint(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class BacklogTask(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str
+    summary: str
+    milestone_id: str | None = None
+    epic_id: str | None = None
+    lane: str
+    risk_level: str
+    status: str = "draft"
+    dependencies: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    validation_expectations: list[str] = Field(default_factory=list)
+    allowed_scope: list[str] = Field(default_factory=list)
+    forbidden_scope: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    source: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ProjectBacklog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    title: str
+    blueprint_reference: str
+    status: str = "draft"
+    tasks: list[BacklogTask] = Field(default_factory=list)
+    task_count: int = 0
+    ready_task_count: int = 0
+    blocked_task_count: int = 0
+    completed_task_count: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -86,6 +127,8 @@ class PlanningArtifactPaths(BaseModel):
     brief_markdown: Path
     blueprint_json: Path
     blueprint_markdown: Path
+    backlog_json: Path
+    backlog_markdown: Path
 
 
 def planning_artifact_paths(project_name: str, workspace_root: Path | None = None) -> PlanningArtifactPaths:
@@ -97,6 +140,8 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         brief_markdown=planning_dir / PROJECT_BRIEF_MD,
         blueprint_json=planning_dir / BLUEPRINT_JSON,
         blueprint_markdown=planning_dir / BLUEPRINT_MD,
+        backlog_json=planning_dir / BACKLOG_JSON,
+        backlog_markdown=planning_dir / BACKLOG_MD,
     )
 
 
@@ -223,6 +268,74 @@ def approve_project_blueprint(project_name: str, workspace_root: Path | None = N
     return updated, paths
 
 
+def create_project_backlog(project_name: str, workspace_root: Path | None = None) -> tuple[ProjectBacklog, PlanningArtifactPaths]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    blueprint = load_project_blueprint(project_name, workspace_root=root)
+    if not blueprint:
+        msg = f"Project blueprint not found for project: {project_name}"
+        raise ValueError(msg)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    now = datetime.now(UTC)
+    existing = load_project_backlog(project_name, workspace_root=root)
+    created_at = existing.created_at if existing else now
+    tasks = _default_backlog_tasks(blueprint, now)
+    backlog = _with_backlog_counts(
+        ProjectBacklog(
+            project=project_name,
+            title=f"{blueprint.title} Backlog",
+            blueprint_reference=str(paths.blueprint_json),
+            status="draft",
+            tasks=tasks,
+            created_at=created_at,
+            updated_at=now,
+        )
+    )
+    paths.planning_dir.mkdir(parents=True, exist_ok=True)
+    _write_model(paths.backlog_json, backlog)
+    paths.backlog_markdown.write_text(render_project_backlog_markdown(backlog), encoding="utf-8")
+    return backlog, paths
+
+
+def load_project_backlog(project_name: str, workspace_root: Path | None = None) -> ProjectBacklog | None:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.backlog_json.exists():
+        return None
+    return ProjectBacklog.model_validate_json(paths.backlog_json.read_text(encoding="utf-8"))
+
+
+def approve_project_backlog(project_name: str, workspace_root: Path | None = None) -> tuple[ProjectBacklog, PlanningArtifactPaths]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not backlog:
+        msg = f"Project backlog not found for project: {project_name}"
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    tasks = [
+        task.model_copy(update={"status": "ready" if task.status == "draft" else task.status, "updated_at": now})
+        for task in backlog.tasks
+    ]
+    updated = _with_backlog_counts(backlog.model_copy(update={"status": "approved", "tasks": tasks, "updated_at": now}))
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    _write_model(paths.backlog_json, updated)
+    paths.backlog_markdown.write_text(render_project_backlog_markdown(updated), encoding="utf-8")
+    return updated, paths
+
+
+def get_backlog_task(project_name: str, task_id: str, workspace_root: Path | None = None) -> BacklogTask:
+    backlog = load_project_backlog(project_name, workspace_root=workspace_root)
+    if not backlog:
+        msg = f"Project backlog not found for project: {project_name}"
+        raise ValueError(msg)
+    normalized = task_id.strip().upper()
+    for task in backlog.tasks:
+        if task.id.upper() == normalized:
+            return task
+    msg = f"Backlog task not found: {task_id}"
+    raise ValueError(msg)
+
+
 def render_project_brief_markdown(brief: ProjectBrief, source_text: str | None = None) -> str:
     lines = [
         f"# {brief.title}",
@@ -306,6 +419,104 @@ def render_project_blueprint_markdown(blueprint: ProjectBlueprint) -> str:
     _append_list_section(lines, "Validation Strategy", blueprint.validation_strategy)
     _append_list_section(lines, "Open Questions", blueprint.open_questions)
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_project_backlog_markdown(backlog: ProjectBacklog) -> str:
+    lines = [
+        f"# {backlog.title}",
+        "",
+        f"- Project: `{backlog.project}`",
+        f"- Status: `{backlog.status}`",
+        f"- Blueprint reference: `{backlog.blueprint_reference}`",
+        f"- Task count: `{backlog.task_count}`",
+        f"- Ready tasks: `{backlog.ready_task_count}`",
+        f"- Blocked tasks: `{backlog.blocked_task_count}`",
+        f"- Completed tasks: `{backlog.completed_task_count}`",
+        f"- Created: `{backlog.created_at.isoformat()}`",
+        f"- Updated: `{backlog.updated_at.isoformat()}`",
+        "",
+        "## Tasks",
+        "",
+    ]
+    if not backlog.tasks:
+        lines.extend(["No tasks recorded.", ""])
+    for task in backlog.tasks:
+        lines.extend(
+            [
+                f"### {task.id}: {task.title}",
+                "",
+                f"- Status: `{task.status}`",
+                f"- Lane: `{task.lane}`",
+                f"- Risk: `{task.risk_level}`",
+                f"- Milestone: `{task.milestone_id or 'none'}`",
+                f"- Epic: `{task.epic_id or 'none'}`",
+                f"- Source: {task.source}",
+                "",
+                task.summary,
+                "",
+            ]
+        )
+        _append_list_section(lines, "Acceptance Criteria", task.acceptance_criteria)
+        _append_list_section(lines, "Validation Expectations", task.validation_expectations)
+        _append_list_section(lines, "Allowed Scope", task.allowed_scope)
+        _append_list_section(lines, "Forbidden Scope", task.forbidden_scope)
+        _append_list_section(lines, "Dependencies", task.dependencies)
+        _append_list_section(lines, "Notes", task.notes)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _default_backlog_tasks(blueprint: ProjectBlueprint, now: datetime) -> list[BacklogTask]:
+    tasks: list[BacklogTask] = []
+    sources: list[tuple[str, str | None, str | None, str]] = []
+    for epic in blueprint.epics:
+        sources.append((epic.title, epic.milestone_id, epic.id, epic.summary))
+    if not sources:
+        for milestone in blueprint.milestones:
+            sources.append((milestone.title, milestone.id, None, milestone.summary))
+    if not sources:
+        sources.append(("Planning Follow-Up", None, None, blueprint.vision_summary))
+
+    for index, (title, milestone_id, epic_id, summary) in enumerate(sources, start=1):
+        tasks.append(
+            BacklogTask(
+                id=f"T{index:03d}",
+                title=_short_title(title, fallback=f"Task {index}"),
+                summary=summary,
+                milestone_id=milestone_id,
+                epic_id=epic_id,
+                lane="small-feature",
+                risk_level="medium",
+                status="draft",
+                acceptance_criteria=[
+                    "Refine this placeholder into concrete implementation criteria during TASK-DEVO-076 planning handoff.",
+                ],
+                validation_expectations=blueprint.validation_strategy[:5] or ["Define validation before implementation."],
+                allowed_scope=["Planning placeholder only; implementation scope must be refined before batch approval."],
+                forbidden_scope=[
+                    "Do not execute implementation from this placeholder.",
+                    "Do not run AI/API/Codex automation from backlog creation.",
+                ],
+                notes=["Deterministic starter task generated from the current blueprint."],
+                source=f"blueprint:{epic_id or milestone_id or 'overview'}",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return tasks
+
+
+def _with_backlog_counts(backlog: ProjectBacklog) -> ProjectBacklog:
+    ready = sum(1 for task in backlog.tasks if task.status in {"ready", "approved"})
+    blocked = sum(1 for task in backlog.tasks if task.status == "blocked")
+    completed = sum(1 for task in backlog.tasks if task.status == "completed")
+    return backlog.model_copy(
+        update={
+            "task_count": len(backlog.tasks),
+            "ready_task_count": ready,
+            "blocked_task_count": blocked,
+            "completed_task_count": completed,
+        }
+    )
 
 
 def _default_milestones(brief: ProjectBrief) -> list[BlueprintMilestone]:

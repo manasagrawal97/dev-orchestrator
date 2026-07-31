@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from devo.api import create_app, validate_api_host
 from devo.main import app
-from devo.project_planning import create_project_blueprint, create_project_brief
+from devo.project_planning import approve_project_backlog, create_project_backlog, create_project_blueprint, create_project_brief
 from devo.runs import save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 from devo.validation_registry import add_validation_command
@@ -115,17 +115,64 @@ def test_project_brief_and_blueprint_endpoints_return_json(tmp_path: Path, monke
     assert blueprint.json()["artifact_paths"]["markdown"].endswith("blueprint.md")
 
 
+def test_project_backlog_and_task_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    approve_project_backlog("sample", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    backlog = client.get("/api/projects/sample/backlog")
+    tasks = client.get("/api/projects/sample/tasks")
+    task = client.get("/api/projects/sample/tasks/T001")
+
+    assert backlog.status_code == 200
+    assert backlog.json()["status"] == "approved"
+    assert backlog.json()["task_count"] == 2
+    assert backlog.json()["artifact_paths"]["json"].endswith("backlog.json")
+    assert tasks.status_code == 200
+    assert tasks.json()["count"] == 2
+    assert tasks.json()["tasks"][0]["id"] == "T001"
+    assert task.status_code == 200
+    assert task.json()["id"] == "T001"
+    assert task.json()["status"] == "ready"
+
+
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
 
     brief = client.get("/api/projects/sample/brief")
     blueprint = client.get("/api/projects/sample/blueprint")
+    backlog = client.get("/api/projects/sample/backlog")
+    tasks = client.get("/api/projects/sample/tasks")
 
     assert brief.status_code == 404
     assert brief.json()["detail"]["error"] == "brief_not_found"
     assert blueprint.status_code == 404
     assert blueprint.json()["detail"]["error"] == "blueprint_not_found"
+    assert backlog.status_code == 404
+    assert backlog.json()["detail"]["error"] == "backlog_not_found"
+    assert tasks.status_code == 404
+    assert tasks.json()["detail"]["error"] == "backlog_not_found"
+
+
+def test_project_task_endpoint_returns_404_for_missing_task(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/tasks/T999")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["error"] == "task_not_found"
 
 
 def test_project_overview_include_timing_returns_breakdown(tmp_path: Path, monkeypatch) -> None:
@@ -250,6 +297,8 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/overview" in result.output
     assert "GET /api/projects/{project}/brief" in result.output
     assert "GET /api/projects/{project}/blueprint" in result.output
+    assert "GET /api/projects/{project}/backlog" in result.output
+    assert "GET /api/projects/{project}/tasks" in result.output
 
 
 def test_api_serve_blocks_non_local_host(tmp_path: Path, monkeypatch) -> None:

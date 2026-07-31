@@ -213,7 +213,12 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
                   ['Brief', overview.brief_status],
                   ['Blueprint', overview.blueprint_status],
                   ['Milestones', overview.blueprint_milestone_count],
-                  ['Epics', overview.blueprint_epic_count]
+                  ['Epics', overview.blueprint_epic_count],
+                  ['Backlog', overview.backlog_status],
+                  ['Tasks', overview.backlog_task_count],
+                  ['Ready', overview.backlog_ready_count],
+                  ['Blocked', overview.backlog_blocked_count],
+                  ['Completed', overview.backlog_completed_count]
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>

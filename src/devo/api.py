@@ -8,7 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
 from .doctor import run_doctor_with_timing
-from .project_planning import load_project_blueprint, load_project_brief, planning_artifact_paths
+from .project_planning import get_backlog_task, load_project_backlog, load_project_blueprint, load_project_brief, planning_artifact_paths
 from .projects import get_workspace_root, list_projects
 from .read_models import build_project_overview_with_timing, build_run_overview, build_work_package_overview
 from .runs import load_current_selection, load_run
@@ -24,6 +24,9 @@ API_ROUTES = (
     "GET /api/projects/{project}/overview",
     "GET /api/projects/{project}/brief",
     "GET /api/projects/{project}/blueprint",
+    "GET /api/projects/{project}/backlog",
+    "GET /api/projects/{project}/tasks",
+    "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
     "GET /api/projects/{project}/doctor",
     "GET /api/projects/{project}/runs/{run_id}/overview",
@@ -110,6 +113,35 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         data = _model_dump(blueprint)
         data["artifact_paths"] = {"json": str(paths.blueprint_json), "markdown": str(paths.blueprint_markdown)}
         return data
+
+    @api.get("/api/projects/{project}/backlog")
+    def project_backlog(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        backlog = load_project_backlog(project, workspace_root=root)
+        if not backlog:
+            raise HTTPException(status_code=404, detail={"error": "backlog_not_found", "message": f"Project backlog not found: {project}"})
+        paths = planning_artifact_paths(project, workspace_root=root)
+        data = _model_dump(backlog)
+        data["artifact_paths"] = {"json": str(paths.backlog_json), "markdown": str(paths.backlog_markdown)}
+        return data
+
+    @api.get("/api/projects/{project}/tasks")
+    def project_tasks(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        backlog = load_project_backlog(project, workspace_root=root)
+        if not backlog:
+            raise HTTPException(status_code=404, detail={"error": "backlog_not_found", "message": f"Project backlog not found: {project}"})
+        return {"project": project, "count": backlog.task_count, "tasks": [_model_dump(task) for task in backlog.tasks]}
+
+    @api.get("/api/projects/{project}/tasks/{task_id}")
+    def project_task(project: str, task_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        try:
+            task = get_backlog_task(project, task_id, workspace_root=root)
+        except ValueError as exc:
+            error = "task_not_found" if str(exc).startswith("Backlog task not found:") else "backlog_not_found"
+            raise HTTPException(status_code=404, detail={"error": error, "message": str(exc)}) from exc
+        return _model_dump(task)
 
     @api.get("/api/projects/{project}/activity")
     def project_activity(project: str, limit: int = 10, include_timing: bool = False) -> dict[str, object]:

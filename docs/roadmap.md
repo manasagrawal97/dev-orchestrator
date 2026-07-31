@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-075 Backlog/task data model
 - TASK-DEVO-076 Blueprint-to-backlog planning handoff prompt
 - TASK-DEVO-077 Batch model and batch selection
 - TASK-DEVO-078 Progress calculation and project completion percent
@@ -198,6 +197,10 @@ Added `docs/remaining-roadmap.md` as the durable source of truth for the remaini
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 
 Added the first planning pipeline artifacts: Project Brief and Blueprint. Devo can now create, show, and approve a brief from a local Markdown/text file, create a deterministic draft blueprint from that brief, show and approve the blueprint, expose planning status in ProjectOverview/read-only API responses, and show a read-only Planning card in the dashboard. This stores Devo workspace artifacts only and does not implement backlog/tasks/batches, direct AI/API calls, Codex CLI automation, or target repository mutation.
+
+### TASK-DEVO-075 Backlog And Task Planning - Completed
+
+Added deterministic Backlog and Task planning artifacts derived from blueprint milestones/epics. Devo can now create, show, and approve a backlog, list backlog tasks, show one task, expose backlog/task JSON through read-only API endpoints, include backlog counts in ProjectOverview, and show those counts in the dashboard Planning card. This is a template-based starter backlog only; TASK-DEVO-076 should add a Codex handoff prompt for intelligent backlog refinement. Batches and execution queue remain future work.
 
 ### TASK-023 Safe Validation Runner
 

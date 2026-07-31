@@ -76,6 +76,11 @@ export interface ProjectOverview {
   blueprint_status: string;
   blueprint_milestone_count: number;
   blueprint_epic_count: number;
+  backlog_status: string;
+  backlog_task_count: number;
+  backlog_ready_count: number;
+  backlog_blocked_count: number;
+  backlog_completed_count: number;
   planning_next_action: string;
   recent_runs: RunOverview[];
   recent_work_packages: WorkPackageOverview[];

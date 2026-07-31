@@ -6,7 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from devo.main import app
-from devo.project_planning import load_project_blueprint, load_project_brief, planning_artifact_paths
+from devo.project_planning import load_project_backlog, load_project_blueprint, load_project_brief, planning_artifact_paths
 from devo.read_models import build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 
@@ -108,10 +108,85 @@ def test_blueprint_approve_marks_approved(tmp_path: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Project blueprint approved" in result.output
-    assert "TASK-DEVO-075" in result.output
+    assert "backlog-create" in result.output
     blueprint = load_project_blueprint("sample", workspace_root=workspace)
     assert blueprint is not None
     assert blueprint.status == "approved"
+
+
+def test_backlog_create_from_blueprint_creates_json_and_markdown_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_blueprint(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "backlog-create", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Project backlog saved" in result.output
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    assert paths.backlog_json.exists()
+    assert paths.backlog_markdown.exists()
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    assert backlog.status == "draft"
+    assert backlog.task_count == 2
+    assert backlog.ready_task_count == 0
+    assert [task.id for task in backlog.tasks] == ["T001", "T002"]
+    assert backlog.tasks[0].epic_id == "E001"
+    assert "Deterministic starter task" in paths.backlog_markdown.read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_backlog_show_works(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(app, ["project", "backlog-show", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Project backlog: sample" in result.output
+    assert "Status: draft" in result.output
+    assert "Tasks: 2" in result.output
+
+
+def test_backlog_approve_marks_approved_and_tasks_ready(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(app, ["project", "backlog-approve", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Project backlog approved" in result.output
+    assert "TASK-DEVO-077" in result.output
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    assert backlog.status == "approved"
+    assert backlog.ready_task_count == 2
+    assert {task.status for task in backlog.tasks} == {"ready"}
+
+
+def test_task_list_works(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(app, ["project", "task-list", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Backlog tasks: sample" in result.output
+    assert "T001" in result.output
+    assert "lane=small-feature" in result.output
+
+
+def test_task_show_works(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(app, ["project", "task-show", "--project", "sample", "--task", "T001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Backlog task: T001" in result.output
+    assert "Planning Foundation" in result.output
+    assert "Validation expectations" in result.output
 
 
 def test_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
@@ -137,6 +212,25 @@ def test_blueprint_create_without_brief_fails_clearly(tmp_path: Path, monkeypatc
     assert "Project brief not found" in result.output
 
 
+def test_backlog_create_without_blueprint_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["project", "backlog-create", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Project blueprint not found" in result.output
+
+
+def test_task_show_unknown_task_fails_clearly(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(app, ["project", "task-show", "--project", "sample", "--task", "T999"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Backlog task not found" in result.output
+
+
 def test_read_models_include_planning_summary(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     brief_file = _brief_file(tmp_path)
@@ -155,7 +249,17 @@ def test_read_models_include_planning_summary(tmp_path: Path, monkeypatch) -> No
     assert overview.blueprint_status == "approved"
     assert overview.blueprint_milestone_count == 2
     assert overview.blueprint_epic_count == 2
-    assert "TASK-DEVO-075" in overview.planning_next_action
+    assert overview.backlog_status == "missing"
+    assert "backlog-create" in overview.planning_next_action
+
+    runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+
+    with_backlog = build_project_overview("sample", workspace_root=workspace)
+    assert with_backlog.backlog_status == "approved"
+    assert with_backlog.backlog_task_count == 2
+    assert with_backlog.backlog_ready_count == 2
+    assert "TASK-DEVO-077" in with_backlog.planning_next_action
 
 
 def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
@@ -167,8 +271,23 @@ def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch
     runner.invoke(app, ["project", "brief-approve", "--project", "sample"])
     runner.invoke(app, ["project", "blueprint-create", "--project", "sample"])
     runner.invoke(app, ["project", "blueprint-approve", "--project", "sample"])
+    runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
 
     assert _target_snapshot(project_path) == before_target
+
+
+def _create_blueprint(tmp_path: Path) -> None:
+    brief_file = _brief_file(tmp_path)
+    runner.invoke(app, ["project", "brief-create", "--project", "sample", "--title", "Sample Product", "--file", str(brief_file)])
+    runner.invoke(app, ["project", "brief-approve", "--project", "sample"])
+    runner.invoke(app, ["project", "blueprint-create", "--project", "sample"])
+    runner.invoke(app, ["project", "blueprint-approve", "--project", "sample"])
+
+
+def _create_backlog(tmp_path: Path) -> None:
+    _create_blueprint(tmp_path)
+    runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
 
 
 def _brief_file(tmp_path: Path) -> Path:

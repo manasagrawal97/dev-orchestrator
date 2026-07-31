@@ -115,7 +115,7 @@ Future Devo should introduce durable planning artifacts:
 
 These concepts should build on existing Devo work packages, lanes, approvals, validation, work history, reports, read models, and UI action safety.
 
-TASK-DEVO-074 adds the first two durable planning artifacts: Project Brief and Blueprint. Backlog, task, batch, queue, and progress models remain future work.
+TASK-DEVO-074 adds the first two durable planning artifacts: Project Brief and Blueprint. TASK-DEVO-075 adds deterministic Backlog and Task artifacts from the blueprint. Batch, queue, and progress models remain future work.
 
 ## Codex CLI Worker Strategy
 

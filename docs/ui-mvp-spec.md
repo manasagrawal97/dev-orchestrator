@@ -16,7 +16,7 @@ It does not replace the CLI. It does not execute risky actions. UI v1 is read-on
 
 The longer-term UI should follow the company-model vision in `docs/devo-company-model.md`: project brief, blueprint, backlog, batches, queue, and progress views around Codex-powered execution. The implementation order for those planning/progress screens is tracked in `docs/remaining-roadmap.md`. It should not become a general chat clone.
 
-After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. UI write controls for creating or approving planning artifacts remain future scope.
+After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. UI write controls for creating or approving planning artifacts remain future scope.
 
 ## UI MVP Principles
 

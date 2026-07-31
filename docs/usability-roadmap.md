@@ -53,7 +53,7 @@ Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. 
 
 The long-term direction is documented in `docs/devo-company-model.md`: Devo should become a local software-development company operating system around AI workers. The next major usability layer should support project brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. The prioritized task order is documented in `docs/remaining-roadmap.md`.
 
-TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. Backlog/tasks, batch selection, execution queue, and Codex handoff prompts are still next.
+TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. Codex backlog-refinement prompts, batch selection, execution queue, and richer progress views are still next.
 
 ### Work Packages - MVP Added
 

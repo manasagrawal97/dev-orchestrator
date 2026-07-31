@@ -74,7 +74,23 @@ devo project blueprint-approve --project MyProject
 
 The brief is the intake artifact: the final project summary distilled from discussion with ChatGPT or another advisor. The blueprint is the high-level deterministic plan derived from the brief. Both live under `workspace/projects/<project>/planning/`.
 
-This flow is workspace-only. It does not create backlog/tasks/batches yet, does not call AI, does not call Codex CLI, and does not modify the target project.
+This flow is workspace-only. It does not create batches or execution queues, does not call AI, does not call Codex CLI, and does not modify the target project.
+
+## Backlog And Tasks
+
+After a blueprint exists, create the starter backlog:
+
+```powershell
+devo project backlog-create --project MyProject
+devo project backlog-show --project MyProject
+devo project task-list --project MyProject
+devo project task-show --project MyProject --task T001
+devo project backlog-approve --project MyProject
+```
+
+The backlog is the structured task plan derived from the blueprint. TASK-DEVO-075 creates deterministic placeholder tasks from blueprint milestones/epics. Intelligent backlog refinement through Codex handoff is future TASK-DEVO-076. Batch selection and execution queue work come later.
+
+This remains workspace-only. It does not call AI, does not call Codex CLI, does not approve implementation, and does not modify the target project.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
