@@ -138,6 +138,16 @@ devo project backlog-approve --project MyProject
 
 Backlog artifacts are also stored under `workspace/projects/<project>/planning/` as `backlog.json` and `backlog.md`. TASK-DEVO-075 creates template-based starter tasks from blueprint milestones/epics only. It does not create batches, run an execution queue, call AI, call Codex CLI, approve implementation, or modify the target project.
 
+Generate a Codex/manual planning handoff prompt to refine the starter backlog:
+
+```powershell
+devo project backlog-prompt --project MyProject
+devo project backlog-validate --project MyProject --file E:\path\to\refined-backlog.json
+devo project backlog-import --project MyProject --file E:\path\to\refined-backlog.json
+```
+
+`backlog-prompt` writes `workspace/projects/<project>/planning/backlog-refinement-prompt.md`. It does not call Codex or any AI API. `backlog-import` validates the refined JSON and imports it as a draft backlog; it does not approve implementation or modify the target project.
+
 List registered projects:
 
 ```powershell

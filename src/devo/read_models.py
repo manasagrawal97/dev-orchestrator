@@ -10,7 +10,7 @@ from .backups import list_backup_inventory
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
-from .project_planning import load_project_backlog, load_project_blueprint, load_project_brief
+from .project_planning import load_project_backlog, load_project_blueprint, load_project_brief, planning_artifact_paths
 from .project_settings import load_project_settings, project_settings_path
 from .projects import get_workspace_root
 from .runs import list_runs, load_current_selection, load_run
@@ -84,6 +84,8 @@ class ProjectOverview(BaseModel):
     backlog_ready_count: int = 0
     backlog_blocked_count: int = 0
     backlog_completed_count: int = 0
+    backlog_refinement_prompt_exists: bool = False
+    backlog_refinement_prompt_path: str | None = None
     planning_next_action: str = "Create a Project Brief."
     recent_runs: list[RunOverview] = Field(default_factory=list)
     recent_work_packages: list[WorkPackageOverview] = Field(default_factory=list)
@@ -142,6 +144,8 @@ def build_project_overview_with_timing(
             backlog_ready_count=int(planning["backlog_ready_count"]),
             backlog_blocked_count=int(planning["backlog_blocked_count"]),
             backlog_completed_count=int(planning["backlog_completed_count"]),
+            backlog_refinement_prompt_exists=bool(planning["backlog_refinement_prompt_exists"]),
+            backlog_refinement_prompt_path=str(planning["backlog_refinement_prompt_path"]) if planning["backlog_refinement_prompt_path"] else None,
             planning_next_action=str(planning["planning_next_action"]),
             recent_runs=runs,
             recent_work_packages=work,
@@ -361,8 +365,11 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "backlog_ready_count": 0,
             "backlog_blocked_count": 0,
             "backlog_completed_count": 0,
+            "backlog_refinement_prompt_exists": False,
+            "backlog_refinement_prompt_path": None,
             "planning_next_action": f"Review planning artifacts: {exc}",
         }
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     if not brief:
         next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
     elif brief.status != "approved":
@@ -387,6 +394,8 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "backlog_ready_count": backlog.ready_task_count if backlog else 0,
         "backlog_blocked_count": backlog.blocked_task_count if backlog else 0,
         "backlog_completed_count": backlog.completed_task_count if backlog else 0,
+        "backlog_refinement_prompt_exists": paths.backlog_refinement_prompt.exists(),
+        "backlog_refinement_prompt_path": str(paths.backlog_refinement_prompt),
         "planning_next_action": next_action,
     }
 

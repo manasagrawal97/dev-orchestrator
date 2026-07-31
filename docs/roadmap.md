@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-076 Blueprint-to-backlog planning handoff prompt
 - TASK-DEVO-077 Batch model and batch selection
 - TASK-DEVO-078 Progress calculation and project completion percent
 - TASK-DEVO-079 Execution queue state machine
@@ -201,6 +200,10 @@ Added the first planning pipeline artifacts: Project Brief and Blueprint. Devo c
 ### TASK-DEVO-075 Backlog And Task Planning - Completed
 
 Added deterministic Backlog and Task planning artifacts derived from blueprint milestones/epics. Devo can now create, show, and approve a backlog, list backlog tasks, show one task, expose backlog/task JSON through read-only API endpoints, include backlog counts in ProjectOverview, and show those counts in the dashboard Planning card. This is a template-based starter backlog only; TASK-DEVO-076 should add a Codex handoff prompt for intelligent backlog refinement. Batches and execution queue remain future work.
+
+### TASK-DEVO-076 Backlog Refinement Handoff - Completed
+
+Added `devo project backlog-prompt` to write a Codex-ready planning prompt containing the project brief, blueprint, current backlog, lane/risk guidance, task schema, output JSON example, and explicit planning-only safety rules. Added `devo project backlog-validate` and `devo project backlog-import` so refined backlog JSON can be checked and imported as a draft backlog. ProjectOverview and the read-only API expose prompt metadata, and the dashboard Planning card shows whether the refinement prompt exists. Devo still does not call Codex, call AI APIs, approve implementation, create batches, create an execution queue, or modify target repositories.
 
 ### TASK-023 Safe Validation Runner
 

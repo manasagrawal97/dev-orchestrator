@@ -59,6 +59,7 @@ from .projects import get_workspace_root, list_projects, register_project
 from .project_onboarding import ProjectOnboardingReport, build_project_onboarding_report
 from .project_planning import (
     BacklogTask,
+    BacklogValidationResult,
     ProjectBacklog,
     ProjectBlueprint,
     ProjectBrief,
@@ -68,11 +69,14 @@ from .project_planning import (
     create_project_backlog,
     create_project_blueprint,
     create_project_brief,
+    generate_backlog_refinement_prompt,
     get_backlog_task,
+    import_refined_backlog,
     load_project_backlog,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    validate_refined_backlog_file,
 )
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
 from .read_models import (
@@ -321,6 +325,17 @@ def _print_backlog_task(task: BacklogTask) -> None:
         console.print(f"  - {item}", soft_wrap=True)
     console.print("Notes:")
     for item in task.notes or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+
+
+def _print_backlog_validation_result(result: BacklogValidationResult) -> None:
+    console.print(f"Valid: {result.valid}")
+    console.print(f"Tasks: {result.task_count}")
+    console.print("Errors:")
+    for item in result.errors or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Warnings:")
+    for item in result.warnings or ["none"]:
         console.print(f"  - {item}", soft_wrap=True)
 
 
@@ -1263,6 +1278,64 @@ def show_backlog_task_command(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--task") from exc
     _print_backlog_task(task)
+
+
+@project_app.command("backlog-prompt")
+def create_backlog_refinement_prompt_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Write a Codex-ready planning prompt for refining the current Backlog."""
+    project_name = _resolve_project(project_name)
+    try:
+        path, _prompt = generate_backlog_refinement_prompt(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Backlog refinement prompt written[/green] {project_name}")
+    console.print(f"Prompt: {_named_path(path)}")
+    console.print("Next suggested step: paste this prompt into Codex/manual planning, then import the refined backlog JSON.")
+    console.print(f"Suggested import command: devo project backlog-import --project {project_name} --file <refined-backlog.json>")
+
+
+@project_app.command("backlog-validate")
+def validate_backlog_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    refined_file: Path = typer.Option(..., "--file", help="Refined backlog JSON file to validate."),
+) -> None:
+    """Validate a refined Backlog JSON file without importing it."""
+    project_name = _resolve_project(project_name)
+    try:
+        result, _backlog = validate_refined_backlog_file(project_name, refined_file)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--file") from exc
+    _print_backlog_validation_result(result)
+    if not result.valid:
+        raise typer.Exit(1)
+
+
+@project_app.command("backlog-import")
+def import_backlog_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    refined_file: Path = typer.Option(..., "--file", help="Refined backlog JSON file to import."),
+) -> None:
+    """Import a validated refined Backlog JSON file as a draft Backlog."""
+    project_name = _resolve_project(project_name)
+    try:
+        backlog, paths, result = import_refined_backlog(project_name, refined_file)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--file") from exc
+    console.print(f"[green]Refined backlog imported[/green] {project_name}")
+    console.print(f"Status: {backlog.status}")
+    console.print(f"Tasks: {backlog.task_count}")
+    console.print(f"Ready: {backlog.ready_task_count}")
+    console.print(f"Blocked: {backlog.blocked_task_count}")
+    console.print(f"Completed: {backlog.completed_task_count}")
+    if result.warnings:
+        console.print("Warnings:")
+        for warning in result.warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    console.print(f"JSON: {_named_path(paths.backlog_json)}")
+    console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
+    console.print(f"Suggested next command: devo project backlog-show --project {project_name}")
 
 
 @project_app.command("activity")

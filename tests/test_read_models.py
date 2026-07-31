@@ -29,6 +29,7 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.validation_registry_summary["command_count"] == 1
     assert overview.brief_status == "missing"
     assert overview.backlog_status == "missing"
+    assert overview.backlog_refinement_prompt_exists is False
     assert "brief-create" in overview.planning_next_action
     assert overview.recent_runs[0].run_id == package.run_id
     assert overview.recent_work_packages[0].run_id == package.run_id
@@ -113,6 +114,7 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert overview_data["schema_version"] == "1"
     assert "brief_status" in overview_data
     assert "backlog_task_count" in overview_data
+    assert "backlog_refinement_prompt_exists" in overview_data
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:

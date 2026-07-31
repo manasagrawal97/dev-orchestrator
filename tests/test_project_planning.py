@@ -6,7 +6,15 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from devo.main import app
-from devo.project_planning import load_project_backlog, load_project_blueprint, load_project_brief, planning_artifact_paths
+from devo.project_planning import (
+    BacklogTask,
+    ProjectBacklog,
+    generate_backlog_refinement_prompt,
+    load_project_backlog,
+    load_project_blueprint,
+    load_project_brief,
+    planning_artifact_paths,
+)
 from devo.read_models import build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 
@@ -189,6 +197,106 @@ def test_task_show_works(tmp_path: Path, monkeypatch) -> None:
     assert "Validation expectations" in result.output
 
 
+def test_backlog_prompt_creates_prompt_artifact_with_context_and_schema(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "backlog-prompt", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Backlog refinement prompt written" in result.output
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    prompt = paths.backlog_refinement_prompt.read_text(encoding="utf-8")
+    assert "Project Brief Summary" in prompt
+    assert "Blueprint" in prompt
+    assert "Current Backlog" in prompt
+    assert "Required task fields" in prompt
+    assert "Do not modify source code" in prompt
+    assert "small-feature" in prompt
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_backlog_prompt_fails_when_blueprint_or_backlog_missing(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    missing_blueprint = runner.invoke(app, ["project", "backlog-prompt", "--project", "sample"], terminal_width=240)
+    assert missing_blueprint.exit_code != 0
+    assert "Project blueprint not found" in missing_blueprint.output
+
+    _create_blueprint(tmp_path)
+    missing_backlog = runner.invoke(app, ["project", "backlog-prompt", "--project", "sample"], terminal_width=240)
+    assert missing_backlog.exit_code != 0
+    assert "Project backlog not found" in missing_backlog.output
+
+
+def test_backlog_import_imports_valid_refined_backlog_as_draft(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    refined = _refined_backlog_file(tmp_path, workspace, status="approved", task_status="approved")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "backlog-import", "--project", "sample", "--file", str(refined)], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Refined backlog imported" in result.output
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    assert backlog.status == "draft"
+    assert backlog.task_count == 2
+    assert backlog.ready_task_count == 0
+    assert {task.status for task in backlog.tasks} == {"draft"}
+    assert backlog.tasks[0].title == "Refined planning task"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_backlog_validate_accepts_valid_refined_backlog(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    refined = _refined_backlog_file(tmp_path, workspace)
+
+    result = runner.invoke(app, ["project", "backlog-validate", "--project", "sample", "--file", str(refined)], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Valid: True" in result.output
+    assert "Tasks: 2" in result.output
+
+
+def test_backlog_import_rejects_duplicate_task_ids(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    refined = _refined_backlog_file(tmp_path, workspace, duplicate=True)
+
+    result = runner.invoke(app, ["project", "backlog-import", "--project", "sample", "--file", str(refined)], terminal_width=240)
+    validation = runner.invoke(app, ["project", "backlog-validate", "--project", "sample", "--file", str(refined)], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert validation.exit_code != 0
+    assert "Duplicate task id" in validation.output
+
+
+def test_backlog_import_rejects_invalid_status_and_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    refined = _refined_backlog_file(tmp_path, workspace, task_status="mystery", risk_level="spicy")
+
+    result = runner.invoke(app, ["project", "backlog-import", "--project", "sample", "--file", str(refined)], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Invalid status" in result.output
+    assert "Invalid risk level" in result.output
+
+
+def test_backlog_import_fails_for_unknown_project(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    refined = _refined_backlog_file(tmp_path, workspace, project="missing")
+
+    result = runner.invoke(app, ["project", "backlog-import", "--project", "missing", "--file", str(refined)], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Registered project not found" in result.output
+
+
 def test_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     brief_file = _brief_file(tmp_path)
@@ -254,11 +362,14 @@ def test_read_models_include_planning_summary(tmp_path: Path, monkeypatch) -> No
 
     runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
     runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+    generate_backlog_refinement_prompt("sample", workspace_root=workspace)
 
     with_backlog = build_project_overview("sample", workspace_root=workspace)
     assert with_backlog.backlog_status == "approved"
     assert with_backlog.backlog_task_count == 2
     assert with_backlog.backlog_ready_count == 2
+    assert with_backlog.backlog_refinement_prompt_exists is True
+    assert with_backlog.backlog_refinement_prompt_path is not None
     assert "TASK-DEVO-077" in with_backlog.planning_next_action
 
 
@@ -272,9 +383,75 @@ def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch
     runner.invoke(app, ["project", "blueprint-create", "--project", "sample"])
     runner.invoke(app, ["project", "blueprint-approve", "--project", "sample"])
     runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
+    runner.invoke(app, ["project", "backlog-prompt", "--project", "sample"])
     runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+    refined = _refined_backlog_file(tmp_path, _workspace_path)
+    runner.invoke(app, ["project", "backlog-validate", "--project", "sample", "--file", str(refined)])
 
     assert _target_snapshot(project_path) == before_target
+
+
+def _refined_backlog_file(
+    tmp_path: Path,
+    workspace: Path,
+    *,
+    project: str = "sample",
+    status: str = "draft",
+    task_status: str = "draft",
+    risk_level: str = "medium",
+    duplicate: bool = False,
+) -> Path:
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    task_ids = ["T101", "T101" if duplicate else "T102"]
+    backlog = ProjectBacklog(
+        project=project,
+        title="Refined Sample Backlog",
+        blueprint_reference=str(paths.blueprint_json),
+        status=status,
+        task_count=2,
+        ready_task_count=0,
+        blocked_task_count=0,
+        completed_task_count=0,
+        tasks=[
+            BacklogTask(
+                id=task_ids[0],
+                title="Refined planning task",
+                summary="Make the starter task implementation-ready.",
+                milestone_id="M001",
+                epic_id="E001",
+                lane="small-feature",
+                risk_level=risk_level,
+                status=task_status,
+                dependencies=[],
+                acceptance_criteria=["The task has clear acceptance criteria."],
+                validation_expectations=["Run focused tests."],
+                allowed_scope=["Planning artifacts only."],
+                forbidden_scope=["No target repo mutation."],
+                notes=["Created by test refined backlog."],
+                source="test-refinement",
+            ),
+            BacklogTask(
+                id=task_ids[1],
+                title="Second refined planning task",
+                summary="A second implementation-ready placeholder.",
+                milestone_id="M001",
+                epic_id="E002",
+                lane="docs-only",
+                risk_level="low",
+                status="draft",
+                dependencies=[task_ids[0]],
+                acceptance_criteria=["The task is separately executable."],
+                validation_expectations=["Run docs checks."],
+                allowed_scope=["Docs only."],
+                forbidden_scope=["No source behavior changes."],
+                notes=[],
+                source="test-refinement",
+            ),
+        ],
+    )
+    path = tmp_path / "refined-backlog.json"
+    path.write_text(backlog.model_dump_json(indent=2), encoding="utf-8")
+    return path
 
 
 def _create_blueprint(tmp_path: Path) -> None:

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from pydantic import ValidationError
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .projects import get_workspace_root
 from .scanner import load_registered_project
+from .work_packages import BUILT_IN_LANES
 
 PLANNING_DIR_NAME = "planning"
 PROJECT_BRIEF_JSON = "project-brief.json"
@@ -16,7 +18,11 @@ BLUEPRINT_JSON = "blueprint.json"
 BLUEPRINT_MD = "blueprint.md"
 BACKLOG_JSON = "backlog.json"
 BACKLOG_MD = "backlog.md"
+BACKLOG_REFINEMENT_PROMPT_MD = "backlog-refinement-prompt.md"
 PLANNING_SCHEMA_VERSION = "1"
+ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
+ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
+ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 
 
 class ProjectBrief(BaseModel):
@@ -119,6 +125,15 @@ class ProjectBacklog(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class BacklogValidationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    task_count: int = 0
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -129,6 +144,7 @@ class PlanningArtifactPaths(BaseModel):
     blueprint_markdown: Path
     backlog_json: Path
     backlog_markdown: Path
+    backlog_refinement_prompt: Path
 
 
 def planning_artifact_paths(project_name: str, workspace_root: Path | None = None) -> PlanningArtifactPaths:
@@ -142,6 +158,7 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         blueprint_markdown=planning_dir / BLUEPRINT_MD,
         backlog_json=planning_dir / BACKLOG_JSON,
         backlog_markdown=planning_dir / BACKLOG_MD,
+        backlog_refinement_prompt=planning_dir / BACKLOG_REFINEMENT_PROMPT_MD,
     )
 
 
@@ -336,6 +353,181 @@ def get_backlog_task(project_name: str, task_id: str, workspace_root: Path | Non
     raise ValueError(msg)
 
 
+def generate_backlog_refinement_prompt(project_name: str, workspace_root: Path | None = None) -> tuple[Path, str]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    brief = load_project_brief(project_name, workspace_root=root)
+    blueprint = load_project_blueprint(project_name, workspace_root=root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not blueprint:
+        msg = f"Project blueprint not found for project: {project_name}"
+        raise ValueError(msg)
+    if not backlog:
+        msg = f"Project backlog not found for project: {project_name}"
+        raise ValueError(msg)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.planning_dir.mkdir(parents=True, exist_ok=True)
+    prompt = render_backlog_refinement_prompt(project_name, brief, blueprint, backlog)
+    paths.backlog_refinement_prompt.write_text(prompt, encoding="utf-8")
+    return paths.backlog_refinement_prompt, prompt
+
+
+def validate_refined_backlog_file(
+    project_name: str,
+    source_file: Path,
+    workspace_root: Path | None = None,
+) -> tuple[BacklogValidationResult, ProjectBacklog | None]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    source_path = source_file.expanduser().resolve()
+    if not source_path.exists():
+        msg = f"Refined backlog file does not exist: {source_path}"
+        raise ValueError(msg)
+    if not source_path.is_file():
+        msg = f"Refined backlog path must be a file: {source_path}"
+        raise ValueError(msg)
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        backlog = ProjectBacklog.model_validate_json(source_path.read_text(encoding="utf-8"))
+    except (ValueError, ValidationError) as exc:
+        return BacklogValidationResult(valid=False, errors=[f"Invalid backlog JSON: {exc}"]), None
+
+    if backlog.project != project_name:
+        errors.append(f"Backlog project must be {project_name}, got {backlog.project}.")
+    if backlog.status not in ALLOWED_BACKLOG_STATUSES:
+        errors.append(f"Invalid backlog status: {backlog.status}.")
+    seen: set[str] = set()
+    all_task_ids = {task.id.strip().upper() for task in backlog.tasks}
+    known_lanes = set(BUILT_IN_LANES)
+    for task in backlog.tasks:
+        normalized_id = task.id.strip().upper()
+        if normalized_id in seen:
+            errors.append(f"Duplicate task id: {task.id}.")
+        seen.add(normalized_id)
+        if task.status not in ALLOWED_TASK_STATUSES:
+            errors.append(f"Invalid status for {task.id}: {task.status}.")
+        if task.risk_level not in ALLOWED_RISK_LEVELS:
+            errors.append(f"Invalid risk level for {task.id}: {task.risk_level}.")
+        if task.lane not in known_lanes:
+            errors.append(f"Unknown lane for {task.id}: {task.lane}.")
+        for dependency in task.dependencies:
+            if dependency.strip().upper() not in all_task_ids:
+                warnings.append(f"Task {task.id} depends on unknown task id: {dependency}.")
+    result = BacklogValidationResult(valid=not errors, errors=errors, warnings=warnings, task_count=len(backlog.tasks))
+    return result, backlog if result.valid else None
+
+
+def import_refined_backlog(
+    project_name: str,
+    source_file: Path,
+    workspace_root: Path | None = None,
+) -> tuple[ProjectBacklog, PlanningArtifactPaths, BacklogValidationResult]:
+    root = workspace_root or get_workspace_root()
+    result, backlog = validate_refined_backlog_file(project_name, source_file, workspace_root=root)
+    if not result.valid or not backlog:
+        msg = "Refined backlog validation failed: " + "; ".join(result.errors)
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    safe_tasks = [task.model_copy(update={"status": _safe_import_task_status(task.status), "updated_at": now}) for task in backlog.tasks]
+    imported = _with_backlog_counts(backlog.model_copy(update={"status": "draft", "tasks": safe_tasks, "updated_at": now}))
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.planning_dir.mkdir(parents=True, exist_ok=True)
+    _write_model(paths.backlog_json, imported)
+    paths.backlog_markdown.write_text(render_project_backlog_markdown(imported), encoding="utf-8")
+    return imported, paths, result
+
+
+def render_backlog_refinement_prompt(
+    project_name: str,
+    brief: ProjectBrief | None,
+    blueprint: ProjectBlueprint,
+    backlog: ProjectBacklog,
+) -> str:
+    example = _with_backlog_counts(
+        ProjectBacklog(
+            project=project_name,
+            title="Refined implementation backlog",
+            blueprint_reference=backlog.blueprint_reference,
+            status="draft",
+            tasks=[
+                BacklogTask(
+                    id="T001",
+                    title="Small implementation task",
+                    summary="One implementation-ready task description.",
+                    milestone_id=blueprint.milestones[0].id if blueprint.milestones else None,
+                    epic_id=blueprint.epics[0].id if blueprint.epics else None,
+                    lane="small-feature",
+                    risk_level="medium",
+                    status="draft",
+                    dependencies=[],
+                    acceptance_criteria=["Concrete user-visible or technical acceptance criterion."],
+                    validation_expectations=["Registered validation command or manual validation evidence needed."],
+                    allowed_scope=["Specific files or areas allowed for this task."],
+                    forbidden_scope=["DB/migrations/secrets/scripts/backups unless explicitly approved."],
+                    notes=["Planning only; not approved for implementation."],
+                    source="codex-refinement",
+                )
+            ],
+        )
+    )
+    return "\n".join(
+        [
+            f"# Backlog Refinement Handoff: {project_name}",
+            "",
+            "You are Codex acting as a planning worker. This is planning only.",
+            "",
+            "## Hard Rules",
+            "",
+            "- Do not modify source code.",
+            "- Do not run build, test, restore, backup, migration, database, scheduler, app, or external API commands.",
+            "- Do not call AI/model APIs.",
+            "- Preserve Devo's safety model, approvals, validation evidence, and target repository boundaries.",
+            "- Do not suggest unapproved risky work as ordinary low-risk tasks.",
+            "- Refine the backlog into small implementation-ready tasks suitable for later work packages/batches.",
+            "",
+            "## Project Brief Summary",
+            "",
+            brief.summary if brief else "No Project Brief artifact is available.",
+            "",
+            "## Blueprint",
+            "",
+            render_project_blueprint_markdown(blueprint).strip(),
+            "",
+            "## Current Backlog",
+            "",
+            render_project_backlog_markdown(backlog).strip(),
+            "",
+            "## Lane Guidance",
+            "",
+            _lane_summary(),
+            "",
+            "## Risk Guidance",
+            "",
+            "- low: docs, display-only UI, tests, tiny scoped cleanup",
+            "- medium: ordinary source changes with bounded behavior impact",
+            "- high: build/test/run, config, scripts, target repo validation, or broader source behavior",
+            "- critical: destructive, secrets, DB migrations/data, restore/delete, scheduler, deployment, or unbounded execution",
+            "",
+            "## Required Output",
+            "",
+            "Return only a Devo-compatible refined backlog JSON object. Do not wrap it in Markdown.",
+            "",
+            "Required task fields: id, title, summary, milestone_id, epic_id, lane, risk_level, status, dependencies, acceptance_criteria, validation_expectations, allowed_scope, forbidden_scope, notes, source, created_at, updated_at.",
+            "",
+            "Use task statuses from: draft, ready, approved, in_progress, blocked, completed, superseded.",
+            "Use backlog status draft unless a human explicitly asks for reviewed/approved.",
+            "",
+            "## Output JSON Example",
+            "",
+            "```json",
+            example.model_dump_json(indent=2),
+            "```",
+            "",
+        ]
+    )
+
+
 def render_project_brief_markdown(brief: ProjectBrief, source_text: str | None = None) -> str:
     lines = [
         f"# {brief.title}",
@@ -517,6 +709,23 @@ def _with_backlog_counts(backlog: ProjectBacklog) -> ProjectBacklog:
             "completed_task_count": completed,
         }
     )
+
+
+def _safe_import_task_status(status: str) -> str:
+    if status in {"completed", "superseded"}:
+        return status
+    return "draft"
+
+
+def _lane_summary() -> str:
+    lines: list[str] = []
+    for lane_id, lane in sorted(BUILT_IN_LANES.items()):
+        lines.append(f"- {lane_id}: {lane.name}")
+        if lane.default_validation_commands:
+            lines.append(f"  - default validation: {', '.join(lane.default_validation_commands)}")
+        if lane.notes:
+            lines.append(f"  - note: {lane.notes[0]}")
+    return "\n".join(lines)
 
 
 def _default_milestones(brief: ProjectBrief) -> list[BlueprintMilestone]:

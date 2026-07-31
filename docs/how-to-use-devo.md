@@ -92,6 +92,25 @@ The backlog is the structured task plan derived from the blueprint. TASK-DEVO-07
 
 This remains workspace-only. It does not call AI, does not call Codex CLI, does not approve implementation, and does not modify the target project.
 
+## Backlog Refinement Handoff
+
+The starter backlog is intentionally deterministic. To refine it into better implementation-ready tasks, generate a planning handoff prompt:
+
+```powershell
+devo project backlog-prompt --project MyProject
+```
+
+This writes `workspace/projects/<project>/planning/backlog-refinement-prompt.md`. Paste that prompt into Codex/manual planning. The prompt includes the brief, blueprint, starter backlog, task schema, lane guidance, risk guidance, output JSON example, and explicit planning-only safety rules.
+
+After Codex/manual planning produces refined backlog JSON:
+
+```powershell
+devo project backlog-validate --project MyProject --file E:\path\to\refined-backlog.json
+devo project backlog-import --project MyProject --file E:\path\to\refined-backlog.json
+```
+
+Import validates required fields, duplicate task IDs, statuses, lanes, and risk levels, then writes the backlog as `draft` for safety. It does not approve implementation, create batches, create an execution queue, call Codex, call AI APIs, or modify the target project.
+
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
 ```mermaid

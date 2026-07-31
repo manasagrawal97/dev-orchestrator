@@ -25,6 +25,7 @@ API_ROUTES = (
     "GET /api/projects/{project}/brief",
     "GET /api/projects/{project}/blueprint",
     "GET /api/projects/{project}/backlog",
+    "GET /api/projects/{project}/backlog/prompt",
     "GET /api/projects/{project}/tasks",
     "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
@@ -124,6 +125,17 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         data = _model_dump(backlog)
         data["artifact_paths"] = {"json": str(paths.backlog_json), "markdown": str(paths.backlog_markdown)}
         return data
+
+    @api.get("/api/projects/{project}/backlog/prompt")
+    def project_backlog_prompt(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        paths = planning_artifact_paths(project, workspace_root=root)
+        return {
+            "project": project,
+            "exists": paths.backlog_refinement_prompt.exists(),
+            "path": str(paths.backlog_refinement_prompt),
+            "suggested_command": f"devo project backlog-prompt --project {project}",
+        }
 
     @api.get("/api/projects/{project}/tasks")
     def project_tasks(project: str) -> dict[str, object]:

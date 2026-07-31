@@ -81,6 +81,8 @@ export interface ProjectOverview {
   backlog_ready_count: number;
   backlog_blocked_count: number;
   backlog_completed_count: number;
+  backlog_refinement_prompt_exists: boolean;
+  backlog_refinement_prompt_path: string | null;
   planning_next_action: string;
   recent_runs: RunOverview[];
   recent_work_packages: WorkPackageOverview[];

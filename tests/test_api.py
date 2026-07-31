@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 from devo.api import create_app, validate_api_host
 from devo.main import app
-from devo.project_planning import approve_project_backlog, create_project_backlog, create_project_blueprint, create_project_brief
+from devo.project_planning import approve_project_backlog, create_project_backlog, create_project_blueprint, create_project_brief, generate_backlog_refinement_prompt
 from devo.runs import save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 from devo.validation_registry import add_validation_command
@@ -139,6 +139,27 @@ def test_project_backlog_and_task_endpoints_return_json(tmp_path: Path, monkeypa
     assert task.status_code == 200
     assert task.json()["id"] == "T001"
     assert task.json()["status"] == "ready"
+
+
+def test_project_backlog_prompt_endpoint_returns_metadata(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    before = client.get("/api/projects/sample/backlog/prompt")
+    generate_backlog_refinement_prompt("sample", workspace_root=workspace)
+    after = client.get("/api/projects/sample/backlog/prompt")
+
+    assert before.status_code == 200
+    assert before.json()["exists"] is False
+    assert before.json()["path"].endswith("backlog-refinement-prompt.md")
+    assert "backlog-prompt" in before.json()["suggested_command"]
+    assert after.status_code == 200
+    assert after.json()["exists"] is True
 
 
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
@@ -298,6 +319,7 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/brief" in result.output
     assert "GET /api/projects/{project}/blueprint" in result.output
     assert "GET /api/projects/{project}/backlog" in result.output
+    assert "GET /api/projects/{project}/backlog/prompt" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
 
 

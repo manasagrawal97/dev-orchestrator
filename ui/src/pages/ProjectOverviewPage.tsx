@@ -218,10 +218,12 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
                   ['Tasks', overview.backlog_task_count],
                   ['Ready', overview.backlog_ready_count],
                   ['Blocked', overview.backlog_blocked_count],
-                  ['Completed', overview.backlog_completed_count]
+                  ['Completed', overview.backlog_completed_count],
+                  ['Refinement prompt', overview.backlog_refinement_prompt_exists ? 'available' : 'missing']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
+              <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading planning summary..." /> : <ErrorState message="Planning summary is unavailable." />
