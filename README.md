@@ -113,6 +113,19 @@ devo project settings-set --project PersonalOS --default-lane low-risk-ui-mainte
 
 Project settings are Devo workspace metadata. They do not modify the target project. Defaults can store the normal lane, validation command, full-test command, branch, scope-template behavior, delivery mode, and notes for a project.
 
+Create the first planning artifacts from a final project brief:
+
+```powershell
+devo project brief-create --project MyProject --title "My Project" --file E:\path\to\brief.md
+devo project brief-show --project MyProject
+devo project brief-approve --project MyProject
+devo project blueprint-create --project MyProject
+devo project blueprint-show --project MyProject
+devo project blueprint-approve --project MyProject
+```
+
+Project Brief and Blueprint artifacts are stored under `workspace/projects/<project>/planning/`. They are deterministic Devo workspace artifacts only. This does not create backlog/tasks/batches yet, does not call AI, does not call Codex CLI, and does not modify the target project.
+
 List registered projects:
 
 ```powershell

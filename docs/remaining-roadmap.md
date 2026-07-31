@@ -31,6 +31,7 @@ Devo already has:
 - UI action safety model
 - limited workspace-safe UI actions
 - company-model vision docs
+- Project Brief and Blueprint planning artifacts
 
 These capabilities make Devo a useful local control plane today, but the product is not yet centered enough around brief intake, durable planning, batch queues, and visible progress.
 
@@ -112,7 +113,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 
 ## Specific Next Task Order
 
-1. TASK-DEVO-074: Project Brief + Blueprint data model - add durable brief and blueprint artifacts/read models.
+1. TASK-DEVO-074: Project Brief + Blueprint data model - completed.
 2. TASK-DEVO-075: Backlog/task data model - add structured backlog, task, dependency, lane, and risk records.
 3. TASK-DEVO-076: Blueprint-to-backlog planning handoff prompt - generate Codex-friendly planning prompts from a brief/blueprint.
 4. TASK-DEVO-077: Batch model and batch selection - group backlog tasks into approved execution batches.

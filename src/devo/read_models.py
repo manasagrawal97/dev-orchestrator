@@ -10,6 +10,7 @@ from .backups import list_backup_inventory
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
+from .project_planning import load_project_blueprint, load_project_brief
 from .project_settings import load_project_settings, project_settings_path
 from .projects import get_workspace_root
 from .runs import list_runs, load_current_selection, load_run
@@ -74,6 +75,11 @@ class ProjectOverview(BaseModel):
     git_summary: dict[str, object] = Field(default_factory=dict)
     validation_registry_summary: dict[str, object] = Field(default_factory=dict)
     backup_summary: dict[str, object] = Field(default_factory=dict)
+    brief_status: str = "missing"
+    blueprint_status: str = "missing"
+    blueprint_milestone_count: int = 0
+    blueprint_epic_count: int = 0
+    planning_next_action: str = "Create a Project Brief."
     recent_runs: list[RunOverview] = Field(default_factory=list)
     recent_work_packages: list[WorkPackageOverview] = Field(default_factory=list)
     suggested_next_action: str = "unknown"
@@ -103,8 +109,13 @@ def build_project_overview_with_timing(
     settings = _timed("settings_ms", timing, lambda: _settings_summary(project_name, root))
     git = _timed("git_ms", timing, lambda: _git_summary(project_name, root))
     validation = _timed("validation_registry_ms", timing, lambda: _validation_registry_summary(project_name, root))
+    planning = _timed("planning_ms", timing, lambda: _planning_summary(project_name, root))
     backup = _timed("backup_ms", timing, _backup_summary)
     timing["total_ms"] = _elapsed_ms(started)
+    planning_next_action = str(planning["planning_next_action"])
+    suggested_next_action = planning_next_action
+    if planning_next_action == "Planning artifacts are ready for TASK-DEVO-075 backlog creation.":
+        suggested_next_action = activity.suggested_next_action if activity else _suggest_project_next_action(onboarding)
     return (
         ProjectOverview(
             project_name=project_name,
@@ -117,9 +128,14 @@ def build_project_overview_with_timing(
             git_summary=git,
             validation_registry_summary=validation,
             backup_summary=backup,
+            brief_status=str(planning["brief_status"]),
+            blueprint_status=str(planning["blueprint_status"]),
+            blueprint_milestone_count=int(planning["blueprint_milestone_count"]),
+            blueprint_epic_count=int(planning["blueprint_epic_count"]),
+            planning_next_action=str(planning["planning_next_action"]),
             recent_runs=runs,
             recent_work_packages=work,
-            suggested_next_action=activity.suggested_next_action if activity else _suggest_project_next_action(onboarding),
+            suggested_next_action=suggested_next_action,
         ),
         timing,
     )
@@ -316,6 +332,37 @@ def _backup_summary() -> dict[str, object]:
         "protected_count": len(inventory.protected_backups),
         "incomplete_count": len(inventory.incomplete_backups),
         "invalid_count": len(inventory.invalid_backup_folders),
+    }
+
+
+def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, object]:
+    try:
+        brief = load_project_brief(project_name, workspace_root=workspace_root)
+        blueprint = load_project_blueprint(project_name, workspace_root=workspace_root)
+    except Exception as exc:
+        return {
+            "brief_status": "unknown",
+            "blueprint_status": "unknown",
+            "blueprint_milestone_count": 0,
+            "blueprint_epic_count": 0,
+            "planning_next_action": f"Review planning artifacts: {exc}",
+        }
+    if not brief:
+        next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
+    elif brief.status != "approved":
+        next_action = f"Approve the Project Brief: devo project brief-approve --project {project_name}"
+    elif not blueprint:
+        next_action = f"Create a Blueprint: devo project blueprint-create --project {project_name}"
+    elif blueprint.status != "approved":
+        next_action = f"Approve the Blueprint: devo project blueprint-approve --project {project_name}"
+    else:
+        next_action = "Planning artifacts are ready for TASK-DEVO-075 backlog creation."
+    return {
+        "brief_status": brief.status if brief else "missing",
+        "blueprint_status": blueprint.status if blueprint else "missing",
+        "blueprint_milestone_count": len(blueprint.milestones) if blueprint else 0,
+        "blueprint_epic_count": len(blueprint.epics) if blueprint else 0,
+        "planning_next_action": next_action,
     }
 
 

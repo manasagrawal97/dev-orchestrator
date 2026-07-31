@@ -57,6 +57,17 @@ from .reports import (
 )
 from .projects import get_workspace_root, list_projects, register_project
 from .project_onboarding import ProjectOnboardingReport, build_project_onboarding_report
+from .project_planning import (
+    ProjectBlueprint,
+    ProjectBrief,
+    approve_project_blueprint,
+    approve_project_brief,
+    create_project_blueprint,
+    create_project_brief,
+    load_project_blueprint,
+    load_project_brief,
+    planning_artifact_paths,
+)
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
 from .read_models import (
     ProjectOverview,
@@ -224,9 +235,41 @@ def _print_project_overview(overview: ProjectOverview) -> None:
     console.print(f"Default lane: {overview.settings_summary.get('default_lane') or 'none'}")
     console.print(f"Git: {overview.git_summary.get('status', 'unknown')} branch={overview.git_summary.get('branch', 'unknown')}")
     console.print(f"Validation commands: {overview.validation_registry_summary.get('command_count', 0)}")
+    console.print(f"Brief: {overview.brief_status}")
+    console.print(f"Blueprint: {overview.blueprint_status} milestones={overview.blueprint_milestone_count} epics={overview.blueprint_epic_count}")
+    console.print(f"Planning next action: {overview.planning_next_action}", soft_wrap=True)
     console.print(f"Recent runs: {len(overview.recent_runs)}")
     console.print(f"Recent work packages: {len(overview.recent_work_packages)}")
     console.print(f"Suggested next action: {overview.suggested_next_action}", soft_wrap=True)
+
+
+def _print_project_brief(brief: ProjectBrief | None, project_name: str) -> None:
+    paths = planning_artifact_paths(project_name)
+    if not brief:
+        console.print(f"[yellow]Project brief not found for {project_name}.[/yellow]")
+        console.print(f"Suggested next command: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>")
+        return
+    console.print(f"[bold]Project brief: {project_name}[/bold]")
+    console.print(f"Title: {brief.title}")
+    console.print(f"Status: {brief.status}")
+    console.print(f"Summary: {brief.summary}", soft_wrap=True)
+    console.print(f"JSON: {_named_path(paths.brief_json)}")
+    console.print(f"Markdown: {_named_path(paths.brief_markdown)}")
+
+
+def _print_project_blueprint(blueprint: ProjectBlueprint | None, project_name: str) -> None:
+    paths = planning_artifact_paths(project_name)
+    if not blueprint:
+        console.print(f"[yellow]Project blueprint not found for {project_name}.[/yellow]")
+        console.print(f"Suggested next command: devo project blueprint-create --project {project_name}")
+        return
+    console.print(f"[bold]Project blueprint: {project_name}[/bold]")
+    console.print(f"Title: {blueprint.title}")
+    console.print(f"Status: {blueprint.status}")
+    console.print(f"Milestones: {len(blueprint.milestones)}")
+    console.print(f"Epics: {len(blueprint.epics)}")
+    console.print(f"JSON: {_named_path(paths.blueprint_json)}")
+    console.print(f"Markdown: {_named_path(paths.blueprint_markdown)}")
 
 
 def _print_json_model(model: object) -> None:
@@ -974,6 +1017,106 @@ def show_project_overview(
         _print_json_model(overview)
         return
     _print_project_overview(overview)
+
+
+@project_app.command("brief-create")
+def create_brief_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    title: str = typer.Option(..., "--title", help="Project brief title."),
+    brief_file: Path = typer.Option(..., "--file", help="Markdown or text file containing the final project brief."),
+) -> None:
+    """Create or update the draft Project Brief artifact from a local text file."""
+    project_name = _resolve_project(project_name)
+    try:
+        brief, paths = create_project_brief(project_name, title, brief_file)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]Project brief saved[/green] {project_name}")
+    console.print(f"Title: {brief.title}")
+    console.print(f"Status: {brief.status}")
+    console.print(f"JSON: {_named_path(paths.brief_json)}")
+    console.print(f"Markdown: {_named_path(paths.brief_markdown)}")
+    console.print(f"Suggested next command: devo project brief-approve --project {project_name}")
+
+
+@project_app.command("brief-show")
+def show_brief_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the current Project Brief summary without mutating it."""
+    project_name = _resolve_project(project_name)
+    try:
+        load_registered_project(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_project_brief(load_project_brief(project_name), project_name)
+
+
+@project_app.command("brief-approve")
+def approve_brief_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Mark the current Project Brief approved without approving implementation work."""
+    project_name = _resolve_project(project_name)
+    try:
+        brief, paths = approve_project_brief(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Project brief approved[/green] {project_name}")
+    console.print(f"Title: {brief.title}")
+    console.print(f"JSON: {_named_path(paths.brief_json)}")
+    console.print(f"Markdown: {_named_path(paths.brief_markdown)}")
+    console.print(f"Suggested next command: devo project blueprint-create --project {project_name}")
+
+
+@project_app.command("blueprint-create")
+def create_blueprint_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Create or update a deterministic draft Blueprint from the current Project Brief."""
+    project_name = _resolve_project(project_name)
+    try:
+        blueprint, paths = create_project_blueprint(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Project blueprint saved[/green] {project_name}")
+    console.print(f"Title: {blueprint.title}")
+    console.print(f"Status: {blueprint.status}")
+    console.print(f"Milestones: {len(blueprint.milestones)}")
+    console.print(f"Epics: {len(blueprint.epics)}")
+    console.print(f"JSON: {_named_path(paths.blueprint_json)}")
+    console.print(f"Markdown: {_named_path(paths.blueprint_markdown)}")
+    console.print(f"Suggested next command: devo project blueprint-approve --project {project_name}")
+
+
+@project_app.command("blueprint-show")
+def show_blueprint_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the current Blueprint summary without mutating it."""
+    project_name = _resolve_project(project_name)
+    try:
+        load_registered_project(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_project_blueprint(load_project_blueprint(project_name), project_name)
+
+
+@project_app.command("blueprint-approve")
+def approve_blueprint_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Mark the current Blueprint approved without approving implementation work."""
+    project_name = _resolve_project(project_name)
+    try:
+        blueprint, paths = approve_project_blueprint(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[green]Project blueprint approved[/green] {project_name}")
+    console.print(f"Title: {blueprint.title}")
+    console.print(f"JSON: {_named_path(paths.blueprint_json)}")
+    console.print(f"Markdown: {_named_path(paths.blueprint_markdown)}")
+    console.print("Suggested next command: backlog creation is TASK-DEVO-075.")
 
 
 @project_app.command("activity")

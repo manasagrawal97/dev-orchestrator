@@ -59,6 +59,23 @@ For current PersonalOS maintenance, use the simpler practical flow from [Persona
 
 The older two-stop flow, separate source approval followed by separate build approval, remains useful when a bundle is not available or the scope/risk changes.
 
+## Project Brief And Blueprint
+
+The first planning pipeline artifacts are Project Brief and Blueprint.
+
+```powershell
+devo project brief-create --project MyProject --title "My Project" --file E:\path\to\brief.md
+devo project brief-show --project MyProject
+devo project brief-approve --project MyProject
+devo project blueprint-create --project MyProject
+devo project blueprint-show --project MyProject
+devo project blueprint-approve --project MyProject
+```
+
+The brief is the intake artifact: the final project summary distilled from discussion with ChatGPT or another advisor. The blueprint is the high-level deterministic plan derived from the brief. Both live under `workspace/projects/<project>/planning/`.
+
+This flow is workspace-only. It does not create backlog/tasks/batches yet, does not call AI, does not call Codex CLI, and does not modify the target project.
+
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
 ```mermaid

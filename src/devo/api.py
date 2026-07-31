@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
 from .doctor import run_doctor_with_timing
+from .project_planning import load_project_blueprint, load_project_brief, planning_artifact_paths
 from .projects import get_workspace_root, list_projects
 from .read_models import build_project_overview_with_timing, build_run_overview, build_work_package_overview
 from .runs import load_current_selection, load_run
@@ -21,6 +22,8 @@ API_ROUTES = (
     "GET /api/current",
     "GET /api/projects",
     "GET /api/projects/{project}/overview",
+    "GET /api/projects/{project}/brief",
+    "GET /api/projects/{project}/blueprint",
     "GET /api/projects/{project}/activity",
     "GET /api/projects/{project}/doctor",
     "GET /api/projects/{project}/runs/{run_id}/overview",
@@ -85,6 +88,28 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         _require_project(project, root)
         overview, timing = build_project_overview_with_timing(project, workspace_root=root)
         return _with_optional_timing(_model_dump(overview), timing, include_timing)
+
+    @api.get("/api/projects/{project}/brief")
+    def project_brief(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        brief = load_project_brief(project, workspace_root=root)
+        if not brief:
+            raise HTTPException(status_code=404, detail={"error": "brief_not_found", "message": f"Project brief not found: {project}"})
+        paths = planning_artifact_paths(project, workspace_root=root)
+        data = _model_dump(brief)
+        data["artifact_paths"] = {"json": str(paths.brief_json), "markdown": str(paths.brief_markdown)}
+        return data
+
+    @api.get("/api/projects/{project}/blueprint")
+    def project_blueprint(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        blueprint = load_project_blueprint(project, workspace_root=root)
+        if not blueprint:
+            raise HTTPException(status_code=404, detail={"error": "blueprint_not_found", "message": f"Project blueprint not found: {project}"})
+        paths = planning_artifact_paths(project, workspace_root=root)
+        data = _model_dump(blueprint)
+        data["artifact_paths"] = {"json": str(paths.blueprint_json), "markdown": str(paths.blueprint_markdown)}
+        return data
 
     @api.get("/api/projects/{project}/activity")
     def project_activity(project: str, limit: int = 10, include_timing: bool = False) -> dict[str, object]:

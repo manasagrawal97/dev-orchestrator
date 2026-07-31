@@ -72,6 +72,11 @@ export interface ProjectOverview {
   git_summary: Record<string, unknown>;
   validation_registry_summary: Record<string, unknown>;
   backup_summary: Record<string, unknown>;
+  brief_status: string;
+  blueprint_status: string;
+  blueprint_milestone_count: number;
+  blueprint_epic_count: number;
+  planning_next_action: string;
   recent_runs: RunOverview[];
   recent_work_packages: WorkPackageOverview[];
   suggested_next_action: string;

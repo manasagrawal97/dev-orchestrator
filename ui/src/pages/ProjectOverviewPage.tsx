@@ -205,6 +205,23 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
             overviewLoading ? <LoadingState message="Loading backup summary..." /> : <ErrorState message="Backup summary is unavailable." />
           )}
         </SummaryCard>
+        <SummaryCard title="Planning">
+          {overview ? (
+            <>
+              <KeyValueList
+                items={[
+                  ['Brief', overview.brief_status],
+                  ['Blueprint', overview.blueprint_status],
+                  ['Milestones', overview.blueprint_milestone_count],
+                  ['Epics', overview.blueprint_epic_count]
+                ]}
+              />
+              <p className="muted compact">{overview.planning_next_action}</p>
+            </>
+          ) : (
+            overviewLoading ? <LoadingState message="Loading planning summary..." /> : <ErrorState message="Planning summary is unavailable." />
+          )}
+        </SummaryCard>
       </div>
 
       <SummaryCard title="Suggested next action">
