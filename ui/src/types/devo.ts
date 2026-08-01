@@ -116,6 +116,11 @@ export interface ProjectOverview {
   latest_worker_report_path: string | null;
   latest_worker_report_summary: string | null;
   latest_worker_report_next_action: string | null;
+  codex_run_plan_count: number;
+  latest_codex_run_plan_id: string | null;
+  latest_codex_run_plan_status: string | null;
+  latest_codex_preflight_status: string | null;
+  latest_codex_run_plan_next_action: string | null;
   project_completion_percent: number;
   backlog_readiness_percent: number;
   blocked_percent: number;
@@ -402,6 +407,49 @@ export interface WorkerRunsResponse {
   project: string;
   count: number;
   worker_runs: WorkerRun[];
+}
+
+export interface CodexPreflightCheck {
+  name: string;
+  status: string;
+  detail: string;
+}
+
+export interface CodexRunPlan {
+  project: string;
+  plan_id: string;
+  worker_run_id: string;
+  handoff_id: string;
+  queue_id: string | null;
+  queue_item_id: string | null;
+  task_id: string | null;
+  batch_id: string | null;
+  status: string;
+  target_repo_path: string;
+  prompt_path: string;
+  proposed_working_directory: string;
+  proposed_command_label: string;
+  proposed_command_preview: string;
+  approval_required: boolean;
+  approval_status: string;
+  approval_note?: string | null;
+  preflight_status: string;
+  preflight_checks: CodexPreflightCheck[];
+  safety_boundaries: string[];
+  allowed_scope: string[];
+  forbidden_scope: string[];
+  validation_expectations: string[];
+  blocked_reasons: string[];
+  warnings: string[];
+  next_action: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CodexRunPlansResponse {
+  project: string;
+  count: number;
+  run_plans: CodexRunPlan[];
 }
 
 export interface WorkerReportsResponse {

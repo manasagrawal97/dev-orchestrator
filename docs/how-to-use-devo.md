@@ -215,6 +215,18 @@ devo worker codex run-mark-used --project MyProject --run WR001
 
 Worker run artifacts live under `workspace/projects/<project>/workers/codex/` as `worker-run-<id>.json`, `worker-run-<id>.md`, and `worker-run-index.json`. They are tracking records only. They do not run Codex, call AI APIs, execute target commands, prove implementation complete, complete queue items, validate, commit, push, or modify target source.
 
+Before any future supervised worker execution, preflight the tracked worker run or write a run-plan preview:
+
+```powershell
+devo worker codex preflight --project MyProject --run WR001
+devo worker codex run-plan --project MyProject --run WR001
+devo worker codex run-plan-list --project MyProject
+devo worker codex run-plan-show --project MyProject --plan RP001
+devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
+```
+
+Run-plan artifacts live under `workspace/projects/<project>/workers/codex/run-plans/`. Preflight checks the linked handoff/prompt, target repo path, worker run state, linked metadata, and optional Codex executable presence using safe `PATH` detection only. The generated command is a preview string, not something Devo executes. Run-plan approval is planning approval only; it does not authorize Codex launch, validation, delivery, queue completion, or target repository changes.
+
 After the user runs Codex manually, create and import a structured worker report:
 
 ```powershell
@@ -504,7 +516,7 @@ http://127.0.0.1:5173
 
 The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, Progress, Work Package, Activity, Health, and Action Safety pages.
 
-Planning Intake is a read-only operator guide for brief, blueprint, backlog, batch, queue, handoff, worker run, and progress state; it shows status/count summaries and copyable CLI commands. Blueprint and Backlog are read-only inspection pages for planning artifacts, milestone/epic rollups, task filters, and task details. Batches, Queues, Handoffs, Worker Runs, and Progress are read-only inspection pages for the later planning-to-Codex handoff stages: batch risk/lane summaries, queue item state, handoff prompt metadata, worker run/report review evidence, progress bars, milestone/epic rollups, warnings, and next actions.
+Planning Intake is a read-only operator guide for brief, blueprint, backlog, batch, queue, handoff, worker run, and progress state; it shows status/count summaries and copyable CLI commands. Blueprint and Backlog are read-only inspection pages for planning artifacts, milestone/epic rollups, task filters, and task details. Batches, Queues, Handoffs, Worker Runs, and Progress are read-only inspection pages for the later planning-to-Codex handoff stages: batch risk/lane summaries, queue item state, handoff prompt metadata, worker run/report/run-plan review evidence, preflight status, progress bars, milestone/epic rollups, warnings, and next actions.
 
 These pages do not import reports from the UI, start/resume workers, execute target commands, validate, commit, push, restore/delete backups, modify scheduler settings, edit target files, run Codex, complete queue items, or call model APIs from the UI. Batch approval controls, when surfaced through the controlled Action Safety model, are workspace-safe planning actions only: request approval, record review notes, approve planning, or reject planning. They do not create queues or execute target work. The pages also provide copyable CLI commands so the user can continue through the safer CLI/Codex workflow. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation.
 

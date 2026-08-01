@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from datetime import UTC, datetime
 from pydantic import ValidationError
 from pathlib import Path
@@ -30,6 +31,8 @@ WORKERS_DIR_NAME = "workers"
 CODEX_WORKER_DIR_NAME = "codex"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
+WORKER_RUN_PLANS_DIR_NAME = "run-plans"
+WORKER_RUN_PLAN_INDEX_JSON = "run-plan-index.json"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
@@ -56,6 +59,9 @@ ALLOWED_WORKER_RUN_STATUSES = {
 }
 ALLOWED_WORKER_REPORT_STATUSES = {"missing", "present", "validated", "rejected"}
 ALLOWED_WORKER_REPORTED_STATUSES = {"completed", "failed", "blocked", "partial", "usage_limit", "needs_approval"}
+ALLOWED_WORKER_RUN_PLAN_STATUSES = {"draft", "ready", "blocked", "superseded"}
+ALLOWED_WORKER_RUN_PLAN_APPROVAL_STATUSES = {"not_requested", "requested", "approved", "rejected"}
+ALLOWED_WORKER_PREFLIGHT_STATUSES = {"not_run", "passed", "warnings", "blocked"}
 SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -544,6 +550,83 @@ class WorkerRunIndex(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CodexPreflightCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    status: str
+    detail: str
+
+
+class CodexPreflightResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    worker_run_id: str
+    status: str
+    checks: list[CodexPreflightCheck] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class CodexRunPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    plan_id: str
+    worker_run_id: str
+    handoff_id: str
+    queue_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    batch_id: str | None = None
+    status: str = "draft"
+    target_repo_path: str
+    prompt_path: str
+    proposed_working_directory: str
+    proposed_command_label: str = "Codex CLI supervised worker"
+    proposed_command_preview: str
+    approval_required: bool = True
+    approval_status: str = "not_requested"
+    approval_note: str | None = None
+    preflight_status: str = "not_run"
+    preflight_checks: list[CodexPreflightCheck] = Field(default_factory=list)
+    safety_boundaries: list[str] = Field(default_factory=list)
+    allowed_scope: list[str] = Field(default_factory=list)
+    forbidden_scope: list[str] = Field(default_factory=list)
+    validation_expectations: list[str] = Field(default_factory=list)
+    blocked_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CodexRunPlanIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str
+    worker_run_id: str
+    handoff_id: str
+    status: str
+    approval_status: str
+    preflight_status: str
+    path: str
+    next_action: str
+    updated_at: datetime
+
+
+class CodexRunPlanIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    run_plans: list[CodexRunPlanIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class WorkerArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -551,6 +634,8 @@ class WorkerArtifactPaths(BaseModel):
     codex_dir: Path
     worker_run_index_json: Path
     reports_dir: Path
+    run_plans_dir: Path
+    run_plan_index_json: Path
 
 
 class PlanningArtifactPaths(BaseModel):
@@ -604,6 +689,8 @@ def worker_artifact_paths(project_name: str, workspace_root: Path | None = None)
         codex_dir=codex_dir,
         worker_run_index_json=codex_dir / WORKER_RUN_INDEX_JSON,
         reports_dir=codex_dir / WORKER_REPORTS_DIR_NAME,
+        run_plans_dir=codex_dir / WORKER_RUN_PLANS_DIR_NAME,
+        run_plan_index_json=codex_dir / WORKER_RUN_PLANS_DIR_NAME / WORKER_RUN_PLAN_INDEX_JSON,
     )
 
 
@@ -623,6 +710,12 @@ def worker_report_artifact_paths(project_name: str, worker_run_id: str, workspac
     paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_worker_run_id(worker_run_id)
     return paths.reports_dir / f"report-{safe_id}.json", paths.reports_dir / f"report-{safe_id}.md"
+
+
+def worker_run_plan_artifact_paths(project_name: str, plan_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_run_plan_id(plan_id)
+    return paths.run_plans_dir / f"run-plan-{safe_id}.json", paths.run_plans_dir / f"run-plan-{safe_id}.md"
 
 
 def create_project_brief(
@@ -2001,6 +2094,231 @@ def list_codex_worker_reports(project_name: str, workspace_root: Path | None = N
     return sorted(reports, key=lambda report: report.reported_at or datetime.min.replace(tzinfo=UTC), reverse=True)
 
 
+def run_codex_worker_preflight(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> CodexPreflightResult:
+    root = workspace_root or get_workspace_root()
+    checks: list[CodexPreflightCheck] = []
+    blocked_reasons: list[str] = []
+    warnings: list[str] = []
+
+    try:
+        registration = load_registered_project(project_name, workspace_root=root)
+        checks.append(CodexPreflightCheck(name="project_registered", status="OK", detail=f"Project is registered at {registration.path}."))
+    except ValueError as exc:
+        blocked_reasons.append(str(exc))
+        checks.append(CodexPreflightCheck(name="project_registered", status="FAIL", detail=str(exc)))
+        return _codex_preflight_result(project_name, _normalize_worker_run_id(worker_run_id), checks, blocked_reasons, warnings)
+
+    worker_run = load_codex_worker_run(project_name, worker_run_id, workspace_root=root)
+    if not worker_run:
+        blocked_reasons.append(f"Codex worker run not found: {worker_run_id}")
+        checks.append(CodexPreflightCheck(name="worker_run_exists", status="FAIL", detail=f"Codex worker run not found: {worker_run_id}"))
+        return _codex_preflight_result(project_name, _normalize_worker_run_id(worker_run_id), checks, blocked_reasons, warnings)
+    checks.append(CodexPreflightCheck(name="worker_run_exists", status="OK", detail=f"Worker run exists: {worker_run.worker_run_id}."))
+
+    if worker_run.status in {"planned", "waiting_review", "paused_usage_limit", "blocked_needs_approval"}:
+        checks.append(CodexPreflightCheck(name="worker_run_status", status="OK", detail=f"Worker run status is suitable for planning: {worker_run.status}."))
+    else:
+        blocked_reasons.append(f"Worker run status is not suitable for run planning: {worker_run.status}.")
+        checks.append(CodexPreflightCheck(name="worker_run_status", status="FAIL", detail=f"Status is {worker_run.status}."))
+
+    if worker_run.source_handoff_id:
+        handoff = load_codex_handoff(project_name, worker_run.source_handoff_id, workspace_root=root)
+        if handoff:
+            checks.append(CodexPreflightCheck(name="handoff_exists", status="OK", detail=f"Linked handoff exists: {handoff.handoff_id}."))
+        else:
+            blocked_reasons.append(f"Linked handoff is missing: {worker_run.source_handoff_id}.")
+            checks.append(CodexPreflightCheck(name="handoff_exists", status="FAIL", detail=f"Missing handoff: {worker_run.source_handoff_id}."))
+    else:
+        blocked_reasons.append("Worker run has no linked handoff id.")
+        checks.append(CodexPreflightCheck(name="handoff_exists", status="FAIL", detail="Worker run has no linked handoff id."))
+
+    prompt_path = Path(worker_run.prompt_path)
+    if prompt_path.exists() and prompt_path.is_file():
+        checks.append(CodexPreflightCheck(name="prompt_file_exists", status="OK", detail=f"Prompt file exists: {prompt_path}."))
+    else:
+        blocked_reasons.append(f"Prompt file is missing: {prompt_path}.")
+        checks.append(CodexPreflightCheck(name="prompt_file_exists", status="FAIL", detail=f"Prompt file is missing: {prompt_path}."))
+
+    target_repo_path = Path(worker_run.target_repo_path)
+    if target_repo_path.exists() and target_repo_path.is_dir():
+        checks.append(CodexPreflightCheck(name="target_repo_path_exists", status="OK", detail=f"Target repo path exists: {target_repo_path}."))
+    else:
+        blocked_reasons.append(f"Target repo path is missing: {target_repo_path}.")
+        checks.append(CodexPreflightCheck(name="target_repo_path_exists", status="FAIL", detail=f"Target repo path is missing: {target_repo_path}."))
+
+    if worker_run.source_queue_id:
+        queue = load_execution_queue(project_name, worker_run.source_queue_id, workspace_root=root)
+        if queue:
+            checks.append(CodexPreflightCheck(name="linked_queue", status="OK", detail=f"Linked queue exists: {queue.queue_id}."))
+            if worker_run.source_queue_item_id and not _find_queue_item(queue.items, worker_run.source_queue_item_id):
+                warnings.append(f"Linked queue item not found in queue: {worker_run.source_queue_item_id}.")
+                checks.append(CodexPreflightCheck(name="linked_queue_item", status="WARN", detail=f"Queue item not found: {worker_run.source_queue_item_id}."))
+        else:
+            warnings.append(f"Linked queue metadata is missing: {worker_run.source_queue_id}.")
+            checks.append(CodexPreflightCheck(name="linked_queue", status="WARN", detail=f"Linked queue metadata missing: {worker_run.source_queue_id}."))
+
+    if worker_run.source_task_id and not _try_get_backlog_task(project_name, worker_run.source_task_id, root):
+        warnings.append(f"Linked backlog task metadata is missing: {worker_run.source_task_id}.")
+        checks.append(CodexPreflightCheck(name="linked_task", status="WARN", detail=f"Linked backlog task metadata missing: {worker_run.source_task_id}."))
+    elif worker_run.source_task_id:
+        checks.append(CodexPreflightCheck(name="linked_task", status="OK", detail=f"Linked backlog task exists: {worker_run.source_task_id}."))
+
+    codex_path = shutil.which("codex")
+    if codex_path:
+        checks.append(CodexPreflightCheck(name="codex_path_detection", status="OK", detail=f"Codex executable appears on PATH: {codex_path}."))
+    else:
+        warnings.append("Codex executable was not found on PATH by safe detection; future supervised execution may need configuration.")
+        checks.append(CodexPreflightCheck(name="codex_path_detection", status="WARN", detail="Codex executable was not found on PATH. No command was executed."))
+
+    return _codex_preflight_result(project_name, worker_run.worker_run_id, checks, blocked_reasons, warnings)
+
+
+def create_codex_worker_run_plan(
+    project_name: str,
+    worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[CodexRunPlan, CodexPreflightResult, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run = _require_worker_run(project_name, worker_run_id, root)
+    preflight = run_codex_worker_preflight(project_name, worker_run.worker_run_id, workspace_root=root)
+    plan_id = _next_run_plan_id(project_name, workspace_root=root)
+    now = datetime.now(UTC)
+    status = "ready" if preflight.status in {"passed", "warnings"} and not preflight.blocked_reasons else "blocked"
+    plan = CodexRunPlan(
+        project=project_name,
+        plan_id=plan_id,
+        worker_run_id=worker_run.worker_run_id,
+        handoff_id=worker_run.source_handoff_id or "",
+        queue_id=worker_run.source_queue_id,
+        queue_item_id=worker_run.source_queue_item_id,
+        task_id=worker_run.source_task_id,
+        batch_id=worker_run.source_batch_id,
+        status=status,
+        target_repo_path=worker_run.target_repo_path,
+        prompt_path=worker_run.prompt_path,
+        proposed_working_directory=worker_run.target_repo_path,
+        proposed_command_label="Codex CLI supervised worker",
+        proposed_command_preview=f"codex < {worker_run.prompt_path}",
+        approval_required=True,
+        approval_status="not_requested",
+        preflight_status=preflight.status,
+        preflight_checks=preflight.checks,
+        safety_boundaries=worker_run.safety_boundaries,
+        allowed_scope=worker_run.allowed_scope,
+        forbidden_scope=worker_run.forbidden_scope,
+        validation_expectations=worker_run.validation_expectations,
+        blocked_reasons=preflight.blocked_reasons,
+        warnings=preflight.warnings,
+        next_action=_run_plan_next_action(project_name, plan_id, preflight.status, preflight.blocked_reasons),
+        created_at=now,
+        updated_at=now,
+    )
+    written, json_path, markdown_path = _write_codex_run_plan(project_name, plan, workspace_root=root)
+    return written, preflight, json_path, markdown_path
+
+
+def load_codex_run_plan(project_name: str, plan_id: str, workspace_root: Path | None = None) -> CodexRunPlan | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = worker_run_plan_artifact_paths(project_name, plan_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return CodexRunPlan.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_run_plans(project_name: str, workspace_root: Path | None = None) -> list[CodexRunPlan]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    plans: list[CodexRunPlan] = []
+    if paths.run_plan_index_json.exists():
+        index = load_codex_run_plan_index(project_name, workspace_root=root)
+        for entry in index.run_plans:
+            plan = load_codex_run_plan(project_name, entry.plan_id, workspace_root=root)
+            if plan:
+                plans.append(plan)
+    else:
+        for path in sorted(paths.run_plans_dir.glob("run-plan-*.json")):
+            if path.name == WORKER_RUN_PLAN_INDEX_JSON:
+                continue
+            try:
+                plans.append(CodexRunPlan.model_validate_json(path.read_text(encoding="utf-8")))
+            except (ValueError, ValidationError):
+                continue
+    return sorted(plans, key=lambda item: item.updated_at, reverse=True)
+
+
+def load_codex_run_plan_index(project_name: str, workspace_root: Path | None = None) -> CodexRunPlanIndex:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.run_plan_index_json.exists():
+        return CodexRunPlanIndex(project=project_name)
+    return CodexRunPlanIndex.model_validate_json(paths.run_plan_index_json.read_text(encoding="utf-8"))
+
+
+def approve_codex_run_plan(project_name: str, plan_id: str, note: str = "", workspace_root: Path | None = None) -> tuple[CodexRunPlan, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    plan = load_codex_run_plan(project_name, plan_id, workspace_root=root)
+    if not plan:
+        msg = f"Codex run plan not found: {plan_id}"
+        raise ValueError(msg)
+    updated = plan.model_copy(
+        update={
+            "approval_status": "approved",
+            "approval_note": note.strip() or plan.approval_note,
+            "updated_at": datetime.now(UTC),
+            "next_action": "Planning approval recorded only. Supervised Codex execution is future work and is not implemented yet.",
+        }
+    )
+    return _write_codex_run_plan(project_name, updated, workspace_root=root)
+
+
+def render_codex_run_plan_markdown(plan: CodexRunPlan) -> str:
+    lines = [
+        f"# Codex Run Plan: {plan.plan_id}",
+        "",
+        f"- Project: `{plan.project}`",
+        f"- Worker run: `{plan.worker_run_id}`",
+        f"- Handoff: `{plan.handoff_id or 'none'}`",
+        f"- Queue: `{plan.queue_id or 'none'}`",
+        f"- Queue item: `{plan.queue_item_id or 'none'}`",
+        f"- Task: `{plan.task_id or 'none'}`",
+        f"- Batch: `{plan.batch_id or 'none'}`",
+        f"- Status: `{plan.status}`",
+        f"- Approval required: `{plan.approval_required}`",
+        f"- Approval status: `{plan.approval_status}`",
+        f"- Approval note: `{plan.approval_note or 'none'}`",
+        f"- Preflight status: `{plan.preflight_status}`",
+        f"- Target repo path: `{plan.target_repo_path}`",
+        f"- Prompt path: `{plan.prompt_path}`",
+        f"- Proposed working directory: `{plan.proposed_working_directory}`",
+        f"- Proposed command label: `{plan.proposed_command_label}`",
+        f"- Proposed command preview: `{plan.proposed_command_preview}`",
+        f"- Created: `{plan.created_at.isoformat()}`",
+        f"- Updated: `{plan.updated_at.isoformat()}`",
+        "",
+        "## Next Action",
+        "",
+        plan.next_action or "No next action recorded.",
+        "",
+    ]
+    _append_preflight_section(lines, plan.preflight_checks)
+    _append_list_section(lines, "Blocked Reasons", plan.blocked_reasons)
+    _append_list_section(lines, "Warnings", plan.warnings)
+    _append_list_section(lines, "Allowed Scope", plan.allowed_scope)
+    _append_list_section(lines, "Forbidden Scope", plan.forbidden_scope)
+    _append_list_section(lines, "Validation Expectations", plan.validation_expectations)
+    _append_list_section(lines, "Safety Boundaries", plan.safety_boundaries)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "This run plan is a safe preview only. Devo did not run Codex, call AI APIs, execute target commands, validate, commit, push, complete queue/tasks, or modify the target repository.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_worker_report_template_markdown(report: CodexWorkerReport) -> str:
     return "\n".join(
         [
@@ -2743,6 +3061,13 @@ def _normalize_worker_run_id(worker_run_id: str) -> str:
     return cleaned.upper()
 
 
+def _normalize_run_plan_id(plan_id: str) -> str:
+    cleaned = plan_id.strip()
+    if cleaned.lower().startswith("run-plan-"):
+        cleaned = cleaned[9:]
+    return cleaned.upper()
+
+
 def _next_batch_id(project_name: str, workspace_root: Path | None = None) -> str:
     existing = {_normalize_batch_id(batch.batch_id) for batch in list_project_batches(project_name, workspace_root=workspace_root)}
     index = 1
@@ -2778,6 +3103,16 @@ def _next_worker_run_id(project_name: str, workspace_root: Path | None = None) -
     index = 1
     while True:
         candidate = f"WR{index:03d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _next_run_plan_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_run_plan_id(plan.plan_id) for plan in list_codex_run_plans(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"RP{index:03d}"
         if candidate not in existing:
             return candidate
         index += 1
@@ -3052,6 +3387,60 @@ def _write_worker_run_index(project_name: str, workspace_root: Path | None = Non
     ]
     index = WorkerRunIndex(project=project_name, worker_runs=entries, updated_at=datetime.now(UTC))
     _write_model(paths.worker_run_index_json, index)
+    return index
+
+
+def _write_codex_run_plan(project_name: str, plan: CodexRunPlan, workspace_root: Path | None = None) -> tuple[CodexRunPlan, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    if plan.status not in ALLOWED_WORKER_RUN_PLAN_STATUSES:
+        msg = f"Invalid run plan status: {plan.status}"
+        raise ValueError(msg)
+    if plan.approval_status not in ALLOWED_WORKER_RUN_PLAN_APPROVAL_STATUSES:
+        msg = f"Invalid run plan approval status: {plan.approval_status}"
+        raise ValueError(msg)
+    if plan.preflight_status not in ALLOWED_WORKER_PREFLIGHT_STATUSES:
+        msg = f"Invalid run plan preflight status: {plan.preflight_status}"
+        raise ValueError(msg)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.run_plans_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = worker_run_plan_artifact_paths(project_name, plan.plan_id, workspace_root=root)
+    updated = plan.model_copy(update={"plan_id": _normalize_run_plan_id(plan.plan_id)})
+    _write_model(json_path, updated)
+    markdown_path.write_text(render_codex_run_plan_markdown(updated), encoding="utf-8")
+    _write_codex_run_plan_index(project_name, workspace_root=root)
+    return updated, json_path, markdown_path
+
+
+def _write_codex_run_plan_index(project_name: str, workspace_root: Path | None = None) -> CodexRunPlanIndex:
+    root = workspace_root or get_workspace_root()
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.run_plans_dir.mkdir(parents=True, exist_ok=True)
+    plans: list[CodexRunPlan] = []
+    for path in sorted(paths.run_plans_dir.glob("run-plan-*.json")):
+        if path.name == WORKER_RUN_PLAN_INDEX_JSON:
+            continue
+        try:
+            plans.append(CodexRunPlan.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    plans = sorted(plans, key=lambda item: item.updated_at, reverse=True)
+    entries = [
+        CodexRunPlanIndexEntry(
+            plan_id=plan.plan_id,
+            worker_run_id=plan.worker_run_id,
+            handoff_id=plan.handoff_id,
+            status=plan.status,
+            approval_status=plan.approval_status,
+            preflight_status=plan.preflight_status,
+            path=str(worker_run_plan_artifact_paths(project_name, plan.plan_id, workspace_root=root)[0]),
+            next_action=plan.next_action,
+            updated_at=plan.updated_at,
+        )
+        for plan in plans
+    ]
+    index = CodexRunPlanIndex(project=project_name, run_plans=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.run_plan_index_json, index)
     return index
 
 
@@ -3460,7 +3849,10 @@ def _worker_safety_boundaries(project_name: str) -> list[str]:
 
 def _worker_run_next_action(project_name: str, worker_run_id: str, status: str) -> str:
     if status == "planned":
-        return "Paste the linked handoff prompt into Codex manually, then later import/report results in future TASK-DEVO-089."
+        return (
+            f"Inspect preflight or create a run plan with devo worker codex preflight --project {project_name} --run {worker_run_id}. "
+            "Paste the linked handoff prompt into Codex manually when executing today; supervised Codex execution is future work."
+        )
     if status == "running":
         return f"Track the manual Codex session; update status with devo worker codex run-status --project {project_name} --run {worker_run_id}."
     if status == "completed":
@@ -3507,6 +3899,42 @@ def _worker_report_next_action(project_name: str, worker_run_id: str, status_rep
     if status_reported_by_worker == "failed":
         return "Review failure evidence and create a new handoff or worker run only after the cause is understood."
     return "Review imported report manually before any queue/task completion, validation, commit, or push."
+
+
+def _codex_preflight_result(
+    project_name: str,
+    worker_run_id: str,
+    checks: list[CodexPreflightCheck],
+    blocked_reasons: list[str],
+    warnings: list[str],
+) -> CodexPreflightResult:
+    if blocked_reasons:
+        status = "blocked"
+        next_action = "Resolve blocked preflight checks before creating or using a Codex run plan."
+    elif warnings:
+        status = "warnings"
+        next_action = f"Review warnings, then create a safe preview with devo worker codex run-plan --project {project_name} --run {worker_run_id}."
+    else:
+        status = "passed"
+        next_action = f"Create a safe preview with devo worker codex run-plan --project {project_name} --run {worker_run_id}. Supervised Codex execution is future work."
+    return CodexPreflightResult(
+        project=project_name,
+        worker_run_id=worker_run_id,
+        status=status,
+        checks=checks,
+        blocked_reasons=blocked_reasons,
+        warnings=warnings,
+        next_action=next_action,
+    )
+
+
+def _run_plan_next_action(project_name: str, plan_id: str, preflight_status: str, blocked_reasons: list[str]) -> str:
+    if blocked_reasons or preflight_status == "blocked":
+        return f"Resolve blocked preflight checks, then recreate the run plan: devo worker codex run-plan --project {project_name} --run <workerRunId>."
+    return (
+        f"Inspect this run plan with devo worker codex run-plan-show --project {project_name} --plan {plan_id}. "
+        "Supervised Codex execution is future work and is not implemented yet."
+    )
 
 
 def _reported_validation_summary(report: CodexWorkerReport) -> list[str]:
@@ -3716,6 +4144,16 @@ def _append_list_section(lines: list[str], title: str, values: list[str]) -> Non
             lines.append(f"- {value}")
     else:
         lines.append("No items recorded.")
+    lines.append("")
+
+
+def _append_preflight_section(lines: list[str], checks: list[CodexPreflightCheck]) -> None:
+    lines.extend(["## Preflight Checks", ""])
+    if checks:
+        for check in checks:
+            lines.append(f"- `{check.status}` {check.name}: {check.detail}")
+    else:
+        lines.append("No preflight checks recorded.")
     lines.append("")
 
 

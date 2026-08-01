@@ -5,6 +5,8 @@ import type {
   CurrentContext,
   DoctorReport,
   CodexWorkerReport,
+  CodexRunPlan,
+  CodexRunPlansResponse,
   CodexHandoff,
   ExecutionQueue,
   ProjectBacklog,
@@ -96,6 +98,9 @@ export const devoApi = {
   getProjectWorkerReports: (project: string) => getJson<WorkerReportsResponse>(`/api/projects/${encodeURIComponent(project)}/worker-reports`),
   getProjectWorkerReport: (project: string, workerRunId: string) =>
     getJson<CodexWorkerReport>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}/report`),
+  getProjectWorkerRunPlans: (project: string) => getJson<CodexRunPlansResponse>(`/api/projects/${encodeURIComponent(project)}/worker-run-plans`),
+  getProjectWorkerRunPlan: (project: string, planId: string) =>
+    getJson<CodexRunPlan>(`/api/projects/${encodeURIComponent(project)}/worker-run-plans/${encodeURIComponent(planId)}`),
   getProjectProgress: (project: string) => getJson<ProjectProgress>(`/api/projects/${encodeURIComponent(project)}/progress`),
   getProjectActivity: (project: string) => getJson<ProjectActivity>(`/api/projects/${encodeURIComponent(project)}/activity`),
   getProjectDoctor: (project: string) => getJson<DoctorReport>(`/api/projects/${encodeURIComponent(project)}/doctor`),

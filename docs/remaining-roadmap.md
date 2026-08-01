@@ -41,6 +41,7 @@ Devo already has:
 - Workspace-only Codex worker run tracking records
 - Manual Codex worker report templates, validation, import, show, and list commands
 - Read-only Worker Runs dashboard page
+- Read-only Codex worker preflight checks and run-plan preview artifacts
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -143,12 +144,13 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 15. TASK-DEVO-088: Worker run/report data model - completed.
 16. TASK-DEVO-089: Manual execution report import - completed.
 17. TASK-DEVO-090: Worker run UI visibility and review affordance polish - completed.
-18. TASK-DEVO-091: Supervised Codex CLI adapter prototype - launch Codex only after explicit approval.
-19. TASK-DEVO-092: Queue integration for one item at a time.
-20. TASK-DEVO-093: Pause/resume and usage-limit handling.
-21. TASK-DEVO-094: Validation/review integration.
-22. TASK-DEVO-095: Optional commit/push delivery integration after safety review.
-23. TASK-DEVO-096+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
+18. TASK-DEVO-091: Codex CLI worker preflight and run-plan model - completed.
+19. TASK-DEVO-092: Supervised Codex CLI adapter prototype - launch Codex only after explicit approval.
+20. TASK-DEVO-093: Queue integration for one item at a time.
+21. TASK-DEVO-094: Pause/resume and usage-limit handling.
+22. TASK-DEVO-095: Validation/review integration.
+23. TASK-DEVO-096: Optional commit/push delivery integration after safety review.
+24. TASK-DEVO-097+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

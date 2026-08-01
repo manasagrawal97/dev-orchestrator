@@ -219,6 +219,18 @@ devo worker codex run-mark-used --project MyProject --run WR001
 
 Worker run artifacts are stored under `workspace/projects/<project>/workers/codex/` as `worker-run-<id>.json`, `worker-run-<id>.md`, and `worker-run-index.json`. These are workspace-only tracking records. They do not run Codex, call AI APIs, execute target commands, prove implementation complete, import execution reports, mark queue/task completion, validate, commit, push, or modify target project source.
 
+Preflight future supervised Codex runs and create safe run-plan previews:
+
+```powershell
+devo worker codex preflight --project MyProject --run WR001
+devo worker codex run-plan --project MyProject --run WR001
+devo worker codex run-plan-list --project MyProject
+devo worker codex run-plan-show --project MyProject --plan RP001
+devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
+```
+
+Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; supervised Codex execution remains future work.
+
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 
 List registered projects:
@@ -664,7 +676,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, Progress, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> worker run -> progress workflow. Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, and Progress provide detailed read-only inspection of planning artifacts, milestone/epic rollups, task filters, batch risk/lane summaries, queue item state, handoff and worker-run/report metadata, progress bars, warnings, and next actions. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
+Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, Progress, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> worker run -> progress workflow. Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, and Progress provide detailed read-only inspection of planning artifacts, milestone/epic rollups, task filters, batch risk/lane summaries, queue item state, handoff and worker-run/report/run-plan metadata, progress bars, warnings, and next actions. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
 
 Manual Codex worker report import is available for assisted handoff workflows:
 
@@ -677,6 +689,18 @@ devo worker codex report-list --project MyProject
 ```
 
 Reports are stored under `workspace/projects/<project>/workers/codex/reports/` and summarize what a manually run worker reported: status, changed files, validation, tests, commands, optional commit hash, warnings, blockers, follow-ups, and notes. Importing a report is not proof of completion. It does not run Codex, call AI APIs, execute target commands, complete queue/tasks, run validation, commit, push, or modify target repositories.
+
+Codex run plans are safe previews for a future supervised execution path:
+
+```powershell
+devo worker codex preflight --project MyProject --run WR001
+devo worker codex run-plan --project MyProject --run WR001
+devo worker codex run-plan-list --project MyProject
+devo worker codex run-plan-show --project MyProject --plan RP001
+devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
+```
+
+Run plans live under `workspace/projects/<project>/workers/codex/run-plans/`. They store readiness checks, blocked reasons, warnings, a safe command preview, allowed/forbidden scope, validation expectations, and next action guidance. They do not execute Codex, call AI APIs, run target commands, trust implementation complete, validate, commit, push, or complete queue/task state. `run-plan-approve` is a planning-review marker only.
 
 ## Policy Gates
 

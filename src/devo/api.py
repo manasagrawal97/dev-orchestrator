@@ -14,6 +14,7 @@ from .project_planning import (
     get_queue_next_item,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_run_plans,
     list_codex_worker_reports,
     list_codex_worker_runs,
     list_project_batches,
@@ -21,6 +22,7 @@ from .project_planning import (
     load_execution_queue,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_run_plan,
     load_codex_worker_report,
     load_codex_worker_run,
     load_project_backlog,
@@ -60,6 +62,8 @@ API_ROUTES = (
     "GET /api/projects/{project}/worker-runs/{worker_run_id}",
     "GET /api/projects/{project}/worker-runs/{worker_run_id}/report",
     "GET /api/projects/{project}/worker-reports",
+    "GET /api/projects/{project}/worker-run-plans",
+    "GET /api/projects/{project}/worker-run-plans/{plan_id}",
     "GET /api/projects/{project}/tasks",
     "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
@@ -280,6 +284,20 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         _require_project(project, root)
         reports = list_codex_worker_reports(project, workspace_root=root)
         return {"project": project, "count": len(reports), "reports": [_model_dump(report) for report in reports]}
+
+    @api.get("/api/projects/{project}/worker-run-plans")
+    def project_worker_run_plans(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        plans = list_codex_run_plans(project, workspace_root=root)
+        return {"project": project, "count": len(plans), "run_plans": [_model_dump(plan) for plan in plans]}
+
+    @api.get("/api/projects/{project}/worker-run-plans/{plan_id}")
+    def project_worker_run_plan(project: str, plan_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        plan = load_codex_run_plan(project, plan_id, workspace_root=root)
+        if not plan:
+            raise HTTPException(status_code=404, detail={"error": "worker_run_plan_not_found", "message": f"Codex run plan not found: {plan_id}"})
+        return _model_dump(plan)
 
     @api.get("/api/projects/{project}/tasks")
     def project_tasks(project: str) -> dict[str, object]:

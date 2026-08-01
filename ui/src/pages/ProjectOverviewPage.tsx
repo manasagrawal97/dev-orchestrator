@@ -240,7 +240,10 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                   ['Worker runs', overview.worker_run_count],
                   ['Latest worker run', overview.latest_worker_run_id ?? 'none'],
                   ['Latest worker status', overview.latest_worker_run_status ?? 'none'],
-                  ['Latest worker report', overview.latest_worker_report_status ?? 'none']
+                  ['Latest worker report', overview.latest_worker_report_status ?? 'none'],
+                  ['Codex run plans', overview.codex_run_plan_count],
+                  ['Latest run plan', overview.latest_codex_run_plan_id ?? 'none'],
+                  ['Latest preflight', overview.latest_codex_preflight_status ?? 'none']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
@@ -252,6 +255,7 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
               <CommandCopyBox command={`devo worker codex run-list --project ${selectedProject}`} />
+              <CommandCopyBox command={`devo worker codex run-plan-list --project ${selectedProject}`} />
               {onOpenPage ? (
                 <div className="detail-link-row">
                   <button className="link-button detail-link" type="button" onClick={() => onOpenPage('batches')}>

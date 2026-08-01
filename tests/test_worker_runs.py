@@ -7,12 +7,16 @@ from typer.testing import CliRunner
 
 from devo.main import app
 from devo.project_planning import (
+    list_codex_run_plans,
     list_codex_worker_runs,
+    load_codex_run_plan,
     load_codex_worker_report,
     load_codex_handoff,
     load_codex_worker_run,
     load_execution_queue,
+    load_codex_run_plan_index,
     load_worker_run_index,
+    worker_run_plan_artifact_paths,
     worker_report_artifact_paths,
     worker_report_template_paths,
     worker_run_artifact_paths,
@@ -364,6 +368,137 @@ def test_worker_report_show_and_list_work(tmp_path: Path, monkeypatch) -> None:
     assert "WR001 | completed" in listed.output
 
 
+def test_codex_preflight_passes_for_valid_worker_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Status: passed" in result.output
+    assert "Devo did not run Codex" in result.output
+    assert _target_snapshot(project_path) == before_target
+    assert list_codex_run_plans("sample", workspace_root=workspace) == []
+
+
+def test_codex_preflight_blocks_missing_prompt(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    handoff = load_codex_handoff("sample", "H001")
+    assert handoff is not None
+    Path(handoff.prompt_path).unlink()
+
+    result = runner.invoke(app, ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Status: blocked" in result.output
+    assert "Prompt file is missing" in result.output
+
+
+def test_codex_preflight_blocks_missing_target_repo_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    worker_run = load_codex_worker_run("sample", "WR001")
+    assert worker_run is not None
+    target = Path(worker_run.target_repo_path)
+    for child in target.iterdir():
+        child.unlink()
+    target.rmdir()
+
+    result = runner.invoke(app, ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Status: blocked" in result.output
+    assert "Target repo path is missing" in result.output
+
+
+def test_codex_run_plan_creates_artifacts_and_index(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Codex run plan saved" in result.output
+    assert "Supervised Codex execution is future work" in result.output
+    json_path, markdown_path = worker_run_plan_artifact_paths("sample", "RP001", workspace_root=workspace)
+    assert json_path.exists()
+    assert markdown_path.exists()
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["plan_id"] == "RP001"
+    assert data["worker_run_id"] == "WR001"
+    assert data["status"] == "ready"
+    assert data["preflight_status"] == "passed"
+    assert "codex <" in data["proposed_command_preview"]
+    assert "safe preview only" in markdown_path.read_text(encoding="utf-8")
+    index = load_codex_run_plan_index("sample", workspace_root=workspace)
+    assert index.run_plans[0].plan_id == "RP001"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_run_plan_stores_blocked_reasons(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    handoff = load_codex_handoff("sample", "H001", workspace_root=workspace)
+    assert handoff is not None
+    Path(handoff.prompt_path).unlink()
+
+    result = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert plan is not None
+    assert plan.status == "blocked"
+    assert plan.preflight_status == "blocked"
+    assert any("Prompt file is missing" in reason for reason in plan.blocked_reasons)
+
+
+def test_codex_run_plan_list_show_and_approve_work(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"])
+
+    listed = runner.invoke(app, ["worker", "codex", "run-plan-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["worker", "codex", "run-plan-show", "--project", "sample", "--plan", "RP001"], terminal_width=240)
+    approved = runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001", "--note", "Looks safe."], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert "RP001 | run=WR001" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Codex run plan: RP001" in shown.output
+    assert approved.exit_code == 0, approved.output
+    assert "planning approval recorded" in approved.output
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert plan is not None
+    assert plan.approval_status == "approved"
+    assert plan.approval_note == "Looks safe."
+    assert "Looks safe." not in plan.warnings
+    assert "Supervised Codex execution is future work" in plan.next_action
+
+
+def test_codex_run_plan_commands_do_not_mutate_target_repo_or_queue(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    runner.invoke(app, ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001"])
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"])
+    runner.invoke(app, ["worker", "codex", "run-plan-list", "--project", "sample"])
+    runner.invoke(app, ["worker", "codex", "run-plan-show", "--project", "sample", "--plan", "RP001"])
+
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "running"
+    assert queue.items[0].status == "running"
+    assert _target_snapshot(project_path) == before_target
+
+
 def _create_worker_run(tmp_path: Path) -> None:
     _create_queue_handoff(tmp_path)
     result = runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
@@ -429,6 +564,14 @@ def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
 
 def _target_snapshot(project_path: Path) -> dict[str, str]:
     return {str(path.relative_to(project_path)): path.read_text(encoding="utf-8") for path in project_path.rglob("*") if path.is_file()}
+
+
+def _add_fake_codex_to_path(tmp_path: Path, monkeypatch) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake_codex = bin_dir / "codex.cmd"
+    fake_codex.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{bin_dir};")
 
 
 def _worker_report_file(tmp_path: Path, worker_run_id: str, status: str = "completed") -> Path:

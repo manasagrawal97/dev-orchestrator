@@ -53,6 +53,11 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.latest_worker_report_path is None
     assert overview.latest_worker_report_summary is None
     assert overview.latest_worker_report_next_action is None
+    assert overview.codex_run_plan_count == 0
+    assert overview.latest_codex_run_plan_id is None
+    assert overview.latest_codex_run_plan_status is None
+    assert overview.latest_codex_preflight_status is None
+    assert overview.latest_codex_run_plan_next_action is None
     assert overview.project_completion_percent == 0.0
     assert overview.backlog_readiness_percent == 0.0
     assert overview.progress_next_action
@@ -156,6 +161,8 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "latest_worker_run_next_action" in overview_data
     assert "latest_worker_report_status" in overview_data
     assert "latest_worker_report_summary" in overview_data
+    assert "codex_run_plan_count" in overview_data
+    assert "latest_codex_preflight_status" in overview_data
 
 
 def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkeypatch) -> None:
@@ -218,6 +225,28 @@ def test_project_overview_includes_worker_report_summary(tmp_path: Path, monkeyp
     assert overview.latest_worker_report_summary == "Worker reported completion."
     assert overview.latest_worker_report_next_action is not None
     assert "queue-complete-item only after review" in overview.latest_worker_report_next_action
+
+
+def test_project_overview_includes_codex_run_plan_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001", "--note", "Approved."])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
+    result = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
+    assert result.exit_code == 0, result.output
+
+    overview = build_project_overview("sample")
+
+    assert overview.codex_run_plan_count == 1
+    assert overview.latest_codex_run_plan_id == "RP001"
+    assert overview.latest_codex_run_plan_status == "ready"
+    assert overview.latest_codex_preflight_status in {"passed", "warnings"}
+    assert overview.latest_codex_run_plan_next_action is not None
+    assert "Supervised Codex execution is future work" in overview.latest_codex_run_plan_next_action
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:

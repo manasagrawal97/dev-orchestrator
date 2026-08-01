@@ -70,9 +70,12 @@ from .project_planning import (
     ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    CodexPreflightResult,
+    CodexRunPlan,
     CodexWorkerReport,
     WorkerReportValidationResult,
     WorkerRun,
+    approve_codex_run_plan,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -87,6 +90,7 @@ from .project_planning import (
     create_codex_handoff_for_queue_next,
     create_codex_handoff_for_task,
     create_codex_worker_run_from_handoff,
+    create_codex_worker_run_plan,
     create_codex_worker_report_template,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
@@ -98,12 +102,14 @@ from .project_planning import (
     list_execution_queues,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_run_plans,
     list_codex_worker_reports,
     list_codex_worker_runs,
     list_project_batches,
     load_execution_queue,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_run_plan,
     load_codex_worker_report,
     load_codex_worker_run,
     load_project_backlog,
@@ -120,11 +126,13 @@ from .project_planning import (
     resume_execution_queue,
     suggest_project_batch,
     start_execution_queue,
+    run_codex_worker_preflight,
     update_codex_worker_run_status,
     validate_refined_backlog_file,
     validate_codex_worker_report_file,
     import_codex_worker_report,
     worker_report_artifact_paths,
+    worker_run_plan_artifact_paths,
     worker_run_artifact_paths,
 )
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
@@ -650,6 +658,46 @@ def _print_worker_report(report: CodexWorkerReport, json_path: Path | None = Non
     if markdown_path:
         console.print(f"Markdown: {_named_path(markdown_path)}")
     console.print("Safety: imported reports are worker-provided evidence only; queue/task completion remains explicit.")
+
+
+def _print_codex_preflight(result: CodexPreflightResult) -> None:
+    console.print(f"[bold]Codex worker preflight: {result.worker_run_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Status: {result.status}")
+    console.print("Checks:")
+    for check in result.checks:
+        console.print(f"  - {check.status} {check.name}: {check.detail}", soft_wrap=True)
+    console.print("Blocked reasons:")
+    for item in result.blocked_reasons or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Warnings:")
+    for item in result.warnings or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print("Safety: preflight is read-only. Devo did not run Codex or target repo commands.")
+
+
+def _print_codex_run_plan(plan: CodexRunPlan, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Codex run plan: {plan.plan_id}[/bold]")
+    console.print(f"Project: {plan.project}")
+    console.print(f"Worker run: {plan.worker_run_id}")
+    console.print(f"Handoff: {plan.handoff_id or 'none'}")
+    console.print(f"Queue: {plan.queue_id or 'none'}")
+    console.print(f"Queue item: {plan.queue_item_id or 'none'}")
+    console.print(f"Task: {plan.task_id or 'none'}")
+    console.print(f"Status: {plan.status}")
+    console.print(f"Approval status: {plan.approval_status}")
+    console.print(f"Preflight status: {plan.preflight_status}")
+    console.print(f"Proposed working directory: {plan.proposed_working_directory}", soft_wrap=True)
+    console.print(f"Proposed command preview: {plan.proposed_command_preview}", soft_wrap=True)
+    console.print(f"Blocked reasons: {len(plan.blocked_reasons)}")
+    console.print(f"Warnings: {len(plan.warnings)}")
+    console.print(f"Next action: {plan.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("Safety: this is a preview artifact only. Devo did not run Codex, execute target commands, or modify target source.")
 
 
 def _print_json_model(model: object) -> None:
@@ -2366,6 +2414,96 @@ def list_codex_worker_reports_command(
             f"validation={len(report.validation_results)} | {report.summary}",
             soft_wrap=True,
         )
+
+
+@worker_codex_app.command("preflight")
+def preflight_codex_worker_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    write: bool = typer.Option(False, "--write", help="Create a run-plan artifact if preflight is not blocked."),
+) -> None:
+    """Run read-only preflight checks for a future supervised Codex run."""
+    project_name = _resolve_project(project_name)
+    result = run_codex_worker_preflight(project_name, worker_run_id)
+    _print_codex_preflight(result)
+    if write:
+        if result.status == "blocked":
+            console.print("[yellow]Run plan not written because preflight is blocked.[/yellow]")
+            raise typer.Exit(1)
+        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id)
+        console.print("[green]Codex run plan written from preflight[/green]")
+        _print_codex_preflight(preflight)
+        _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
+    if result.status == "blocked":
+        raise typer.Exit(1)
+
+
+@worker_codex_app.command("run-plan")
+def create_codex_worker_run_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Create a safe preview run-plan artifact for future supervised Codex execution."""
+    project_name = _resolve_project(project_name)
+    try:
+        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    console.print(f"[green]Codex run plan saved[/green] {project_name}")
+    _print_codex_preflight(preflight)
+    _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
+    console.print("Supervised Codex execution is future work and is not implemented yet.")
+
+
+@worker_codex_app.command("run-plan-list")
+def list_codex_worker_run_plans_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List Codex worker run plans for a project."""
+    project_name = _resolve_project(project_name)
+    plans = list_codex_run_plans(project_name)
+    console.print(f"[bold]Codex run plans: {project_name}[/bold]")
+    if not plans:
+        console.print("[yellow]No Codex run plans found.[/yellow]")
+        console.print(f"Suggested next command: devo worker codex run-plan --project {project_name} --run <workerRunId>")
+        return
+    for plan in plans:
+        console.print(
+            f"{plan.plan_id} | run={plan.worker_run_id} | {plan.status} | preflight={plan.preflight_status} | approval={plan.approval_status} | {plan.next_action}",
+            soft_wrap=True,
+        )
+
+
+@worker_codex_app.command("run-plan-show")
+def show_codex_worker_run_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    plan_id: str = typer.Option(..., "--plan", help="Codex run plan id."),
+) -> None:
+    """Show one Codex worker run-plan artifact without mutating anything."""
+    project_name = _resolve_project(project_name)
+    plan = load_codex_run_plan(project_name, plan_id)
+    if not plan:
+        console.print(f"[yellow]Codex run plan not found: {plan_id}[/yellow]")
+        return
+    json_path, markdown_path = worker_run_plan_artifact_paths(project_name, plan.plan_id)
+    _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
+
+
+@worker_codex_app.command("run-plan-approve")
+def approve_codex_worker_run_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    plan_id: str = typer.Option(..., "--plan", help="Codex run plan id."),
+    note: str = typer.Option("", "--note", help="Planning approval note."),
+) -> None:
+    """Approve a run plan as planning-only evidence without running Codex."""
+    project_name = _resolve_project(project_name)
+    try:
+        plan, json_path, markdown_path = approve_codex_run_plan(project_name, plan_id, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    console.print(f"[green]Codex run plan planning approval recorded[/green] {project_name}")
+    _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
+    console.print("This approval is planning-only. It does not execute Codex or authorize future execution by itself.")
 
 
 @project_app.command("activity")
