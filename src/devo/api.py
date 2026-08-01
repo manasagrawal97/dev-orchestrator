@@ -8,7 +8,15 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
 from .doctor import run_doctor_with_timing
-from .project_planning import get_backlog_task, load_project_backlog, load_project_blueprint, load_project_brief, planning_artifact_paths
+from .project_planning import (
+    get_backlog_task,
+    list_project_batches,
+    load_project_backlog,
+    load_project_batch,
+    load_project_blueprint,
+    load_project_brief,
+    planning_artifact_paths,
+)
 from .projects import get_workspace_root, list_projects
 from .read_models import build_project_overview_with_timing, build_run_overview, build_work_package_overview
 from .runs import load_current_selection, load_run
@@ -26,6 +34,8 @@ API_ROUTES = (
     "GET /api/projects/{project}/blueprint",
     "GET /api/projects/{project}/backlog",
     "GET /api/projects/{project}/backlog/prompt",
+    "GET /api/projects/{project}/batches",
+    "GET /api/projects/{project}/batches/{batch_id}",
     "GET /api/projects/{project}/tasks",
     "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
@@ -136,6 +146,20 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             "path": str(paths.backlog_refinement_prompt),
             "suggested_command": f"devo project backlog-prompt --project {project}",
         }
+
+    @api.get("/api/projects/{project}/batches")
+    def project_batches(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        batches = list_project_batches(project, workspace_root=root)
+        return {"project": project, "count": len(batches), "batches": [_model_dump(batch) for batch in batches]}
+
+    @api.get("/api/projects/{project}/batches/{batch_id}")
+    def project_batch(project: str, batch_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        batch = load_project_batch(project, batch_id, workspace_root=root)
+        if not batch:
+            raise HTTPException(status_code=404, detail={"error": "batch_not_found", "message": f"Project batch not found: {batch_id}"})
+        return _model_dump(batch)
 
     @api.get("/api/projects/{project}/tasks")
     def project_tasks(project: str) -> dict[str, object]:

@@ -19,10 +19,15 @@ BLUEPRINT_MD = "blueprint.md"
 BACKLOG_JSON = "backlog.json"
 BACKLOG_MD = "backlog.md"
 BACKLOG_REFINEMENT_PROMPT_MD = "backlog-refinement-prompt.md"
+BATCHES_DIR_NAME = "batches"
+BATCH_INDEX_JSON = "batch-index.json"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
+ALLOWED_BATCH_STATUSES = {"draft", "reviewed", "approved", "in_progress", "completed", "blocked", "superseded"}
+SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
+RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
 class ProjectBrief(BaseModel):
@@ -134,6 +139,85 @@ class BacklogValidationResult(BaseModel):
     task_count: int = 0
 
 
+class BatchTaskSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    title: str
+    lane: str
+    risk_level: str
+    status: str
+    dependencies: list[str] = Field(default_factory=list)
+    acceptance_criteria_summary: str = ""
+    validation_expectations_summary: str = ""
+
+
+class ProjectBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    batch_id: str
+    title: str
+    summary: str
+    source_backlog_reference: str
+    status: str = "draft"
+    task_ids: list[str] = Field(default_factory=list)
+    task_count: int = 0
+    completed_task_count: int = 0
+    blocked_task_count: int = 0
+    risk_summary: dict[str, int] = Field(default_factory=dict)
+    lane_summary: dict[str, int] = Field(default_factory=dict)
+    dependencies: list[str] = Field(default_factory=list)
+    approval_status: str = "not_requested"
+    review_notes: list[str] = Field(default_factory=list)
+    task_snapshots: list[BatchTaskSnapshot] = Field(default_factory=list)
+    dependency_warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class BatchIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: str
+    title: str
+    status: str
+    task_count: int
+    approval_status: str
+    path: str
+    updated_at: datetime
+
+
+class BatchIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    batches: list[BatchIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class BatchSuggestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    title: str
+    lane: str
+    risk_level: str
+    status: str
+    reason: str
+
+
+class BatchSuggestionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    suggested_tasks: list[BatchSuggestion] = Field(default_factory=list)
+    skipped_tasks: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -145,6 +229,8 @@ class PlanningArtifactPaths(BaseModel):
     backlog_json: Path
     backlog_markdown: Path
     backlog_refinement_prompt: Path
+    batches_dir: Path
+    batch_index_json: Path
 
 
 def planning_artifact_paths(project_name: str, workspace_root: Path | None = None) -> PlanningArtifactPaths:
@@ -159,6 +245,8 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         backlog_json=planning_dir / BACKLOG_JSON,
         backlog_markdown=planning_dir / BACKLOG_MD,
         backlog_refinement_prompt=planning_dir / BACKLOG_REFINEMENT_PROMPT_MD,
+        batches_dir=planning_dir / BATCHES_DIR_NAME,
+        batch_index_json=planning_dir / BATCHES_DIR_NAME / BATCH_INDEX_JSON,
     )
 
 
@@ -436,6 +524,240 @@ def import_refined_backlog(
     _write_model(paths.backlog_json, imported)
     paths.backlog_markdown.write_text(render_project_backlog_markdown(imported), encoding="utf-8")
     return imported, paths, result
+
+
+def create_project_batch(
+    project_name: str,
+    title: str,
+    task_ids: list[str],
+    workspace_root: Path | None = None,
+) -> tuple[ProjectBatch, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not backlog:
+        msg = f"Project backlog not found for project: {project_name}"
+        raise ValueError(msg)
+    normalized_ids = _normalize_task_ids(task_ids)
+    if not normalized_ids:
+        msg = "At least one task id is required."
+        raise ValueError(msg)
+    if len(set(normalized_ids)) != len(normalized_ids):
+        msg = "Duplicate task ids are not allowed."
+        raise ValueError(msg)
+    task_by_id = {task.id.strip().upper(): task for task in backlog.tasks}
+    missing = [task_id for task_id in normalized_ids if task_id not in task_by_id]
+    if missing:
+        msg = f"Backlog task id not found: {', '.join(missing)}"
+        raise ValueError(msg)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    batch_id = _next_batch_id(project_name, workspace_root=root)
+    tasks = [task_by_id[task_id] for task_id in normalized_ids]
+    now = datetime.now(UTC)
+    batch = _build_batch_from_tasks(
+        project_name=project_name,
+        batch_id=batch_id,
+        title=title.strip() or f"Planning Batch {batch_id}",
+        tasks=tasks,
+        backlog=backlog,
+        source_backlog_reference=str(paths.backlog_json),
+        now=now,
+    )
+    json_path, markdown_path = _write_project_batch(project_name, batch, workspace_root=root)
+    return batch, json_path, markdown_path
+
+
+def suggest_project_batch(
+    project_name: str,
+    limit: int = 10,
+    workspace_root: Path | None = None,
+) -> BatchSuggestionResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not backlog:
+        msg = f"Project backlog not found for project: {project_name}"
+        raise ValueError(msg)
+    safe_limit = max(1, limit)
+    task_by_id = {task.id.strip().upper(): task for task in backlog.tasks}
+    completed = {task_id for task_id, task in task_by_id.items() if task.status == "completed"}
+    selected: list[BacklogTask] = []
+    skipped: list[str] = []
+    warnings: list[str] = []
+    candidates = sorted(
+        [task for task in backlog.tasks if task.status in SELECTABLE_TASK_STATUSES],
+        key=lambda task: (RISK_ORDER.get(task.risk_level, 99), task.lane, task.id),
+    )
+    for task in candidates:
+        if len(selected) >= safe_limit:
+            break
+        selected_ids = {item.id.strip().upper() for item in selected}
+        dependencies = [dependency.strip().upper() for dependency in task.dependencies]
+        missing_dependencies = [dependency for dependency in dependencies if dependency not in task_by_id]
+        unresolved = [dependency for dependency in dependencies if dependency not in completed and dependency not in selected_ids]
+        if missing_dependencies:
+            skipped.append(f"{task.id}: missing dependency {', '.join(missing_dependencies)}")
+            continue
+        if unresolved:
+            skipped.append(f"{task.id}: unresolved dependency {', '.join(unresolved)}")
+            continue
+        selected.append(task)
+    if not selected:
+        warnings.append("No ready batch candidates found.")
+    suggestions = [
+        BatchSuggestion(
+            task_id=task.id,
+            title=task.title,
+            lane=task.lane,
+            risk_level=task.risk_level,
+            status=task.status,
+            reason=_suggestion_reason(task),
+        )
+        for task in selected
+    ]
+    return BatchSuggestionResult(project=project_name, suggested_tasks=suggestions, skipped_tasks=skipped, warnings=warnings)
+
+
+def create_suggested_project_batch(
+    project_name: str,
+    limit: int = 10,
+    workspace_root: Path | None = None,
+) -> tuple[ProjectBatch, Path, Path, BatchSuggestionResult]:
+    root = workspace_root or get_workspace_root()
+    suggestion = suggest_project_batch(project_name, limit=limit, workspace_root=root)
+    task_ids = [task.task_id for task in suggestion.suggested_tasks]
+    if not task_ids:
+        msg = "No suggested tasks are available for a batch."
+        raise ValueError(msg)
+    batch, json_path, markdown_path = create_project_batch(
+        project_name,
+        title="Suggested planning batch",
+        task_ids=task_ids,
+        workspace_root=root,
+    )
+    return batch, json_path, markdown_path, suggestion
+
+
+def load_batch_index(project_name: str, workspace_root: Path | None = None) -> BatchIndex:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.batch_index_json.exists():
+        return BatchIndex(project=project_name)
+    return BatchIndex.model_validate_json(paths.batch_index_json.read_text(encoding="utf-8"))
+
+
+def list_project_batches(project_name: str, workspace_root: Path | None = None) -> list[ProjectBatch]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    if not paths.batches_dir.exists():
+        return []
+    batches: list[ProjectBatch] = []
+    for path in sorted(paths.batches_dir.glob("batch-*.json")):
+        if path.name == BATCH_INDEX_JSON:
+            continue
+        try:
+            batches.append(ProjectBatch.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(batches, key=lambda batch: batch.updated_at, reverse=True)
+
+
+def load_project_batch(project_name: str, batch_id: str, workspace_root: Path | None = None) -> ProjectBatch | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = project_batch_artifact_paths(project_name, batch_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return ProjectBatch.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def approve_project_batch(project_name: str, batch_id: str, workspace_root: Path | None = None) -> tuple[ProjectBatch, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    batch = load_project_batch(project_name, batch_id, workspace_root=root)
+    if not batch:
+        msg = f"Project batch not found: {batch_id}"
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    updated = batch.model_copy(update={"status": "approved", "approval_status": "approved", "updated_at": now})
+    json_path, markdown_path = _write_project_batch(project_name, updated, workspace_root=root)
+    return updated, json_path, markdown_path
+
+
+def review_project_batch(project_name: str, batch_id: str, note: str, workspace_root: Path | None = None) -> tuple[ProjectBatch, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    batch = load_project_batch(project_name, batch_id, workspace_root=root)
+    if not batch:
+        msg = f"Project batch not found: {batch_id}"
+        raise ValueError(msg)
+    cleaned = note.strip()
+    if not cleaned:
+        msg = "Review note must not be empty."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    notes = [*batch.review_notes, f"{now.isoformat()}: {cleaned}"]
+    status = "reviewed" if batch.status == "draft" else batch.status
+    updated = batch.model_copy(update={"status": status, "review_notes": notes, "updated_at": now})
+    json_path, markdown_path = _write_project_batch(project_name, updated, workspace_root=root)
+    return updated, json_path, markdown_path
+
+
+def project_batch_artifact_paths(project_name: str, batch_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_batch_id(batch_id)
+    return paths.batches_dir / f"batch-{safe_id}.json", paths.batches_dir / f"batch-{safe_id}.md"
+
+
+def render_project_batch_markdown(batch: ProjectBatch) -> str:
+    lines = [
+        f"# {batch.title}",
+        "",
+        f"- Project: `{batch.project}`",
+        f"- Batch id: `{batch.batch_id}`",
+        f"- Status: `{batch.status}`",
+        f"- Approval status: `{batch.approval_status}`",
+        f"- Source backlog: `{batch.source_backlog_reference}`",
+        f"- Task count: `{batch.task_count}`",
+        f"- Completed tasks: `{batch.completed_task_count}`",
+        f"- Blocked tasks: `{batch.blocked_task_count}`",
+        f"- Created: `{batch.created_at.isoformat()}`",
+        f"- Updated: `{batch.updated_at.isoformat()}`",
+        "",
+        "## Summary",
+        "",
+        batch.summary or "No summary recorded.",
+        "",
+    ]
+    _append_mapping_section(lines, "Risk Summary", batch.risk_summary)
+    _append_mapping_section(lines, "Lane Summary", batch.lane_summary)
+    _append_list_section(lines, "Dependencies", batch.dependencies)
+    _append_list_section(lines, "Dependency Warnings", batch.dependency_warnings)
+    _append_list_section(lines, "Review Notes", batch.review_notes)
+    lines.extend(["## Task Snapshots", ""])
+    if not batch.task_snapshots:
+        lines.extend(["No tasks recorded.", ""])
+    for task in batch.task_snapshots:
+        lines.extend(
+            [
+                f"### {task.task_id}: {task.title}",
+                "",
+                f"- Status: `{task.status}`",
+                f"- Lane: `{task.lane}`",
+                f"- Risk: `{task.risk_level}`",
+                f"- Dependencies: `{', '.join(task.dependencies) if task.dependencies else 'none'}`",
+                f"- Acceptance criteria: {task.acceptance_criteria_summary or 'none'}",
+                f"- Validation: {task.validation_expectations_summary or 'none'}",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "Planning approval only: batch approval does not approve implementation execution. Execution queue, Codex automation, implementation approval, validation, commit, and push are future workflow steps.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def render_backlog_refinement_prompt(
@@ -717,6 +1039,172 @@ def _safe_import_task_status(status: str) -> str:
     return "draft"
 
 
+def _normalize_task_ids(task_ids: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw in task_ids:
+        for item in raw.split(","):
+            cleaned = item.strip().upper()
+            if cleaned:
+                normalized.append(cleaned)
+    return normalized
+
+
+def _normalize_batch_id(batch_id: str) -> str:
+    cleaned = batch_id.strip()
+    if cleaned.lower().startswith("batch-"):
+        cleaned = cleaned[6:]
+    return cleaned.upper()
+
+
+def _next_batch_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_batch_id(batch.batch_id) for batch in list_project_batches(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"B{index:03d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _build_batch_from_tasks(
+    *,
+    project_name: str,
+    batch_id: str,
+    title: str,
+    tasks: list[BacklogTask],
+    backlog: ProjectBacklog,
+    source_backlog_reference: str,
+    now: datetime,
+) -> ProjectBatch:
+    task_ids = [task.id for task in tasks]
+    dependency_warnings = _batch_dependency_warnings(tasks, backlog)
+    return ProjectBatch(
+        project=project_name,
+        batch_id=batch_id,
+        title=title,
+        summary=_batch_summary(tasks),
+        source_backlog_reference=source_backlog_reference,
+        status="draft",
+        task_ids=task_ids,
+        task_count=len(tasks),
+        completed_task_count=sum(1 for task in tasks if task.status == "completed"),
+        blocked_task_count=sum(1 for task in tasks if task.status == "blocked"),
+        risk_summary=_count_by(tasks, "risk_level"),
+        lane_summary=_count_by(tasks, "lane"),
+        dependencies=_batch_dependencies(tasks),
+        approval_status="not_requested",
+        review_notes=[],
+        task_snapshots=[_task_snapshot(task) for task in tasks],
+        dependency_warnings=dependency_warnings,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _write_project_batch(project_name: str, batch: ProjectBatch, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.batches_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = project_batch_artifact_paths(project_name, batch.batch_id, workspace_root=root)
+    _write_model(json_path, batch)
+    markdown_path.write_text(render_project_batch_markdown(batch), encoding="utf-8")
+    _write_batch_index(project_name, workspace_root=root)
+    return json_path, markdown_path
+
+
+def _write_batch_index(project_name: str, workspace_root: Path | None = None) -> BatchIndex:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.batches_dir.mkdir(parents=True, exist_ok=True)
+    batches = list_project_batches(project_name, workspace_root=root)
+    entries = [
+        BatchIndexEntry(
+            batch_id=batch.batch_id,
+            title=batch.title,
+            status=batch.status,
+            task_count=batch.task_count,
+            approval_status=batch.approval_status,
+            path=str(project_batch_artifact_paths(project_name, batch.batch_id, workspace_root=root)[0]),
+            updated_at=batch.updated_at,
+        )
+        for batch in batches
+    ]
+    index = BatchIndex(project=project_name, batches=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.batch_index_json, index)
+    return index
+
+
+def _task_snapshot(task: BacklogTask) -> BatchTaskSnapshot:
+    return BatchTaskSnapshot(
+        task_id=task.id,
+        title=task.title,
+        lane=task.lane,
+        risk_level=task.risk_level,
+        status=task.status,
+        dependencies=task.dependencies,
+        acceptance_criteria_summary=_summary_list(task.acceptance_criteria),
+        validation_expectations_summary=_summary_list(task.validation_expectations),
+    )
+
+
+def _batch_summary(tasks: list[BacklogTask]) -> str:
+    if not tasks:
+        return "No tasks selected."
+    lanes = ", ".join(sorted({task.lane for task in tasks}))
+    risks = ", ".join(sorted({task.risk_level for task in tasks}, key=lambda risk: RISK_ORDER.get(risk, 99)))
+    return f"Planning batch with {len(tasks)} task(s), lanes: {lanes}, risks: {risks}."
+
+
+def _count_by(tasks: list[BacklogTask], field_name: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for task in tasks:
+        value = str(getattr(task, field_name))
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _batch_dependencies(tasks: list[BacklogTask]) -> list[str]:
+    selected = {task.id.strip().upper() for task in tasks}
+    dependencies: set[str] = set()
+    for task in tasks:
+        for dependency in task.dependencies:
+            normalized = dependency.strip().upper()
+            if normalized and normalized not in selected:
+                dependencies.add(normalized)
+    return sorted(dependencies)
+
+
+def _batch_dependency_warnings(tasks: list[BacklogTask], backlog: ProjectBacklog) -> list[str]:
+    selected = {task.id.strip().upper() for task in tasks}
+    task_by_id = {task.id.strip().upper(): task for task in backlog.tasks}
+    warnings: list[str] = []
+    for task in tasks:
+        for dependency in task.dependencies:
+            normalized = dependency.strip().upper()
+            dependency_task = task_by_id.get(normalized)
+            if not dependency_task:
+                warnings.append(f"{task.id} depends on unknown task {dependency}.")
+            elif normalized not in selected:
+                warnings.append(f"{task.id} depends on {dependency_task.id}, which is not included in this batch.")
+            elif dependency_task.status != "completed" and dependency_task.id != task.id:
+                warnings.append(f"{task.id} depends on {dependency_task.id}, which is included but not completed.")
+    return warnings
+
+
+def _suggestion_reason(task: BacklogTask) -> str:
+    dependency_text = "dependencies satisfied" if not task.dependencies else "dependencies completed or included"
+    return f"{task.status} task, {task.risk_level} risk, {dependency_text}."
+
+
+def _summary_list(values: list[str]) -> str:
+    if not values:
+        return ""
+    text = "; ".join(values[:3])
+    if len(values) > 3:
+        text += f"; +{len(values) - 3} more"
+    return text
+
+
 def _lane_summary() -> str:
     lines: list[str] = []
     for lane_id, lane in sorted(BUILT_IN_LANES.items()):
@@ -846,6 +1334,16 @@ def _append_list_section(lines: list[str], title: str, values: list[str]) -> Non
     if values:
         for value in values:
             lines.append(f"- {value}")
+    else:
+        lines.append("No items recorded.")
+    lines.append("")
+
+
+def _append_mapping_section(lines: list[str], title: str, values: dict[str, int]) -> None:
+    lines.extend([f"## {title}", ""])
+    if values:
+        for key, value in sorted(values.items()):
+            lines.append(f"- {key}: {value}")
     else:
         lines.append("No items recorded.")
     lines.append("")

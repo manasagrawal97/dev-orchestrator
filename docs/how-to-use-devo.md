@@ -61,7 +61,7 @@ The older two-stop flow, separate source approval followed by separate build app
 
 ## Project Brief And Blueprint
 
-The first planning pipeline artifacts are Project Brief and Blueprint.
+The first planning pipeline artifacts are Project Brief, Blueprint, Backlog, Tasks, and planning Batches.
 
 ```powershell
 devo project brief-create --project MyProject --title "My Project" --file E:\path\to\brief.md
@@ -74,7 +74,7 @@ devo project blueprint-approve --project MyProject
 
 The brief is the intake artifact: the final project summary distilled from discussion with ChatGPT or another advisor. The blueprint is the high-level deterministic plan derived from the brief. Both live under `workspace/projects/<project>/planning/`.
 
-This flow is workspace-only. It does not create batches or execution queues, does not call AI, does not call Codex CLI, and does not modify the target project.
+This flow is workspace-only. It does not create execution queues, does not call AI, does not call Codex CLI, and does not modify the target project.
 
 ## Backlog And Tasks
 
@@ -88,7 +88,7 @@ devo project task-show --project MyProject --task T001
 devo project backlog-approve --project MyProject
 ```
 
-The backlog is the structured task plan derived from the blueprint. TASK-DEVO-075 creates deterministic placeholder tasks from blueprint milestones/epics. Intelligent backlog refinement through Codex handoff is future TASK-DEVO-076. Batch selection and execution queue work come later.
+The backlog is the structured task plan derived from the blueprint. TASK-DEVO-075 creates deterministic placeholder tasks from blueprint milestones/epics. TASK-DEVO-076 adds a Codex/manual prompt and safe import path for refined backlog JSON.
 
 This remains workspace-only. It does not call AI, does not call Codex CLI, does not approve implementation, and does not modify the target project.
 
@@ -109,7 +109,35 @@ devo project backlog-validate --project MyProject --file E:\path\to\refined-back
 devo project backlog-import --project MyProject --file E:\path\to\refined-backlog.json
 ```
 
-Import validates required fields, duplicate task IDs, statuses, lanes, and risk levels, then writes the backlog as `draft` for safety. It does not approve implementation, create batches, create an execution queue, call Codex, call AI APIs, or modify the target project.
+Import validates required fields, duplicate task IDs, statuses, lanes, and risk levels, then writes the backlog as `draft` for safety. It does not approve implementation, create an execution queue, call Codex, call AI APIs, or modify the target project.
+
+## Planning Batches
+
+A planning Batch is a user-reviewable group of backlog tasks. Batch approval records planning intent only; it does not approve source edits, create an execution queue, call Codex, run validation, commit, push, or modify the target project.
+
+Create a batch from explicit task IDs:
+
+```powershell
+devo project batch-create --project MyProject --title "First batch" --tasks T001,T002
+```
+
+Ask Devo for a deterministic suggestion:
+
+```powershell
+devo project batch-suggest --project MyProject
+devo project batch-suggest --project MyProject --write
+```
+
+Inspect and approve the planning batch:
+
+```powershell
+devo project batch-list --project MyProject
+devo project batch-show --project MyProject --batch B001
+devo project batch-review --project MyProject --batch B001 --note "Looks scoped."
+devo project batch-approve --project MyProject --batch B001
+```
+
+Batch artifacts live under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Suggestions prefer selectable backlog tasks whose dependencies are completed or already included, with lower-risk tasks first. Execution queue and Codex handoff prompts come later.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

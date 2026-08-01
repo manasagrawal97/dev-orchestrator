@@ -10,7 +10,9 @@ from devo.project_planning import (
     BacklogTask,
     ProjectBacklog,
     generate_backlog_refinement_prompt,
+    list_project_batches,
     load_project_backlog,
+    load_project_batch,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
@@ -297,6 +299,166 @@ def test_backlog_import_fails_for_unknown_project(tmp_path: Path, monkeypatch) -
     assert "Registered project not found" in result.output
 
 
+def test_batch_create_creates_json_and_markdown_from_explicit_task_ids(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001,T002"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Project batch saved" in result.output
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    batch_json = paths.batches_dir / "batch-B001.json"
+    batch_md = paths.batches_dir / "batch-B001.md"
+    assert batch_json.exists()
+    assert batch_md.exists()
+    assert paths.batch_index_json.exists()
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    assert batch.status == "draft"
+    assert batch.approval_status == "not_requested"
+    assert batch.task_ids == ["T001", "T002"]
+    assert batch.task_count == 2
+    assert batch.risk_summary == {"medium": 2}
+    assert "Planning approval only" in batch_md.read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_batch_create_rejects_unknown_task_ids(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "batch-create", "--project", "sample", "--title", "Bad batch", "--tasks", "T999"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Backlog task id not found" in result.output
+
+
+def test_batch_create_rejects_duplicate_task_ids(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "batch-create", "--project", "sample", "--title", "Bad batch", "--tasks", "T001,T001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Duplicate task ids" in result.output
+
+
+def test_batch_suggest_suggests_ready_tasks(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+
+    result = runner.invoke(app, ["project", "batch-suggest", "--project", "sample", "--limit", "1"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Batch suggestion: sample" in result.output
+    assert "T001" in result.output
+    assert "Suggested write command" in result.output
+
+
+def test_batch_suggest_write_creates_draft_batch(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+
+    result = runner.invoke(app, ["project", "batch-suggest", "--project", "sample", "--limit", "2", "--write"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Suggested project batch saved" in result.output
+    batches = list_project_batches("sample", workspace_root=workspace)
+    assert len(batches) == 1
+    assert batches[0].batch_id == "B001"
+    assert batches[0].task_count == 2
+
+
+def test_batch_list_and_show_work(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+
+    listed = runner.invoke(app, ["project", "batch-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["project", "batch-show", "--project", "sample", "--batch", "B001"], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert "B001" in listed.output
+    assert "First batch" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Project batch: B001" in shown.output
+    assert "Included tasks" in shown.output
+
+
+def test_batch_approve_marks_approved(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+
+    result = runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Project batch approved" in result.output
+    assert "Planning approval only" in result.output
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    assert batch.status == "approved"
+    assert batch.approval_status == "approved"
+
+
+def test_batch_review_adds_note_and_marks_reviewed(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+
+    result = runner.invoke(app, ["project", "batch-review", "--project", "sample", "--batch", "B001", "--note", "Looks scoped."], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    assert batch.status == "reviewed"
+    assert any("Looks scoped." in note for note in batch.review_notes)
+
+
+def test_batch_create_includes_dependency_warnings(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    refined = _refined_backlog_file(tmp_path, workspace)
+    runner.invoke(app, ["project", "backlog-import", "--project", "sample", "--file", str(refined)])
+
+    result = runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "Dependent batch", "--tasks", "T102"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Dependency warnings" in result.output
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    assert batch.dependencies == ["T101"]
+    assert batch.dependency_warnings
+
+
+def test_batch_commands_fail_for_unknown_project_and_missing_backlog(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    unknown = runner.invoke(app, ["project", "batch-list", "--project", "missing"], terminal_width=240)
+    missing_backlog = runner.invoke(app, ["project", "batch-suggest", "--project", "sample"], terminal_width=240)
+
+    assert unknown.exit_code != 0
+    assert "Registered project not found" in unknown.output
+    assert missing_backlog.exit_code != 0
+    assert "Project backlog not found" in missing_backlog.output
+
+
 def test_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     brief_file = _brief_file(tmp_path)
@@ -370,7 +532,18 @@ def test_read_models_include_planning_summary(tmp_path: Path, monkeypatch) -> No
     assert with_backlog.backlog_ready_count == 2
     assert with_backlog.backlog_refinement_prompt_exists is True
     assert with_backlog.backlog_refinement_prompt_path is not None
-    assert "TASK-DEVO-077" in with_backlog.planning_next_action
+    assert with_backlog.batch_count == 0
+    assert "batch-suggest" in with_backlog.planning_next_action
+
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+
+    with_batch = build_project_overview("sample", workspace_root=workspace)
+    assert with_batch.batch_count == 1
+    assert with_batch.approved_batch_count == 1
+    assert with_batch.latest_batch_id == "B001"
+    assert with_batch.latest_batch_status == "approved"
+    assert "TASK-DEVO-079" in with_batch.planning_next_action
 
 
 def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
@@ -387,6 +560,10 @@ def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch
     runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
     refined = _refined_backlog_file(tmp_path, _workspace_path)
     runner.invoke(app, ["project", "backlog-validate", "--project", "sample", "--file", str(refined)])
+    runner.invoke(app, ["project", "batch-suggest", "--project", "sample"])
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "Safe planning batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-review", "--project", "sample", "--batch", "B001", "--note", "Planning review only."])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
 
     assert _target_snapshot(project_path) == before_target
 

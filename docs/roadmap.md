@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-077 Batch model and batch selection
 - TASK-DEVO-078 Progress calculation and project completion percent
 - TASK-DEVO-079 Execution queue state machine
 - TASK-DEVO-080 Codex handoff prompts for next task/batch
@@ -204,6 +203,10 @@ Added deterministic Backlog and Task planning artifacts derived from blueprint m
 ### TASK-DEVO-076 Backlog Refinement Handoff - Completed
 
 Added `devo project backlog-prompt` to write a Codex-ready planning prompt containing the project brief, blueprint, current backlog, lane/risk guidance, task schema, output JSON example, and explicit planning-only safety rules. Added `devo project backlog-validate` and `devo project backlog-import` so refined backlog JSON can be checked and imported as a draft backlog. ProjectOverview and the read-only API expose prompt metadata, and the dashboard Planning card shows whether the refinement prompt exists. Devo still does not call Codex, call AI APIs, approve implementation, create batches, create an execution queue, or modify target repositories.
+
+### TASK-DEVO-077 Batch Model And Selection - Completed
+
+Added Project Batch planning artifacts under `workspace/projects/<project>/planning/batches/`, with JSON/Markdown batch files and `batch-index.json`. Devo can create a draft batch from explicit task ids, suggest ready lower-risk tasks from the backlog, optionally write the suggestion as a draft batch, list/show/review/approve batches, expose batch summary fields in `ProjectOverview`, expose read-only batch API endpoints, and show batch counts in the dashboard Planning card. Batch approval is planning approval only; Devo still does not create an execution queue, call Codex, call AI APIs, approve implementation execution, run validation, commit, push, or modify target repositories.
 
 ### TASK-023 Safe Validation Runner
 

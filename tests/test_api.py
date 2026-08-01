@@ -8,7 +8,14 @@ from typer.testing import CliRunner
 
 from devo.api import create_app, validate_api_host
 from devo.main import app
-from devo.project_planning import approve_project_backlog, create_project_backlog, create_project_blueprint, create_project_brief, generate_backlog_refinement_prompt
+from devo.project_planning import (
+    approve_project_backlog,
+    create_project_backlog,
+    create_project_blueprint,
+    create_project_brief,
+    create_project_batch,
+    generate_backlog_refinement_prompt,
+)
 from devo.runs import save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 from devo.validation_registry import add_validation_command
@@ -160,6 +167,30 @@ def test_project_backlog_prompt_endpoint_returns_metadata(tmp_path: Path, monkey
     assert "backlog-prompt" in before.json()["suggested_command"]
     assert after.status_code == 200
     assert after.json()["exists"] is True
+
+
+def test_project_batch_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    batches = client.get("/api/projects/sample/batches")
+    batch = client.get("/api/projects/sample/batches/B001")
+    missing = client.get("/api/projects/sample/batches/B999")
+
+    assert batches.status_code == 200
+    assert batches.json()["count"] == 1
+    assert batches.json()["batches"][0]["batch_id"] == "B001"
+    assert batch.status_code == 200
+    assert batch.json()["title"] == "API batch"
+    assert batch.json()["task_ids"] == ["T001"]
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"] == "batch_not_found"
 
 
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
@@ -320,6 +351,8 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/blueprint" in result.output
     assert "GET /api/projects/{project}/backlog" in result.output
     assert "GET /api/projects/{project}/backlog/prompt" in result.output
+    assert "GET /api/projects/{project}/batches" in result.output
+    assert "GET /api/projects/{project}/batches/{batch_id}" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
 
 

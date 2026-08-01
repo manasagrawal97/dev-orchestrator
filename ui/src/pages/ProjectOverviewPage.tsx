@@ -219,11 +219,16 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
                   ['Ready', overview.backlog_ready_count],
                   ['Blocked', overview.backlog_blocked_count],
                   ['Completed', overview.backlog_completed_count],
-                  ['Refinement prompt', overview.backlog_refinement_prompt_exists ? 'available' : 'missing']
+                  ['Refinement prompt', overview.backlog_refinement_prompt_exists ? 'available' : 'missing'],
+                  ['Batches', overview.batch_count],
+                  ['Approved batches', overview.approved_batch_count],
+                  ['Latest batch', overview.latest_batch_id ?? 'none'],
+                  ['Latest batch status', overview.latest_batch_status ?? 'none']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
+              <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading planning summary..." /> : <ErrorState message="Planning summary is unavailable." />

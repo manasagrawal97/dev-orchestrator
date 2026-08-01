@@ -83,6 +83,10 @@ export interface ProjectOverview {
   backlog_completed_count: number;
   backlog_refinement_prompt_exists: boolean;
   backlog_refinement_prompt_path: string | null;
+  batch_count: number;
+  approved_batch_count: number;
+  latest_batch_id: string | null;
+  latest_batch_status: string | null;
   planning_next_action: string;
   recent_runs: RunOverview[];
   recent_work_packages: WorkPackageOverview[];

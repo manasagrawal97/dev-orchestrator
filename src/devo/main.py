@@ -60,22 +60,31 @@ from .project_onboarding import ProjectOnboardingReport, build_project_onboardin
 from .project_planning import (
     BacklogTask,
     BacklogValidationResult,
+    BatchSuggestionResult,
     ProjectBacklog,
+    ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
     approve_project_brief,
+    create_project_batch,
     create_project_backlog,
     create_project_blueprint,
     create_project_brief,
+    create_suggested_project_batch,
     generate_backlog_refinement_prompt,
     get_backlog_task,
     import_refined_backlog,
+    list_project_batches,
     load_project_backlog,
+    load_project_batch,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    review_project_batch,
+    suggest_project_batch,
     validate_refined_backlog_file,
 )
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
@@ -247,6 +256,7 @@ def _print_project_overview(overview: ProjectOverview) -> None:
     console.print(f"Validation commands: {overview.validation_registry_summary.get('command_count', 0)}")
     console.print(f"Brief: {overview.brief_status}")
     console.print(f"Blueprint: {overview.blueprint_status} milestones={overview.blueprint_milestone_count} epics={overview.blueprint_epic_count}")
+    console.print(f"Batches: {overview.batch_count} approved={overview.approved_batch_count} latest={overview.latest_batch_id or 'none'}")
     console.print(f"Planning next action: {overview.planning_next_action}", soft_wrap=True)
     console.print(f"Recent runs: {len(overview.recent_runs)}")
     console.print(f"Recent work packages: {len(overview.recent_work_packages)}")
@@ -337,6 +347,45 @@ def _print_backlog_validation_result(result: BacklogValidationResult) -> None:
     console.print("Warnings:")
     for item in result.warnings or ["none"]:
         console.print(f"  - {item}", soft_wrap=True)
+
+
+def _print_project_batch(batch: ProjectBatch, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Project batch: {batch.batch_id}[/bold]")
+    console.print(f"Title: {batch.title}")
+    console.print(f"Status: {batch.status}")
+    console.print(f"Approval status: {batch.approval_status}")
+    console.print(f"Tasks: {batch.task_count}")
+    console.print(f"Completed: {batch.completed_task_count}")
+    console.print(f"Blocked: {batch.blocked_task_count}")
+    console.print(f"Summary: {batch.summary}", soft_wrap=True)
+    if batch.dependency_warnings:
+        console.print("Dependency warnings:")
+        for warning in batch.dependency_warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Included tasks:")
+    for task in batch.task_snapshots:
+        console.print(f"  - {task.task_id} | {task.status} | lane={task.lane} | risk={task.risk_level} | {task.title}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+def _print_batch_suggestion(result: BatchSuggestionResult) -> None:
+    console.print(f"[bold]Batch suggestion: {result.project}[/bold]")
+    if not result.suggested_tasks:
+        console.print("[yellow]No suggested tasks.[/yellow]")
+    for task in result.suggested_tasks:
+        console.print(f"{task.task_id} | {task.status} | lane={task.lane} | risk={task.risk_level} | {task.title}", soft_wrap=True)
+        console.print(f"  Reason: {task.reason}", soft_wrap=True)
+    if result.skipped_tasks:
+        console.print("Skipped:")
+        for item in result.skipped_tasks:
+            console.print(f"  - {item}", soft_wrap=True)
+    if result.warnings:
+        console.print("Warnings:")
+        for item in result.warnings:
+            console.print(f"  - {item}", soft_wrap=True)
 
 
 def _print_json_model(model: object) -> None:
@@ -1336,6 +1385,123 @@ def import_backlog_command(
     console.print(f"JSON: {_named_path(paths.backlog_json)}")
     console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
     console.print(f"Suggested next command: devo project backlog-show --project {project_name}")
+
+
+@project_app.command("batch-create")
+def create_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    title: str = typer.Option(..., "--title", help="Batch title."),
+    tasks: str = typer.Option(..., "--tasks", help="Comma-separated backlog task ids."),
+) -> None:
+    """Create a draft planning Batch from explicit backlog task ids."""
+    project_name = _resolve_project(project_name)
+    try:
+        batch, json_path, markdown_path = create_project_batch(project_name, title=title, task_ids=[tasks])
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--tasks") from exc
+    console.print(f"[green]Project batch saved[/green] {project_name}")
+    _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Suggested next command: devo project batch-show --project {project_name} --batch {batch.batch_id}")
+    console.print("Batch approval is planning-only; execution queue comes in TASK-DEVO-079.")
+
+
+@project_app.command("batch-suggest")
+def suggest_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    limit: int = typer.Option(10, "--limit", min=1, help="Maximum task count to suggest."),
+    write: bool = typer.Option(False, "--write", help="Write the suggestion as a draft batch."),
+) -> None:
+    """Suggest ready backlog tasks for a planning Batch without writing unless requested."""
+    project_name = _resolve_project(project_name)
+    try:
+        if write:
+            batch, json_path, markdown_path, suggestion = create_suggested_project_batch(project_name, limit=limit)
+            _print_batch_suggestion(suggestion)
+            console.print(f"[green]Suggested project batch saved[/green] {project_name}")
+            _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
+            console.print(f"Suggested next command: devo project batch-review --project {project_name} --batch {batch.batch_id} --note \"<review note>\"")
+            return
+        suggestion = suggest_project_batch(project_name, limit=limit)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_batch_suggestion(suggestion)
+    if suggestion.suggested_tasks:
+        task_ids = ",".join(task.task_id for task in suggestion.suggested_tasks)
+        console.print(f"Suggested write command: devo project batch-create --project {project_name} --title \"<batch title>\" --tasks {task_ids}")
+
+
+@project_app.command("batch-list")
+def list_batches_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List planning Batches for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        batches = list_project_batches(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Project batches: {project_name}[/bold]")
+    if not batches:
+        console.print("[yellow]No batches recorded.[/yellow]")
+        console.print(f"Suggested next command: devo project batch-suggest --project {project_name}")
+        return
+    for batch in batches:
+        console.print(
+            f"{batch.batch_id} | {batch.status} | approval={batch.approval_status} | tasks={batch.task_count} | {batch.title}",
+            soft_wrap=True,
+        )
+
+
+@project_app.command("batch-show")
+def show_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+) -> None:
+    """Show a planning Batch without mutating it."""
+    project_name = _resolve_project(project_name)
+    try:
+        batch = load_project_batch(project_name, batch_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    if not batch:
+        console.print(f"[yellow]Project batch not found: {batch_id}[/yellow]")
+        console.print(f"Suggested next command: devo project batch-list --project {project_name}")
+        return
+    _print_project_batch(batch)
+    console.print("Next future step after approval: execution queue is TASK-DEVO-079.")
+
+
+@project_app.command("batch-approve")
+def approve_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+) -> None:
+    """Mark a planning Batch approved without approving implementation execution."""
+    project_name = _resolve_project(project_name)
+    try:
+        batch, json_path, markdown_path = approve_project_batch(project_name, batch_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[green]Project batch approved[/green] {project_name}")
+    _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
+    console.print("Planning approval only. Execution queue is TASK-DEVO-079.")
+
+
+@project_app.command("batch-review")
+def review_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+    note: str = typer.Option(..., "--note", help="Review note to append."),
+) -> None:
+    """Append a review note to a planning Batch."""
+    project_name = _resolve_project(project_name)
+    try:
+        batch, json_path, markdown_path = review_project_batch(project_name, batch_id, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[green]Project batch reviewed[/green] {project_name}")
+    _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Suggested next command: devo project batch-approve --project {project_name} --batch {batch.batch_id}")
 
 
 @project_app.command("activity")

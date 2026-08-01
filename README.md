@@ -148,6 +148,20 @@ devo project backlog-import --project MyProject --file E:\path\to\refined-backlo
 
 `backlog-prompt` writes `workspace/projects/<project>/planning/backlog-refinement-prompt.md`. It does not call Codex or any AI API. `backlog-import` validates the refined JSON and imports it as a draft backlog; it does not approve implementation or modify the target project.
 
+Create a planning batch from backlog tasks:
+
+```powershell
+devo project batch-suggest --project MyProject
+devo project batch-suggest --project MyProject --write
+devo project batch-create --project MyProject --title "First batch" --tasks T001,T002
+devo project batch-list --project MyProject
+devo project batch-show --project MyProject --batch B001
+devo project batch-review --project MyProject --batch B001 --note "Looks scoped."
+devo project batch-approve --project MyProject --batch B001
+```
+
+Batch artifacts are stored under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Batch approval is planning approval only; it does not run Codex, create an execution queue, approve implementation, run validation, commit, push, or modify the target project.
+
 List registered projects:
 
 ```powershell

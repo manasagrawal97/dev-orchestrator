@@ -10,7 +10,7 @@ from .backups import list_backup_inventory
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
-from .project_planning import load_project_backlog, load_project_blueprint, load_project_brief, planning_artifact_paths
+from .project_planning import load_project_backlog, load_project_blueprint, load_project_brief, list_project_batches, planning_artifact_paths
 from .project_settings import load_project_settings, project_settings_path
 from .projects import get_workspace_root
 from .runs import list_runs, load_current_selection, load_run
@@ -86,6 +86,10 @@ class ProjectOverview(BaseModel):
     backlog_completed_count: int = 0
     backlog_refinement_prompt_exists: bool = False
     backlog_refinement_prompt_path: str | None = None
+    batch_count: int = 0
+    approved_batch_count: int = 0
+    latest_batch_id: str | None = None
+    latest_batch_status: str | None = None
     planning_next_action: str = "Create a Project Brief."
     recent_runs: list[RunOverview] = Field(default_factory=list)
     recent_work_packages: list[WorkPackageOverview] = Field(default_factory=list)
@@ -121,8 +125,6 @@ def build_project_overview_with_timing(
     timing["total_ms"] = _elapsed_ms(started)
     planning_next_action = str(planning["planning_next_action"])
     suggested_next_action = planning_next_action
-    if planning_next_action == "Planning artifacts are ready for TASK-DEVO-077 batch creation.":
-        suggested_next_action = activity.suggested_next_action if activity else _suggest_project_next_action(onboarding)
     return (
         ProjectOverview(
             project_name=project_name,
@@ -146,6 +148,10 @@ def build_project_overview_with_timing(
             backlog_completed_count=int(planning["backlog_completed_count"]),
             backlog_refinement_prompt_exists=bool(planning["backlog_refinement_prompt_exists"]),
             backlog_refinement_prompt_path=str(planning["backlog_refinement_prompt_path"]) if planning["backlog_refinement_prompt_path"] else None,
+            batch_count=int(planning["batch_count"]),
+            approved_batch_count=int(planning["approved_batch_count"]),
+            latest_batch_id=str(planning["latest_batch_id"]) if planning["latest_batch_id"] else None,
+            latest_batch_status=str(planning["latest_batch_status"]) if planning["latest_batch_status"] else None,
             planning_next_action=str(planning["planning_next_action"]),
             recent_runs=runs,
             recent_work_packages=work,
@@ -354,6 +360,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         brief = load_project_brief(project_name, workspace_root=workspace_root)
         blueprint = load_project_blueprint(project_name, workspace_root=workspace_root)
         backlog = load_project_backlog(project_name, workspace_root=workspace_root)
+        batches = list_project_batches(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
             "brief_status": "unknown",
@@ -367,9 +374,14 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "backlog_completed_count": 0,
             "backlog_refinement_prompt_exists": False,
             "backlog_refinement_prompt_path": None,
+            "batch_count": 0,
+            "approved_batch_count": 0,
+            "latest_batch_id": None,
+            "latest_batch_status": None,
             "planning_next_action": f"Review planning artifacts: {exc}",
         }
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    latest_batch = batches[0] if batches else None
     if not brief:
         next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
     elif brief.status != "approved":
@@ -382,8 +394,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         next_action = f"Create a Backlog: devo project backlog-create --project {project_name}"
     elif backlog.status != "approved":
         next_action = f"Approve the Backlog: devo project backlog-approve --project {project_name}"
+    elif not batches:
+        next_action = f"Create or suggest a Batch: devo project batch-suggest --project {project_name}"
+    elif not any(batch.approval_status == "approved" for batch in batches):
+        next_action = f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
     else:
-        next_action = "Planning artifacts are ready for TASK-DEVO-077 batch creation."
+        next_action = "Approved planning batch is ready; execution queue comes in TASK-DEVO-079."
     return {
         "brief_status": brief.status if brief else "missing",
         "blueprint_status": blueprint.status if blueprint else "missing",
@@ -396,6 +412,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "backlog_completed_count": backlog.completed_task_count if backlog else 0,
         "backlog_refinement_prompt_exists": paths.backlog_refinement_prompt.exists(),
         "backlog_refinement_prompt_path": str(paths.backlog_refinement_prompt),
+        "batch_count": len(batches),
+        "approved_batch_count": sum(1 for batch in batches if batch.approval_status == "approved"),
+        "latest_batch_id": latest_batch.batch_id if latest_batch else None,
+        "latest_batch_status": latest_batch.status if latest_batch else None,
         "planning_next_action": next_action,
     }
 
