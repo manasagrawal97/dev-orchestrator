@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-085 End-to-end workflow dogfood run on DevOrchestrator
+- TASK-DEVO-086 Planning pipeline operator guidance and input robustness
 
 ## Updated Roadmap Phases
 
@@ -230,6 +230,10 @@ Added detailed read-only Batch, Queue, Handoff, and Progress pages to the React/
 ### TASK-DEVO-084 Batch Approval And Review Workflow - Completed
 
 Added explicit workspace-only Batch approval artifacts under `workspace/projects/<project>/planning/batches/approvals/`. Devo can request batch approval, show/list approval artifacts, record reviewed or needs-changes notes, approve planning with decision notes, and reject planning without deleting batches or mutating backlog/tasks. Approval artifacts summarize task scope, high-risk task count, dependency warnings, risk/lane counts, validation expectations, decision notes, and next suggested command. ProjectOverview/read-model/API responses expose latest batch approval/review status and approval counts, the Batches UI shows approval metadata, and the controlled UI action safety model supports confirmed workspace-safe batch approval/review actions only. Batch approval remains planning approval; queue creation, Codex handoff, validation, commit, push, target project edits, restore, scheduler changes, and model/API calls remain separate or deferred.
+
+### TASK-DEVO-085 End-To-End Planning Pipeline Dogfood - Completed
+
+Ran the current planning pipeline on DevOrchestrator itself and documented the results in `docs/dogfood/devo-pipeline-dogfood-085.md`. The dogfood run created and approved a Project Brief, Blueprint, Backlog, suggested Batch `B001`, Batch approval artifact, execution Queue `Q001`, Codex handoff `H001`, and progress summary. Generated planning artifacts stayed under `workspace/` and were not committed. Findings: BOM-prefixed brief input can trigger Windows console rendering failures, `backlog-approve` still prints stale batch guidance, `queue-next` prints placeholder handoff commands, and the deterministic starter backlog needs clearer reminders before real implementation. TASK-DEVO-086 should address these operator-friction issues before a larger Codex CLI worker adapter design task.
 
 ### TASK-023 Safe Validation Runner
 

@@ -43,7 +43,7 @@ Devo already has:
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
 - Explicit workspace-only Batch approval/review artifacts and decisions
 
-These capabilities make Devo a useful local control plane today, but the product still needs a full end-to-end dogfood run.
+These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives.
 
 ## Final Target Workflow
 
@@ -134,11 +134,12 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 9. TASK-DEVO-082: UI Blueprint/Backlog pages - completed.
 10. TASK-DEVO-083: UI Batch Queue and Progress dashboard - completed.
 11. TASK-DEVO-084: Batch approval/review workflow - completed.
-12. TASK-DEVO-085: End-to-end workflow dogfood run on DevOrchestrator - prove brief -> blueprint -> backlog -> batch -> Codex handoff -> validation -> delivery -> review.
-13. TASK-DEVO-086: Codex CLI worker adapter design doc - design controlled future automation without implementing it prematurely.
-14. TASK-DEVO-087: Optional Codex CLI worker MVP - add a bounded adapter only after the manual handoff flow is solid.
-15. TASK-DEVO-088: Agent worker abstraction - define the stable worker interface for manual, Codex CLI, and future model adapters.
-16. TASK-DEVO-089+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
+12. TASK-DEVO-085: End-to-end workflow dogfood run on DevOrchestrator - completed.
+13. TASK-DEVO-086: Planning pipeline operator guidance and input robustness - fix dogfood findings around BOM input handling, stale next-action guidance, concrete queue/handoff commands, and clearer starter-backlog warnings.
+14. TASK-DEVO-087: Codex CLI worker adapter design doc - design controlled future automation without implementing it prematurely.
+15. TASK-DEVO-088: Optional Codex CLI worker MVP - add a bounded adapter only after the manual handoff flow is solid.
+16. TASK-DEVO-089: Agent worker abstraction - define the stable worker interface for manual, Codex CLI, and future model adapters.
+17. TASK-DEVO-090+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 
@@ -170,7 +171,7 @@ The completion target for returning more focus to other projects is:
 - UI progress visibility
 - one dogfood end-to-end run
 
-At that point Devo can be considered around 80-85% complete for personal use.
+That dogfood point has now been reached. Devo can be considered around 80-85% complete for personal use, with the next work focused on making the proven manual pipeline smoother and less surprising.
 
 ## Decision Rules For Future Task Selection
 

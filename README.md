@@ -32,6 +32,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Visual strategy](docs/visual-strategy.md)
 - [UI/API architecture](docs/ui-architecture.md)
 - [UI MVP specification](docs/ui-mvp-spec.md)
+- [TASK-DEVO-085 planning pipeline dogfood report](docs/dogfood/devo-pipeline-dogfood-085.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
 - [Roadmap](docs/roadmap.md)
 - [How to use Devo](docs/how-to-use-devo.md)

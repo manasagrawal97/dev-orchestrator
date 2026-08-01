@@ -161,6 +161,8 @@ devo project progress --project MyProject --json
 
 The summary includes Project Brief/Blueprint/Backlog status, task counts, active/completed/ready/approved/draft/blocked counts, project completion percent, backlog readiness percent, blocked percent, batch completion percent, latest batch, milestone progress, epic progress, warnings, and the next planning action.
 
+For a real end-to-end example of this planning pipeline on DevOrchestrator itself, see `docs/dogfood/devo-pipeline-dogfood-085.md`. That report shows the exact brief -> blueprint -> backlog -> batch -> approval -> queue -> handoff -> progress command sequence, plus the operator-friction issues found during dogfood.
+
 ## Execution Queue State
 
 Execution queues are deterministic state tracking artifacts created from approved planning batches. They do not run Codex, run validation, run Git commands, commit, push, or modify target project source.
