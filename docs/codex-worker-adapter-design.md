@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-089 update, after manual Codex worker report import was added. This is still a design document for future worker execution. Devo does not implement Codex CLI execution, AI API usage, target command execution, or autonomous delivery.
+Source/freshness: TASK-DEVO-090 update, after the read-only Worker Runs dashboard page was added. This is still a design document for future worker execution. Devo does not implement Codex CLI execution, AI API usage, target command execution, or autonomous delivery.
 
 ## Purpose
 
@@ -263,6 +263,7 @@ Command names are proposals and may change after supervised execution is impleme
 UI exposes worker state cautiously:
 
 - Handoffs page worker-run summary
+- dedicated Worker Runs page
 - worker run status
 - source handoff
 - report status
@@ -275,7 +276,7 @@ UI exposes worker state cautiously:
 - review checklist
 - copyable CLI commands for report template, validation, import, show, and list
 
-The UI is read-only. It does not include risky buttons for execution, validation, commit, push, restore, scheduler changes, target app runs, or model/API calls.
+The UI is read-only. The Worker Runs page inspects existing worker run/report artifacts and shows review guidance, but it does not import reports from the UI, launch Codex, execute target commands, complete queue items, validate, commit, push, restore, modify scheduler settings, run target apps, or call model/API agents.
 
 Later, the controlled Action Safety model may expose workspace-safe worker actions with explicit confirmation, such as generating worker plan artifacts or importing a worker report. Launching Codex from UI should require a stronger approval and safety model.
 
@@ -285,7 +286,7 @@ Recommended future sequence:
 
 1. TASK-DEVO-088: Worker run/report data model - completed.
 2. TASK-DEVO-089: Manual execution report import - completed.
-3. TASK-DEVO-090: Worker run UI visibility and review affordance polish.
+3. TASK-DEVO-090: Worker run UI visibility and review affordance polish - completed.
 4. TASK-DEVO-091: Supervised Codex CLI adapter prototype.
 5. TASK-DEVO-092: Queue integration for one item at a time.
 6. TASK-DEVO-093: Pause/resume/usage-limit handling.

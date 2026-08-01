@@ -19,7 +19,7 @@ import type {
 
 interface PlanningIntakePageProps {
   selectedProject: string | null;
-  onOpenPage?: (page: 'blueprint' | 'backlog' | 'batches' | 'queues' | 'handoffs' | 'progress') => void;
+  onOpenPage?: (page: 'blueprint' | 'backlog' | 'batches' | 'queues' | 'handoffs' | 'worker-runs' | 'progress') => void;
 }
 
 interface OptionalState<T> {
@@ -226,6 +226,11 @@ export function PlanningIntakePage({ selectedProject, onOpenPage }: PlanningInta
           {onOpenPage ? (
             <button className="link-button detail-link" type="button" onClick={() => onOpenPage('handoffs')}>
               Open Handoff detail
+            </button>
+          ) : null}
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('worker-runs')}>
+              Open Worker Runs
             </button>
           ) : null}
         </PlanningSection>

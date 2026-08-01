@@ -9,6 +9,7 @@ import type { CodexHandoff, ProjectHandoffsResponse, WorkerRunsResponse } from '
 
 interface HandoffsPageProps {
   selectedProject: string | null;
+  onOpenPage?: (page: 'worker-runs') => void;
 }
 
 interface OptionalState<T> {
@@ -19,7 +20,7 @@ interface OptionalState<T> {
 
 const emptyOptional = <T,>(): OptionalState<T> => ({ data: null, loading: false, error: null });
 
-export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
+export function HandoffsPage({ selectedProject, onOpenPage }: HandoffsPageProps) {
   const [handoffs, setHandoffs] = useState<OptionalState<ProjectHandoffsResponse>>(emptyOptional);
   const [workerRuns, setWorkerRuns] = useState<OptionalState<WorkerRunsResponse>>(emptyOptional);
   const [selectedHandoffId, setSelectedHandoffId] = useState<string | null>(null);
@@ -183,6 +184,12 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
             <CommandCopyBox command={`devo worker codex report-validate --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'} --file <reportFile>`} />
             <CommandCopyBox command={`devo worker codex report-import --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'} --file <reportFile>`} />
             <CommandCopyBox command={`devo worker codex report-show --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'}`} />
+            <CommandCopyBox command={`devo worker codex report-list --project ${selectedProject}`} />
+            {onOpenPage ? (
+              <button className="link-button detail-link" type="button" onClick={() => onOpenPage('worker-runs')}>
+                Open Worker Runs
+              </button>
+            ) : null}
           </SummaryCard>
         </>
       ) : null}

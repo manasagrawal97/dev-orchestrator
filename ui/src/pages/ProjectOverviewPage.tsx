@@ -11,7 +11,7 @@ import type { DoctorReport, ProjectActivity, ProjectOverview } from '../types/de
 interface ProjectOverviewPageProps {
   selectedProject: string | null;
   onSelectRun: (runId: string) => void;
-  onOpenPage?: (page: 'batches' | 'queues' | 'handoffs' | 'progress') => void;
+  onOpenPage?: (page: 'batches' | 'queues' | 'handoffs' | 'worker-runs' | 'progress') => void;
 }
 
 export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }: ProjectOverviewPageProps) {
@@ -262,6 +262,9 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                   </button>
                   <button className="link-button detail-link" type="button" onClick={() => onOpenPage('handoffs')}>
                     Open Handoffs
+                  </button>
+                  <button className="link-button detail-link" type="button" onClick={() => onOpenPage('worker-runs')}>
+                    Open Worker Runs
                   </button>
                 </div>
               ) : null}

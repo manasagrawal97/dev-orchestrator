@@ -251,6 +251,10 @@ Added workspace-only Codex worker run records under `workspace/projects/<project
 
 Added `devo worker codex report-template`, `report-validate`, `report-import`, `report-show`, and `report-list`. Reports live under `workspace/projects/<project>/workers/codex/reports/` and capture worker-reported status, summary, changed files, validation/tests/commands, optional commit hash, safety warnings, blockers, follow-ups, and notes. Import updates worker-run report metadata and conservative review-oriented next actions only; it does not run Codex, call AI APIs, execute target commands, trust completion, complete queue/tasks, validate, commit, push, or modify target projects. ProjectOverview, the local API, and the Handoffs dashboard expose report status and guidance read-only.
 
+### TASK-DEVO-090 Worker Runs UI Visibility - Completed
+
+Added a dedicated read-only Worker Runs dashboard page. It shows worker run counts, latest state, run list, selected run detail, allowed/forbidden scope, validation expectations, safety boundaries, imported report detail, reported changed files/tests/commands, safety warnings, blockers, follow-ups, related handoff/queue context, and copyable CLI guidance. It adds no Codex execution, report upload/import buttons, target command execution, validation/build/test, commit/push, restore, scheduler controls, model/API calls, or queue/task completion buttons.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

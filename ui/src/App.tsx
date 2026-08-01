@@ -12,6 +12,7 @@ import { ProgressPage } from './pages/ProgressPage';
 import { ProjectOverviewPage } from './pages/ProjectOverviewPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { QueuesPage } from './pages/QueuesPage';
+import { WorkerRunsPage } from './pages/WorkerRunsPage';
 import { WorkPackagePage } from './pages/WorkPackagePage';
 import type { CurrentContext } from './types/devo';
 
@@ -24,6 +25,7 @@ type PageId =
   | 'batches'
   | 'queues'
   | 'handoffs'
+  | 'worker-runs'
   | 'progress'
   | 'work'
   | 'activity'
@@ -39,6 +41,7 @@ const pages: Array<{ id: PageId; label: string }> = [
   { id: 'batches', label: 'Batches' },
   { id: 'queues', label: 'Queues' },
   { id: 'handoffs', label: 'Handoffs' },
+  { id: 'worker-runs', label: 'Worker Runs' },
   { id: 'progress', label: 'Progress' },
   { id: 'work', label: 'Work Package' },
   { id: 'activity', label: 'Activity' },
@@ -150,7 +153,8 @@ export default function App() {
           {activePage === 'backlog' ? <BacklogPage selectedProject={selectedProject} /> : null}
           {activePage === 'batches' ? <BatchesPage selectedProject={selectedProject} /> : null}
           {activePage === 'queues' ? <QueuesPage selectedProject={selectedProject} /> : null}
-          {activePage === 'handoffs' ? <HandoffsPage selectedProject={selectedProject} /> : null}
+          {activePage === 'handoffs' ? <HandoffsPage selectedProject={selectedProject} onOpenPage={setActivePage} /> : null}
+          {activePage === 'worker-runs' ? <WorkerRunsPage selectedProject={selectedProject} /> : null}
           {activePage === 'progress' ? <ProgressPage selectedProject={selectedProject} /> : null}
           {activePage === 'work' ? (
             <WorkPackagePage
