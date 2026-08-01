@@ -203,6 +203,8 @@ Handoff artifacts live under `workspace/projects/<project>/planning/handoffs/` a
 
 Devo still does not run Codex, call AI APIs, execute target repo commands, approve implementation, run validation, commit, push, or modify target project source. The user manually pastes the generated prompt into Codex and must request explicit trusted approval when a safety gate blocks work.
 
+Future Codex CLI worker integration is design-only for now. Read `docs/codex-worker-adapter-design.md` before any worker adapter work. Manual handoff remains supported, and any future worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
+
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
 ```mermaid

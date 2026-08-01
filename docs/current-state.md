@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -39,12 +39,13 @@ The working loop is:
 ## Latest State
 
 - Latest completed source task: TASK-DEVO-086 planning pipeline operator guidance and input robustness
+- Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-DEVO-085 end-to-end planning pipeline dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: continue toward TASK-DEVO-087 Codex CLI worker adapter design, keeping automation design-only until the manual handoff workflow remains solid.
+- Next recommended action: continue toward TASK-DEVO-088 worker run/report data model, keeping actual Codex execution deferred until design, report import, visibility, and safety gates are ready.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -104,6 +105,7 @@ The working loop is:
 - TASK-DEVO-084 adds explicit planning Batch approval artifacts under `workspace/projects/<project>/planning/batches/approvals/`, plus `devo project batch-approval-request`, `batch-approval-show`, `batch-approval-list`, enhanced `batch-review --needs-changes`, enhanced `batch-approve --note`, and `batch-reject`. Approval artifacts record review status, decision notes, task/risk/lane/dependency/scope/validation summaries, and next action. Read models/API/UI visibility now expose approval counts and latest approval/review state, and the controlled UI action safety model supports confirmed workspace-only batch approval/review actions. Batch approval remains planning approval only and does not create queues, run Codex, execute target commands, run validation, commit, push, restore, modify schedulers, edit target files, or call model APIs.
 - TASK-DEVO-085 dogfoods the full planning pipeline on DevOrchestrator itself and records the result in `docs/dogfood/devo-pipeline-dogfood-085.md`. The run validated brief, blueprint, backlog, batch suggestion, batch approval/review, queue state, handoff prompt generation, and progress reporting. It found several small operator-friction issues: BOM-prefixed brief input can crash Windows console output, `backlog-approve` next-action guidance is stale, and `queue-next` prints a placeholder handoff command instead of the actual project/queue ids. Generated planning artifacts remain workspace-only and were not committed.
 - TASK-DEVO-086 fixes the main TASK-DEVO-085 dogfood friction: BOM-prefixed planning text inputs are handled safely for brief creation, starter backlog CLI/Markdown guidance now warns that deterministic backlogs are not implementation-ready by default, backlog approval points to real `batch-suggest --limit 10` commands, queue-next handoff guidance uses concrete project/queue ids, and UI verification docs clarify that `devo ui status` only checks reachability unless the local API/UI servers are running.
+- TASK-DEVO-087 adds `docs/codex-worker-adapter-design.md` as the design-only plan for a future Codex CLI/Desktop worker adapter. It documents manual handoff as Mode 0, assisted handoff/report import, supervised local Codex runs, one-at-a-time queue worker integration, future multi-worker agents, worker run storage under `workspace/projects/<project>/workers/codex/`, conservative queue state transitions, separate planning/execution/delivery/safety approvals, usage-limit pauses, validation/review handling, proposed future CLI commands, UI visibility, rollout tasks, and deferred autonomous/API-agent scope.
 
 ## Readiness Estimate
 
@@ -200,6 +202,7 @@ The next product step should focus on the planning pipeline in `docs/remaining-r
 - TASK-DEVO-084 batch approval/review workflow
 - TASK-DEVO-085 end-to-end planning pipeline dogfood run
 - TASK-DEVO-086 planning pipeline guidance and input robustness
+- TASK-DEVO-087 Codex CLI worker adapter design
 
 ## Recovery Pointers
 
@@ -209,13 +212,14 @@ If chat context is lost, start here:
 2. Read `docs/devo-vision.md`.
 3. Read `docs/devo-company-model.md`.
 4. Read `docs/remaining-roadmap.md`.
-5. Read `docs/current-capabilities.md`.
-6. Read `docs/agent-workflow.md`.
-7. Read `docs/ui-architecture.md` when continuing UI/API planning.
-8. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
-9. Read `docs/roadmap.md`.
-10. Read `docs/operating-model.md`.
-11. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-12. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-13. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
-14. Continue from the latest planned next task.
+5. Read `docs/codex-worker-adapter-design.md` before worker adapter work.
+6. Read `docs/current-capabilities.md`.
+7. Read `docs/agent-workflow.md`.
+8. Read `docs/ui-architecture.md` when continuing UI/API planning.
+9. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
+10. Read `docs/roadmap.md`.
+11. Read `docs/operating-model.md`.
+12. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+13. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+14. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+15. Continue from the latest planned next task.

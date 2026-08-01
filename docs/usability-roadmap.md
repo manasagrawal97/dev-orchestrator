@@ -53,7 +53,7 @@ Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. 
 
 The long-term direction is documented in `docs/devo-company-model.md`: Devo should become a local software-development company operating system around AI workers. The next major usability layer should support project brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. The prioritized task order is documented in `docs/remaining-roadmap.md`.
 
-TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. TASK-DEVO-076 adds a Codex/manual backlog refinement prompt and safe refined-backlog import path. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds deterministic count-based progress summaries and a read-only dashboard Progress card. TASK-DEVO-079 adds execution queue state tracking and read-only queue summaries. TASK-DEVO-080 adds Codex-ready handoff prompts and read-only handoff summaries. TASK-DEVO-081 adds the first dedicated read-only Planning Intake page for the full planning pipeline. TASK-DEVO-082 adds detailed read-only Blueprint and Backlog pages. TASK-DEVO-083 adds detailed read-only Batch, Queue, Handoff, and Progress pages. TASK-DEVO-084 adds explicit workspace-only Batch approval/review artifacts and decisions. TASK-DEVO-085 proves the full planning pipeline through dogfood, and TASK-DEVO-086 tightens the main operator guidance and input robustness issues found there.
+TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. TASK-DEVO-076 adds a Codex/manual backlog refinement prompt and safe refined-backlog import path. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds deterministic count-based progress summaries and a read-only dashboard Progress card. TASK-DEVO-079 adds execution queue state tracking and read-only queue summaries. TASK-DEVO-080 adds Codex-ready handoff prompts and read-only handoff summaries. TASK-DEVO-081 adds the first dedicated read-only Planning Intake page for the full planning pipeline. TASK-DEVO-082 adds detailed read-only Blueprint and Backlog pages. TASK-DEVO-083 adds detailed read-only Batch, Queue, Handoff, and Progress pages. TASK-DEVO-084 adds explicit workspace-only Batch approval/review artifacts and decisions. TASK-DEVO-085 proves the full planning pipeline through dogfood, TASK-DEVO-086 tightens the main operator guidance and input robustness issues found there, and TASK-DEVO-087 documents the future Codex worker adapter safety model without implementing automation.
 
 ### Work Packages - MVP Added
 
@@ -273,7 +273,7 @@ That should come after:
 
 Direct agent execution should use the same policy, approval, validation, and evidence model. It should not be a bypass around it.
 
-Possible adapters include OpenAI, Claude, Gemini, and local models. API token cost should be explicit and controlled. Manual/Codex mode must remain supported.
+Possible adapters include Codex CLI/Desktop, OpenAI, Claude, Gemini, and local models. API token cost should be explicit and controlled. Manual/Codex mode must remain supported. The Codex CLI worker adapter design is documented in `docs/codex-worker-adapter-design.md`; implementation should start with worker run/report artifacts and manual report import before any supervised process launch.
 
 ## Near-Term Priority
 
@@ -283,4 +283,5 @@ The best next usability improvements are:
 2. Expand local agent workflow: handoff prompt generation, task templates, and interrupted-work recovery/resume.
 3. Expand generated visual reports only where they clarify current work.
 4. Plan dashboard/UI later from the structured Devo data model.
-5. Add direct model adapters later, after manual/Codex mode is smooth and cost controls are clear.
+5. Add worker run/report visibility before any supervised Codex CLI launch.
+6. Add direct model adapters later, after manual/Codex mode is smooth and cost controls are clear.

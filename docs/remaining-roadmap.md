@@ -136,10 +136,16 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 11. TASK-DEVO-084: Batch approval/review workflow - completed.
 12. TASK-DEVO-085: End-to-end workflow dogfood run on DevOrchestrator - completed.
 13. TASK-DEVO-086: Planning pipeline operator guidance and input robustness - completed.
-14. TASK-DEVO-087: Codex CLI worker adapter design doc - design controlled future automation without implementing it prematurely.
-15. TASK-DEVO-088: Optional Codex CLI worker MVP - add a bounded adapter only after the manual handoff flow is solid.
-16. TASK-DEVO-089: Agent worker abstraction - define the stable worker interface for manual, Codex CLI, and future model adapters.
-17. TASK-DEVO-090+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
+14. TASK-DEVO-087: Codex CLI worker adapter design doc - completed.
+15. TASK-DEVO-088: Worker run/report data model - add workspace-only worker run records before launching Codex.
+16. TASK-DEVO-089: Manual execution report import - let users import worker-style reports from manually run Codex.
+17. TASK-DEVO-090: Worker run UI visibility - show worker run/report state read-only.
+18. TASK-DEVO-091: Supervised Codex CLI adapter prototype - launch Codex only after explicit approval.
+19. TASK-DEVO-092: Queue integration for one item at a time.
+20. TASK-DEVO-093: Pause/resume and usage-limit handling.
+21. TASK-DEVO-094: Validation/review integration.
+22. TASK-DEVO-095: Optional commit/push delivery integration after safety review.
+23. TASK-DEVO-096+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

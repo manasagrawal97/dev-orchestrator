@@ -134,7 +134,7 @@ Devo should generate structured handoff prompts for Codex:
 
 TASK-DEVO-080 implements this as manual prompt generation under `workspace/projects/<project>/planning/handoffs/`. The user still pastes the generated prompt into Codex; Devo does not invoke Codex CLI or run target project commands.
 
-Later, Devo may support controlled Codex CLI worker integration. That integration should remain bounded by Devo approvals, lanes, validation commands, Git delivery checks, and policy rules.
+Later, Devo may support controlled Codex CLI worker integration. TASK-DEVO-087 documents that future design in `docs/codex-worker-adapter-design.md`. That integration should remain bounded by Devo approvals, lanes, validation commands, Git delivery checks, worker run evidence, queue state, and policy rules.
 
 If Codex hits usage limits, errors, or availability limits, Devo should pause the queue honestly and preserve the next resume point. When usage resets or the user returns, Devo should resume from the approved queue without requiring the user to reconstruct context from chat history.
 

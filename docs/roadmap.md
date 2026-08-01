@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-087 Codex CLI worker adapter design doc
+- TASK-DEVO-088 Worker run/report data model
 
 ## Updated Roadmap Phases
 
@@ -28,7 +28,7 @@ Add durable Project Brief, Blueprint, Backlog/task, dependency, risk/lane mappin
 
 Generate structured Codex handoff prompts, task prompts, and batch prompts from approved planning artifacts. Add the execution queue state machine, pause/resume, usage-limit pause reasons, and blocked task handling. Codex/Desktop/CLI remains the default worker.
 
-The long-term agent model is documented in `docs/devo-company-model.md`: Devo owns role contracts and workflow state, while worker backends such as manual operation, Codex CLI, API models, or local models can be attached later. Codex CLI should be the default personal/local worker.
+The long-term agent model is documented in `docs/devo-company-model.md`, and the future Codex adapter safety design is documented in `docs/codex-worker-adapter-design.md`: Devo owns role contracts and workflow state, while worker backends such as manual operation, Codex CLI, API models, or local models can be attached later. Codex CLI should be the default personal/local worker.
 
 ### Phase 3: UI Planning And Progress Pages
 
@@ -238,6 +238,10 @@ Ran the current planning pipeline on DevOrchestrator itself and documented the r
 ### TASK-DEVO-086 Planning Pipeline Guidance And Input Robustness - Completed
 
 Fixed the main TASK-DEVO-085 dogfood friction before adding new workflow features. Brief creation now reads planning text with UTF-8 BOM handling and strips BOM markers before storing/rendering summaries. Starter backlog CLI output and generated `backlog.md` now warn that deterministic backlogs are not implementation-ready by default and point to `backlog-prompt`/`backlog-import` before batch creation. `backlog-approve` now suggests concrete `batch-suggest --limit 10` commands, and `queue-next` now prints actual project/queue/task handoff commands instead of placeholders. UI verification docs now clarify that `devo ui status` is a reachability check and browser page review requires the local API/UI servers to be running.
+
+### TASK-DEVO-087 Codex CLI Worker Adapter Design - Completed
+
+Added `docs/codex-worker-adapter-design.md` to define the future Codex CLI/Desktop worker adapter before implementation. The design keeps manual handoff as Mode 0, then stages assisted report import, supervised local Codex worker runs, one-at-a-time queue worker integration, and later multi-worker adapters. It defines conceptual worker input/output fields, workspace-only storage under `workspace/projects/<project>/workers/codex/`, conservative queue state mapping, usage-limit pause handling, validation/review requirements, separate planning/execution/delivery/safety approvals, proposed future CLI commands, UI visibility, rollout tasks TASK-DEVO-088 through TASK-DEVO-095, and explicitly deferred autonomous/API-agent scope.
 
 ### TASK-023 Safe Validation Runner
 

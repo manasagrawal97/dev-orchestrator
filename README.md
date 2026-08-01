@@ -25,6 +25,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Current state](docs/current-state.md)
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
+- [Codex worker adapter design](docs/codex-worker-adapter-design.md)
 - [Remaining roadmap](docs/remaining-roadmap.md)
 - [Current capabilities](docs/current-capabilities.md)
 - [Agent workflow](docs/agent-workflow.md)
@@ -205,6 +206,8 @@ devo project handoff-mark-used --project MyProject --handoff H001
 ```
 
 Handoff artifacts are stored under `workspace/projects/<project>/planning/handoffs/` as `handoff-<handoff_id>.json`, `handoff-<handoff_id>.md`, and `handoff-index.json`. Handoff prompts are the first safe bridge from Devo planning to Codex execution: Devo writes a prompt, then the user manually pastes it into Codex. Devo still does not run Codex, call AI APIs, execute target commands, approve implementation, run validation, commit, push, or modify target project source.
+
+The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). It is design-only: manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 
 List registered projects:
 
