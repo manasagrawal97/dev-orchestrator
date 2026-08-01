@@ -3,15 +3,32 @@ import { devoApi } from './api/client';
 import { ActionSafetyPage } from './pages/ActionSafetyPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { BacklogPage } from './pages/BacklogPage';
+import { BatchesPage } from './pages/BatchesPage';
 import { BlueprintPage } from './pages/BlueprintPage';
+import { HandoffsPage } from './pages/HandoffsPage';
 import { HealthPage } from './pages/HealthPage';
 import { PlanningIntakePage } from './pages/PlanningIntakePage';
+import { ProgressPage } from './pages/ProgressPage';
 import { ProjectOverviewPage } from './pages/ProjectOverviewPage';
 import { ProjectsPage } from './pages/ProjectsPage';
+import { QueuesPage } from './pages/QueuesPage';
 import { WorkPackagePage } from './pages/WorkPackagePage';
 import type { CurrentContext } from './types/devo';
 
-type PageId = 'projects' | 'overview' | 'planning' | 'blueprint' | 'backlog' | 'work' | 'activity' | 'health' | 'actions';
+type PageId =
+  | 'projects'
+  | 'overview'
+  | 'planning'
+  | 'blueprint'
+  | 'backlog'
+  | 'batches'
+  | 'queues'
+  | 'handoffs'
+  | 'progress'
+  | 'work'
+  | 'activity'
+  | 'health'
+  | 'actions';
 
 const pages: Array<{ id: PageId; label: string }> = [
   { id: 'projects', label: 'Projects' },
@@ -19,6 +36,10 @@ const pages: Array<{ id: PageId; label: string }> = [
   { id: 'planning', label: 'Planning Intake' },
   { id: 'blueprint', label: 'Blueprint' },
   { id: 'backlog', label: 'Backlog' },
+  { id: 'batches', label: 'Batches' },
+  { id: 'queues', label: 'Queues' },
+  { id: 'handoffs', label: 'Handoffs' },
+  { id: 'progress', label: 'Progress' },
   { id: 'work', label: 'Work Package' },
   { id: 'activity', label: 'Activity' },
   { id: 'health', label: 'Health' },
@@ -123,10 +144,14 @@ export default function App() {
           </div>
 
           {activePage === 'projects' ? <ProjectsPage selectedProject={selectedProject} onSelectProject={selectProject} /> : null}
-          {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} onSelectRun={selectRun} /> : null}
+          {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} onSelectRun={selectRun} onOpenPage={setActivePage} /> : null}
           {activePage === 'planning' ? <PlanningIntakePage selectedProject={selectedProject} onOpenPage={setActivePage} /> : null}
           {activePage === 'blueprint' ? <BlueprintPage selectedProject={selectedProject} /> : null}
           {activePage === 'backlog' ? <BacklogPage selectedProject={selectedProject} /> : null}
+          {activePage === 'batches' ? <BatchesPage selectedProject={selectedProject} /> : null}
+          {activePage === 'queues' ? <QueuesPage selectedProject={selectedProject} /> : null}
+          {activePage === 'handoffs' ? <HandoffsPage selectedProject={selectedProject} /> : null}
+          {activePage === 'progress' ? <ProgressPage selectedProject={selectedProject} /> : null}
           {activePage === 'work' ? (
             <WorkPackagePage
               selectedProject={selectedProject}

@@ -2,9 +2,12 @@ import type {
   ApiHealth,
   CurrentContext,
   DoctorReport,
+  CodexHandoff,
+  ExecutionQueue,
   ProjectBacklog,
   ProjectBatchesResponse,
   ProjectBlueprint,
+  ProjectBatch,
   ProjectBrief,
   ProjectActivity,
   ProjectHandoffsResponse,
@@ -70,8 +73,14 @@ export const devoApi = {
   getProjectBacklog: (project: string) => getJson<ProjectBacklog>(`/api/projects/${encodeURIComponent(project)}/backlog`),
   getProjectTasks: (project: string) => getJson<ProjectTasksResponse>(`/api/projects/${encodeURIComponent(project)}/tasks`),
   getProjectBatches: (project: string) => getJson<ProjectBatchesResponse>(`/api/projects/${encodeURIComponent(project)}/batches`),
+  getProjectBatch: (project: string, batchId: string) =>
+    getJson<ProjectBatch>(`/api/projects/${encodeURIComponent(project)}/batches/${encodeURIComponent(batchId)}`),
   getProjectQueues: (project: string) => getJson<ProjectQueuesResponse>(`/api/projects/${encodeURIComponent(project)}/queues`),
+  getProjectQueue: (project: string, queueId: string) =>
+    getJson<ExecutionQueue>(`/api/projects/${encodeURIComponent(project)}/queues/${encodeURIComponent(queueId)}`),
   getProjectHandoffs: (project: string) => getJson<ProjectHandoffsResponse>(`/api/projects/${encodeURIComponent(project)}/handoffs`),
+  getProjectHandoff: (project: string, handoffId: string) =>
+    getJson<CodexHandoff>(`/api/projects/${encodeURIComponent(project)}/handoffs/${encodeURIComponent(handoffId)}`),
   getProjectProgress: (project: string) => getJson<ProjectProgress>(`/api/projects/${encodeURIComponent(project)}/progress`),
   getProjectActivity: (project: string) => getJson<ProjectActivity>(`/api/projects/${encodeURIComponent(project)}/activity`),
   getProjectDoctor: (project: string) => getJson<DoctorReport>(`/api/projects/${encodeURIComponent(project)}/doctor`),

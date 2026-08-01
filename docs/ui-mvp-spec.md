@@ -16,7 +16,7 @@ It does not replace the CLI. It does not execute risky actions. UI v1 is read-on
 
 The longer-term UI should follow the company-model vision in `docs/devo-company-model.md`: project brief, blueprint, backlog, batches, queue, and progress views around Codex-powered execution. The implementation order for those planning/progress screens is tracked in `docs/remaining-roadmap.md`. It should not become a general chat clone.
 
-After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. TASK-DEVO-082 adds read-only Blueprint and Backlog detail pages with milestone/epic rollups, task filters, and selected-task detail. UI write controls for creating, importing, approving, queue transitions, handoff generation, or executing planning artifacts remain future scope.
+After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. TASK-DEVO-082 adds read-only Blueprint and Backlog detail pages with milestone/epic rollups, task filters, and selected-task detail. TASK-DEVO-083 adds read-only Batch, Queue, Handoff, and Progress pages with selected-artifact detail, queue item detail, handoff metadata, progress bars, milestone/epic progress, and CLI guidance. UI write controls for creating, importing, approving, reviewing, queue transitions, handoff generation, or executing planning artifacts remain future scope.
 
 ## UI MVP Principles
 
@@ -122,6 +122,70 @@ Sections:
 Primary user question: "Which task should I inspect or prepare next?"
 
 This page is read-only. It does not create, import, approve, execute, or mutate backlog/task artifacts from the UI.
+
+### B5. Batches Page
+
+Shows stored planning Batches in detail.
+
+Sections:
+
+- batch count, approved count, latest batch, and batch completion percentage
+- batch list with batch id, title, status, approval status, task counts, blocked/completed counts, risk summary, and lane summary
+- selected batch detail with summary, source backlog reference, dependencies, dependency warnings, review notes, and task snapshots
+- copyable CLI commands for `batch-list`, `batch-show`, `batch-suggest`, `batch-suggest --write`, and `batch-approve`
+
+Primary user question: "Which batch is ready or approved, and what does it contain?"
+
+This page is read-only. It does not create, suggest, review, approve, or mutate batches from the UI.
+
+### B6. Queues Page
+
+Shows stored execution Queues in detail.
+
+Sections:
+
+- queue count, latest queue, latest status, current item, and aggregate item counts
+- queue list with source batch, status, item counts, pause reason, and resume hint
+- selected queue detail with items, item status, task id, lane, risk, dependencies, acceptance criteria, validation expectations, and notes
+- copyable CLI commands for `queue-list`, `queue-show`, `queue-create`, `queue-start`, `queue-next`, `queue-pause`, and `queue-resume`
+
+Primary user question: "What is queued, paused, blocked, or completed?"
+
+This page is read-only. It does not create queues, start queues, resume queues, pause queues, advance queue items, run Codex, or mutate queue artifacts from the UI.
+
+### B7. Handoffs Page
+
+Shows stored Codex handoff metadata.
+
+Sections:
+
+- handoff count, latest handoff id, latest type, and latest status
+- handoff list with source queue, batch, item, task, prompt path, and status
+- selected handoff metadata
+- copyable CLI commands for `handoff-list`, `handoff-show`, `handoff-next`, `handoff-task`, `handoff-batch`, and `handoff-mark-used`
+
+Primary user question: "Which Codex handoff prompt exists, and what source artifact produced it?"
+
+This page is read-only. It does not generate prompts, mark prompts used, invoke Codex, call AI APIs, or execute target commands from the UI.
+
+### B8. Progress Page
+
+Shows planning and workflow progress in one dashboard.
+
+Sections:
+
+- project completion, backlog readiness, blocked percentage, and batch completion progress bars
+- task counts by draft, ready, approved, active, completed, and blocked
+- batch counts by total, approved, active, and completed
+- queue counts by total, latest status, pending, running, completed, blocked, and failed
+- milestone progress groups
+- epic progress groups
+- warnings and next action
+- copyable CLI command for `devo project progress`
+
+Primary user question: "How far through the plan is this project, and where is the next bottleneck?"
+
+This page is read-only. It does not recalculate by running target commands, execute queues, validate, commit, push, restore backups, edit target files, or call model APIs.
 
 ### C. Work Package / Run Detail Page
 

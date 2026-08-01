@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-083 UI Batch Queue and Progress dashboard
+- TASK-DEVO-084 Batch approval/review workflow
 
 ## Updated Roadmap Phases
 
@@ -222,6 +222,10 @@ Added a read-only Planning Intake page to the React/Vite dashboard. The page vis
 ### TASK-DEVO-082 UI Blueprint And Backlog Pages - Completed
 
 Added dedicated read-only Blueprint and Backlog pages to the React/Vite dashboard. Blueprint uses existing API responses to show blueprint status, vision, architecture notes, risks, validation strategy, open questions, milestones, linked epics, and milestone/epic progress rollups. Backlog shows backlog counts, readiness and blocked percentages, refinement prompt status, task filters by status/lane/risk/search, and a selected-task detail panel with acceptance criteria, validation expectations, allowed/forbidden scope, dependencies, notes, and source. The pages add copyable CLI guidance only and do not create, approve, import, execute, validate, commit, push, restore, modify schedulers, edit target files, or call model APIs.
+
+### TASK-DEVO-083 UI Batch Queue And Progress Dashboard - Completed
+
+Added detailed read-only Batch, Queue, Handoff, and Progress pages to the React/Vite dashboard. Batch pages show batch lists, selected batch detail, approval status, risk/lane summaries, dependency warnings, review notes, and task snapshots. Queue pages show queue lists, selected queue detail, item state, pause/resume metadata, acceptance criteria, validation expectations, and notes. Handoff pages show handoff metadata, source queue/batch/task/item fields, prompt paths, and handoff CLI guidance. Progress shows project/backlog/batch progress bars, task/batch/queue counts, milestone/epic progress, warnings, and next action. These pages remain inspection/operator guidance only and do not create/approve/review/start/resume queues, run Codex, execute target commands, validate, commit, push, restore, edit target files, modify schedulers, or call model APIs.
 
 ### TASK-023 Safe Validation Runner
 

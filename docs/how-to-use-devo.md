@@ -461,7 +461,11 @@ Open:
 http://127.0.0.1:5173
 ```
 
-The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Work Package, Activity, Health, and Action Safety pages. Planning Intake is a read-only operator guide for brief, blueprint, backlog, batch, queue, handoff, and progress state; it shows status/count summaries and copyable CLI commands. Blueprint and Backlog are read-only inspection pages for planning artifacts, milestone/epic rollups, task filters, and task details. They do not create, approve, or import planning artifacts from the UI, run Codex, execute target commands, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation.
+The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Progress, Work Package, Activity, Health, and Action Safety pages.
+
+Planning Intake is a read-only operator guide for brief, blueprint, backlog, batch, queue, handoff, and progress state; it shows status/count summaries and copyable CLI commands. Blueprint and Backlog are read-only inspection pages for planning artifacts, milestone/epic rollups, task filters, and task details. Batches, Queues, Handoffs, and Progress are read-only inspection pages for the later planning-to-Codex handoff stages: batch risk/lane summaries, queue item state, handoff prompt metadata, progress bars, milestone/epic rollups, warnings, and next actions.
+
+These pages do not create, approve, review, import, start, resume, execute, validate, commit, push, restore/delete backups, modify scheduler settings, edit target files, run Codex, execute target commands, or call model APIs from the UI. They provide copyable CLI commands so the user can continue through the safer CLI/Codex workflow. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation.
 
 ## Safety
 

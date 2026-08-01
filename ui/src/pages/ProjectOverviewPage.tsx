@@ -11,9 +11,10 @@ import type { DoctorReport, ProjectActivity, ProjectOverview } from '../types/de
 interface ProjectOverviewPageProps {
   selectedProject: string | null;
   onSelectRun: (runId: string) => void;
+  onOpenPage?: (page: 'batches' | 'queues' | 'handoffs' | 'progress') => void;
 }
 
-export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOverviewPageProps) {
+export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }: ProjectOverviewPageProps) {
   const [overview, setOverview] = useState<ProjectOverview | null>(null);
   const [activity, setActivity] = useState<ProjectActivity | null>(null);
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
@@ -238,6 +239,19 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
+              {onOpenPage ? (
+                <div className="detail-link-row">
+                  <button className="link-button detail-link" type="button" onClick={() => onOpenPage('batches')}>
+                    Open Batches
+                  </button>
+                  <button className="link-button detail-link" type="button" onClick={() => onOpenPage('queues')}>
+                    Open Queues
+                  </button>
+                  <button className="link-button detail-link" type="button" onClick={() => onOpenPage('handoffs')}>
+                    Open Handoffs
+                  </button>
+                </div>
+              ) : null}
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading planning summary..." /> : <ErrorState message="Planning summary is unavailable." />
@@ -261,6 +275,11 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
               <p className="muted compact">{overview.queue_count ? overview.queue_next_action : overview.progress_next_action}</p>
               <CommandCopyBox command={`devo project progress --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
+              {onOpenPage ? (
+                <button className="link-button detail-link" type="button" onClick={() => onOpenPage('progress')}>
+                  Open Progress dashboard
+                </button>
+              ) : null}
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading progress summary..." /> : <ErrorState message="Progress summary is unavailable." />

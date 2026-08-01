@@ -19,7 +19,7 @@ import type {
 
 interface PlanningIntakePageProps {
   selectedProject: string | null;
-  onOpenPage?: (page: 'blueprint' | 'backlog') => void;
+  onOpenPage?: (page: 'blueprint' | 'backlog' | 'batches' | 'queues' | 'handoffs' | 'progress') => void;
 }
 
 interface OptionalState<T> {
@@ -181,6 +181,11 @@ export function PlanningIntakePage({ selectedProject, onOpenPage }: PlanningInta
           <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject} --limit 10`} />
           <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject} --limit 10 --write`} />
           <CommandCopyBox command={`devo project batch-approve --project ${selectedProject} --batch ${latestBatch?.batch_id ?? '<batchId>'}`} />
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('batches')}>
+              Open Batch detail
+            </button>
+          ) : null}
         </PlanningSection>
 
         <PlanningSection title="Queue" state={queues}>
@@ -198,6 +203,11 @@ export function PlanningIntakePage({ selectedProject, onOpenPage }: PlanningInta
           <CommandCopyBox command={`devo project queue-create --project ${selectedProject} --batch ${latestBatch?.batch_id ?? '<batchId>'}`} />
           <CommandCopyBox command={`devo project queue-start --project ${selectedProject} --queue ${latestQueue?.queue_id ?? '<queueId>'}`} />
           <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${latestQueue?.queue_id ?? '<queueId>'}`} />
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('queues')}>
+              Open Queue detail
+            </button>
+          ) : null}
         </PlanningSection>
 
         <PlanningSection title="Handoff" state={handoffs}>
@@ -213,6 +223,11 @@ export function PlanningIntakePage({ selectedProject, onOpenPage }: PlanningInta
           <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue ${latestQueue?.queue_id ?? '<queueId>'}`} />
           <CommandCopyBox command={`devo project handoff-task --project ${selectedProject} --task <taskId>`} />
           <CommandCopyBox command={`devo project handoff-batch --project ${selectedProject} --batch ${latestBatch?.batch_id ?? '<batchId>'}`} />
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('handoffs')}>
+              Open Handoff detail
+            </button>
+          ) : null}
         </PlanningSection>
 
         <PlanningSection title="Progress" state={progress}>
@@ -239,6 +254,11 @@ export function PlanningIntakePage({ selectedProject, onOpenPage }: PlanningInta
             <EmptyState message="No Progress summary is available yet." />
           )}
           <CommandCopyBox command={`devo project progress --project ${selectedProject}`} />
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('progress')}>
+              Open Progress dashboard
+            </button>
+          ) : null}
         </PlanningSection>
       </div>
     </section>

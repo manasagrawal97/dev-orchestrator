@@ -189,55 +189,131 @@ export interface ProjectTasksResponse {
 export interface ProjectBatchesResponse {
   project: string;
   count: number;
-  batches: Array<{
-    batch_id: string;
-    title: string;
-    status: string;
-    approval_status: string;
-    task_count: number;
-  }>;
+  batches: ProjectBatch[];
+}
+
+export interface BatchTaskSnapshot {
+  task_id: string;
+  title: string;
+  lane: string;
+  risk_level: string;
+  status: string;
+  dependencies: string[];
+  acceptance_criteria_summary: string;
+  validation_expectations_summary: string;
+}
+
+export interface ProjectBatch {
+  project: string;
+  batch_id: string;
+  title: string;
+  summary: string;
+  source_backlog_reference: string;
+  status: string;
+  task_ids: string[];
+  task_count: number;
+  completed_task_count: number;
+  blocked_task_count: number;
+  risk_summary: Record<string, number>;
+  lane_summary: Record<string, number>;
+  dependencies: string[];
+  approval_status: string;
+  review_notes: string[];
+  task_snapshots: BatchTaskSnapshot[];
+  dependency_warnings: string[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ProjectQueuesResponse {
   project: string;
   count: number;
-  queues: Array<{
-    queue_id: string;
-    title: string;
-    source_batch_id: string;
-    status: string;
-    current_item_id: string | null;
-    pending_count: number;
-    completed_count: number;
-    blocked_count: number;
-  }>;
+  queues: ExecutionQueue[];
+}
+
+export interface QueueItem {
+  item_id: string;
+  task_id: string;
+  title: string;
+  lane: string;
+  risk_level: string;
+  status: string;
+  batch_id: string;
+  dependencies: string[];
+  acceptance_criteria: string[];
+  validation_expectations: string[];
+  started_at: string | null;
+  completed_at: string | null;
+  notes: string[];
+}
+
+export interface ExecutionQueue {
+  project: string;
+  queue_id: string;
+  title: string;
+  source_batch_id: string;
+  source_backlog_reference: string;
+  status: string;
+  items: QueueItem[];
+  item_count: number;
+  pending_count: number;
+  running_count: number;
+  completed_count: number;
+  blocked_count: number;
+  failed_count: number;
+  pause_reason: string | null;
+  resume_hint: string | null;
+  current_item_id: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ProjectHandoffsResponse {
   project: string;
   count: number;
-  handoffs: Array<{
-    handoff_id: string;
-    handoff_type: string;
-    title: string;
-    status: string;
-    source_queue_id: string | null;
-    source_batch_id: string | null;
-    source_item_id: string | null;
-    source_task_id: string | null;
-    prompt_path: string;
-  }>;
+  handoffs: CodexHandoff[];
+}
+
+export interface CodexHandoff {
+  project: string;
+  handoff_id: string;
+  handoff_type: string;
+  title: string;
+  status: string;
+  source_queue_id: string | null;
+  source_batch_id: string | null;
+  source_item_id: string | null;
+  source_task_id: string | null;
+  prompt_path: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ProjectProgress {
   project: string;
+  has_brief?: boolean;
   brief_status: string;
+  has_blueprint?: boolean;
   blueprint_status: string;
+  has_backlog?: boolean;
   backlog_status: string;
+  task_count: number;
+  completed_task_count: number;
+  active_task_count: number;
+  blocked_task_count: number;
+  approved_task_count: number;
+  ready_task_count: number;
+  draft_task_count: number;
   project_completion_percent: number;
   backlog_readiness_percent: number;
   blocked_percent: number;
+  batch_count: number;
+  approved_batch_count: number;
+  completed_batch_count: number;
+  active_batch_count: number;
   batch_completion_percent: number;
+  latest_batch_id: string | null;
+  latest_batch_status: string | null;
   next_action: string;
   warnings: string[];
   milestone_progress: PlanningProgressGroup[];

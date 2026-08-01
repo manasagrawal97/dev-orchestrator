@@ -613,6 +613,13 @@ tr:last-child td {
   margin-top: 14px;
 }
 
+.detail-link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .detail-panel {
   margin-top: 22px;
 }
@@ -669,6 +676,36 @@ tr:last-child td {
 .selected-row {
   border-color: #2aa876;
   box-shadow: 0 0 0 3px rgba(42, 168, 118, 0.12);
+}
+
+.progress-meter {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.progress-meter-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.progress-meter-track {
+  height: 11px;
+  overflow: hidden;
+  background: #e5edf6;
+  border: 1px solid #d1dbe8;
+  border-radius: 999px;
+}
+
+.progress-meter-track span {
+  display: block;
+  height: 100%;
+  background: #2aa876;
+  border-radius: inherit;
 }
 
 .json-details {

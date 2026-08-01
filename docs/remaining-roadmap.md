@@ -40,8 +40,9 @@ Devo already has:
 - Codex handoff prompt generation from queue, batch, and task artifacts
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
+- Read-only UI Batch, Queue, Handoff, and Progress detail pages
 
-These capabilities make Devo a useful local control plane today, but the product still needs stronger Batch Queue/Progress UI views and post-delivery review.
+These capabilities make Devo a useful local control plane today, but the product still needs post-delivery batch review and a full end-to-end dogfood run.
 
 ## Final Target Workflow
 
@@ -130,7 +131,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 7. TASK-DEVO-080: Codex handoff prompts for next task/batch - completed.
 8. TASK-DEVO-081: UI Planning Intake page - completed.
 9. TASK-DEVO-082: UI Blueprint/Backlog pages - completed.
-10. TASK-DEVO-083: UI Batch Queue and Progress dashboard - show queue state, progress, next action, and review needs.
+10. TASK-DEVO-083: UI Batch Queue and Progress dashboard - completed.
 11. TASK-DEVO-084: Batch approval/review workflow - support approval and post-delivery review around batches.
 12. TASK-DEVO-085: End-to-end workflow dogfood run on DevOrchestrator - prove brief -> blueprint -> backlog -> batch -> Codex handoff -> validation -> delivery -> review.
 13. TASK-DEVO-086: Codex CLI worker adapter design doc - design controlled future automation without implementing it prematurely.
