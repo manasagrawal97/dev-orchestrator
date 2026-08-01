@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-084 Batch approval/review workflow
+- TASK-DEVO-085 End-to-end workflow dogfood run on DevOrchestrator
 
 ## Updated Roadmap Phases
 
@@ -226,6 +226,10 @@ Added dedicated read-only Blueprint and Backlog pages to the React/Vite dashboar
 ### TASK-DEVO-083 UI Batch Queue And Progress Dashboard - Completed
 
 Added detailed read-only Batch, Queue, Handoff, and Progress pages to the React/Vite dashboard. Batch pages show batch lists, selected batch detail, approval status, risk/lane summaries, dependency warnings, review notes, and task snapshots. Queue pages show queue lists, selected queue detail, item state, pause/resume metadata, acceptance criteria, validation expectations, and notes. Handoff pages show handoff metadata, source queue/batch/task/item fields, prompt paths, and handoff CLI guidance. Progress shows project/backlog/batch progress bars, task/batch/queue counts, milestone/epic progress, warnings, and next action. These pages remain inspection/operator guidance only and do not create/approve/review/start/resume queues, run Codex, execute target commands, validate, commit, push, restore, edit target files, modify schedulers, or call model APIs.
+
+### TASK-DEVO-084 Batch Approval And Review Workflow - Completed
+
+Added explicit workspace-only Batch approval artifacts under `workspace/projects/<project>/planning/batches/approvals/`. Devo can request batch approval, show/list approval artifacts, record reviewed or needs-changes notes, approve planning with decision notes, and reject planning without deleting batches or mutating backlog/tasks. Approval artifacts summarize task scope, high-risk task count, dependency warnings, risk/lane counts, validation expectations, decision notes, and next suggested command. ProjectOverview/read-model/API responses expose latest batch approval/review status and approval counts, the Batches UI shows approval metadata, and the controlled UI action safety model supports confirmed workspace-safe batch approval/review actions only. Batch approval remains planning approval; queue creation, Codex handoff, validation, commit, push, target project edits, restore, scheduler changes, and model/API calls remain separate or deferred.
 
 ### TASK-023 Safe Validation Runner
 

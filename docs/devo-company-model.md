@@ -107,7 +107,7 @@ Future Devo should introduce durable planning artifacts:
 - Dependencies: ordering and blocking relationships.
 - Risk levels: low, medium, high, or critical safety classification.
 - Lanes: execution modes such as docs-only, low-risk UI maintenance, small bugfix, small feature, test-only, or Devo internal source.
-- Batches: approved groups of tasks that can be executed together.
+- Batches: reviewed and planning-approved groups of tasks that can be executed together after a separate queue step.
 - Execution Queue: ordered approved work waiting for Codex or another worker.
 - Progress percent: transparent progress across blueprint, backlog, milestone, batch, and task levels.
 - Batch review: user review of delivered work and evidence.
@@ -115,7 +115,7 @@ Future Devo should introduce durable planning artifacts:
 
 These concepts should build on existing Devo work packages, lanes, approvals, validation, work history, reports, read models, and UI action safety.
 
-TASK-DEVO-074 adds the first two durable planning artifacts: Project Brief and Blueprint. TASK-DEVO-075 adds deterministic Backlog and Task artifacts from the blueprint. TASK-DEVO-076 adds a Codex-ready planning handoff prompt plus refined-backlog validation/import, while still avoiding direct Codex or AI API execution. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds count-based progress summaries across tasks, milestones, epics, and batches. TASK-DEVO-079 adds execution queue state tracking. TASK-DEVO-080 adds Codex-ready handoff prompts for queue items, tasks, and batches. Direct worker automation and AI/API execution models remain future work.
+TASK-DEVO-074 adds the first two durable planning artifacts: Project Brief and Blueprint. TASK-DEVO-075 adds deterministic Backlog and Task artifacts from the blueprint. TASK-DEVO-076 adds a Codex-ready planning handoff prompt plus refined-backlog validation/import, while still avoiding direct Codex or AI API execution. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds count-based progress summaries across tasks, milestones, epics, and batches. TASK-DEVO-079 adds execution queue state tracking. TASK-DEVO-080 adds Codex-ready handoff prompts for queue items, tasks, and batches. TASK-DEVO-084 adds explicit Batch approval/review artifacts and decisions. Batch approval is planning approval only: queue creation, Codex handoff, validation, delivery, and target project edits stay separate. Direct worker automation and AI/API execution models remain future work.
 
 ## Codex CLI Worker Strategy
 

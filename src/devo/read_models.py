@@ -12,6 +12,7 @@ from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
 from .project_planning import (
     calculate_project_progress,
+    list_batch_approvals,
     list_codex_handoffs,
     list_project_batches,
     list_execution_queues,
@@ -99,6 +100,13 @@ class ProjectOverview(BaseModel):
     approved_batch_count: int = 0
     latest_batch_id: str | None = None
     latest_batch_status: str | None = None
+    latest_batch_approval_status: str | None = None
+    latest_batch_review_status: str | None = None
+    batch_approval_requested_count: int = 0
+    batch_approved_count: int = 0
+    batch_rejected_count: int = 0
+    batch_needs_changes_count: int = 0
+    batch_approval_next_action: str = "Create a Project Brief."
     queue_count: int = 0
     latest_queue_id: str | None = None
     latest_queue_status: str | None = None
@@ -180,6 +188,13 @@ def build_project_overview_with_timing(
             approved_batch_count=int(planning["approved_batch_count"]),
             latest_batch_id=str(planning["latest_batch_id"]) if planning["latest_batch_id"] else None,
             latest_batch_status=str(planning["latest_batch_status"]) if planning["latest_batch_status"] else None,
+            latest_batch_approval_status=str(planning["latest_batch_approval_status"]) if planning["latest_batch_approval_status"] else None,
+            latest_batch_review_status=str(planning["latest_batch_review_status"]) if planning["latest_batch_review_status"] else None,
+            batch_approval_requested_count=int(planning["batch_approval_requested_count"]),
+            batch_approved_count=int(planning["batch_approved_count"]),
+            batch_rejected_count=int(planning["batch_rejected_count"]),
+            batch_needs_changes_count=int(planning["batch_needs_changes_count"]),
+            batch_approval_next_action=str(planning["batch_approval_next_action"]),
             queue_count=int(planning["queue_count"]),
             latest_queue_id=str(planning["latest_queue_id"]) if planning["latest_queue_id"] else None,
             latest_queue_status=str(planning["latest_queue_status"]) if planning["latest_queue_status"] else None,
@@ -408,6 +423,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         blueprint = load_project_blueprint(project_name, workspace_root=workspace_root)
         backlog = load_project_backlog(project_name, workspace_root=workspace_root)
         batches = list_project_batches(project_name, workspace_root=workspace_root)
+        batch_approvals = list_batch_approvals(project_name, workspace_root=workspace_root)
         queues = list_execution_queues(project_name, workspace_root=workspace_root)
         handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
         progress = calculate_project_progress(project_name, workspace_root=workspace_root)
@@ -428,6 +444,13 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "approved_batch_count": 0,
             "latest_batch_id": None,
             "latest_batch_status": None,
+            "latest_batch_approval_status": None,
+            "latest_batch_review_status": None,
+            "batch_approval_requested_count": 0,
+            "batch_approved_count": 0,
+            "batch_rejected_count": 0,
+            "batch_needs_changes_count": 0,
+            "batch_approval_next_action": f"Review planning artifacts: {exc}",
             "queue_count": 0,
             "latest_queue_id": None,
             "latest_queue_status": None,
@@ -451,6 +474,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         }
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     latest_batch = batches[0] if batches else None
+    latest_batch_approval = next((approval for approval in batch_approvals if latest_batch and approval.batch_id == latest_batch.batch_id), None)
     latest_queue = queues[0] if queues else None
     latest_handoff = handoffs[0] if handoffs else None
     if not brief:
@@ -468,7 +492,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     elif not batches:
         next_action = f"Create or suggest a Batch: devo project batch-suggest --project {project_name}"
     elif not any(batch.approval_status == "approved" for batch in batches):
-        next_action = f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
+        if latest_batch_approval and latest_batch_approval.approval_status == "requested":
+            next_action = f"Review requested Batch approval: devo project batch-approval-show --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
+        else:
+            next_action = f"Request Batch approval: devo project batch-approval-request --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'} --note \"<note>\""
     elif not queues:
         next_action = f"Create an Execution Queue: devo project queue-create --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
     else:
@@ -491,6 +518,13 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "approved_batch_count": sum(1 for batch in batches if batch.approval_status == "approved"),
         "latest_batch_id": latest_batch.batch_id if latest_batch else None,
         "latest_batch_status": latest_batch.status if latest_batch else None,
+        "latest_batch_approval_status": (latest_batch_approval.approval_status if latest_batch_approval else latest_batch.approval_status) if latest_batch else None,
+        "latest_batch_review_status": (latest_batch_approval.review_status if latest_batch_approval else latest_batch.review_status) if latest_batch else None,
+        "batch_approval_requested_count": sum(1 for approval in batch_approvals if approval.approval_status == "requested"),
+        "batch_approved_count": sum(1 for approval in batch_approvals if approval.approval_status == "approved"),
+        "batch_rejected_count": sum(1 for approval in batch_approvals if approval.approval_status == "rejected"),
+        "batch_needs_changes_count": sum(1 for approval in batch_approvals if approval.review_status == "needs_changes"),
+        "batch_approval_next_action": latest_batch_approval.next_action if latest_batch_approval else next_action,
         "queue_count": len(queues),
         "latest_queue_id": latest_queue.queue_id if latest_queue else None,
         "latest_queue_status": latest_queue.status if latest_queue else None,

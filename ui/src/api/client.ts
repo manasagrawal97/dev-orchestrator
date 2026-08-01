@@ -1,5 +1,7 @@
 import type {
   ApiHealth,
+  BatchApproval,
+  BatchApprovalsResponse,
   CurrentContext,
   DoctorReport,
   CodexHandoff,
@@ -73,8 +75,11 @@ export const devoApi = {
   getProjectBacklog: (project: string) => getJson<ProjectBacklog>(`/api/projects/${encodeURIComponent(project)}/backlog`),
   getProjectTasks: (project: string) => getJson<ProjectTasksResponse>(`/api/projects/${encodeURIComponent(project)}/tasks`),
   getProjectBatches: (project: string) => getJson<ProjectBatchesResponse>(`/api/projects/${encodeURIComponent(project)}/batches`),
+  getProjectBatchApprovals: (project: string) => getJson<BatchApprovalsResponse>(`/api/projects/${encodeURIComponent(project)}/batch-approvals`),
   getProjectBatch: (project: string, batchId: string) =>
     getJson<ProjectBatch>(`/api/projects/${encodeURIComponent(project)}/batches/${encodeURIComponent(batchId)}`),
+  getProjectBatchApproval: (project: string, batchId: string) =>
+    getJson<BatchApproval>(`/api/projects/${encodeURIComponent(project)}/batches/${encodeURIComponent(batchId)}/approval`),
   getProjectQueues: (project: string) => getJson<ProjectQueuesResponse>(`/api/projects/${encodeURIComponent(project)}/queues`),
   getProjectQueue: (project: string, queueId: string) =>
     getJson<ExecutionQueue>(`/api/projects/${encodeURIComponent(project)}/queues/${encodeURIComponent(queueId)}`),

@@ -13,7 +13,9 @@ from devo.project_planning import (
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
     list_codex_handoffs,
+    list_batch_approvals,
     list_execution_queues,
+    load_batch_approval,
     load_codex_handoff,
     list_project_batches,
     load_execution_queue,
@@ -23,6 +25,7 @@ from devo.project_planning import (
     load_project_brief,
     planning_artifact_paths,
     project_batch_artifact_paths,
+    batch_approval_artifact_paths,
     queue_artifact_paths,
 )
 from devo.read_models import build_project_overview
@@ -423,6 +426,39 @@ def test_batch_approve_marks_approved(tmp_path: Path, monkeypatch) -> None:
     assert batch is not None
     assert batch.status == "approved"
     assert batch.approval_status == "approved"
+    approval = load_batch_approval("sample", "B001", workspace_root=workspace)
+    assert approval is not None
+    assert approval.approval_status == "approved"
+    assert "queue-create" in approval.next_action
+    approval_json, approval_md = batch_approval_artifact_paths("sample", "B001", workspace_root=workspace)
+    assert approval_json.exists()
+    assert approval_md.exists()
+
+
+def test_batch_approval_request_creates_artifacts_and_show_works(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+
+    result = runner.invoke(
+        app,
+        ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready for review."],
+        terminal_width=240,
+    )
+    shown = runner.invoke(app, ["project", "batch-approval-show", "--project", "sample", "--batch", "B001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Batch approval requested" in result.output
+    assert shown.exit_code == 0, shown.output
+    assert "Approval status: requested" in shown.output
+    approval = load_batch_approval("sample", "B001", workspace_root=workspace)
+    assert approval is not None
+    assert approval.approval_status == "requested"
+    assert approval.task_count == 1
+    assert any("Ready for review." in note for note in approval.review_notes)
+    approval_json, approval_md = batch_approval_artifact_paths("sample", "B001", workspace_root=workspace)
+    assert approval_json.exists()
+    assert "Safety Note" in approval_md.read_text(encoding="utf-8")
 
 
 def test_batch_review_adds_note_and_marks_reviewed(tmp_path: Path, monkeypatch) -> None:
@@ -436,7 +472,54 @@ def test_batch_review_adds_note_and_marks_reviewed(tmp_path: Path, monkeypatch) 
     batch = load_project_batch("sample", "B001", workspace_root=workspace)
     assert batch is not None
     assert batch.status == "reviewed"
+    assert batch.review_status == "reviewed"
     assert any("Looks scoped." in note for note in batch.review_notes)
+
+
+def test_batch_review_updates_approval_artifact_and_needs_changes(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Please review."])
+
+    result = runner.invoke(
+        app,
+        ["project", "batch-review", "--project", "sample", "--batch", "B001", "--note", "Needs a smaller scope.", "--needs-changes"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    approval = load_batch_approval("sample", "B001", workspace_root=workspace)
+    assert approval is not None
+    assert approval.review_status == "needs_changes"
+    assert any("Needs a smaller scope." in note for note in approval.review_notes)
+    listed = runner.invoke(app, ["project", "batch-approval-list", "--project", "sample"], terminal_width=240)
+    assert listed.exit_code == 0, listed.output
+    assert "needs_changes" in listed.output
+
+
+def test_batch_reject_marks_rejected_without_deleting_batch(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Please review."])
+
+    result = runner.invoke(
+        app,
+        ["project", "batch-reject", "--project", "sample", "--batch", "B001", "--note", "Needs a safer split."],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Project batch rejected" in result.output
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    approval = load_batch_approval("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    assert approval is not None
+    assert batch.approval_status == "rejected"
+    assert approval.approval_status == "rejected"
+    assert approval.review_status == "needs_changes"
+    assert "Revise backlog/batch" in approval.next_action
 
 
 def test_batch_create_includes_dependency_warnings(tmp_path: Path, monkeypatch) -> None:

@@ -38,13 +38,13 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-083 UI Batch Queue and Progress dashboard
+- Latest completed source task: TASK-DEVO-084 batch approval/review workflow
 - Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: start TASK-DEVO-084 batch approval/review workflow, following `docs/remaining-roadmap.md`.
+- Next recommended action: start TASK-DEVO-085 end-to-end workflow dogfood run on DevOrchestrator, following `docs/remaining-roadmap.md`.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -101,6 +101,7 @@ The working loop is:
 - TASK-DEVO-081 adds a read-only Planning Intake dashboard page. It shows the brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress workflow as an operator-oriented pipeline with status/count summaries, artifact/path context when available, section-level loading/empty/error states, and copyable CLI commands. It does not create briefs from UI, run Codex, execute target commands, run validation, commit, push, restore, modify schedulers, or call model APIs.
 - TASK-DEVO-082 adds read-only Blueprint and Backlog dashboard pages. Blueprint shows status, title, vision, architecture notes, risks, validation strategy, open questions, milestones, epics, linked epics, progress rollups, artifact paths, and copyable CLI guidance. Backlog shows counts, readiness/blocked percentages, refinement prompt status, task filters by status/lane/risk/search, and selected-task detail with summary, acceptance criteria, validation expectations, allowed/forbidden scope, dependencies, notes, and source. These pages do not create, approve, or import artifacts from UI; they do not run Codex, execute target commands, run validation, commit, push, restore, modify schedulers, or call model APIs.
 - TASK-DEVO-083 adds read-only Batch, Queue, Handoff, and Progress dashboard pages. Batch shows batch counts, approval status, risk/lane summaries, dependency warnings, review notes, and task snapshots. Queue shows queue counts, item status, pause/resume metadata, acceptance criteria, validation expectations, and notes. Handoff shows Codex handoff metadata and prompt paths. Progress shows project/backlog/batch completion bars, task/batch/queue counts, milestone/epic progress, warnings, next action, and copyable CLI guidance. These pages do not create, approve, review, start, resume, execute, validate, commit, push, restore, modify schedulers, edit target files, run Codex, execute target commands, or call model APIs.
+- TASK-DEVO-084 adds explicit planning Batch approval artifacts under `workspace/projects/<project>/planning/batches/approvals/`, plus `devo project batch-approval-request`, `batch-approval-show`, `batch-approval-list`, enhanced `batch-review --needs-changes`, enhanced `batch-approve --note`, and `batch-reject`. Approval artifacts record review status, decision notes, task/risk/lane/dependency/scope/validation summaries, and next action. Read models/API/UI visibility now expose approval counts and latest approval/review state, and the controlled UI action safety model supports confirmed workspace-only batch approval/review actions. Batch approval remains planning approval only and does not create queues, run Codex, execute target commands, run validation, commit, push, restore, modify schedulers, edit target files, or call model APIs.
 
 ## Readiness Estimate
 
@@ -194,6 +195,7 @@ The next product step should focus on the planning pipeline in `docs/remaining-r
 - TASK-DEVO-081 UI Planning Intake page
 - TASK-DEVO-082 UI Blueprint and Backlog pages
 - TASK-DEVO-083 UI Batch Queue and Progress dashboard
+- TASK-DEVO-084 batch approval/review workflow
 
 ## Recovery Pointers
 

@@ -5,7 +5,7 @@ import { KeyValueList } from '../components/KeyValueList';
 import { EmptyState, ErrorState, LoadingState } from '../components/SectionState';
 import { StatusBadge } from '../components/StatusBadge';
 import { SummaryCard } from '../components/SummaryCard';
-import type { BatchTaskSnapshot, ProjectBatch, ProjectBatchesResponse, ProjectProgress, ProjectTasksResponse } from '../types/devo';
+import type { BatchApproval, BatchApprovalsResponse, BatchTaskSnapshot, ProjectBatch, ProjectBatchesResponse, ProjectProgress, ProjectTasksResponse } from '../types/devo';
 
 interface BatchesPageProps {
   selectedProject: string | null;
@@ -21,26 +21,32 @@ const emptyOptional = <T,>(): OptionalState<T> => ({ data: null, loading: false,
 
 export function BatchesPage({ selectedProject }: BatchesPageProps) {
   const [batches, setBatches] = useState<OptionalState<ProjectBatchesResponse>>(emptyOptional);
+  const [approvals, setApprovals] = useState<OptionalState<BatchApprovalsResponse>>(emptyOptional);
   const [progress, setProgress] = useState<OptionalState<ProjectProgress>>(emptyOptional);
   const [tasks, setTasks] = useState<OptionalState<ProjectTasksResponse>>(emptyOptional);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [selectedBatch, setSelectedBatch] = useState<OptionalState<ProjectBatch>>(emptyOptional);
+  const [selectedApproval, setSelectedApproval] = useState<OptionalState<BatchApproval>>(emptyOptional);
 
   useEffect(() => {
     if (!selectedProject) {
       setBatches(emptyOptional<ProjectBatchesResponse>());
+      setApprovals(emptyOptional<BatchApprovalsResponse>());
       setProgress(emptyOptional<ProjectProgress>());
       setTasks(emptyOptional<ProjectTasksResponse>());
       setSelectedBatchId(null);
       setSelectedBatch(emptyOptional<ProjectBatch>());
+      setSelectedApproval(emptyOptional<BatchApproval>());
       return;
     }
 
     let active = true;
     setBatches({ data: null, loading: true, error: null });
+    setApprovals({ data: null, loading: true, error: null });
     setProgress({ data: null, loading: true, error: null });
     setTasks({ data: null, loading: true, error: null });
     setSelectedBatch(emptyOptional<ProjectBatch>());
+    setSelectedApproval(emptyOptional<BatchApproval>());
 
     loadOptional(devoApi.getProjectBatches(selectedProject)).then((state) => {
       if (!active) {
@@ -49,6 +55,7 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
       setBatches(state);
       setSelectedBatchId((current) => current ?? state.data?.batches[0]?.batch_id ?? null);
     });
+    loadOptional(devoApi.getProjectBatchApprovals(selectedProject)).then((state) => active && setApprovals(state));
     loadOptional(devoApi.getProjectProgress(selectedProject)).then((state) => active && setProgress(state));
     loadOptional(devoApi.getProjectTasks(selectedProject)).then((state) => active && setTasks(state));
 
@@ -60,12 +67,15 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
   useEffect(() => {
     if (!selectedProject || !selectedBatchId) {
       setSelectedBatch(emptyOptional<ProjectBatch>());
+      setSelectedApproval(emptyOptional<BatchApproval>());
       return;
     }
 
     let active = true;
     setSelectedBatch({ data: null, loading: true, error: null });
+    setSelectedApproval({ data: null, loading: true, error: null });
     loadOptional(devoApi.getProjectBatch(selectedProject, selectedBatchId)).then((state) => active && setSelectedBatch(state));
+    loadOptional(devoApi.getProjectBatchApproval(selectedProject, selectedBatchId)).then((state) => active && setSelectedApproval(state));
     return () => {
       active = false;
     };
@@ -75,6 +85,11 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
   const latestBatch = batchList[0] ?? null;
   const approvedCount = useMemo(() => batchList.filter((batch) => batch.approval_status === 'approved').length, [batchList]);
   const selected = selectedBatch.data ?? batchList.find((batch) => batch.batch_id === selectedBatchId) ?? null;
+  const approvalList = approvals.data?.approvals ?? [];
+  const selectedApprovalData = selectedApproval.data ?? approvalList.find((approval) => approval.batch_id === selectedBatchId) ?? null;
+  const approvalRequestedCount = useMemo(() => approvalList.filter((approval) => approval.approval_status === 'requested').length, [approvalList]);
+  const rejectedCount = useMemo(() => approvalList.filter((approval) => approval.approval_status === 'rejected').length, [approvalList]);
+  const needsChangesCount = useMemo(() => approvalList.filter((approval) => approval.review_status === 'needs_changes').length, [approvalList]);
   const taskStatusById = useMemo(() => {
     const result: Record<string, string> = {};
     for (const task of tasks.data?.tasks ?? []) {
@@ -97,6 +112,9 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
       <div className="summary-grid">
         <SummaryCard title="Batches" value={batches.loading ? 'Loading' : batches.data?.count ?? 0} />
         <SummaryCard title="Approved" value={approvedCount} />
+        <SummaryCard title="Requested" value={approvalRequestedCount} />
+        <SummaryCard title="Needs changes" value={needsChangesCount} />
+        <SummaryCard title="Rejected" value={rejectedCount} />
         <SummaryCard title="Latest batch" value={latestBatch?.batch_id ?? 'none'} />
         <SummaryCard title="Completion" value={progress.data ? `${progress.data.batch_completion_percent.toFixed(1)}%` : 'unknown'} />
       </div>
@@ -127,7 +145,7 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
                       {batch.batch_id}: {batch.title}
                     </span>
                     <small>
-                      {batch.status} | approval {batch.approval_status} | {batch.task_count} tasks
+                      {batch.status} | approval {batch.approval_status} | review {batch.review_status} | {batch.task_count} tasks
                     </small>
                     <small>
                       {batch.completed_task_count ?? 0} completed, {batch.blocked_task_count ?? 0} blocked
@@ -142,20 +160,31 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
               <h3>Selected Batch</h3>
               {selectedBatch.loading ? <LoadingState message="Loading batch detail..." /> : null}
               {selectedBatch.error ? <ErrorState message={selectedBatch.error} /> : null}
-              {selected ? <BatchDetail batch={selected} taskStatusById={taskStatusById} /> : <p className="muted compact">Select a batch to inspect details.</p>}
+              {selected ? (
+                <BatchDetail batch={selected} approval={selectedApprovalData} approvalLoading={selectedApproval.loading} taskStatusById={taskStatusById} />
+              ) : (
+                <p className="muted compact">Select a batch to inspect details.</p>
+              )}
             </section>
           </div>
 
           <SummaryCard title="CLI Guidance">
             <CommandCopyBox command={`devo project batch-list --project ${selectedProject}`} />
             <CommandCopyBox command={`devo project batch-show --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'}`} />
+            <CommandCopyBox command={`devo project batch-approval-request --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'} --note "<note>"`} />
+            <CommandCopyBox command={`devo project batch-approval-show --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'}`} />
             <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject} --limit 10`} />
             <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject} --limit 10 --write`} />
-            <CommandCopyBox command={`devo project batch-approve --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'}`} />
+            <CommandCopyBox command={`devo project batch-review --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'} --note "<review note>"`} />
+            <CommandCopyBox command={`devo project batch-review --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'} --note "<review note>" --needs-changes`} />
+            <CommandCopyBox command={`devo project batch-approve --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'} --note "<decision note>"`} />
+            <CommandCopyBox command={`devo project batch-reject --project ${selectedProject} --batch ${selectedBatchId ?? '<batchId>'} --note "<decision note>"`} />
           </SummaryCard>
         </>
       ) : null}
 
+      {approvals.loading ? <LoadingState message="Loading batch approval metadata..." /> : null}
+      {approvals.error ? <ErrorState message={approvals.error} /> : null}
       {progress.loading ? <LoadingState message="Loading batch progress..." /> : null}
       {progress.error ? <ErrorState message={progress.error} /> : null}
       {tasks.error ? <ErrorState message={tasks.error} /> : null}
@@ -163,7 +192,17 @@ export function BatchesPage({ selectedProject }: BatchesPageProps) {
   );
 }
 
-function BatchDetail({ batch, taskStatusById }: { batch: ProjectBatch; taskStatusById: Record<string, string> }) {
+function BatchDetail({
+  batch,
+  approval,
+  approvalLoading,
+  taskStatusById
+}: {
+  batch: ProjectBatch;
+  approval: BatchApproval | null;
+  approvalLoading: boolean;
+  taskStatusById: Record<string, string>;
+}) {
   return (
     <div className="task-detail">
       <div className="detail-card-title">
@@ -175,6 +214,7 @@ function BatchDetail({ batch, taskStatusById }: { batch: ProjectBatch; taskStatu
       <KeyValueList
         items={[
           ['Approval', batch.approval_status],
+          ['Review', batch.review_status],
           ['Tasks', batch.task_count],
           ['Completed', batch.completed_task_count],
           ['Blocked', batch.blocked_task_count],
@@ -185,9 +225,33 @@ function BatchDetail({ batch, taskStatusById }: { batch: ProjectBatch; taskStatu
         ]}
       />
       <p>{batch.summary || 'No summary recorded.'}</p>
+      <div className="detail-list">
+        <strong>Approval Artifact</strong>
+        {approvalLoading ? <LoadingState message="Loading approval artifact..." /> : null}
+        {approval ? (
+          <KeyValueList
+            items={[
+              ['Approval status', approval.approval_status],
+              ['Review status', approval.review_status],
+              ['Requested', approval.requested_at ?? 'none'],
+              ['Reviewed', approval.reviewed_at ?? 'none'],
+              ['Approved', approval.approved_at ?? 'none'],
+              ['Rejected', approval.rejected_at ?? 'none'],
+              ['High-risk tasks', approval.high_risk_task_count],
+              ['Blocked dependencies', approval.blocked_dependency_count],
+              ['Decision note', approval.decision_note || 'none'],
+              ['Next action', approval.next_action]
+            ]}
+          />
+        ) : approvalLoading ? null : (
+          <p className="muted compact">No approval request artifact recorded for this batch.</p>
+        )}
+      </div>
       <DetailList title="Dependencies" items={batch.dependencies} />
-      <DetailList title="Dependency Warnings" items={batch.dependency_warnings} />
-      <DetailList title="Review Notes" items={batch.review_notes} />
+      <DetailList title="Dependency Warnings" items={approval?.dependency_warnings ?? batch.dependency_warnings} />
+      <DetailList title="Scope Summary" items={approval?.scope_summary ?? []} />
+      <DetailList title="Validation Summary" items={approval?.validation_summary ?? []} />
+      <DetailList title="Review Notes" items={approval?.review_notes ?? batch.review_notes} />
       <div className="detail-list">
         <strong>Task Snapshots</strong>
         {batch.task_snapshots.length ? (

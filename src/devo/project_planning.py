@@ -21,6 +21,7 @@ BACKLOG_MD = "backlog.md"
 BACKLOG_REFINEMENT_PROMPT_MD = "backlog-refinement-prompt.md"
 BATCHES_DIR_NAME = "batches"
 BATCH_INDEX_JSON = "batch-index.json"
+BATCH_APPROVALS_DIR_NAME = "approvals"
 QUEUES_DIR_NAME = "queues"
 QUEUE_INDEX_JSON = "queue-index.json"
 HANDOFFS_DIR_NAME = "handoffs"
@@ -30,6 +31,8 @@ ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 ALLOWED_BATCH_STATUSES = {"draft", "reviewed", "approved", "in_progress", "completed", "blocked", "superseded"}
+ALLOWED_BATCH_APPROVAL_STATUSES = {"not_requested", "requested", "approved", "rejected"}
+ALLOWED_BATCH_REVIEW_STATUSES = {"not_reviewed", "reviewed", "needs_changes"}
 ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
 ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
@@ -179,9 +182,39 @@ class ProjectBatch(BaseModel):
     lane_summary: dict[str, int] = Field(default_factory=dict)
     dependencies: list[str] = Field(default_factory=list)
     approval_status: str = "not_requested"
+    review_status: str = "not_reviewed"
     review_notes: list[str] = Field(default_factory=list)
     task_snapshots: list[BatchTaskSnapshot] = Field(default_factory=list)
     dependency_warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class BatchApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    batch_id: str
+    approval_status: str = "not_requested"
+    review_status: str = "not_reviewed"
+    requested_at: datetime | None = None
+    reviewed_at: datetime | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    reviewer: str | None = None
+    approver: str | None = None
+    decision_note: str = ""
+    review_notes: list[str] = Field(default_factory=list)
+    dependency_warnings: list[str] = Field(default_factory=list)
+    risk_summary: dict[str, int] = Field(default_factory=dict)
+    lane_summary: dict[str, int] = Field(default_factory=dict)
+    task_count: int = 0
+    high_risk_task_count: int = 0
+    blocked_dependency_count: int = 0
+    scope_summary: list[str] = Field(default_factory=list)
+    validation_summary: list[str] = Field(default_factory=list)
+    next_action: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -399,6 +432,7 @@ class PlanningArtifactPaths(BaseModel):
     backlog_markdown: Path
     backlog_refinement_prompt: Path
     batches_dir: Path
+    batch_approvals_dir: Path
     batch_index_json: Path
     queues_dir: Path
     queue_index_json: Path
@@ -419,6 +453,7 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         backlog_markdown=planning_dir / BACKLOG_MD,
         backlog_refinement_prompt=planning_dir / BACKLOG_REFINEMENT_PROMPT_MD,
         batches_dir=planning_dir / BATCHES_DIR_NAME,
+        batch_approvals_dir=planning_dir / BATCHES_DIR_NAME / BATCH_APPROVALS_DIR_NAME,
         batch_index_json=planning_dir / BATCHES_DIR_NAME / BATCH_INDEX_JSON,
         queues_dir=planning_dir / QUEUES_DIR_NAME,
         queue_index_json=planning_dir / QUEUES_DIR_NAME / QUEUE_INDEX_JSON,
@@ -848,34 +883,169 @@ def load_project_batch(project_name: str, batch_id: str, workspace_root: Path | 
     return ProjectBatch.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
-def approve_project_batch(project_name: str, batch_id: str, workspace_root: Path | None = None) -> tuple[ProjectBatch, Path, Path]:
+def batch_approval_artifact_paths(project_name: str, batch_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_batch_id(batch_id)
+    return paths.batch_approvals_dir / f"batch-{safe_id}-approval.json", paths.batch_approvals_dir / f"batch-{safe_id}-approval.md"
+
+
+def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
-    batch = load_project_batch(project_name, batch_id, workspace_root=root)
-    if not batch:
-        msg = f"Project batch not found: {batch_id}"
+    _require_project(project_name, root)
+    json_path, _markdown_path = batch_approval_artifact_paths(project_name, batch_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return BatchApproval.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_batch_approvals(project_name: str, workspace_root: Path | None = None) -> list[BatchApproval]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    if not paths.batch_approvals_dir.exists():
+        return []
+    approvals: list[BatchApproval] = []
+    for path in sorted(paths.batch_approvals_dir.glob("batch-*-approval.json")):
+        try:
+            approvals.append(BatchApproval.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(approvals, key=lambda approval: approval.updated_at, reverse=True)
+
+
+def request_batch_approval(
+    project_name: str,
+    batch_id: str,
+    note: str = "",
+    reviewer: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[BatchApproval, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    batch = _require_batch(project_name, batch_id, root)
+    now = datetime.now(UTC)
+    existing = load_batch_approval(project_name, batch.batch_id, workspace_root=root)
+    review_notes = list(existing.review_notes if existing else [])
+    cleaned = note.strip()
+    if cleaned:
+        review_notes.append(f"{now.isoformat()}: request: {cleaned}")
+    approval = _build_batch_approval(
+        batch,
+        existing=existing,
+        approval_status="requested",
+        review_status=existing.review_status if existing else "not_reviewed",
+        review_notes=review_notes,
+        requested_at=now,
+        reviewer=reviewer or (existing.reviewer if existing else None),
+        now=now,
+    )
+    updated_batch = batch.model_copy(update={"approval_status": "requested", "updated_at": now})
+    _write_project_batch(project_name, updated_batch, workspace_root=root)
+    return _write_batch_approval(project_name, approval, workspace_root=root)
+
+
+def approve_project_batch(
+    project_name: str,
+    batch_id: str,
+    note: str = "",
+    approver: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[ProjectBatch, Path, Path, BatchApproval, Path, Path, bool]:
+    root = workspace_root or get_workspace_root()
+    batch = _require_batch(project_name, batch_id, root)
+    now = datetime.now(UTC)
+    existing = load_batch_approval(project_name, batch.batch_id, workspace_root=root)
+    direct_approval = existing is None or existing.approval_status != "requested"
+    review_notes = list(existing.review_notes if existing else [])
+    cleaned = note.strip()
+    if cleaned:
+        review_notes.append(f"{now.isoformat()}: approval: {cleaned}")
+    review_status = existing.review_status if existing else batch.review_status
+    approval = _build_batch_approval(
+        batch,
+        existing=existing,
+        approval_status="approved",
+        review_status=review_status if review_status != "not_reviewed" else "reviewed",
+        review_notes=review_notes,
+        approved_at=now,
+        approver=approver or (existing.approver if existing else None),
+        decision_note=cleaned or (existing.decision_note if existing else ""),
+        now=now,
+    )
+    updated = batch.model_copy(update={"status": "approved", "approval_status": "approved", "review_status": approval.review_status, "updated_at": now})
+    json_path, markdown_path = _write_project_batch(project_name, updated, workspace_root=root)
+    approval, approval_json, approval_md = _write_batch_approval(project_name, approval, workspace_root=root)
+    return updated, json_path, markdown_path, approval, approval_json, approval_md, direct_approval
+
+
+def reject_project_batch(
+    project_name: str,
+    batch_id: str,
+    note: str,
+    approver: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[ProjectBatch, Path, Path, BatchApproval, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    batch = _require_batch(project_name, batch_id, root)
+    cleaned = note.strip()
+    if not cleaned:
+        msg = "Decision note must not be empty."
         raise ValueError(msg)
     now = datetime.now(UTC)
-    updated = batch.model_copy(update={"status": "approved", "approval_status": "approved", "updated_at": now})
+    existing = load_batch_approval(project_name, batch.batch_id, workspace_root=root)
+    review_notes = list(existing.review_notes if existing else [])
+    review_notes.append(f"{now.isoformat()}: rejection: {cleaned}")
+    approval = _build_batch_approval(
+        batch,
+        existing=existing,
+        approval_status="rejected",
+        review_status="needs_changes",
+        review_notes=review_notes,
+        rejected_at=now,
+        approver=approver or (existing.approver if existing else None),
+        decision_note=cleaned,
+        now=now,
+    )
+    updated = batch.model_copy(update={"approval_status": "rejected", "review_status": "needs_changes", "updated_at": now})
     json_path, markdown_path = _write_project_batch(project_name, updated, workspace_root=root)
-    return updated, json_path, markdown_path
+    approval, approval_json, approval_md = _write_batch_approval(project_name, approval, workspace_root=root)
+    return updated, json_path, markdown_path, approval, approval_json, approval_md
 
 
-def review_project_batch(project_name: str, batch_id: str, note: str, workspace_root: Path | None = None) -> tuple[ProjectBatch, Path, Path]:
+def review_project_batch(
+    project_name: str,
+    batch_id: str,
+    note: str,
+    needs_changes: bool = False,
+    reviewer: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[ProjectBatch, Path, Path, BatchApproval | None, Path | None, Path | None]:
     root = workspace_root or get_workspace_root()
-    batch = load_project_batch(project_name, batch_id, workspace_root=root)
-    if not batch:
-        msg = f"Project batch not found: {batch_id}"
-        raise ValueError(msg)
+    batch = _require_batch(project_name, batch_id, root)
     cleaned = note.strip()
     if not cleaned:
         msg = "Review note must not be empty."
         raise ValueError(msg)
     now = datetime.now(UTC)
     notes = [*batch.review_notes, f"{now.isoformat()}: {cleaned}"]
-    status = "reviewed" if batch.status == "draft" else batch.status
-    updated = batch.model_copy(update={"status": status, "review_notes": notes, "updated_at": now})
+    review_status = "needs_changes" if needs_changes else "reviewed"
+    status = "reviewed" if batch.status == "draft" and not needs_changes else batch.status
+    updated = batch.model_copy(update={"status": status, "review_status": review_status, "review_notes": notes, "updated_at": now})
     json_path, markdown_path = _write_project_batch(project_name, updated, workspace_root=root)
-    return updated, json_path, markdown_path
+    existing = load_batch_approval(project_name, batch.batch_id, workspace_root=root)
+    if not existing:
+        return updated, json_path, markdown_path, None, None, None
+    approval = _build_batch_approval(
+        updated,
+        existing=existing,
+        approval_status=existing.approval_status,
+        review_status=review_status,
+        review_notes=notes,
+        reviewed_at=now,
+        reviewer=reviewer or existing.reviewer,
+        now=now,
+    )
+    approval, approval_json, approval_md = _write_batch_approval(project_name, approval, workspace_root=root)
+    return updated, json_path, markdown_path, approval, approval_json, approval_md
 
 
 def project_batch_artifact_paths(project_name: str, batch_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
@@ -1589,6 +1759,7 @@ def render_project_batch_markdown(batch: ProjectBatch) -> str:
         f"- Batch id: `{batch.batch_id}`",
         f"- Status: `{batch.status}`",
         f"- Approval status: `{batch.approval_status}`",
+        f"- Review status: `{batch.review_status}`",
         f"- Source backlog: `{batch.source_backlog_reference}`",
         f"- Task count: `{batch.task_count}`",
         f"- Completed tasks: `{batch.completed_task_count}`",
@@ -1628,6 +1799,51 @@ def render_project_batch_markdown(batch: ProjectBatch) -> str:
             "## Safety Note",
             "",
             "Planning approval only: batch approval does not approve implementation execution. Execution queue, Codex automation, implementation approval, validation, commit, and push are future workflow steps.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_batch_approval_markdown(approval: BatchApproval) -> str:
+    lines = [
+        f"# Batch Approval: {approval.batch_id}",
+        "",
+        f"- Project: `{approval.project}`",
+        f"- Batch id: `{approval.batch_id}`",
+        f"- Approval status: `{approval.approval_status}`",
+        f"- Review status: `{approval.review_status}`",
+        f"- Requested at: `{approval.requested_at.isoformat() if approval.requested_at else 'none'}`",
+        f"- Reviewed at: `{approval.reviewed_at.isoformat() if approval.reviewed_at else 'none'}`",
+        f"- Approved at: `{approval.approved_at.isoformat() if approval.approved_at else 'none'}`",
+        f"- Rejected at: `{approval.rejected_at.isoformat() if approval.rejected_at else 'none'}`",
+        f"- Reviewer: `{approval.reviewer or 'none'}`",
+        f"- Approver: `{approval.approver or 'none'}`",
+        f"- Task count: `{approval.task_count}`",
+        f"- High-risk tasks: `{approval.high_risk_task_count}`",
+        f"- Blocked dependencies: `{approval.blocked_dependency_count}`",
+        f"- Updated: `{approval.updated_at.isoformat()}`",
+        "",
+        "## Decision Note",
+        "",
+        approval.decision_note or "No decision note recorded.",
+        "",
+    ]
+    _append_mapping_section(lines, "Risk Summary", approval.risk_summary)
+    _append_mapping_section(lines, "Lane Summary", approval.lane_summary)
+    _append_list_section(lines, "Scope Summary", approval.scope_summary)
+    _append_list_section(lines, "Validation Summary", approval.validation_summary)
+    _append_list_section(lines, "Dependency Warnings", approval.dependency_warnings)
+    _append_list_section(lines, "Review Notes", approval.review_notes)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            approval.next_action or "No next action recorded.",
+            "",
+            "## Safety Note",
+            "",
+            "Batch approval is planning approval only. It does not create a queue, run Codex, execute target commands, run validation, commit, push, restore backups, or modify target repositories.",
             "",
         ]
     )
@@ -2020,6 +2236,16 @@ def _write_project_batch(project_name: str, batch: ProjectBatch, workspace_root:
     return json_path, markdown_path
 
 
+def _write_batch_approval(project_name: str, approval: BatchApproval, workspace_root: Path | None = None) -> tuple[BatchApproval, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.batch_approvals_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = batch_approval_artifact_paths(project_name, approval.batch_id, workspace_root=root)
+    _write_model(json_path, approval)
+    markdown_path.write_text(render_batch_approval_markdown(approval), encoding="utf-8")
+    return approval, json_path, markdown_path
+
+
 def _write_batch_index(project_name: str, workspace_root: Path | None = None) -> BatchIndex:
     root = workspace_root or get_workspace_root()
     paths = planning_artifact_paths(project_name, workspace_root=root)
@@ -2260,6 +2486,92 @@ def _task_snapshot(task: BacklogTask) -> BatchTaskSnapshot:
         acceptance_criteria_summary=_summary_list(task.acceptance_criteria),
         validation_expectations_summary=_summary_list(task.validation_expectations),
     )
+
+
+def _require_batch(project_name: str, batch_id: str, workspace_root: Path) -> ProjectBatch:
+    batch = load_project_batch(project_name, batch_id, workspace_root=workspace_root)
+    if not batch:
+        msg = f"Project batch not found: {batch_id}"
+        raise ValueError(msg)
+    return batch
+
+
+def _build_batch_approval(
+    batch: ProjectBatch,
+    *,
+    existing: BatchApproval | None = None,
+    approval_status: str,
+    review_status: str,
+    review_notes: list[str],
+    requested_at: datetime | None = None,
+    reviewed_at: datetime | None = None,
+    approved_at: datetime | None = None,
+    rejected_at: datetime | None = None,
+    reviewer: str | None = None,
+    approver: str | None = None,
+    decision_note: str = "",
+    now: datetime,
+) -> BatchApproval:
+    created_at = existing.created_at if existing else now
+    return BatchApproval(
+        project=batch.project,
+        batch_id=batch.batch_id,
+        approval_status=approval_status,
+        review_status=review_status,
+        requested_at=requested_at or (existing.requested_at if existing else None),
+        reviewed_at=reviewed_at or (existing.reviewed_at if existing else None),
+        approved_at=approved_at or (existing.approved_at if existing else None),
+        rejected_at=rejected_at or (existing.rejected_at if existing else None),
+        reviewer=reviewer or (existing.reviewer if existing else None),
+        approver=approver or (existing.approver if existing else None),
+        decision_note=decision_note or (existing.decision_note if existing else ""),
+        review_notes=review_notes,
+        dependency_warnings=batch.dependency_warnings,
+        risk_summary=batch.risk_summary,
+        lane_summary=batch.lane_summary,
+        task_count=batch.task_count,
+        high_risk_task_count=sum(batch.risk_summary.get(risk, 0) for risk in ("high", "critical")),
+        blocked_dependency_count=len(batch.dependency_warnings),
+        scope_summary=_batch_scope_summary(batch),
+        validation_summary=_batch_validation_summary(batch),
+        next_action=_batch_approval_next_action(batch.project, batch.batch_id, approval_status, review_status),
+        created_at=created_at,
+        updated_at=now,
+    )
+
+
+def _batch_scope_summary(batch: ProjectBatch) -> list[str]:
+    items = [
+        f"{batch.task_count} task(s): {', '.join(batch.task_ids) if batch.task_ids else 'none'}",
+        f"Lanes: {_format_count_summary(batch.lane_summary)}",
+        f"Risks: {_format_count_summary(batch.risk_summary)}",
+    ]
+    if batch.dependencies:
+        items.append(f"External dependencies: {', '.join(batch.dependencies)}")
+    return items
+
+
+def _batch_validation_summary(batch: ProjectBatch) -> list[str]:
+    summaries = [snapshot.validation_expectations_summary for snapshot in batch.task_snapshots if snapshot.validation_expectations_summary]
+    if not summaries:
+        return ["No validation expectations recorded."]
+    return sorted(set(summaries))
+
+
+def _batch_approval_next_action(project_name: str, batch_id: str, approval_status: str, review_status: str) -> str:
+    if approval_status == "approved":
+        return f"Create execution queue: devo project queue-create --project {project_name} --batch {batch_id}"
+    if approval_status == "rejected" or review_status == "needs_changes":
+        return "Revise backlog/batch manually or create a new batch."
+    if approval_status == "requested":
+        return f"Review or approve batch: devo project batch-approval-show --project {project_name} --batch {batch_id}"
+    return f"Request batch approval: devo project batch-approval-request --project {project_name} --batch {batch_id} --note \"<note>\""
+
+
+def _format_count_summary(summary: dict[str, int]) -> str:
+    if not summary:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(summary.items()))
 
 
 def _batch_summary(tasks: list[BacklogTask]) -> str:

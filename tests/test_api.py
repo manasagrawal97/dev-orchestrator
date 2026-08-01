@@ -17,6 +17,7 @@ from devo.project_planning import (
     create_codex_handoff_for_queue_next,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
+    request_batch_approval,
 )
 from devo.runs import save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -179,20 +180,32 @@ def test_project_batch_endpoints_return_json(tmp_path: Path, monkeypatch) -> Non
     create_project_blueprint("sample", workspace_root=workspace)
     create_project_backlog("sample", workspace_root=workspace)
     create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    request_batch_approval("sample", "B001", note="Ready for API review.", workspace_root=workspace)
     client = TestClient(create_app(workspace_root=workspace))
 
     batches = client.get("/api/projects/sample/batches")
+    approvals = client.get("/api/projects/sample/batch-approvals")
     batch = client.get("/api/projects/sample/batches/B001")
+    approval = client.get("/api/projects/sample/batches/B001/approval")
     missing = client.get("/api/projects/sample/batches/B999")
+    missing_approval = client.get("/api/projects/sample/batches/B999/approval")
 
     assert batches.status_code == 200
     assert batches.json()["count"] == 1
     assert batches.json()["batches"][0]["batch_id"] == "B001"
+    assert approvals.status_code == 200
+    assert approvals.json()["count"] == 1
+    assert approvals.json()["approvals"][0]["approval_status"] == "requested"
     assert batch.status_code == 200
     assert batch.json()["title"] == "API batch"
     assert batch.json()["task_ids"] == ["T001"]
+    assert approval.status_code == 200
+    assert approval.json()["batch_id"] == "B001"
+    assert approval.json()["review_status"] == "not_reviewed"
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "batch_not_found"
+    assert missing_approval.status_code == 404
+    assert missing_approval.json()["detail"]["error"] == "batch_approval_not_found"
 
 
 def test_project_progress_endpoint_returns_json(tmp_path: Path, monkeypatch) -> None:
@@ -434,7 +447,9 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/backlog" in result.output
     assert "GET /api/projects/{project}/backlog/prompt" in result.output
     assert "GET /api/projects/{project}/batches" in result.output
+    assert "GET /api/projects/{project}/batch-approvals" in result.output
     assert "GET /api/projects/{project}/batches/{batch_id}" in result.output
+    assert "GET /api/projects/{project}/batches/{batch_id}/approval" in result.output
     assert "GET /api/projects/{project}/progress" in result.output
     assert "GET /api/projects/{project}/queues" in result.output
     assert "GET /api/projects/{project}/queues/{queue_id}" in result.output

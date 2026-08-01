@@ -225,6 +225,11 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                   ['Approved batches', overview.approved_batch_count],
                   ['Latest batch', overview.latest_batch_id ?? 'none'],
                   ['Latest batch status', overview.latest_batch_status ?? 'none'],
+                  ['Latest batch approval', overview.latest_batch_approval_status ?? 'none'],
+                  ['Latest batch review', overview.latest_batch_review_status ?? 'none'],
+                  ['Approval requests', overview.batch_approval_requested_count],
+                  ['Rejected batches', overview.batch_rejected_count],
+                  ['Needs changes', overview.batch_needs_changes_count],
                   ['Queues', overview.queue_count],
                   ['Latest queue', overview.latest_queue_id ?? 'none'],
                   ['Latest queue status', overview.latest_queue_status ?? 'none'],
@@ -235,6 +240,7 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
+              <p className="muted compact">{overview.batch_approval_next_action}</p>
               <p className="muted compact">{overview.handoff_next_action}</p>
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />

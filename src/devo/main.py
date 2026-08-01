@@ -60,6 +60,7 @@ from .project_onboarding import ProjectOnboardingReport, build_project_onboardin
 from .project_planning import (
     BacklogTask,
     BacklogValidationResult,
+    BatchApproval,
     BatchSuggestionResult,
     CodexHandoff,
     ExecutionQueue,
@@ -90,9 +91,11 @@ from .project_planning import (
     get_queue_next_item,
     import_refined_backlog,
     list_execution_queues,
+    list_batch_approvals,
     list_codex_handoffs,
     list_project_batches,
     load_execution_queue,
+    load_batch_approval,
     load_codex_handoff,
     load_project_backlog,
     load_project_batch,
@@ -101,6 +104,8 @@ from .project_planning import (
     planning_artifact_paths,
     pause_execution_queue,
     mark_codex_handoff_used,
+    reject_project_batch,
+    request_batch_approval,
     review_project_batch,
     resume_execution_queue,
     suggest_project_batch,
@@ -398,6 +403,39 @@ def _print_project_batch(batch: ProjectBatch, json_path: Path | None = None, mar
         console.print(f"JSON: {_named_path(json_path)}")
     if markdown_path:
         console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+def _print_batch_approval(approval: BatchApproval, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Batch approval: {approval.batch_id}[/bold]")
+    console.print(f"Approval status: {approval.approval_status}")
+    console.print(f"Review status: {approval.review_status}")
+    console.print(f"Tasks: {approval.task_count}")
+    console.print(f"High-risk tasks: {approval.high_risk_task_count}")
+    console.print(f"Blocked dependencies: {approval.blocked_dependency_count}")
+    console.print(f"Reviewer: {approval.reviewer or 'none'}")
+    console.print(f"Approver: {approval.approver or 'none'}")
+    console.print(f"Decision note: {approval.decision_note or 'none'}", soft_wrap=True)
+    console.print(f"Next action: {approval.next_action}", soft_wrap=True)
+    if approval.dependency_warnings:
+        console.print("Dependency warnings:")
+        for warning in approval.dependency_warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    if approval.scope_summary:
+        console.print("Scope summary:")
+        for item in approval.scope_summary:
+            console.print(f"  - {item}", soft_wrap=True)
+    if approval.validation_summary:
+        console.print("Validation summary:")
+        for item in approval.validation_summary:
+            console.print(f"  - {item}", soft_wrap=True)
+    if approval.review_notes:
+        console.print("Review notes:")
+        for note in approval.review_notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    if json_path:
+        console.print(f"Approval JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Approval Markdown: {_named_path(markdown_path)}")
 
 
 def _print_batch_suggestion(result: BatchSuggestionResult) -> None:
@@ -1599,23 +1637,95 @@ def show_batch_command(
         console.print(f"Suggested next command: devo project batch-list --project {project_name}")
         return
     _print_project_batch(batch)
-    console.print("Next future step after approval: execution queue is TASK-DEVO-079.")
+    approval = load_batch_approval(project_name, batch.batch_id)
+    if approval:
+        _print_batch_approval(approval)
+    else:
+        console.print(f"Suggested next command: devo project batch-approval-request --project {project_name} --batch {batch.batch_id} --note \"<note>\"")
+
+
+@project_app.command("batch-approval-request")
+def request_batch_approval_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+    note: str = typer.Option("", "--note", help="Request note."),
+    reviewer: str | None = typer.Option(None, "--reviewer", help="Reviewer name to record."),
+) -> None:
+    """Create or update a workspace-only Batch approval request artifact."""
+    project_name = _resolve_project(project_name)
+    try:
+        approval, json_path, markdown_path = request_batch_approval(project_name, batch_id, note=note, reviewer=reviewer)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[green]Batch approval requested[/green] {project_name}")
+    _print_batch_approval(approval, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Suggested next command: devo project batch-review --project {project_name} --batch {approval.batch_id} --note \"<review note>\"")
+
+
+@project_app.command("batch-approval-show")
+def show_batch_approval_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+) -> None:
+    """Show a workspace-only Batch approval request artifact."""
+    project_name = _resolve_project(project_name)
+    try:
+        approval = load_batch_approval(project_name, batch_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    if not approval:
+        console.print(f"[yellow]Batch approval artifact not found: {batch_id}[/yellow]")
+        console.print(f"Suggested next command: devo project batch-approval-request --project {project_name} --batch {batch_id} --note \"<note>\"")
+        return
+    _print_batch_approval(approval)
+
+
+@project_app.command("batch-approval-list")
+def list_batch_approvals_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List workspace-only Batch approval artifacts for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        approvals = list_batch_approvals(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Batch approvals: {project_name}[/bold]")
+    if not approvals:
+        console.print("[yellow]No batch approval artifacts recorded.[/yellow]")
+        return
+    for approval in approvals:
+        console.print(
+            f"{approval.batch_id} | approval={approval.approval_status} | review={approval.review_status} | tasks={approval.task_count} | next={approval.next_action}",
+            soft_wrap=True,
+        )
 
 
 @project_app.command("batch-approve")
 def approve_batch_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+    note: str = typer.Option("", "--note", help="Decision note."),
+    approver: str | None = typer.Option(None, "--approver", help="Approver name to record."),
 ) -> None:
     """Mark a planning Batch approved without approving implementation execution."""
     project_name = _resolve_project(project_name)
     try:
-        batch, json_path, markdown_path = approve_project_batch(project_name, batch_id)
+        batch, json_path, markdown_path, approval, approval_json, approval_md, direct = approve_project_batch(
+            project_name,
+            batch_id,
+            note=note,
+            approver=approver,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--batch") from exc
     console.print(f"[green]Project batch approved[/green] {project_name}")
+    if direct:
+        console.print("[yellow]Approval was recorded without a prior requested approval artifact.[/yellow]")
     _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
-    console.print("Planning approval only. Execution queue is TASK-DEVO-079.")
+    _print_batch_approval(approval, json_path=approval_json, markdown_path=approval_md)
+    console.print("Planning approval only. No queue was created and no target commands were run.")
+    console.print(f"Suggested next command: devo project queue-create --project {project_name} --batch {batch.batch_id}")
 
 
 @project_app.command("batch-review")
@@ -1623,16 +1733,55 @@ def review_batch_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
     note: str = typer.Option(..., "--note", help="Review note to append."),
+    needs_changes: bool = typer.Option(False, "--needs-changes", help="Mark the approval review as needing changes."),
+    reviewer: str | None = typer.Option(None, "--reviewer", help="Reviewer name to record."),
 ) -> None:
     """Append a review note to a planning Batch."""
     project_name = _resolve_project(project_name)
     try:
-        batch, json_path, markdown_path = review_project_batch(project_name, batch_id, note)
+        batch, json_path, markdown_path, approval, approval_json, approval_md = review_project_batch(
+            project_name,
+            batch_id,
+            note,
+            needs_changes=needs_changes,
+            reviewer=reviewer,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--batch") from exc
     console.print(f"[green]Project batch reviewed[/green] {project_name}")
     _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
-    console.print(f"Suggested next command: devo project batch-approve --project {project_name} --batch {batch.batch_id}")
+    if approval:
+        _print_batch_approval(approval, json_path=approval_json, markdown_path=approval_md)
+    next_command = (
+        f"devo project batch-show --project {project_name} --batch {batch.batch_id}"
+        if needs_changes
+        else f"devo project batch-approve --project {project_name} --batch {batch.batch_id} --note \"<decision note>\""
+    )
+    console.print(f"Suggested next command: {next_command}")
+
+
+@project_app.command("batch-reject")
+def reject_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+    note: str = typer.Option(..., "--note", help="Decision note."),
+    approver: str | None = typer.Option(None, "--approver", help="Approver name to record."),
+) -> None:
+    """Reject a planning Batch without deleting it or mutating target repositories."""
+    project_name = _resolve_project(project_name)
+    try:
+        batch, json_path, markdown_path, approval, approval_json, approval_md = reject_project_batch(
+            project_name,
+            batch_id,
+            note=note,
+            approver=approver,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[yellow]Project batch rejected[/yellow] {project_name}")
+    _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
+    _print_batch_approval(approval, json_path=approval_json, markdown_path=approval_md)
+    console.print("No batch was deleted and no target project files were modified.")
 
 
 @project_app.command("progress")

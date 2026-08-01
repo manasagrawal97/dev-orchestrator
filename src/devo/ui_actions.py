@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from .project_onboarding import build_project_onboarding_report
+from .project_planning import approve_project_batch, reject_project_batch, request_batch_approval, review_project_batch
 from .project_settings import load_project_settings
 from .projects import get_workspace_root
 from .runs import load_run
@@ -28,6 +29,10 @@ EXECUTABLE_WORKSPACE_SAFE_ACTIONS = {
     "visual.project_activity.generate",
     "onboarding.report.write",
     "work.new.create",
+    "batch.approval_request",
+    "batch.review",
+    "batch.approve",
+    "batch.reject",
 }
 
 
@@ -59,6 +64,9 @@ class UiActionExecuteRequest(BaseModel):
     run_id: str | None = None
     goal: str | None = None
     lane: str | None = None
+    batch_id: str | None = None
+    note: str | None = None
+    needs_changes: bool = False
     confirm: bool = False
     no_template: bool = False
 
@@ -210,6 +218,66 @@ ACTION_REGISTRY: tuple[UiActionMetadata, ...] = (
         status="available",
         reason="Available through the controlled UI action endpoint with confirmation; creates Devo run and work-package artifacts only.",
         required_cli_command='devo work new --project <project> --goal "<goal>" --lane <lane>',
+    ),
+    UiActionMetadata(
+        id="batch.approval_request",
+        label="Request batch approval",
+        category="workspace_safe",
+        description="Create or update a planning batch approval request artifact.",
+        allowed_in_ui_v1=False,
+        allowed_in_ui_v2_candidate=True,
+        mutates_workspace=True,
+        mutates_target_project=False,
+        requires_approval=False,
+        risk_level="low",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; writes Devo planning artifacts only.",
+        required_cli_command='devo project batch-approval-request --project <project> --batch <batchId> --note "<note>"',
+    ),
+    UiActionMetadata(
+        id="batch.review",
+        label="Review batch",
+        category="workspace_safe",
+        description="Record a planning batch review note or needs-changes decision.",
+        allowed_in_ui_v1=False,
+        allowed_in_ui_v2_candidate=True,
+        mutates_workspace=True,
+        mutates_target_project=False,
+        requires_approval=False,
+        risk_level="low",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; updates Devo planning artifacts only.",
+        required_cli_command='devo project batch-review --project <project> --batch <batchId> --note "<note>"',
+    ),
+    UiActionMetadata(
+        id="batch.approve",
+        label="Approve batch planning",
+        category="workspace_safe",
+        description="Approve a planning batch without creating a queue or approving implementation execution.",
+        allowed_in_ui_v1=False,
+        allowed_in_ui_v2_candidate=True,
+        mutates_workspace=True,
+        mutates_target_project=False,
+        requires_approval=False,
+        risk_level="low",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; planning approval only and no target commands.",
+        required_cli_command='devo project batch-approve --project <project> --batch <batchId> --note "<note>"',
+    ),
+    UiActionMetadata(
+        id="batch.reject",
+        label="Reject batch planning",
+        category="workspace_safe",
+        description="Reject a planning batch without deleting it or modifying backlog/tasks.",
+        allowed_in_ui_v1=False,
+        allowed_in_ui_v2_candidate=True,
+        mutates_workspace=True,
+        mutates_target_project=False,
+        requires_approval=False,
+        risk_level="low",
+        status="available",
+        reason="Available through the controlled UI action endpoint with confirmation; records a planning decision only.",
+        required_cli_command='devo project batch-reject --project <project> --batch <batchId> --note "<note>"',
     ),
     UiActionMetadata(
         id="work.approval_bundle.request",
@@ -423,6 +491,8 @@ def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path |
 
     if action.id == "work.new.create":
         return _execute_work_new(request, project_name, root, action)
+    if action.id in {"batch.approval_request", "batch.review", "batch.approve", "batch.reject"}:
+        return _execute_batch_action(request, project_name, root, action)
     if action.id == "work.scope_template.generate":
         template = generate_work_scope_template(project_name, run_id or "", workspace_root=root)
         return UiActionExecutionResult(
@@ -472,6 +542,81 @@ def execute_ui_action(request: UiActionExecuteRequest, *, workspace_root: Path |
         )
 
     return UiActionExecutionResult(status="FAIL", action_id=action.id, message="No executor is registered for this action.")
+
+
+def _execute_batch_action(
+    request: UiActionExecuteRequest,
+    project_name: str,
+    workspace_root: Path,
+    action: UiActionMetadata,
+) -> UiActionExecutionResult:
+    batch_id = _clean_required(request.batch_id, "batch_id")
+    note = _clean_optional(request.note) or ""
+    if action.id in {"batch.review", "batch.reject"} and not note:
+        return UiActionExecutionResult(
+            status="FAIL",
+            action_id=action.id,
+            message="note is required for this batch action.",
+            project=project_name,
+            suggested_next_command=action.required_cli_command,
+        )
+    if action.id == "batch.approval_request":
+        approval, _json_path, markdown_path = request_batch_approval(project_name, batch_id, note=note, workspace_root=workspace_root)
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Requested planning batch approval under the Devo workspace.",
+            project=project_name,
+            artifact_path=markdown_path,
+            suggested_next_command=approval.next_action,
+        )
+    if action.id == "batch.review":
+        _batch, _json_path, _markdown_path, approval, _approval_json, approval_md = review_project_batch(
+            project_name,
+            batch_id,
+            note,
+            needs_changes=request.needs_changes,
+            workspace_root=workspace_root,
+        )
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Recorded planning batch review under the Devo workspace.",
+            project=project_name,
+            artifact_path=approval_md,
+            suggested_next_command=approval.next_action if approval else f"devo project batch-approval-request --project {project_name} --batch {batch_id} --note \"<note>\"",
+        )
+    if action.id == "batch.approve":
+        _batch, _json_path, _markdown_path, approval, _approval_json, approval_md, _direct = approve_project_batch(
+            project_name,
+            batch_id,
+            note=note,
+            workspace_root=workspace_root,
+        )
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Approved planning batch under the Devo workspace. No queue was created and no target commands were run.",
+            project=project_name,
+            artifact_path=approval_md,
+            suggested_next_command=approval.next_action,
+        )
+    if action.id == "batch.reject":
+        _batch, _json_path, _markdown_path, approval, _approval_json, approval_md = reject_project_batch(
+            project_name,
+            batch_id,
+            note=note,
+            workspace_root=workspace_root,
+        )
+        return UiActionExecutionResult(
+            status="OK",
+            action_id=action.id,
+            message="Rejected planning batch under the Devo workspace. No target project files were modified.",
+            project=project_name,
+            artifact_path=approval_md,
+            suggested_next_command=approval.next_action,
+        )
+    return UiActionExecutionResult(status="FAIL", action_id=action.id, message="Unknown batch action.")
 
 
 def _execute_work_new(

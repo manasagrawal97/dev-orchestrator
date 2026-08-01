@@ -12,10 +12,12 @@ from .project_planning import (
     calculate_project_progress,
     get_backlog_task,
     get_queue_next_item,
+    list_batch_approvals,
     list_codex_handoffs,
     list_project_batches,
     list_execution_queues,
     load_execution_queue,
+    load_batch_approval,
     load_codex_handoff,
     load_project_backlog,
     load_project_batch,
@@ -41,7 +43,9 @@ API_ROUTES = (
     "GET /api/projects/{project}/backlog",
     "GET /api/projects/{project}/backlog/prompt",
     "GET /api/projects/{project}/batches",
+    "GET /api/projects/{project}/batch-approvals",
     "GET /api/projects/{project}/batches/{batch_id}",
+    "GET /api/projects/{project}/batches/{batch_id}/approval",
     "GET /api/projects/{project}/progress",
     "GET /api/projects/{project}/queues",
     "GET /api/projects/{project}/queues/{queue_id}",
@@ -165,6 +169,12 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         batches = list_project_batches(project, workspace_root=root)
         return {"project": project, "count": len(batches), "batches": [_model_dump(batch) for batch in batches]}
 
+    @api.get("/api/projects/{project}/batch-approvals")
+    def project_batch_approvals(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        approvals = list_batch_approvals(project, workspace_root=root)
+        return {"project": project, "count": len(approvals), "approvals": [_model_dump(approval) for approval in approvals]}
+
     @api.get("/api/projects/{project}/batches/{batch_id}")
     def project_batch(project: str, batch_id: str) -> dict[str, object]:
         _require_project(project, root)
@@ -172,6 +182,14 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         if not batch:
             raise HTTPException(status_code=404, detail={"error": "batch_not_found", "message": f"Project batch not found: {batch_id}"})
         return _model_dump(batch)
+
+    @api.get("/api/projects/{project}/batches/{batch_id}/approval")
+    def project_batch_approval(project: str, batch_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        approval = load_batch_approval(project, batch_id, workspace_root=root)
+        if not approval:
+            raise HTTPException(status_code=404, detail={"error": "batch_approval_not_found", "message": f"Batch approval not found: {batch_id}"})
+        return _model_dump(approval)
 
     @api.get("/api/projects/{project}/progress")
     def project_progress(project: str) -> dict[str, object]:

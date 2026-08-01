@@ -87,6 +87,13 @@ export interface ProjectOverview {
   approved_batch_count: number;
   latest_batch_id: string | null;
   latest_batch_status: string | null;
+  latest_batch_approval_status: string | null;
+  latest_batch_review_status: string | null;
+  batch_approval_requested_count: number;
+  batch_approved_count: number;
+  batch_rejected_count: number;
+  batch_needs_changes_count: number;
+  batch_approval_next_action: string;
   queue_count: number;
   latest_queue_id: string | null;
   latest_queue_status: string | null;
@@ -218,11 +225,44 @@ export interface ProjectBatch {
   lane_summary: Record<string, number>;
   dependencies: string[];
   approval_status: string;
+  review_status: string;
   review_notes: string[];
   task_snapshots: BatchTaskSnapshot[];
   dependency_warnings: string[];
   created_at?: string;
   updated_at?: string;
+}
+
+export interface BatchApproval {
+  project: string;
+  batch_id: string;
+  approval_status: string;
+  review_status: string;
+  requested_at: string | null;
+  reviewed_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  reviewer: string | null;
+  approver: string | null;
+  decision_note: string;
+  review_notes: string[];
+  dependency_warnings: string[];
+  risk_summary: Record<string, number>;
+  lane_summary: Record<string, number>;
+  task_count: number;
+  high_risk_task_count: number;
+  blocked_dependency_count: number;
+  scope_summary: string[];
+  validation_summary: string[];
+  next_action: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface BatchApprovalsResponse {
+  project: string;
+  count: number;
+  approvals: BatchApproval[];
 }
 
 export interface ProjectQueuesResponse {
@@ -405,6 +445,9 @@ export interface UiActionExecuteRequest {
   lane?: string | null;
   confirm: boolean;
   no_template?: boolean;
+  batch_id?: string | null;
+  note?: string | null;
+  needs_changes?: boolean;
 }
 
 export interface UiActionExecutionResult {

@@ -33,6 +33,12 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.batch_count == 0
     assert overview.approved_batch_count == 0
     assert overview.latest_batch_id is None
+    assert overview.latest_batch_approval_status is None
+    assert overview.batch_approval_requested_count == 0
+    assert overview.batch_approved_count == 0
+    assert overview.batch_rejected_count == 0
+    assert overview.batch_needs_changes_count == 0
+    assert overview.batch_approval_next_action
     assert overview.queue_count == 0
     assert overview.latest_queue_id is None
     assert overview.queue_pending_count == 0
@@ -129,12 +135,31 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "backlog_refinement_prompt_exists" in overview_data
     assert "batch_count" in overview_data
     assert "approved_batch_count" in overview_data
+    assert "latest_batch_approval_status" in overview_data
+    assert "batch_approval_requested_count" in overview_data
+    assert "batch_approval_next_action" in overview_data
     assert "project_completion_percent" in overview_data
     assert "progress_next_action" in overview_data
     assert "queue_count" in overview_data
     assert "queue_next_action" in overview_data
     assert "handoff_count" in overview_data
     assert "handoff_next_action" in overview_data
+
+
+def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+
+    overview = build_project_overview("sample")
+
+    assert overview.batch_count == 1
+    assert overview.latest_batch_id == "B001"
+    assert overview.latest_batch_approval_status == "requested"
+    assert overview.latest_batch_review_status == "not_reviewed"
+    assert overview.batch_approval_requested_count == 1
+    assert "batch-approval-show" in overview.batch_approval_next_action
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:
@@ -172,6 +197,17 @@ def test_project_overview_marks_current_run_when_available(tmp_path: Path, monke
 
     assert overview.is_current_project is True
     assert overview.current_run_id == package.run_id
+
+
+def _create_backlog(tmp_path: Path) -> None:
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    runner.invoke(app, ["project", "brief-create", "--project", "sample", "--title", "Product", "--file", str(brief_file)])
+    runner.invoke(app, ["project", "brief-approve", "--project", "sample"])
+    runner.invoke(app, ["project", "blueprint-create", "--project", "sample"])
+    runner.invoke(app, ["project", "blueprint-approve", "--project", "sample"])
+    runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
 
 
 def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:

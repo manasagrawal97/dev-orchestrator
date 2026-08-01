@@ -5,6 +5,13 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from devo.api import create_app
+from devo.project_planning import (
+    create_project_backlog,
+    create_project_batch,
+    create_project_blueprint,
+    create_project_brief,
+    load_batch_approval,
+)
 from devo.project_settings import update_project_settings
 from devo.schemas import ContextState, ContextStatus, ProjectRegistration
 from devo.ui_actions import get_ui_action, is_action_allowed, list_allowed_ui_actions, list_ui_actions
@@ -98,6 +105,8 @@ def test_allowed_actions_include_controlled_workspace_safe_but_exclude_dangerous
     assert "work.scope_template.generate" in action_ids
     assert "visual.project_activity.generate" in action_ids
     assert "work.new.create" in action_ids
+    assert "batch.approval_request" in action_ids
+    assert "batch.approve" in action_ids
     assert "git.push" not in action_ids
     assert all(not action["mutates_target_project"] for action in data["actions"])
 
@@ -277,6 +286,64 @@ def test_execute_work_new_no_template_skips_scope_template(tmp_path: Path, monke
     assert not (workspace / "runs" / "sample" / data["run_id"] / "artifacts" / "work-package" / "scope-template.md").exists()
 
 
+def test_execute_batch_approval_actions_require_confirmation_and_write_workspace_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, target, _package = _registered_workspace(tmp_path, monkeypatch)
+    _create_planning_batch(tmp_path, workspace)
+    before_target = (target / "README.md").read_text(encoding="utf-8")
+    client = TestClient(create_app(workspace_root=workspace))
+
+    blocked = client.post(
+        "/api/actions/execute",
+        json={"action_id": "batch.approval_request", "project": "sample", "batch_id": "B001", "note": "Ready.", "confirm": False},
+    )
+    requested = client.post(
+        "/api/actions/execute",
+        json={"action_id": "batch.approval_request", "project": "sample", "batch_id": "B001", "note": "Ready.", "confirm": True},
+    )
+    reviewed = client.post(
+        "/api/actions/execute",
+        json={"action_id": "batch.review", "project": "sample", "batch_id": "B001", "note": "Looks scoped.", "confirm": True},
+    )
+    approved = client.post(
+        "/api/actions/execute",
+        json={"action_id": "batch.approve", "project": "sample", "batch_id": "B001", "note": "Approved.", "confirm": True},
+    )
+
+    assert blocked.status_code == 200
+    assert blocked.json()["status"] == "BLOCKED"
+    assert requested.status_code == 200
+    assert requested.json()["status"] == "OK"
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "OK"
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "OK"
+    assert "queue-create" in approved.json()["suggested_next_command"]
+    approval = load_batch_approval("sample", "B001", workspace_root=workspace)
+    assert approval is not None
+    assert approval.approval_status == "approved"
+    assert (target / "README.md").read_text(encoding="utf-8") == before_target
+
+
+def test_execute_batch_reject_records_planning_decision(tmp_path: Path, monkeypatch) -> None:
+    workspace, target, _package = _registered_workspace(tmp_path, monkeypatch)
+    _create_planning_batch(tmp_path, workspace)
+    before_target = (target / "README.md").read_text(encoding="utf-8")
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/actions/execute",
+        json={"action_id": "batch.reject", "project": "sample", "batch_id": "B001", "note": "Needs changes.", "confirm": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "OK"
+    approval = load_batch_approval("sample", "B001", workspace_root=workspace)
+    assert approval is not None
+    assert approval.approval_status == "rejected"
+    assert approval.review_status == "needs_changes"
+    assert (target / "README.md").read_text(encoding="utf-8") == before_target
+
+
 def test_execute_project_activity_visual_returns_artifact(tmp_path: Path, monkeypatch) -> None:
     workspace, _target, _package = _registered_workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
@@ -406,6 +473,15 @@ def _registered_workspace(tmp_path: Path, monkeypatch):
     (approvals_dir / "context-approval.json").write_text("{}", encoding="utf-8")
     package = start_work_package("sample", "docs-only", "Generate workspace artifact", workspace_root=workspace)
     return workspace, target, package
+
+
+def _create_planning_batch(tmp_path: Path, workspace: Path) -> None:
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    create_project_batch("sample", "UI action batch", ["T001"], workspace_root=workspace)
 
 
 def _workspace_snapshot(workspace: Path) -> dict[str, str]:

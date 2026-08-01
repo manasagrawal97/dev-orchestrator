@@ -133,11 +133,22 @@ Inspect and approve the planning batch:
 ```powershell
 devo project batch-list --project MyProject
 devo project batch-show --project MyProject --batch B001
+devo project batch-approval-request --project MyProject --batch B001 --note "Ready for planning review."
+devo project batch-approval-show --project MyProject --batch B001
+devo project batch-approval-list --project MyProject
 devo project batch-review --project MyProject --batch B001 --note "Looks scoped."
-devo project batch-approve --project MyProject --batch B001
+devo project batch-review --project MyProject --batch B001 --note "Needs a smaller split." --needs-changes
+devo project batch-approve --project MyProject --batch B001 --note "Approved for queue creation."
+devo project batch-reject --project MyProject --batch B001 --note "Needs a safer split."
 ```
 
-Batch artifacts live under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Suggestions prefer selectable backlog tasks whose dependencies are completed or already included, with lower-risk tasks first.
+Batch artifacts live under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Approval artifacts live under `workspace/projects/<project>/planning/batches/approvals/` as `batch-<batch_id>-approval.json` and `.md`. Approval artifacts summarize task scope, risks, lanes, dependencies, validation expectations, decision notes, and the next suggested command. Suggestions prefer selectable backlog tasks whose dependencies are completed or already included, with lower-risk tasks first.
+
+Batch approval is planning approval only. It does not create a queue, run Codex, execute target commands, run validation/build/test/app commands, commit, push, restore/delete backups, modify schedulers, edit target files, or call model APIs. After approval, queue creation is still explicit:
+
+```powershell
+devo project queue-create --project MyProject --batch B001
+```
 
 ## Planning Progress
 
@@ -465,7 +476,7 @@ The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `
 
 Planning Intake is a read-only operator guide for brief, blueprint, backlog, batch, queue, handoff, and progress state; it shows status/count summaries and copyable CLI commands. Blueprint and Backlog are read-only inspection pages for planning artifacts, milestone/epic rollups, task filters, and task details. Batches, Queues, Handoffs, and Progress are read-only inspection pages for the later planning-to-Codex handoff stages: batch risk/lane summaries, queue item state, handoff prompt metadata, progress bars, milestone/epic rollups, warnings, and next actions.
 
-These pages do not create, approve, review, import, start, resume, execute, validate, commit, push, restore/delete backups, modify scheduler settings, edit target files, run Codex, execute target commands, or call model APIs from the UI. They provide copyable CLI commands so the user can continue through the safer CLI/Codex workflow. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation.
+These pages do not import, start, resume, execute, validate, commit, push, restore/delete backups, modify scheduler settings, edit target files, run Codex, execute target commands, or call model APIs from the UI. Batch approval controls, when surfaced through the controlled Action Safety model, are workspace-safe planning actions only: request approval, record review notes, approve planning, or reject planning. They do not create queues or execute target work. The pages also provide copyable CLI commands so the user can continue through the safer CLI/Codex workflow. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation.
 
 ## Safety
 
