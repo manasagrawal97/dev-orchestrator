@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-080 Codex handoff prompts for next task/batch
 - TASK-DEVO-081 UI Planning Intake page
 - TASK-DEVO-082 UI Blueprint/Backlog pages
 - TASK-DEVO-083 UI Batch Queue and Progress dashboard
@@ -212,7 +211,11 @@ Added deterministic count-based progress summaries derived from Project Brief, B
 
 ### TASK-DEVO-079 Execution Queue State Machine - Completed
 
-Added execution queue artifacts under `workspace/projects/<project>/planning/queues/`, with JSON/Markdown queue files and `queue-index.json`. Queues are created from approved planning batches only and support deterministic state transitions for ready, running, paused for usage limits, paused for failure/review, blocked, and completed work. `devo project queue-*` commands can create, list, show, start, inspect next item, complete items, block items, pause, and resume queues. This is state tracking only: Devo still does not run Codex, generate execution prompts, call AI APIs, run validation/Git commands, commit, push, or modify target repositories.
+Added execution queue artifacts under `workspace/projects/<project>/planning/queues/`, with JSON/Markdown queue files and `queue-index.json`. Queues are created from approved planning batches only and support deterministic state transitions for ready, running, paused for usage limits, paused for failure/review, blocked, and completed work. `devo project queue-*` commands can create, list, show, start, inspect next item, complete items, block items, pause, and resume queues. This is state tracking only: Devo still does not run Codex, call AI APIs, execute generated prompts, run validation/Git commands, commit, push, or modify target repositories.
+
+### TASK-DEVO-080 Codex Handoff Prompts - Completed
+
+Added Codex handoff artifacts under `workspace/projects/<project>/planning/handoffs/`, with JSON/Markdown handoff files and `handoff-index.json`. `devo project handoff-next`, `handoff-task`, and `handoff-batch` generate Codex-ready prompts from queue items, backlog tasks, or planning batches, while `handoff-list`, `handoff-show`, and `handoff-mark-used` provide read/workspace-only tracking. Handoff prompts include project path, source queue/batch/task details, lane/risk, dependencies, acceptance criteria, validation expectations, allowed/forbidden scope, safety boundaries, files not to stage, and final report expectations. Devo still does not run Codex, call AI APIs, execute target commands, run validation, commit, push, or modify target repositories.
 
 ### TASK-023 Safe Validation Runner
 

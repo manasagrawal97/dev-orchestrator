@@ -226,12 +226,18 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
                   ['Latest batch status', overview.latest_batch_status ?? 'none'],
                   ['Queues', overview.queue_count],
                   ['Latest queue', overview.latest_queue_id ?? 'none'],
-                  ['Latest queue status', overview.latest_queue_status ?? 'none']
+                  ['Latest queue status', overview.latest_queue_status ?? 'none'],
+                  ['Handoffs', overview.handoff_count],
+                  ['Latest handoff', overview.latest_handoff_id ?? 'none'],
+                  ['Latest handoff type', overview.latest_handoff_type ?? 'none'],
+                  ['Latest handoff status', overview.latest_handoff_status ?? 'none']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
+              <p className="muted compact">{overview.handoff_next_action}</p>
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />
+              <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading planning summary..." /> : <ErrorState message="Planning summary is unavailable." />

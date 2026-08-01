@@ -12,9 +12,11 @@ from .project_planning import (
     calculate_project_progress,
     get_backlog_task,
     get_queue_next_item,
+    list_codex_handoffs,
     list_project_batches,
     list_execution_queues,
     load_execution_queue,
+    load_codex_handoff,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
@@ -44,6 +46,8 @@ API_ROUTES = (
     "GET /api/projects/{project}/queues",
     "GET /api/projects/{project}/queues/{queue_id}",
     "GET /api/projects/{project}/queues/{queue_id}/next",
+    "GET /api/projects/{project}/handoffs",
+    "GET /api/projects/{project}/handoffs/{handoff_id}",
     "GET /api/projects/{project}/tasks",
     "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
@@ -196,6 +200,20 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail={"error": "queue_not_found", "message": str(exc)}) from exc
         return {"project": project, "queue_id": queue.queue_id, "queue_status": queue.status, "item": _model_dump(item) if item else None}
+
+    @api.get("/api/projects/{project}/handoffs")
+    def project_handoffs(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        handoffs = list_codex_handoffs(project, workspace_root=root)
+        return {"project": project, "count": len(handoffs), "handoffs": [_model_dump(handoff) for handoff in handoffs]}
+
+    @api.get("/api/projects/{project}/handoffs/{handoff_id}")
+    def project_handoff(project: str, handoff_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        handoff = load_codex_handoff(project, handoff_id, workspace_root=root)
+        if not handoff:
+            raise HTTPException(status_code=404, detail={"error": "handoff_not_found", "message": f"Codex handoff not found: {handoff_id}"})
+        return _model_dump(handoff)
 
     @api.get("/api/projects/{project}/tasks")
     def project_tasks(project: str) -> dict[str, object]:

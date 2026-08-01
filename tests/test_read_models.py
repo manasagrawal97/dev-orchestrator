@@ -36,6 +36,9 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.queue_count == 0
     assert overview.latest_queue_id is None
     assert overview.queue_pending_count == 0
+    assert overview.handoff_count == 0
+    assert overview.latest_handoff_id is None
+    assert overview.handoff_next_action
     assert overview.project_completion_percent == 0.0
     assert overview.backlog_readiness_percent == 0.0
     assert overview.progress_next_action
@@ -130,6 +133,8 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "progress_next_action" in overview_data
     assert "queue_count" in overview_data
     assert "queue_next_action" in overview_data
+    assert "handoff_count" in overview_data
+    assert "handoff_next_action" in overview_data
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:

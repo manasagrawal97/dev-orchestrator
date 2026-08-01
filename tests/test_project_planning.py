@@ -12,7 +12,9 @@ from devo.project_planning import (
     calculate_project_progress,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
+    list_codex_handoffs,
     list_execution_queues,
+    load_codex_handoff,
     list_project_batches,
     load_execution_queue,
     load_project_backlog,
@@ -648,7 +650,7 @@ def test_queue_next_shows_current_or_next_item(tmp_path: Path, monkeypatch) -> N
     assert "QI001" in before_start.output
     assert after_start.exit_code == 0, after_start.output
     assert "Status: running" in after_start.output
-    assert "TASK-DEVO-080" in after_start.output
+    assert "handoff-next" in after_start.output
 
 
 def test_queue_complete_item_marks_completed_and_advances(tmp_path: Path, monkeypatch) -> None:
@@ -737,6 +739,115 @@ def test_empty_queue_edge_case_starts_as_completed(tmp_path: Path, monkeypatch) 
     assert loaded is not None
     assert loaded.status == "completed"
     assert loaded.item_count == 0
+
+
+def test_handoff_next_creates_prompt_from_running_queue_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+    _create_queue(tmp_path)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+
+    result = runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Codex handoff prompt saved" in result.output
+    assert "paste this prompt into Codex" in result.output
+    handoffs = list_codex_handoffs("sample", workspace_root=workspace)
+    assert len(handoffs) == 1
+    handoff = handoffs[0]
+    assert handoff.handoff_type == "queue_next"
+    assert handoff.source_queue_id == "Q001"
+    assert handoff.source_item_id == "QI001"
+    prompt = Path(handoff.prompt_path).read_text(encoding="utf-8")
+    assert "Do not exceed this task/batch scope." in prompt
+    assert "Do not touch PersonalOS unless the selected project is PersonalOS and the task explicitly says so." in prompt
+    assert "Acceptance Criteria" in prompt
+    assert "Validation Expectations" in prompt
+    assert str(project_path) in prompt
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_handoff_next_creates_prompt_from_pending_item_if_none_running(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+
+    result = runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    handoff = list_codex_handoffs("sample", workspace_root=workspace)[0]
+    assert handoff.source_item_id == "QI001"
+    assert handoff.source_task_id == "T001"
+
+
+def test_handoff_next_fails_for_missing_empty_and_completed_queue(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_batch(tmp_path, task_ids="")
+    create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+
+    missing = runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q999"], terminal_width=240)
+    completed = runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert missing.exit_code != 0
+    assert "Execution queue not found" in missing.output
+    assert completed.exit_code != 0
+    assert "Execution queue is completed" in completed.output
+
+
+def test_handoff_task_creates_prompt_and_unknown_task_fails(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+
+    result = runner.invoke(app, ["project", "handoff-task", "--project", "sample", "--task", "T001"], terminal_width=240)
+    missing = runner.invoke(app, ["project", "handoff-task", "--project", "sample", "--task", "T999"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert missing.exit_code != 0
+    assert "Backlog task not found" in missing.output
+    handoff = list_codex_handoffs("sample", workspace_root=workspace)[0]
+    assert handoff.handoff_type == "task"
+    assert handoff.source_task_id == "T001"
+    prompt = Path(handoff.prompt_path).read_text(encoding="utf-8")
+    assert "Allowed Scope" in prompt
+    assert "Forbidden Scope" in prompt
+
+
+def test_handoff_batch_creates_prompt_and_unknown_batch_fails(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_batch(tmp_path)
+
+    result = runner.invoke(app, ["project", "handoff-batch", "--project", "sample", "--batch", "B001"], terminal_width=240)
+    missing = runner.invoke(app, ["project", "handoff-batch", "--project", "sample", "--batch", "B999"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "approved batch scope" in result.output
+    assert missing.exit_code != 0
+    assert "Project batch not found" in missing.output
+    handoff = list_codex_handoffs("sample", workspace_root=workspace)[0]
+    assert handoff.handoff_type == "batch"
+    assert handoff.source_batch_id == "B001"
+    prompt = Path(handoff.prompt_path).read_text(encoding="utf-8")
+    assert "Batch Tasks" in prompt
+    assert "Do not commit generated workspace artifacts." in prompt
+
+
+def test_handoff_list_show_and_mark_used(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "handoff-task", "--project", "sample", "--task", "T001"])
+
+    listed = runner.invoke(app, ["project", "handoff-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["project", "handoff-show", "--project", "sample", "--handoff", "H001"], terminal_width=240)
+    marked = runner.invoke(app, ["project", "handoff-mark-used", "--project", "sample", "--handoff", "H001"], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert "H001" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Codex handoff: H001" in shown.output
+    assert marked.exit_code == 0, marked.output
+    handoff = load_codex_handoff("sample", "H001", workspace_root=workspace)
+    assert handoff is not None
+    assert handoff.status == "used"
 
 
 def test_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
@@ -835,6 +946,16 @@ def test_read_models_include_planning_summary(tmp_path: Path, monkeypatch) -> No
     assert with_queue.current_queue_item == "QI001"
     assert with_queue.queue_pending_count == 0
     assert with_queue.queue_next_action.endswith("--queue Q001")
+    assert "handoff-next" in with_queue.handoff_next_action
+
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+
+    with_handoff = build_project_overview("sample", workspace_root=workspace)
+    assert with_handoff.handoff_count == 1
+    assert with_handoff.latest_handoff_id == "H001"
+    assert with_handoff.latest_handoff_type == "queue_next"
+    assert with_handoff.latest_handoff_status == "draft"
+    assert with_handoff.latest_handoff_path is not None
 
 
 def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
@@ -860,6 +981,12 @@ def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch
     runner.invoke(app, ["project", "queue-next", "--project", "sample", "--queue", "Q001"])
     runner.invoke(app, ["project", "queue-pause", "--project", "sample", "--queue", "Q001", "--reason", "usage_limit", "--note", "Pause only."])
     runner.invoke(app, ["project", "queue-resume", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["project", "handoff-task", "--project", "sample", "--task", "T001"])
+    runner.invoke(app, ["project", "handoff-batch", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-list", "--project", "sample"])
+    runner.invoke(app, ["project", "handoff-show", "--project", "sample", "--handoff", "H001"])
+    runner.invoke(app, ["project", "handoff-mark-used", "--project", "sample", "--handoff", "H001"])
     runner.invoke(app, ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Done."])
 
     assert _target_snapshot(project_path) == before_target

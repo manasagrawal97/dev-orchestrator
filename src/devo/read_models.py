@@ -12,6 +12,7 @@ from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
 from .project_planning import (
     calculate_project_progress,
+    list_codex_handoffs,
     list_project_batches,
     list_execution_queues,
     load_project_backlog,
@@ -106,6 +107,12 @@ class ProjectOverview(BaseModel):
     queue_completed_count: int = 0
     queue_blocked_count: int = 0
     queue_next_action: str = "Create a Project Brief."
+    handoff_count: int = 0
+    latest_handoff_id: str | None = None
+    latest_handoff_type: str | None = None
+    latest_handoff_status: str | None = None
+    latest_handoff_path: str | None = None
+    handoff_next_action: str = "Create a Project Brief."
     project_completion_percent: float = 0.0
     backlog_readiness_percent: float = 0.0
     blocked_percent: float = 0.0
@@ -181,6 +188,12 @@ def build_project_overview_with_timing(
             queue_completed_count=int(planning["queue_completed_count"]),
             queue_blocked_count=int(planning["queue_blocked_count"]),
             queue_next_action=str(planning["queue_next_action"]),
+            handoff_count=int(planning["handoff_count"]),
+            latest_handoff_id=str(planning["latest_handoff_id"]) if planning["latest_handoff_id"] else None,
+            latest_handoff_type=str(planning["latest_handoff_type"]) if planning["latest_handoff_type"] else None,
+            latest_handoff_status=str(planning["latest_handoff_status"]) if planning["latest_handoff_status"] else None,
+            latest_handoff_path=str(planning["latest_handoff_path"]) if planning["latest_handoff_path"] else None,
+            handoff_next_action=str(planning["handoff_next_action"]),
             project_completion_percent=float(planning["project_completion_percent"]),
             backlog_readiness_percent=float(planning["backlog_readiness_percent"]),
             blocked_percent=float(planning["blocked_percent"]),
@@ -396,6 +409,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         backlog = load_project_backlog(project_name, workspace_root=workspace_root)
         batches = list_project_batches(project_name, workspace_root=workspace_root)
         queues = list_execution_queues(project_name, workspace_root=workspace_root)
+        handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
         progress = calculate_project_progress(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
@@ -422,6 +436,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "queue_completed_count": 0,
             "queue_blocked_count": 0,
             "queue_next_action": f"Review planning artifacts: {exc}",
+            "handoff_count": 0,
+            "latest_handoff_id": None,
+            "latest_handoff_type": None,
+            "latest_handoff_status": None,
+            "latest_handoff_path": None,
+            "handoff_next_action": f"Review planning artifacts: {exc}",
             "project_completion_percent": 0.0,
             "backlog_readiness_percent": 0.0,
             "blocked_percent": 0.0,
@@ -432,6 +452,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     latest_batch = batches[0] if batches else None
     latest_queue = queues[0] if queues else None
+    latest_handoff = handoffs[0] if handoffs else None
     if not brief:
         next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
     elif brief.status != "approved":
@@ -453,6 +474,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     else:
         next_action = f"Continue the Execution Queue: devo project queue-next --project {project_name} --queue {latest_queue.queue_id if latest_queue else '<queueId>'}"
     queue_next_action = _queue_next_action(project_name, latest_queue)
+    handoff_next_action = _handoff_next_action(project_name, latest_queue, latest_handoff)
     return {
         "brief_status": brief.status if brief else "missing",
         "blueprint_status": blueprint.status if blueprint else "missing",
@@ -477,6 +499,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "queue_completed_count": latest_queue.completed_count if latest_queue else 0,
         "queue_blocked_count": latest_queue.blocked_count if latest_queue else 0,
         "queue_next_action": queue_next_action,
+        "handoff_count": len(handoffs),
+        "latest_handoff_id": latest_handoff.handoff_id if latest_handoff else None,
+        "latest_handoff_type": latest_handoff.handoff_type if latest_handoff else None,
+        "latest_handoff_status": latest_handoff.status if latest_handoff else None,
+        "latest_handoff_path": latest_handoff.prompt_path if latest_handoff else None,
+        "handoff_next_action": handoff_next_action,
         "project_completion_percent": progress.project_completion_percent,
         "backlog_readiness_percent": progress.backlog_readiness_percent,
         "blocked_percent": progress.blocked_percent,
@@ -498,6 +526,19 @@ def _queue_next_action(project_name: str, queue: object | None) -> str:
     if status == "completed":
         return "Queue completed; Codex handoff and review workflow improvements continue in later tasks."
     return f"Review Queue status: devo project queue-show --project {project_name} --queue {queue_id}"
+
+
+def _handoff_next_action(project_name: str, queue: object | None, handoff: object | None) -> str:
+    if queue:
+        queue_id = getattr(queue, "queue_id", "<queueId>")
+        status = getattr(queue, "status", "unknown")
+        if status == "running":
+            return f"Generate Codex handoff: devo project handoff-next --project {project_name} --queue {queue_id}"
+        if status in {"draft", "ready", "paused_usage_limit", "paused_failure", "waiting_review"}:
+            return f"Start or resume queue before handoff: devo project queue-start --project {project_name} --queue {queue_id}"
+    if handoff:
+        return f"Review latest handoff: devo project handoff-show --project {project_name} --handoff {getattr(handoff, 'handoff_id', '<handoffId>')}"
+    return f"Generate manual task handoff: devo project handoff-task --project {project_name} --task <taskId>"
 
 
 def _latest_validation(project_name: str, run_id: str, workspace_root: Path):

@@ -61,6 +61,7 @@ from .project_planning import (
     BacklogTask,
     BacklogValidationResult,
     BatchSuggestionResult,
+    CodexHandoff,
     ExecutionQueue,
     QueueItem,
     ProjectProgress,
@@ -78,6 +79,9 @@ from .project_planning import (
     create_project_backlog,
     create_project_blueprint,
     create_project_brief,
+    create_codex_handoff_for_batch,
+    create_codex_handoff_for_queue_next,
+    create_codex_handoff_for_task,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
     complete_queue_item,
@@ -86,14 +90,17 @@ from .project_planning import (
     get_queue_next_item,
     import_refined_backlog,
     list_execution_queues,
+    list_codex_handoffs,
     list_project_batches,
     load_execution_queue,
+    load_codex_handoff,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
     pause_execution_queue,
+    mark_codex_handoff_used,
     review_project_batch,
     resume_execution_queue,
     suggest_project_batch,
@@ -271,9 +278,15 @@ def _print_project_overview(overview: ProjectOverview) -> None:
     console.print(f"Blueprint: {overview.blueprint_status} milestones={overview.blueprint_milestone_count} epics={overview.blueprint_epic_count}")
     console.print(f"Batches: {overview.batch_count} approved={overview.approved_batch_count} latest={overview.latest_batch_id or 'none'}")
     console.print(f"Queues: {overview.queue_count} latest={overview.latest_queue_id or 'none'} status={overview.latest_queue_status or 'none'}")
+    console.print(
+        f"Handoffs: {overview.handoff_count} latest={overview.latest_handoff_id or 'none'} "
+        f"type={overview.latest_handoff_type or 'none'} status={overview.latest_handoff_status or 'none'}",
+        soft_wrap=True,
+    )
     console.print(f"Project completion: {overview.project_completion_percent:.1f}%")
     console.print(f"Backlog readiness: {overview.backlog_readiness_percent:.1f}%")
     console.print(f"Planning next action: {overview.planning_next_action}", soft_wrap=True)
+    console.print(f"Handoff next action: {overview.handoff_next_action}", soft_wrap=True)
     console.print(f"Recent runs: {len(overview.recent_runs)}")
     console.print(f"Recent work packages: {len(overview.recent_work_packages)}")
     console.print(f"Suggested next action: {overview.suggested_next_action}", soft_wrap=True)
@@ -471,7 +484,6 @@ def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None,
 def _print_queue_item(item: QueueItem | None) -> None:
     if not item:
         console.print("[yellow]No current or pending queue item.[/yellow]")
-        console.print("Codex handoff prompts come in TASK-DEVO-080.")
         return
     console.print(f"[bold]Queue item: {item.item_id}[/bold]")
     console.print(f"Task: {item.task_id}")
@@ -488,7 +500,23 @@ def _print_queue_item(item: QueueItem | None) -> None:
     console.print("Validation expectations:")
     for expectation in item.validation_expectations or ["none"]:
         console.print(f"  - {expectation}", soft_wrap=True)
-    console.print("Codex handoff prompts come in TASK-DEVO-080.")
+    console.print("Suggested handoff command: devo project handoff-next --project <project> --queue <queueId>")
+
+
+def _print_codex_handoff(handoff: CodexHandoff, json_path: Path | None = None, prompt_path: Path | None = None) -> None:
+    console.print(f"[bold]Codex handoff: {handoff.handoff_id}[/bold]")
+    console.print(f"Type: {handoff.handoff_type}")
+    console.print(f"Title: {handoff.title}", soft_wrap=True)
+    console.print(f"Status: {handoff.status}")
+    console.print(f"Source queue: {handoff.source_queue_id or 'none'}")
+    console.print(f"Source batch: {handoff.source_batch_id or 'none'}")
+    console.print(f"Source item: {handoff.source_item_id or 'none'}")
+    console.print(f"Source task: {handoff.source_task_id or 'none'}")
+    console.print(f"Prompt: {_named_path(prompt_path or Path(handoff.prompt_path))}")
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    console.print("Suggested user action: paste this prompt into Codex.")
+    console.print("Devo does not run Codex or target project commands automatically.")
 
 
 def _print_json_model(model: object) -> None:
@@ -1505,7 +1533,7 @@ def create_batch_command(
     console.print(f"[green]Project batch saved[/green] {project_name}")
     _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
     console.print(f"Suggested next command: devo project batch-show --project {project_name} --batch {batch.batch_id}")
-    console.print("Batch approval is planning-only; execution queue comes in TASK-DEVO-079.")
+    console.print(f"Suggested next command: devo project queue-create --project {project_name} --batch {batch.batch_id}")
 
 
 @project_app.command("batch-suggest")
@@ -1638,7 +1666,7 @@ def create_queue_command(
     console.print(f"[green]Execution queue saved[/green] {project_name}")
     _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
     console.print(f"Suggested next command: devo project queue-start --project {project_name} --queue {queue.queue_id}")
-    console.print("Queue is state tracking only. Codex handoff prompts come in TASK-DEVO-080.")
+    console.print(f"Suggested handoff command: devo project handoff-next --project {project_name} --queue {queue.queue_id}")
 
 
 @project_app.command("queue-list")
@@ -1680,7 +1708,7 @@ def show_queue_command(
         console.print(f"Suggested next command: devo project queue-list --project {project_name}")
         return
     _print_execution_queue(queue)
-    console.print("Queue is state tracking only. Codex handoff prompts come in TASK-DEVO-080.")
+    console.print(f"Suggested handoff command: devo project handoff-next --project {project_name} --queue {queue.queue_id}")
 
 
 @project_app.command("queue-start")
@@ -1780,6 +1808,114 @@ def resume_queue_command(
         raise typer.BadParameter(str(exc), param_hint="--queue") from exc
     console.print(f"[green]Execution queue resumed[/green] {project_name}")
     _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("handoff-next")
+def create_handoff_next_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Generate a Codex-ready handoff prompt for the current or next queue item."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoff, json_path, prompt_path = create_codex_handoff_for_queue_next(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    console.print(f"[green]Codex handoff prompt saved[/green] {project_name}")
+    _print_codex_handoff(handoff, json_path=json_path, prompt_path=prompt_path)
+
+
+@project_app.command("handoff-task")
+def create_handoff_task_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    task_id: str = typer.Option(..., "--task", help="Backlog task id."),
+) -> None:
+    """Generate a Codex-ready handoff prompt for a single backlog task."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoff, json_path, prompt_path = create_codex_handoff_for_task(project_name, task_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task") from exc
+    console.print(f"[green]Codex handoff prompt saved[/green] {project_name}")
+    _print_codex_handoff(handoff, json_path=json_path, prompt_path=prompt_path)
+
+
+@project_app.command("handoff-batch")
+def create_handoff_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+) -> None:
+    """Generate a Codex-ready handoff prompt for an approved batch scope."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoff, json_path, prompt_path = create_codex_handoff_for_batch(project_name, batch_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[green]Codex handoff prompt saved[/green] {project_name}")
+    _print_codex_handoff(handoff, json_path=json_path, prompt_path=prompt_path)
+    console.print("Batch handoff must stay within the approved batch scope.")
+
+
+@project_app.command("handoff-list")
+def list_handoffs_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List generated Codex handoff prompts for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoffs = list_codex_handoffs(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Codex handoffs: {project_name}[/bold]")
+    if not handoffs:
+        console.print("[yellow]No handoffs recorded.[/yellow]")
+        console.print(f"Suggested next command: devo project handoff-task --project {project_name} --task <taskId>")
+        return
+    for handoff in handoffs:
+        console.print(
+            f"{handoff.handoff_id} | {handoff.handoff_type} | {handoff.status} | "
+            f"task={handoff.source_task_id or 'none'} batch={handoff.source_batch_id or 'none'} queue={handoff.source_queue_id or 'none'} | {handoff.title}",
+            soft_wrap=True,
+        )
+
+
+@project_app.command("handoff-show")
+def show_handoff_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    handoff_id: str = typer.Option(..., "--handoff", help="Codex handoff id."),
+    print_prompt: bool = typer.Option(False, "--print", help="Print prompt content."),
+) -> None:
+    """Show Codex handoff metadata and prompt path without mutating anything."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoff = load_codex_handoff(project_name, handoff_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--handoff") from exc
+    if not handoff:
+        console.print(f"[yellow]Codex handoff not found: {handoff_id}[/yellow]")
+        console.print(f"Suggested next command: devo project handoff-list --project {project_name}")
+        return
+    _print_codex_handoff(handoff)
+    if print_prompt:
+        prompt_path = Path(handoff.prompt_path)
+        if prompt_path.exists():
+            console.print("")
+            console.print(prompt_path.read_text(encoding="utf-8"), soft_wrap=True)
+
+
+@project_app.command("handoff-mark-used")
+def mark_handoff_used_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    handoff_id: str = typer.Option(..., "--handoff", help="Codex handoff id."),
+) -> None:
+    """Mark a handoff prompt used as a workspace-only planning artifact."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoff, json_path, prompt_path = mark_codex_handoff_used(project_name, handoff_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--handoff") from exc
+    console.print(f"[green]Codex handoff marked used[/green] {project_name}")
+    _print_codex_handoff(handoff, json_path=json_path, prompt_path=prompt_path)
 
 
 @project_app.command("activity")

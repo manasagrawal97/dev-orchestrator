@@ -37,8 +37,9 @@ Devo already has:
 - Batch planning artifacts and deterministic batch selection
 - Count-based planning progress summaries
 - Execution queue state tracking
+- Codex handoff prompt generation from queue, batch, and task artifacts
 
-These capabilities make Devo a useful local control plane today, but the product is not yet centered enough around Codex handoff prompts and post-delivery review.
+These capabilities make Devo a useful local control plane today, but the product still needs stronger UI planning/progress pages and post-delivery review.
 
 ## Final Target Workflow
 
@@ -124,7 +125,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 4. TASK-DEVO-077: Batch model and batch selection - completed.
 5. TASK-DEVO-078: Progress calculation and project completion percent - completed.
 6. TASK-DEVO-079: Execution queue state machine - completed.
-7. TASK-DEVO-080: Codex handoff prompts for next task/batch - generate exact execution prompts for Codex/manual workers.
+7. TASK-DEVO-080: Codex handoff prompts for next task/batch - completed.
 8. TASK-DEVO-081: UI Planning Intake page - add read/write-safe brief intake around Devo workspace artifacts.
 9. TASK-DEVO-082: UI Blueprint/Backlog pages - expose the new planning artifacts visually.
 10. TASK-DEVO-083: UI Batch Queue and Progress dashboard - show queue state, progress, next action, and review needs.

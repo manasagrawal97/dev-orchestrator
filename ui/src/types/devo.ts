@@ -95,6 +95,12 @@ export interface ProjectOverview {
   queue_completed_count: number;
   queue_blocked_count: number;
   queue_next_action: string;
+  handoff_count: number;
+  latest_handoff_id: string | null;
+  latest_handoff_type: string | null;
+  latest_handoff_status: string | null;
+  latest_handoff_path: string | null;
+  handoff_next_action: string;
   project_completion_percent: number;
   backlog_readiness_percent: number;
   blocked_percent: number;

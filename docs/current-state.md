@@ -38,13 +38,13 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-079 execution queue state machine
+- Latest completed source task: TASK-DEVO-080 Codex handoff prompts for next task/batch
 - Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: start TASK-DEVO-080 Codex handoff prompts for next task/batch, following `docs/remaining-roadmap.md`.
+- Next recommended action: start TASK-DEVO-081 UI Planning Intake page, following `docs/remaining-roadmap.md`.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -96,7 +96,8 @@ The working loop is:
 - TASK-DEVO-076 adds `devo project backlog-prompt`, `devo project backlog-validate`, and `devo project backlog-import`. Devo can now generate a Codex-ready planning handoff prompt under `workspace/projects/<project>/planning/backlog-refinement-prompt.md`, validate refined backlog JSON, and import it as a draft backlog. This does not call Codex, call AI APIs, approve implementation, create batches, create an execution queue, or modify target projects.
 - TASK-DEVO-077 adds Project Batch planning artifacts under `workspace/projects/<project>/planning/batches/`, plus `devo project batch-create`, `batch-suggest`, `batch-list`, `batch-show`, `batch-review`, and `batch-approve`. Batch selection is deterministic and workspace-only; batch approval is planning approval only and does not run Codex, create an execution queue, approve implementation, run validation, commit, push, or modify target projects.
 - TASK-DEVO-078 adds deterministic planning progress summaries with `devo project progress` and `--json`, derived from Project Brief, Blueprint, Backlog/Task, and Batch artifacts. Progress reports count-based task completion, backlog readiness, blocked percentage, batch completion, milestone/epic rollups, read-model/API fields, and a read-only dashboard Progress card. Weighted scoring, execution queue progress, Codex execution tracking, AI/API automation, and target project mutation remain deferred.
-- TASK-DEVO-079 adds execution queue state tracking under `workspace/projects/<project>/planning/queues/`, plus `devo project queue-create`, `queue-list`, `queue-show`, `queue-start`, `queue-next`, `queue-complete-item`, `queue-block-item`, `queue-pause`, and `queue-resume`. Queues are created from approved planning batches only and track deterministic state transitions without running Codex, generating handoff prompts, running validation/Git commands, or modifying target project source. Codex handoff prompts come next in TASK-DEVO-080.
+- TASK-DEVO-079 adds execution queue state tracking under `workspace/projects/<project>/planning/queues/`, plus `devo project queue-create`, `queue-list`, `queue-show`, `queue-start`, `queue-next`, `queue-complete-item`, `queue-block-item`, `queue-pause`, and `queue-resume`. Queues are created from approved planning batches only and track deterministic state transitions without running Codex, running validation/Git commands, or modifying target project source.
+- TASK-DEVO-080 adds Codex handoff prompt artifacts under `workspace/projects/<project>/planning/handoffs/`, plus `devo project handoff-next`, `handoff-task`, `handoff-batch`, `handoff-list`, `handoff-show`, and `handoff-mark-used`. Handoffs package queue/batch/task scope, acceptance criteria, validation expectations, safety boundaries, files not to stage, and final report expectations into a prompt the user manually pastes into Codex. Devo still does not run Codex, call AI APIs, execute target commands, run validation, commit, push, or modify target project source.
 
 ## Readiness Estimate
 
@@ -105,7 +106,7 @@ The working loop is:
 
 The next personal-use completion target is brief intake, blueprint/backlog, batch approval, Codex handoff, progress tracking, UI progress visibility, and one dogfood end-to-end run. At that point Devo can be considered around 80-85% complete for personal use.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Codex-ready handoff prompts from planning queue/batch/task artifacts without running Codex, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
 The next product step should focus on the planning pipeline in `docs/remaining-roadmap.md`. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
@@ -186,6 +187,7 @@ The next product step should focus on the planning pipeline in `docs/remaining-r
 - TASK-DEVO-077 planning batch model and selection
 - TASK-DEVO-078 planning progress summaries
 - TASK-DEVO-079 execution queue state machine
+- TASK-DEVO-080 Codex handoff prompts for next task/batch
 
 ## Recovery Pointers
 

@@ -137,7 +137,7 @@ devo project batch-review --project MyProject --batch B001 --note "Looks scoped.
 devo project batch-approve --project MyProject --batch B001
 ```
 
-Batch artifacts live under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Suggestions prefer selectable backlog tasks whose dependencies are completed or already included, with lower-risk tasks first. Execution queue and Codex handoff prompts come later.
+Batch artifacts live under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Suggestions prefer selectable backlog tasks whose dependencies are completed or already included, with lower-risk tasks first.
 
 ## Planning Progress
 
@@ -148,11 +148,11 @@ devo project progress --project MyProject
 devo project progress --project MyProject --json
 ```
 
-The summary includes Project Brief/Blueprint/Backlog status, task counts, active/completed/ready/approved/draft/blocked counts, project completion percent, backlog readiness percent, blocked percent, batch completion percent, latest batch, milestone progress, epic progress, warnings, and the next planning action. Codex handoff prompts and deeper execution tracking come later.
+The summary includes Project Brief/Blueprint/Backlog status, task counts, active/completed/ready/approved/draft/blocked counts, project completion percent, backlog readiness percent, blocked percent, batch completion percent, latest batch, milestone progress, epic progress, warnings, and the next planning action.
 
 ## Execution Queue State
 
-Execution queues are deterministic state tracking artifacts created from approved planning batches. They do not run Codex, generate execution prompts, run validation, run Git commands, commit, push, or modify target project source. Codex handoff prompts come next in TASK-DEVO-080.
+Execution queues are deterministic state tracking artifacts created from approved planning batches. They do not run Codex, run validation, run Git commands, commit, push, or modify target project source.
 
 ```powershell
 devo project queue-create --project MyProject --batch B001
@@ -172,6 +172,23 @@ devo project queue-resume --project MyProject --queue Q001
 ```
 
 Queue artifacts live under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. Completing or blocking a queue item can update the corresponding Devo backlog task status so progress reflects queue state, but it still does not edit the target repository.
+
+## Codex Handoff Prompts
+
+Codex handoff prompts are generated workspace artifacts that package one queue item, one backlog task, or one approved batch into a Codex-ready operator prompt. They are a safe manual bridge from Devo planning to Codex execution.
+
+```powershell
+devo project handoff-next --project MyProject --queue Q001
+devo project handoff-task --project MyProject --task T001
+devo project handoff-batch --project MyProject --batch B001
+devo project handoff-list --project MyProject
+devo project handoff-show --project MyProject --handoff H001
+devo project handoff-mark-used --project MyProject --handoff H001
+```
+
+Handoff artifacts live under `workspace/projects/<project>/planning/handoffs/` as `handoff-<handoff_id>.json`, `handoff-<handoff_id>.md`, and `handoff-index.json`. The generated prompt includes project path, source queue/batch/task details, lane, risk, dependencies, acceptance criteria, validation expectations, allowed/forbidden scope, safety boundaries, files not to stage, and final report expectations.
+
+Devo still does not run Codex, call AI APIs, execute target repo commands, approve implementation, run validation, commit, push, or modify target project source. The user manually pastes the generated prompt into Codex and must request explicit trusted approval when a safety gate blocks work.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

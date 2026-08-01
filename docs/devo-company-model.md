@@ -115,7 +115,7 @@ Future Devo should introduce durable planning artifacts:
 
 These concepts should build on existing Devo work packages, lanes, approvals, validation, work history, reports, read models, and UI action safety.
 
-TASK-DEVO-074 adds the first two durable planning artifacts: Project Brief and Blueprint. TASK-DEVO-075 adds deterministic Backlog and Task artifacts from the blueprint. TASK-DEVO-076 adds a Codex-ready planning handoff prompt plus refined-backlog validation/import, while still avoiding direct Codex or AI API execution. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds count-based progress summaries across tasks, milestones, epics, and batches. TASK-DEVO-079 adds execution queue state tracking. Codex handoff prompts, direct worker automation, and AI/API execution models remain future work.
+TASK-DEVO-074 adds the first two durable planning artifacts: Project Brief and Blueprint. TASK-DEVO-075 adds deterministic Backlog and Task artifacts from the blueprint. TASK-DEVO-076 adds a Codex-ready planning handoff prompt plus refined-backlog validation/import, while still avoiding direct Codex or AI API execution. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds count-based progress summaries across tasks, milestones, epics, and batches. TASK-DEVO-079 adds execution queue state tracking. TASK-DEVO-080 adds Codex-ready handoff prompts for queue items, tasks, and batches. Direct worker automation and AI/API execution models remain future work.
 
 ## Codex CLI Worker Strategy
 
@@ -131,6 +131,8 @@ Devo should generate structured handoff prompts for Codex:
 - validation commands
 - stop conditions
 - final report expectations
+
+TASK-DEVO-080 implements this as manual prompt generation under `workspace/projects/<project>/planning/handoffs/`. The user still pastes the generated prompt into Codex; Devo does not invoke Codex CLI or run target project commands.
 
 Later, Devo may support controlled Codex CLI worker integration. That integration should remain bounded by Devo approvals, lanes, validation commands, Git delivery checks, and policy rules.
 

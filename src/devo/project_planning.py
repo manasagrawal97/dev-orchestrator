@@ -23,6 +23,8 @@ BATCHES_DIR_NAME = "batches"
 BATCH_INDEX_JSON = "batch-index.json"
 QUEUES_DIR_NAME = "queues"
 QUEUE_INDEX_JSON = "queue-index.json"
+HANDOFFS_DIR_NAME = "handoffs"
+HANDOFF_INDEX_JSON = "handoff-index.json"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
@@ -31,6 +33,8 @@ ALLOWED_BATCH_STATUSES = {"draft", "reviewed", "approved", "in_progress", "compl
 ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
 ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
+ALLOWED_HANDOFF_STATUSES = {"draft", "used", "superseded"}
+ALLOWED_HANDOFF_TYPES = {"task", "batch", "queue_next"}
 SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -341,6 +345,48 @@ class QueueIndex(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CodexHandoff(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    handoff_id: str
+    handoff_type: str
+    source_queue_id: str | None = None
+    source_batch_id: str | None = None
+    source_item_id: str | None = None
+    source_task_id: str | None = None
+    title: str
+    status: str = "draft"
+    prompt_path: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class HandoffIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    handoff_id: str
+    handoff_type: str
+    title: str
+    status: str
+    source_queue_id: str | None = None
+    source_batch_id: str | None = None
+    source_item_id: str | None = None
+    source_task_id: str | None = None
+    prompt_path: str
+    updated_at: datetime
+
+
+class HandoffIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    handoffs: list[HandoffIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -356,6 +402,8 @@ class PlanningArtifactPaths(BaseModel):
     batch_index_json: Path
     queues_dir: Path
     queue_index_json: Path
+    handoffs_dir: Path
+    handoff_index_json: Path
 
 
 def planning_artifact_paths(project_name: str, workspace_root: Path | None = None) -> PlanningArtifactPaths:
@@ -374,6 +422,8 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         batch_index_json=planning_dir / BATCHES_DIR_NAME / BATCH_INDEX_JSON,
         queues_dir=planning_dir / QUEUES_DIR_NAME,
         queue_index_json=planning_dir / QUEUES_DIR_NAME / QUEUE_INDEX_JSON,
+        handoffs_dir=planning_dir / HANDOFFS_DIR_NAME,
+        handoff_index_json=planning_dir / HANDOFFS_DIR_NAME / HANDOFF_INDEX_JSON,
     )
 
 
@@ -962,7 +1012,7 @@ def create_execution_queue_from_batch(
             status="ready",
             items=items,
             pause_reason=None,
-            resume_hint="Start the queue when ready. Codex handoff prompts come in TASK-DEVO-080.",
+            resume_hint="Start the queue when ready, then generate a Codex handoff prompt with devo project handoff-next.",
             current_item_id=None,
             created_at=now,
             updated_at=now,
@@ -995,6 +1045,13 @@ def load_queue_index(project_name: str, workspace_root: Path | None = None) -> Q
     return QueueIndex.model_validate_json(paths.queue_index_json.read_text(encoding="utf-8"))
 
 
+def load_handoff_index(project_name: str, workspace_root: Path | None = None) -> HandoffIndex:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.handoff_index_json.exists():
+        return HandoffIndex(project=project_name)
+    return HandoffIndex.model_validate_json(paths.handoff_index_json.read_text(encoding="utf-8"))
+
+
 def load_execution_queue(project_name: str, queue_id: str, workspace_root: Path | None = None) -> ExecutionQueue | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -1002,6 +1059,15 @@ def load_execution_queue(project_name: str, queue_id: str, workspace_root: Path 
     if not json_path.exists():
         return None
     return ExecutionQueue.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def load_codex_handoff(project_name: str, handoff_id: str, workspace_root: Path | None = None) -> CodexHandoff | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _prompt_path = handoff_artifact_paths(project_name, handoff_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return CodexHandoff.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
 def start_execution_queue(project_name: str, queue_id: str, workspace_root: Path | None = None) -> tuple[ExecutionQueue, Path, Path]:
@@ -1034,7 +1100,7 @@ def start_execution_queue(project_name: str, queue_id: str, workspace_root: Path
                 "status": "running" if current_item_id else "completed",
                 "items": items,
                 "pause_reason": None,
-                "resume_hint": "Queue is running. Generate Codex handoff prompts in TASK-DEVO-080.",
+                "resume_hint": "Queue is running. Generate a Codex handoff prompt with devo project handoff-next.",
                 "current_item_id": current_item_id,
                 "updated_at": now,
             }
@@ -1117,7 +1183,7 @@ def block_queue_item(
                 "status": "waiting_review",
                 "items": items,
                 "pause_reason": "blocked_item",
-                "resume_hint": f"Review blocked item {blocked.item_id}; Codex handoff prompts come in TASK-DEVO-080.",
+                "resume_hint": f"Review blocked item {blocked.item_id}; generate a new handoff only after the blocker is resolved.",
                 "current_item_id": blocked.item_id,
                 "updated_at": now,
             }
@@ -1192,7 +1258,7 @@ def resume_execution_queue(project_name: str, queue_id: str, workspace_root: Pat
                 "status": status,
                 "items": items,
                 "pause_reason": None,
-                "resume_hint": "Queue resumed. Codex handoff prompts come in TASK-DEVO-080.",
+                "resume_hint": "Queue resumed. Generate a Codex handoff prompt with devo project handoff-next.",
                 "current_item_id": current_item_id,
                 "updated_at": now,
             }
@@ -1205,6 +1271,260 @@ def queue_artifact_paths(project_name: str, queue_id: str, workspace_root: Path 
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_queue_id(queue_id)
     return paths.queues_dir / f"queue-{safe_id}.json", paths.queues_dir / f"queue-{safe_id}.md"
+
+
+def handoff_artifact_paths(project_name: str, handoff_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_handoff_id(handoff_id)
+    return paths.handoffs_dir / f"handoff-{safe_id}.json", paths.handoffs_dir / f"handoff-{safe_id}.md"
+
+
+def create_codex_handoff_for_queue_next(project_name: str, queue_id: str, workspace_root: Path | None = None) -> tuple[CodexHandoff, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue, item = get_queue_next_item(project_name, queue_id, workspace_root=root)
+    if queue.status == "completed":
+        msg = f"Execution queue is completed: {queue.queue_id}"
+        raise ValueError(msg)
+    if not item:
+        msg = f"Execution queue has no running or pending item: {queue.queue_id}"
+        raise ValueError(msg)
+    task = _try_get_backlog_task(project_name, item.task_id, root)
+    prompt = render_codex_handoff_prompt(
+        project_name,
+        handoff_type="queue_next",
+        title=f"{item.task_id}: {item.title}",
+        queue=queue,
+        queue_item=item,
+        task=task,
+        batch=load_project_batch(project_name, queue.source_batch_id, workspace_root=root),
+        workspace_root=root,
+    )
+    return _write_codex_handoff(
+        project_name,
+        handoff_type="queue_next",
+        title=f"{item.task_id}: {item.title}",
+        prompt=prompt,
+        source_queue_id=queue.queue_id,
+        source_batch_id=queue.source_batch_id,
+        source_item_id=item.item_id,
+        source_task_id=item.task_id,
+        workspace_root=root,
+    )
+
+
+def create_codex_handoff_for_task(project_name: str, task_id: str, workspace_root: Path | None = None) -> tuple[CodexHandoff, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    task = get_backlog_task(project_name, task_id, workspace_root=root)
+    prompt = render_codex_handoff_prompt(
+        project_name,
+        handoff_type="task",
+        title=f"{task.id}: {task.title}",
+        task=task,
+        workspace_root=root,
+    )
+    return _write_codex_handoff(
+        project_name,
+        handoff_type="task",
+        title=f"{task.id}: {task.title}",
+        prompt=prompt,
+        source_task_id=task.id,
+        workspace_root=root,
+    )
+
+
+def create_codex_handoff_for_batch(project_name: str, batch_id: str, workspace_root: Path | None = None) -> tuple[CodexHandoff, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    batch = load_project_batch(project_name, batch_id, workspace_root=root)
+    if not batch:
+        msg = f"Project batch not found: {batch_id}"
+        raise ValueError(msg)
+    tasks = [_try_get_backlog_task(project_name, task_id, root) for task_id in batch.task_ids]
+    prompt = render_codex_handoff_prompt(
+        project_name,
+        handoff_type="batch",
+        title=f"{batch.batch_id}: {batch.title}",
+        batch=batch,
+        tasks=[task for task in tasks if task],
+        workspace_root=root,
+    )
+    return _write_codex_handoff(
+        project_name,
+        handoff_type="batch",
+        title=f"{batch.batch_id}: {batch.title}",
+        prompt=prompt,
+        source_batch_id=batch.batch_id,
+        workspace_root=root,
+    )
+
+
+def list_codex_handoffs(project_name: str, workspace_root: Path | None = None) -> list[CodexHandoff]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    index = load_handoff_index(project_name, workspace_root=root)
+    handoffs: list[CodexHandoff] = []
+    for entry in index.handoffs:
+        handoff = load_codex_handoff(project_name, entry.handoff_id, workspace_root=root)
+        if handoff:
+            handoffs.append(handoff)
+    return sorted(handoffs, key=lambda item: item.updated_at, reverse=True)
+
+
+def mark_codex_handoff_used(project_name: str, handoff_id: str, workspace_root: Path | None = None) -> tuple[CodexHandoff, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    handoff = load_codex_handoff(project_name, handoff_id, workspace_root=root)
+    if not handoff:
+        msg = f"Codex handoff not found: {handoff_id}"
+        raise ValueError(msg)
+    updated = handoff.model_copy(update={"status": "used", "updated_at": datetime.now(UTC)})
+    return _write_codex_handoff_model(project_name, updated, workspace_root=root)
+
+
+def render_codex_handoff_prompt(
+    project_name: str,
+    *,
+    handoff_type: str,
+    title: str,
+    workspace_root: Path | None = None,
+    queue: ExecutionQueue | None = None,
+    queue_item: QueueItem | None = None,
+    task: BacklogTask | None = None,
+    batch: ProjectBatch | None = None,
+    tasks: list[BacklogTask] | None = None,
+) -> str:
+    root = workspace_root or get_workspace_root()
+    registration = load_registered_project(project_name, workspace_root=root)
+    selected_tasks = tasks or ([task] if task else [])
+    lane = queue_item.lane if queue_item else (task.lane if task else _summarize_batch_dict(batch.lane_summary if batch else {}, "unknown"))
+    risk = queue_item.risk_level if queue_item else (task.risk_level if task else _summarize_batch_dict(batch.risk_summary if batch else {}, "unknown"))
+    dependencies = queue_item.dependencies if queue_item else (task.dependencies if task else (batch.dependencies if batch else []))
+    acceptance = queue_item.acceptance_criteria if queue_item else (task.acceptance_criteria if task else _batch_acceptance(batch, selected_tasks))
+    validation = queue_item.validation_expectations if queue_item else (task.validation_expectations if task else _batch_validation(batch, selected_tasks))
+    allowed_scope = task.allowed_scope if task else _collect_task_scope(selected_tasks, "allowed")
+    forbidden_scope = task.forbidden_scope if task else _collect_task_scope(selected_tasks, "forbidden")
+    lines = [
+        f"# Codex Handoff: {title}",
+        "",
+        "Continue DevOrchestrator-managed project work using this generated Devo handoff prompt.",
+        "",
+        "## Project",
+        "",
+        f"- Project: `{project_name}`",
+        f"- Target repo path: `{registration.path}`",
+        f"- Handoff type: `{handoff_type}`",
+        f"- Lane: `{lane}`",
+        f"- Risk level: `{risk}`",
+        "",
+        "## Devo Context",
+        "",
+        "- Devo is the workflow controller for planning, scope, queue state, validation records, and delivery reports.",
+        "- This prompt is a handoff artifact only. Devo is not invoking Codex or an AI API automatically.",
+        "- Execute only the selected task or approved batch scope described below.",
+        "",
+    ]
+    if queue:
+        lines.extend(
+            [
+                "## Source Queue",
+                "",
+                f"- Queue id: `{queue.queue_id}`",
+                f"- Queue status: `{queue.status}`",
+                f"- Source batch: `{queue.source_batch_id}`",
+                f"- Current item: `{queue.current_item_id or 'none'}`",
+                "",
+            ]
+        )
+    if queue_item:
+        lines.extend(
+            [
+                "## Queue Item",
+                "",
+                f"- Item id: `{queue_item.item_id}`",
+                f"- Task id: `{queue_item.task_id}`",
+                f"- Title: {queue_item.title}",
+                f"- Status: `{queue_item.status}`",
+                "",
+            ]
+        )
+    if batch:
+        lines.extend(
+            [
+                "## Source Batch",
+                "",
+                f"- Batch id: `{batch.batch_id}`",
+                f"- Title: {batch.title}",
+                f"- Status: `{batch.status}`",
+                f"- Approval status: `{batch.approval_status}`",
+                f"- Task count: `{batch.task_count}`",
+                "",
+            ]
+        )
+        if batch.task_snapshots:
+            lines.extend(["### Batch Tasks", ""])
+            for snapshot in batch.task_snapshots:
+                lines.append(f"- `{snapshot.task_id}` {snapshot.title} ({snapshot.lane}, {snapshot.risk_level})")
+            lines.append("")
+    if task:
+        lines.extend(_task_prompt_section(task))
+    elif selected_tasks:
+        for selected in selected_tasks:
+            lines.extend(_task_prompt_section(selected))
+    lines.extend(
+        [
+            "## Dependencies",
+            "",
+            *_bullet_lines(dependencies, "No dependencies recorded."),
+            "",
+            "## Acceptance Criteria",
+            "",
+            *_bullet_lines(acceptance, "No acceptance criteria recorded."),
+            "",
+            "## Validation Expectations",
+            "",
+            *_bullet_lines(validation, "No validation expectations recorded. Use the project's approved validation method only."),
+            "",
+            "## Allowed Scope",
+            "",
+            *_bullet_lines(allowed_scope, "Only the task or batch scope described in this handoff."),
+            "",
+            "## Forbidden Scope",
+            "",
+            *_bullet_lines(
+                forbidden_scope,
+                "Do not modify unrelated files, generated artifacts, secrets, local settings, backups, database files, migrations, or scripts.",
+            ),
+            "",
+            "## Safety Boundaries",
+            "",
+            "- Do not exceed this task/batch scope.",
+            "- Do not touch PersonalOS unless the selected project is PersonalOS and the task explicitly says so.",
+            "- Do not commit generated workspace artifacts.",
+            "- Do not stage workspace/, ui/node_modules/, ui/dist/, .venv/, .env, .pytest_cache/, or pt-* folders.",
+            "- Do not run backup/restore, scheduler modification, destructive commands, or target project commands unless explicitly approved for this handoff.",
+            "- Do not add AI API/model integration or invoke Codex CLI automation automatically.",
+            "- Ask for explicit trusted approval if a safety gate blocks the edit.",
+            "",
+            "## Required Validation Instructions",
+            "",
+            "- Run only validation that is approved for this task/batch.",
+            "- Record skipped validation honestly when approval is absent or unsafe.",
+            "- Run diff checks before staging if source files change.",
+            "- Do not fabricate validation, review, audit, commit, or push evidence.",
+            "",
+            "## Expected Final Report",
+            "",
+            "- Changed files",
+            "- Implementation summary",
+            "- Validation performed and results",
+            "- Devo artifacts generated or updated",
+            "- Commit hash and push result, if delivery is approved",
+            "- Final source repo status",
+            "- Confirmation generated workspace artifacts were not committed",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def render_execution_queue_markdown(queue: ExecutionQueue) -> str:
@@ -1254,7 +1574,7 @@ def render_execution_queue_markdown(queue: ExecutionQueue) -> str:
         [
             "## Safety Note",
             "",
-            "Execution queue state is tracking only. Devo does not run Codex, generate execution prompts, run validation, commit, push, or modify target repositories from this queue.",
+            "Execution queue state is tracking only. Devo does not run Codex, run validation, commit, push, or modify target repositories from this queue.",
             "",
         ]
     )
@@ -1617,6 +1937,13 @@ def _normalize_queue_id(queue_id: str) -> str:
     return cleaned.upper()
 
 
+def _normalize_handoff_id(handoff_id: str) -> str:
+    cleaned = handoff_id.strip()
+    if cleaned.lower().startswith("handoff-"):
+        cleaned = cleaned[8:]
+    return cleaned.upper()
+
+
 def _next_batch_id(project_name: str, workspace_root: Path | None = None) -> str:
     existing = {_normalize_batch_id(batch.batch_id) for batch in list_project_batches(project_name, workspace_root=workspace_root)}
     index = 1
@@ -1632,6 +1959,16 @@ def _next_queue_id(project_name: str, workspace_root: Path | None = None) -> str
     index = 1
     while True:
         candidate = f"Q{index:03d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _next_handoff_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_handoff_id(handoff.handoff_id) for handoff in list_codex_handoffs(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"H{index:03d}"
         if candidate not in existing:
             return candidate
         index += 1
@@ -1739,6 +2076,101 @@ def _write_queue_index(project_name: str, workspace_root: Path | None = None) ->
     ]
     index = QueueIndex(project=project_name, queues=entries, updated_at=datetime.now(UTC))
     _write_model(paths.queue_index_json, index)
+    return index
+
+
+def _write_codex_handoff(
+    project_name: str,
+    *,
+    handoff_type: str,
+    title: str,
+    prompt: str,
+    workspace_root: Path | None = None,
+    source_queue_id: str | None = None,
+    source_batch_id: str | None = None,
+    source_item_id: str | None = None,
+    source_task_id: str | None = None,
+) -> tuple[CodexHandoff, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_type = handoff_type.strip().lower()
+    if normalized_type not in ALLOWED_HANDOFF_TYPES:
+        msg = f"Invalid handoff type: {handoff_type}"
+        raise ValueError(msg)
+    handoff_id = _next_handoff_id(project_name, workspace_root=root)
+    _json_path, prompt_path = handoff_artifact_paths(project_name, handoff_id, workspace_root=root)
+    now = datetime.now(UTC)
+    handoff = CodexHandoff(
+        project=project_name,
+        handoff_id=handoff_id,
+        handoff_type=normalized_type,
+        source_queue_id=source_queue_id,
+        source_batch_id=source_batch_id,
+        source_item_id=source_item_id,
+        source_task_id=source_task_id,
+        title=title,
+        status="draft",
+        prompt_path=str(prompt_path),
+        created_at=now,
+        updated_at=now,
+    )
+    return _write_codex_handoff_model(project_name, handoff, prompt=prompt, workspace_root=root)
+
+
+def _write_codex_handoff_model(
+    project_name: str,
+    handoff: CodexHandoff,
+    *,
+    prompt: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[CodexHandoff, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.handoffs_dir.mkdir(parents=True, exist_ok=True)
+    if handoff.status not in ALLOWED_HANDOFF_STATUSES:
+        msg = f"Invalid handoff status: {handoff.status}"
+        raise ValueError(msg)
+    json_path, prompt_path = handoff_artifact_paths(project_name, handoff.handoff_id, workspace_root=root)
+    updated = handoff.model_copy(update={"prompt_path": str(prompt_path), "updated_at": handoff.updated_at})
+    _write_model(json_path, updated)
+    if prompt is not None:
+        prompt_path.write_text(prompt, encoding="utf-8")
+    elif not prompt_path.exists():
+        prompt_path.write_text(f"# Codex Handoff: {updated.title}\n\nPrompt content is unavailable.\n", encoding="utf-8")
+    _write_handoff_index(project_name, workspace_root=root)
+    return updated, json_path, prompt_path
+
+
+def _write_handoff_index(project_name: str, workspace_root: Path | None = None) -> HandoffIndex:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.handoffs_dir.mkdir(parents=True, exist_ok=True)
+    handoffs = []
+    for path in sorted(paths.handoffs_dir.glob("handoff-*.json")):
+        if path.name == HANDOFF_INDEX_JSON:
+            continue
+        try:
+            handoffs.append(CodexHandoff.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    handoffs = sorted(handoffs, key=lambda item: item.updated_at, reverse=True)
+    entries = [
+        HandoffIndexEntry(
+            handoff_id=handoff.handoff_id,
+            handoff_type=handoff.handoff_type,
+            title=handoff.title,
+            status=handoff.status,
+            source_queue_id=handoff.source_queue_id,
+            source_batch_id=handoff.source_batch_id,
+            source_item_id=handoff.source_item_id,
+            source_task_id=handoff.source_task_id,
+            prompt_path=handoff.prompt_path,
+            updated_at=handoff.updated_at,
+        )
+        for handoff in handoffs
+    ]
+    index = HandoffIndex(project=project_name, handoffs=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.handoff_index_json, index)
     return index
 
 
@@ -1903,7 +2335,7 @@ def _progress_next_action(
     latest_batch = batches[0]
     if not any(batch.approval_status == "approved" for batch in batches):
         return f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id}"
-    return "Approved planning batch is ready; execution queue comes in TASK-DEVO-079."
+    return "Approved planning batch is ready; create an execution queue or generate a batch handoff."
 
 
 def _progress_warnings(
@@ -1993,6 +2425,78 @@ def _lane_summary() -> str:
         if lane.notes:
             lines.append(f"  - note: {lane.notes[0]}")
     return "\n".join(lines)
+
+
+def _try_get_backlog_task(project_name: str, task_id: str, workspace_root: Path) -> BacklogTask | None:
+    try:
+        return get_backlog_task(project_name, task_id, workspace_root=workspace_root)
+    except ValueError:
+        return None
+
+
+def _task_prompt_section(task: BacklogTask) -> list[str]:
+    return [
+        "## Task",
+        "",
+        f"- Task id: `{task.id}`",
+        f"- Title: {task.title}",
+        f"- Status: `{task.status}`",
+        f"- Lane: `{task.lane}`",
+        f"- Risk level: `{task.risk_level}`",
+        f"- Milestone: `{task.milestone_id or 'none'}`",
+        f"- Epic: `{task.epic_id or 'none'}`",
+        "",
+        "### Summary",
+        "",
+        task.summary or "No summary recorded.",
+        "",
+    ]
+
+
+def _bullet_lines(values: list[str], fallback: str) -> list[str]:
+    if not values:
+        return [f"- {fallback}"]
+    return [f"- {value}" for value in values]
+
+
+def _summarize_batch_dict(values: dict[str, int], fallback: str) -> str:
+    if not values:
+        return fallback
+    return ", ".join(f"{key} ({value})" for key, value in sorted(values.items()))
+
+
+def _batch_acceptance(batch: ProjectBatch | None, tasks: list[BacklogTask]) -> list[str]:
+    values: list[str] = []
+    for task in tasks:
+        values.extend(f"{task.id}: {item}" for item in task.acceptance_criteria)
+    if values:
+        return values
+    if not batch:
+        return []
+    return [f"{snapshot.task_id}: {snapshot.acceptance_criteria_summary}" for snapshot in batch.task_snapshots if snapshot.acceptance_criteria_summary]
+
+
+def _batch_validation(batch: ProjectBatch | None, tasks: list[BacklogTask]) -> list[str]:
+    values: list[str] = []
+    for task in tasks:
+        values.extend(f"{task.id}: {item}" for item in task.validation_expectations)
+    if values:
+        return values
+    if not batch:
+        return []
+    return [
+        f"{snapshot.task_id}: {snapshot.validation_expectations_summary}"
+        for snapshot in batch.task_snapshots
+        if snapshot.validation_expectations_summary
+    ]
+
+
+def _collect_task_scope(tasks: list[BacklogTask], kind: str) -> list[str]:
+    values: list[str] = []
+    for task in tasks:
+        source = task.allowed_scope if kind == "allowed" else task.forbidden_scope
+        values.extend(f"{task.id}: {item}" for item in source)
+    return values
 
 
 def _default_milestones(brief: ProjectBrief) -> list[BlueprintMilestone]:

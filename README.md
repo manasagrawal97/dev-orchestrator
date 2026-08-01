@@ -185,7 +185,20 @@ devo project queue-pause --project MyProject --queue Q001 --reason usage_limit -
 devo project queue-resume --project MyProject --queue Q001
 ```
 
-Queue artifacts are stored under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. The execution queue is state tracking only. It does not run Codex, generate execution prompts, run validation, run Git commands, commit, push, or modify target project source. Codex handoff prompts come next in TASK-DEVO-080.
+Queue artifacts are stored under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. The execution queue is state tracking only. It does not run Codex, run validation, run Git commands, commit, push, or modify target project source.
+
+Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
+
+```powershell
+devo project handoff-next --project MyProject --queue Q001
+devo project handoff-task --project MyProject --task T001
+devo project handoff-batch --project MyProject --batch B001
+devo project handoff-list --project MyProject
+devo project handoff-show --project MyProject --handoff H001
+devo project handoff-mark-used --project MyProject --handoff H001
+```
+
+Handoff artifacts are stored under `workspace/projects/<project>/planning/handoffs/` as `handoff-<handoff_id>.json`, `handoff-<handoff_id>.md`, and `handoff-index.json`. Handoff prompts are the first safe bridge from Devo planning to Codex execution: Devo writes a prompt, then the user manually pastes it into Codex. Devo still does not run Codex, call AI APIs, execute target commands, approve implementation, run validation, commit, push, or modify target project source.
 
 List registered projects:
 
