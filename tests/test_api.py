@@ -15,6 +15,7 @@ from devo.project_planning import (
     create_project_brief,
     create_project_batch,
     create_codex_handoff_for_queue_next,
+    create_codex_worker_run_from_handoff,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
     request_batch_approval,
@@ -288,6 +289,37 @@ def test_project_handoff_endpoints_return_json(tmp_path: Path, monkeypatch) -> N
     assert missing.json()["detail"]["error"] == "handoff_not_found"
 
 
+def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    batch, _batch_json, _batch_md = create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    approved = batch.model_copy(update={"status": "approved", "approval_status": "approved"})
+    batch_json = workspace / "projects" / "sample" / "planning" / "batches" / "batch-B001.json"
+    batch_json.write_text(approved.model_dump_json(indent=2), encoding="utf-8")
+    create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+    create_codex_handoff_for_queue_next("sample", "Q001", workspace_root=workspace)
+    create_codex_worker_run_from_handoff("sample", "H001", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    worker_runs = client.get("/api/projects/sample/worker-runs")
+    worker_run = client.get("/api/projects/sample/worker-runs/WR001")
+    missing = client.get("/api/projects/sample/worker-runs/WR999")
+
+    assert worker_runs.status_code == 200
+    assert worker_runs.json()["count"] == 1
+    assert worker_runs.json()["worker_runs"][0]["worker_run_id"] == "WR001"
+    assert worker_runs.json()["worker_runs"][0]["source_handoff_id"] == "H001"
+    assert worker_run.status_code == 200
+    assert worker_run.json()["status"] == "planned"
+    assert worker_run.json()["report"]["report_status"] == "missing"
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"] == "worker_run_not_found"
+
+
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
@@ -456,6 +488,8 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/queues/{queue_id}/next" in result.output
     assert "GET /api/projects/{project}/handoffs" in result.output
     assert "GET /api/projects/{project}/handoffs/{handoff_id}" in result.output
+    assert "GET /api/projects/{project}/worker-runs" in result.output
+    assert "GET /api/projects/{project}/worker-runs/{worker_run_id}" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
 
 

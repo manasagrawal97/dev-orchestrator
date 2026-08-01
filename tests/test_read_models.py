@@ -45,6 +45,10 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.handoff_count == 0
     assert overview.latest_handoff_id is None
     assert overview.handoff_next_action
+    assert overview.worker_run_count == 0
+    assert overview.latest_worker_run_id is None
+    assert overview.latest_worker_run_status is None
+    assert overview.latest_worker_run_next_action is None
     assert overview.project_completion_percent == 0.0
     assert overview.backlog_readiness_percent == 0.0
     assert overview.progress_next_action
@@ -144,6 +148,8 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "queue_next_action" in overview_data
     assert "handoff_count" in overview_data
     assert "handoff_next_action" in overview_data
+    assert "worker_run_count" in overview_data
+    assert "latest_worker_run_next_action" in overview_data
 
 
 def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkeypatch) -> None:
@@ -160,6 +166,25 @@ def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkey
     assert overview.latest_batch_review_status == "not_reviewed"
     assert overview.batch_approval_requested_count == 1
     assert "batch-approval-show" in overview.batch_approval_next_action
+
+
+def test_project_overview_includes_worker_run_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001", "--note", "Approved."])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
+
+    overview = build_project_overview("sample")
+
+    assert overview.worker_run_count == 1
+    assert overview.latest_worker_run_id == "WR001"
+    assert overview.latest_worker_run_status == "planned"
+    assert overview.latest_worker_run_next_action is not None
+    assert "Paste the linked handoff prompt" in overview.latest_worker_run_next_action
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:

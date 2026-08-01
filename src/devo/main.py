@@ -70,6 +70,7 @@ from .project_planning import (
     ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    WorkerRun,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -83,6 +84,7 @@ from .project_planning import (
     create_codex_handoff_for_batch,
     create_codex_handoff_for_queue_next,
     create_codex_handoff_for_task,
+    create_codex_worker_run_from_handoff,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
     complete_queue_item,
@@ -93,10 +95,12 @@ from .project_planning import (
     list_execution_queues,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_runs,
     list_project_batches,
     load_execution_queue,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_run,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
@@ -104,13 +108,16 @@ from .project_planning import (
     planning_artifact_paths,
     pause_execution_queue,
     mark_codex_handoff_used,
+    mark_codex_worker_run_handoff_used,
     reject_project_batch,
     request_batch_approval,
     review_project_batch,
     resume_execution_queue,
     suggest_project_batch,
     start_execution_queue,
+    update_codex_worker_run_status,
     validate_refined_backlog_file,
+    worker_run_artifact_paths,
 )
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
 from .read_models import (
@@ -207,6 +214,8 @@ report_app = typer.Typer(help="Generate deterministic project, run, and handoff 
 visual_app = typer.Typer(help="Generate Mermaid visual report artifacts.")
 api_app = typer.Typer(help="Serve the local read-only Devo API.")
 ui_app = typer.Typer(help="Inspect and open the local read-only Devo UI.")
+worker_app = typer.Typer(help="Track local worker runs.")
+worker_codex_app = typer.Typer(help="Track Codex worker runs without invoking Codex.")
 app.add_typer(project_app, name="project")
 app.add_typer(agent_app, name="agent")
 app.add_typer(run_app, name="run")
@@ -226,6 +235,8 @@ app.add_typer(report_app, name="report")
 app.add_typer(visual_app, name="visual")
 app.add_typer(api_app, name="api")
 app.add_typer(ui_app, name="ui")
+app.add_typer(worker_app, name="worker")
+worker_app.add_typer(worker_codex_app, name="codex")
 console = Console()
 
 
@@ -564,6 +575,31 @@ def _print_codex_handoff(handoff: CodexHandoff, json_path: Path | None = None, p
         console.print(f"JSON: {_named_path(json_path)}")
     console.print("Suggested user action: paste this prompt into Codex.")
     console.print("Devo does not run Codex or target project commands automatically.")
+
+
+def _print_worker_run(worker_run: WorkerRun, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Codex worker run: {worker_run.worker_run_id}[/bold]")
+    console.print(f"Project: {worker_run.project}")
+    console.print(f"Worker type: {worker_run.worker_type}")
+    console.print(f"Mode: {worker_run.mode}")
+    console.print(f"Status: {worker_run.status}")
+    console.print(f"Title: {worker_run.title}", soft_wrap=True)
+    console.print(f"Source handoff: {worker_run.source_handoff_id or 'none'}")
+    console.print(f"Source queue: {worker_run.source_queue_id or 'none'}")
+    console.print(f"Source item: {worker_run.source_queue_item_id or 'none'}")
+    console.print(f"Source batch: {worker_run.source_batch_id or 'none'}")
+    console.print(f"Source task: {worker_run.source_task_id or 'none'}")
+    console.print(f"Prompt: {_named_path(Path(worker_run.prompt_path))}")
+    console.print(f"Target repo: {worker_run.target_repo_path}", soft_wrap=True)
+    console.print(f"Report status: {worker_run.report.report_status}")
+    console.print(f"Reported commit: {worker_run.report.reported_commit_hash or 'none'}")
+    console.print(f"Status note: {worker_run.status_note or 'none'}", soft_wrap=True)
+    console.print(f"Next action: {worker_run.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("Safety: this is workspace-only tracking. Devo did not run Codex, execute target commands, or mark implementation complete.")
 
 
 def _print_json_model(model: object) -> None:
@@ -2080,6 +2116,99 @@ def mark_handoff_used_command(
         raise typer.BadParameter(str(exc), param_hint="--handoff") from exc
     console.print(f"[green]Codex handoff marked used[/green] {project_name}")
     _print_codex_handoff(handoff, json_path=json_path, prompt_path=prompt_path)
+
+
+@worker_codex_app.command("run-create")
+def create_codex_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    handoff_id: str = typer.Option(..., "--handoff", help="Codex handoff id."),
+) -> None:
+    """Create a planned Codex worker run record from an existing handoff without running Codex."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_run, json_path, markdown_path = create_codex_worker_run_from_handoff(project_name, handoff_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--handoff") from exc
+    console.print(f"[green]Codex worker run recorded[/green] {project_name}")
+    _print_worker_run(worker_run, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Manual action: paste the handoff prompt into Codex from {_named_path(Path(worker_run.prompt_path))}.", soft_wrap=True)
+    console.print("Future TASK-DEVO-089 will import/review worker reports. This command does not trust or complete worker output.")
+
+
+@worker_codex_app.command("run-list")
+def list_codex_worker_runs_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List Codex worker run records for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_runs = list_codex_worker_runs(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Codex worker runs: {project_name}[/bold]")
+    if not worker_runs:
+        console.print("[yellow]No Codex worker runs recorded.[/yellow]")
+        console.print(f"Suggested next command: devo worker codex run-create --project {project_name} --handoff <handoffId>")
+        return
+    for worker_run in worker_runs:
+        console.print(
+            f"{worker_run.worker_run_id} | {worker_run.status} | handoff={worker_run.source_handoff_id or 'none'} "
+            f"task={worker_run.source_task_id or 'none'} report={worker_run.report.report_status} | {worker_run.title}",
+            soft_wrap=True,
+        )
+
+
+@worker_codex_app.command("run-show")
+def show_codex_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Show Codex worker run metadata without mutating anything."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_run = load_codex_worker_run(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    if not worker_run:
+        console.print(f"[yellow]Codex worker run not found: {worker_run_id}[/yellow]")
+        console.print(f"Suggested next command: devo worker codex run-list --project {project_name}")
+        return
+    json_path, markdown_path = worker_run_artifact_paths(project_name, worker_run.worker_run_id)
+    _print_worker_run(worker_run, json_path=json_path, markdown_path=markdown_path)
+
+
+@worker_codex_app.command("run-status")
+def update_codex_worker_run_status_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    status: str = typer.Option(..., "--status", help="New worker run status."),
+    note: str = typer.Option("", "--note", help="Status note."),
+) -> None:
+    """Update a Codex worker run status as a workspace-only tracking artifact."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_run, json_path, markdown_path = update_codex_worker_run_status(project_name, worker_run_id, status, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--status") from exc
+    console.print(f"[green]Codex worker run status updated[/green] {project_name}")
+    _print_worker_run(worker_run, json_path=json_path, markdown_path=markdown_path)
+    console.print("No queue item, backlog task, validation, commit, or push state was updated automatically.")
+
+
+@worker_codex_app.command("run-mark-used")
+def mark_codex_worker_run_used_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Mark the linked Codex handoff used without implying worker completion."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_run, json_path, markdown_path = mark_codex_worker_run_handoff_used(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    console.print(f"[green]Linked handoff marked used[/green] {project_name}")
+    _print_worker_run(worker_run, json_path=json_path, markdown_path=markdown_path)
+    console.print("This does not imply worker completion or queue/task completion.")
 
 
 @project_app.command("activity")

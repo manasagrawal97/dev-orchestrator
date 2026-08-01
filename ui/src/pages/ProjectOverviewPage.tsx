@@ -236,15 +236,20 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                   ['Handoffs', overview.handoff_count],
                   ['Latest handoff', overview.latest_handoff_id ?? 'none'],
                   ['Latest handoff type', overview.latest_handoff_type ?? 'none'],
-                  ['Latest handoff status', overview.latest_handoff_status ?? 'none']
+                  ['Latest handoff status', overview.latest_handoff_status ?? 'none'],
+                  ['Worker runs', overview.worker_run_count],
+                  ['Latest worker run', overview.latest_worker_run_id ?? 'none'],
+                  ['Latest worker status', overview.latest_worker_run_status ?? 'none']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
               <p className="muted compact">{overview.batch_approval_next_action}</p>
               <p className="muted compact">{overview.handoff_next_action}</p>
+              {overview.latest_worker_run_next_action ? <p className="muted compact">{overview.latest_worker_run_next_action}</p> : null}
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
+              <CommandCopyBox command={`devo worker codex run-list --project ${selectedProject}`} />
               {onOpenPage ? (
                 <div className="detail-link-row">
                   <button className="link-button detail-link" type="button" onClick={() => onOpenPage('batches')}>

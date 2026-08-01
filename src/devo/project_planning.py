@@ -26,6 +26,9 @@ QUEUES_DIR_NAME = "queues"
 QUEUE_INDEX_JSON = "queue-index.json"
 HANDOFFS_DIR_NAME = "handoffs"
 HANDOFF_INDEX_JSON = "handoff-index.json"
+WORKERS_DIR_NAME = "workers"
+CODEX_WORKER_DIR_NAME = "codex"
+WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
@@ -38,6 +41,19 @@ ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "paused", "blocked", "faile
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
 ALLOWED_HANDOFF_STATUSES = {"draft", "used", "superseded"}
 ALLOWED_HANDOFF_TYPES = {"task", "batch", "queue_next"}
+ALLOWED_WORKER_RUN_MODES = {"manual_handoff", "assisted_handoff", "supervised_cli", "future_queue_worker"}
+ALLOWED_WORKER_RUN_STATUSES = {
+    "planned",
+    "running",
+    "completed",
+    "failed",
+    "paused_usage_limit",
+    "blocked_needs_approval",
+    "cancelled",
+    "waiting_review",
+    "superseded",
+}
+ALLOWED_WORKER_REPORT_STATUSES = {"missing", "present", "validated", "rejected"}
 SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -420,6 +436,86 @@ class HandoffIndex(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class WorkerReportMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_status: str = "missing"
+    reported_changed_files: list[str] = Field(default_factory=list)
+    reported_validation: list[str] = Field(default_factory=list)
+    reported_commit_hash: str | None = None
+    safety_warnings: list[str] = Field(default_factory=list)
+    reviewer_notes: list[str] = Field(default_factory=list)
+    imported_at: datetime | None = None
+
+
+class WorkerRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    worker_run_id: str
+    worker_type: str = "codex_cli"
+    mode: str = "manual_handoff"
+    source_handoff_id: str | None = None
+    source_queue_id: str | None = None
+    source_queue_item_id: str | None = None
+    source_batch_id: str | None = None
+    source_task_id: str | None = None
+    title: str
+    status: str = "planned"
+    prompt_path: str
+    transcript_path: str | None = None
+    report_path: str | None = None
+    target_repo_path: str
+    allowed_scope: list[str] = Field(default_factory=list)
+    forbidden_scope: list[str] = Field(default_factory=list)
+    validation_expectations: list[str] = Field(default_factory=list)
+    safety_boundaries: list[str] = Field(default_factory=list)
+    report: WorkerReportMetadata = Field(default_factory=WorkerReportMetadata)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    status_note: str = ""
+    next_action: str = ""
+
+
+class WorkerRunIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_run_id: str
+    worker_type: str
+    mode: str
+    title: str
+    status: str
+    source_handoff_id: str | None = None
+    source_queue_id: str | None = None
+    source_queue_item_id: str | None = None
+    source_batch_id: str | None = None
+    source_task_id: str | None = None
+    report_status: str = "missing"
+    next_action: str
+    path: str
+    updated_at: datetime
+
+
+class WorkerRunIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    worker_runs: list[WorkerRunIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WorkerArtifactPaths(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    worker_dir: Path
+    codex_dir: Path
+    worker_run_index_json: Path
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -460,6 +556,23 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         handoffs_dir=planning_dir / HANDOFFS_DIR_NAME,
         handoff_index_json=planning_dir / HANDOFFS_DIR_NAME / HANDOFF_INDEX_JSON,
     )
+
+
+def worker_artifact_paths(project_name: str, workspace_root: Path | None = None) -> WorkerArtifactPaths:
+    root = workspace_root or get_workspace_root()
+    worker_dir = root / "projects" / project_name / WORKERS_DIR_NAME
+    codex_dir = worker_dir / CODEX_WORKER_DIR_NAME
+    return WorkerArtifactPaths(
+        worker_dir=worker_dir,
+        codex_dir=codex_dir,
+        worker_run_index_json=codex_dir / WORKER_RUN_INDEX_JSON,
+    )
+
+
+def worker_run_artifact_paths(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_worker_run_id(worker_run_id)
+    return paths.codex_dir / f"worker-run-{safe_id}.json", paths.codex_dir / f"worker-run-{safe_id}.md"
 
 
 def create_project_brief(
@@ -1551,6 +1664,203 @@ def mark_codex_handoff_used(project_name: str, handoff_id: str, workspace_root: 
     return _write_codex_handoff_model(project_name, updated, workspace_root=root)
 
 
+def create_codex_worker_run_from_handoff(
+    project_name: str,
+    handoff_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[WorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    registration = load_registered_project(project_name, workspace_root=root)
+    handoff = load_codex_handoff(project_name, handoff_id, workspace_root=root)
+    if not handoff:
+        msg = f"Codex handoff not found: {handoff_id}"
+        raise ValueError(msg)
+    worker_run_id = _next_worker_run_id(project_name, workspace_root=root)
+    now = datetime.now(UTC)
+    task = _try_get_backlog_task(project_name, handoff.source_task_id, root) if handoff.source_task_id else None
+    queue_item: QueueItem | None = None
+    if handoff.source_queue_id and handoff.source_item_id:
+        queue = load_execution_queue(project_name, handoff.source_queue_id, workspace_root=root)
+        queue_item = _find_queue_item(queue.items, handoff.source_item_id) if queue else None
+    worker_run = WorkerRun(
+        project=project_name,
+        worker_run_id=worker_run_id,
+        worker_type="codex_cli",
+        mode="manual_handoff",
+        source_handoff_id=handoff.handoff_id,
+        source_queue_id=handoff.source_queue_id,
+        source_queue_item_id=handoff.source_item_id,
+        source_batch_id=handoff.source_batch_id,
+        source_task_id=handoff.source_task_id,
+        title=f"Codex worker run for {handoff.handoff_id}: {handoff.title}",
+        status="planned",
+        prompt_path=handoff.prompt_path,
+        target_repo_path=str(registration.path),
+        allowed_scope=_worker_allowed_scope(task, queue_item),
+        forbidden_scope=_worker_forbidden_scope(task),
+        validation_expectations=_worker_validation_expectations(task, queue_item),
+        safety_boundaries=_worker_safety_boundaries(project_name),
+        created_at=now,
+        updated_at=now,
+        next_action=_worker_run_next_action(project_name, worker_run_id, "planned"),
+    )
+    return _write_worker_run(project_name, worker_run, workspace_root=root)
+
+
+def load_worker_run_index(project_name: str, workspace_root: Path | None = None) -> WorkerRunIndex:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.worker_run_index_json.exists():
+        return WorkerRunIndex(project=project_name)
+    return WorkerRunIndex.model_validate_json(paths.worker_run_index_json.read_text(encoding="utf-8"))
+
+
+def load_codex_worker_run(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> WorkerRun | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = worker_run_artifact_paths(project_name, worker_run_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return WorkerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_worker_runs(project_name: str, workspace_root: Path | None = None) -> list[WorkerRun]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    worker_runs: list[WorkerRun] = []
+    if paths.worker_run_index_json.exists():
+        index = load_worker_run_index(project_name, workspace_root=root)
+        for entry in index.worker_runs:
+            worker_run = load_codex_worker_run(project_name, entry.worker_run_id, workspace_root=root)
+            if worker_run:
+                worker_runs.append(worker_run)
+    else:
+        for path in sorted(paths.codex_dir.glob("worker-run-*.json")):
+            if path.name == WORKER_RUN_INDEX_JSON:
+                continue
+            try:
+                worker_runs.append(WorkerRun.model_validate_json(path.read_text(encoding="utf-8")))
+            except (ValueError, ValidationError):
+                continue
+    return sorted(worker_runs, key=lambda item: item.updated_at, reverse=True)
+
+
+def update_codex_worker_run_status(
+    project_name: str,
+    worker_run_id: str,
+    status: str,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[WorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run = load_codex_worker_run(project_name, worker_run_id, workspace_root=root)
+    if not worker_run:
+        msg = f"Codex worker run not found: {worker_run_id}"
+        raise ValueError(msg)
+    normalized_status = status.strip().lower()
+    if normalized_status not in ALLOWED_WORKER_RUN_STATUSES:
+        msg = f"Invalid worker run status: {status}"
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    updates: dict[str, object] = {
+        "status": normalized_status,
+        "status_note": note.strip(),
+        "updated_at": now,
+        "next_action": _worker_run_next_action(project_name, worker_run.worker_run_id, normalized_status),
+    }
+    if normalized_status == "running" and not worker_run.started_at:
+        updates["started_at"] = now
+    if normalized_status in {"completed", "failed", "cancelled", "superseded"}:
+        updates["completed_at"] = now
+    updated = worker_run.model_copy(update=updates)
+    return _write_worker_run(project_name, updated, workspace_root=root)
+
+
+def mark_codex_worker_run_handoff_used(
+    project_name: str,
+    worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[WorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run = load_codex_worker_run(project_name, worker_run_id, workspace_root=root)
+    if not worker_run:
+        msg = f"Codex worker run not found: {worker_run_id}"
+        raise ValueError(msg)
+    if not worker_run.source_handoff_id:
+        msg = f"Codex worker run has no linked handoff: {worker_run_id}"
+        raise ValueError(msg)
+    mark_codex_handoff_used(project_name, worker_run.source_handoff_id, workspace_root=root)
+    updated = worker_run.model_copy(
+        update={
+            "status_note": "Linked handoff marked used. This does not imply worker completion.",
+            "updated_at": datetime.now(UTC),
+            "next_action": _worker_run_next_action(project_name, worker_run.worker_run_id, worker_run.status),
+        }
+    )
+    return _write_worker_run(project_name, updated, workspace_root=root)
+
+
+def render_codex_worker_run_markdown(worker_run: WorkerRun) -> str:
+    lines = [
+        f"# Codex Worker Run: {worker_run.worker_run_id}",
+        "",
+        f"- Project: `{worker_run.project}`",
+        f"- Worker type: `{worker_run.worker_type}`",
+        f"- Mode: `{worker_run.mode}`",
+        f"- Status: `{worker_run.status}`",
+        f"- Title: {worker_run.title}",
+        f"- Target repo path: `{worker_run.target_repo_path}`",
+        f"- Prompt path: `{worker_run.prompt_path}`",
+        f"- Transcript path: `{worker_run.transcript_path or 'none'}`",
+        f"- Report path: `{worker_run.report_path or 'none'}`",
+        f"- Source handoff: `{worker_run.source_handoff_id or 'none'}`",
+        f"- Source queue: `{worker_run.source_queue_id or 'none'}`",
+        f"- Source queue item: `{worker_run.source_queue_item_id or 'none'}`",
+        f"- Source batch: `{worker_run.source_batch_id or 'none'}`",
+        f"- Source task: `{worker_run.source_task_id or 'none'}`",
+        f"- Created: `{worker_run.created_at.isoformat()}`",
+        f"- Updated: `{worker_run.updated_at.isoformat()}`",
+        f"- Started: `{worker_run.started_at.isoformat() if worker_run.started_at else 'none'}`",
+        f"- Completed: `{worker_run.completed_at.isoformat() if worker_run.completed_at else 'none'}`",
+        "",
+        "## Status Note",
+        "",
+        worker_run.status_note or "No status note recorded.",
+        "",
+        "## Next Action",
+        "",
+        worker_run.next_action or "No next action recorded.",
+        "",
+    ]
+    _append_list_section(lines, "Allowed Scope", worker_run.allowed_scope)
+    _append_list_section(lines, "Forbidden Scope", worker_run.forbidden_scope)
+    _append_list_section(lines, "Validation Expectations", worker_run.validation_expectations)
+    _append_list_section(lines, "Safety Boundaries", worker_run.safety_boundaries)
+    lines.extend(
+        [
+            "## Worker Report Metadata",
+            "",
+            f"- Report status: `{worker_run.report.report_status}`",
+            f"- Reported commit hash: `{worker_run.report.reported_commit_hash or 'none'}`",
+            f"- Imported at: `{worker_run.report.imported_at.isoformat() if worker_run.report.imported_at else 'none'}`",
+            "",
+        ]
+    )
+    _append_list_section(lines, "Reported Changed Files", worker_run.report.reported_changed_files)
+    _append_list_section(lines, "Reported Validation", worker_run.report.reported_validation)
+    _append_list_section(lines, "Safety Warnings", worker_run.report.safety_warnings)
+    _append_list_section(lines, "Reviewer Notes", worker_run.report.reviewer_notes)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "This worker run is a workspace-only tracking record. Devo did not run Codex, call AI APIs, execute target commands, trust worker output, mark queue/task completion, commit, push, or modify the target repository.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_handoff_prompt(
     project_name: str,
     *,
@@ -2170,6 +2480,13 @@ def _normalize_handoff_id(handoff_id: str) -> str:
     return cleaned.upper()
 
 
+def _normalize_worker_run_id(worker_run_id: str) -> str:
+    cleaned = worker_run_id.strip()
+    if cleaned.lower().startswith("worker-run-"):
+        cleaned = cleaned[11:]
+    return cleaned.upper()
+
+
 def _next_batch_id(project_name: str, workspace_root: Path | None = None) -> str:
     existing = {_normalize_batch_id(batch.batch_id) for batch in list_project_batches(project_name, workspace_root=workspace_root)}
     index = 1
@@ -2195,6 +2512,16 @@ def _next_handoff_id(project_name: str, workspace_root: Path | None = None) -> s
     index = 1
     while True:
         candidate = f"H{index:03d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _next_worker_run_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_worker_run_id(worker.worker_run_id) for worker in list_codex_worker_runs(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"WR{index:03d}"
         if candidate not in existing:
             return candidate
         index += 1
@@ -2407,6 +2734,68 @@ def _write_handoff_index(project_name: str, workspace_root: Path | None = None) 
     ]
     index = HandoffIndex(project=project_name, handoffs=entries, updated_at=datetime.now(UTC))
     _write_model(paths.handoff_index_json, index)
+    return index
+
+
+def _write_worker_run(project_name: str, worker_run: WorkerRun, workspace_root: Path | None = None) -> tuple[WorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    if worker_run.worker_type != "codex_cli":
+        msg = f"Invalid worker type: {worker_run.worker_type}"
+        raise ValueError(msg)
+    if worker_run.mode not in ALLOWED_WORKER_RUN_MODES:
+        msg = f"Invalid worker run mode: {worker_run.mode}"
+        raise ValueError(msg)
+    if worker_run.status not in ALLOWED_WORKER_RUN_STATUSES:
+        msg = f"Invalid worker run status: {worker_run.status}"
+        raise ValueError(msg)
+    if worker_run.report.report_status not in ALLOWED_WORKER_REPORT_STATUSES:
+        msg = f"Invalid worker report status: {worker_run.report.report_status}"
+        raise ValueError(msg)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.codex_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = worker_run_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    updated = worker_run.model_copy(update={"worker_run_id": _normalize_worker_run_id(worker_run.worker_run_id)})
+    _write_model(json_path, updated)
+    markdown_path.write_text(render_codex_worker_run_markdown(updated), encoding="utf-8")
+    _write_worker_run_index(project_name, workspace_root=root)
+    return updated, json_path, markdown_path
+
+
+def _write_worker_run_index(project_name: str, workspace_root: Path | None = None) -> WorkerRunIndex:
+    root = workspace_root or get_workspace_root()
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.codex_dir.mkdir(parents=True, exist_ok=True)
+    worker_runs: list[WorkerRun] = []
+    for path in sorted(paths.codex_dir.glob("worker-run-*.json")):
+        if path.name == WORKER_RUN_INDEX_JSON:
+            continue
+        try:
+            worker_runs.append(WorkerRun.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    worker_runs = sorted(worker_runs, key=lambda item: item.updated_at, reverse=True)
+    entries = [
+        WorkerRunIndexEntry(
+            worker_run_id=worker_run.worker_run_id,
+            worker_type=worker_run.worker_type,
+            mode=worker_run.mode,
+            title=worker_run.title,
+            status=worker_run.status,
+            source_handoff_id=worker_run.source_handoff_id,
+            source_queue_id=worker_run.source_queue_id,
+            source_queue_item_id=worker_run.source_queue_item_id,
+            source_batch_id=worker_run.source_batch_id,
+            source_task_id=worker_run.source_task_id,
+            report_status=worker_run.report.report_status,
+            next_action=worker_run.next_action,
+            path=str(worker_run_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)[0]),
+            updated_at=worker_run.updated_at,
+        )
+        for worker_run in worker_runs
+    ]
+    index = WorkerRunIndex(project=project_name, worker_runs=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.worker_run_index_json, index)
     return index
 
 
@@ -2754,6 +3143,77 @@ def _try_get_backlog_task(project_name: str, task_id: str, workspace_root: Path)
         return get_backlog_task(project_name, task_id, workspace_root=workspace_root)
     except ValueError:
         return None
+
+
+def _worker_allowed_scope(task: BacklogTask | None, queue_item: QueueItem | None) -> list[str]:
+    if task and task.allowed_scope:
+        return task.allowed_scope
+    if queue_item:
+        return [
+            f"Only the linked queue item {queue_item.item_id} / task {queue_item.task_id}.",
+            "Use the linked Codex handoff prompt as the execution scope.",
+        ]
+    return [
+        "Use the linked Codex handoff prompt as the execution scope.",
+        "Do not expand beyond the source batch, queue item, or task referenced by the handoff.",
+    ]
+
+
+def _worker_forbidden_scope(task: BacklogTask | None) -> list[str]:
+    defaults = [
+        "Do not run Codex CLI automatically from Devo.",
+        "Do not call AI/model APIs.",
+        "Do not execute target repo build/test/run/restore/migration/database/script commands unless separately approved in the handoff.",
+        "Do not modify generated workspace artifacts as delivery evidence.",
+        "Do not mark Devo queue/task completion from worker output alone.",
+        "Do not commit or push target changes from this worker-run tracking command.",
+    ]
+    if task and task.forbidden_scope:
+        return [*task.forbidden_scope, *defaults]
+    return defaults
+
+
+def _worker_validation_expectations(task: BacklogTask | None, queue_item: QueueItem | None) -> list[str]:
+    if task and task.validation_expectations:
+        return task.validation_expectations
+    if queue_item and queue_item.validation_expectations:
+        return queue_item.validation_expectations
+    return [
+        "Worker-reported validation is informational until a future Devo report import/review step validates it.",
+        "Record skipped validation honestly if validation approval or safe command execution is unavailable.",
+    ]
+
+
+def _worker_safety_boundaries(project_name: str) -> list[str]:
+    return [
+        "Worker run records are workspace-only tracking artifacts.",
+        "Manual handoff remains the execution path; Devo does not invoke Codex for this record.",
+        "Codex output is not trusted as implementation complete until reviewed/imported in a future workflow.",
+        "Target repository source must not be changed by worker-run create/list/show/status commands.",
+        f"Keep work inside the registered project scope for {project_name}.",
+    ]
+
+
+def _worker_run_next_action(project_name: str, worker_run_id: str, status: str) -> str:
+    if status == "planned":
+        return "Paste the linked handoff prompt into Codex manually, then later import/report results in future TASK-DEVO-089."
+    if status == "running":
+        return f"Track the manual Codex session; update status with devo worker codex run-status --project {project_name} --run {worker_run_id}."
+    if status == "completed":
+        return "Review/import worker report evidence in future TASK-DEVO-089; do not automatically complete queue/task state."
+    if status == "failed":
+        return "Review the failure, preserve evidence, and create a new handoff or worker run only after scope is clear."
+    if status == "paused_usage_limit":
+        return "Pause or resume the linked queue with devo project queue-pause/queue-resume as appropriate, then create a new worker run when ready."
+    if status == "blocked_needs_approval":
+        return "Stop and request explicit trusted approval before continuing or creating another worker run."
+    if status == "cancelled":
+        return "No automatic queue/task change was made; create a fresh handoff if work should continue."
+    if status == "waiting_review":
+        return "Review worker evidence manually before any queue/task completion, validation, commit, or push."
+    if status == "superseded":
+        return "Use the newer worker run or handoff; this record remains historical only."
+    return "Review worker run status."
 
 
 def _task_prompt_section(task: BacklogTask) -> list[str]:

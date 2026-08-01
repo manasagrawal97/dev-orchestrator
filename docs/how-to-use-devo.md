@@ -203,7 +203,19 @@ Handoff artifacts live under `workspace/projects/<project>/planning/handoffs/` a
 
 Devo still does not run Codex, call AI APIs, execute target repo commands, approve implementation, run validation, commit, push, or modify target project source. The user manually pastes the generated prompt into Codex and must request explicit trusted approval when a safety gate blocks work.
 
-Future Codex CLI worker integration is design-only for now. Read `docs/codex-worker-adapter-design.md` before any worker adapter work. Manual handoff remains supported, and any future worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
+Track a manual Codex worker attempt from an existing handoff:
+
+```powershell
+devo worker codex run-create --project MyProject --handoff H001
+devo worker codex run-list --project MyProject
+devo worker codex run-show --project MyProject --run WR001
+devo worker codex run-status --project MyProject --run WR001 --status waiting_review --note "Manual session needs review."
+devo worker codex run-mark-used --project MyProject --run WR001
+```
+
+Worker run artifacts live under `workspace/projects/<project>/workers/codex/` as `worker-run-<id>.json`, `worker-run-<id>.md`, and `worker-run-index.json`. They are tracking records only. They do not run Codex, call AI APIs, execute target commands, prove implementation complete, import reports, complete queue items, validate, commit, push, or modify target source.
+
+Supervised Codex CLI worker execution remains future scope. Read `docs/codex-worker-adapter-design.md` before any worker adapter work. Manual handoff remains supported, and any future worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

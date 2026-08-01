@@ -108,6 +108,10 @@ export interface ProjectOverview {
   latest_handoff_status: string | null;
   latest_handoff_path: string | null;
   handoff_next_action: string;
+  worker_run_count: number;
+  latest_worker_run_id: string | null;
+  latest_worker_run_status: string | null;
+  latest_worker_run_next_action: string | null;
   project_completion_percent: number;
   backlog_readiness_percent: number;
   blocked_percent: number;
@@ -327,6 +331,51 @@ export interface CodexHandoff {
   prompt_path: string;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface WorkerReportMetadata {
+  report_status: string;
+  reported_changed_files: string[];
+  reported_validation: string[];
+  reported_commit_hash: string | null;
+  safety_warnings: string[];
+  reviewer_notes: string[];
+  imported_at: string | null;
+}
+
+export interface WorkerRun {
+  project: string;
+  worker_run_id: string;
+  worker_type: string;
+  mode: string;
+  source_handoff_id: string | null;
+  source_queue_id: string | null;
+  source_queue_item_id: string | null;
+  source_batch_id: string | null;
+  source_task_id: string | null;
+  title: string;
+  status: string;
+  prompt_path: string;
+  transcript_path: string | null;
+  report_path: string | null;
+  target_repo_path: string;
+  allowed_scope: string[];
+  forbidden_scope: string[];
+  validation_expectations: string[];
+  safety_boundaries: string[];
+  report: WorkerReportMetadata;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at?: string;
+  updated_at?: string;
+  status_note: string;
+  next_action: string;
+}
+
+export interface WorkerRunsResponse {
+  project: string;
+  count: number;
+  worker_runs: WorkerRun[];
 }
 
 export interface ProjectProgress {

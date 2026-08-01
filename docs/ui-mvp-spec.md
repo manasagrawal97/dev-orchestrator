@@ -16,7 +16,7 @@ It does not replace the CLI. It does not execute risky actions. UI v1 is read-on
 
 The longer-term UI should follow the company-model vision in `docs/devo-company-model.md`: project brief, blueprint, backlog, batches, queue, and progress views around Codex-powered execution. The implementation order for those planning/progress screens is tracked in `docs/remaining-roadmap.md`. It should not become a general chat clone.
 
-After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. TASK-DEVO-082 adds read-only Blueprint and Backlog detail pages with milestone/epic rollups, task filters, and selected-task detail. TASK-DEVO-083 adds read-only Batch, Queue, Handoff, and Progress pages with selected-artifact detail, queue item detail, handoff metadata, progress bars, milestone/epic progress, and CLI guidance. TASK-DEVO-084 adds workspace-safe Batch approval/review planning actions and approval metadata visibility. Target execution controls, queue transitions from UI, Codex invocation, validation/build/test, commit/push, restore, scheduler modification, and model/API calls remain future or blocked scope.
+After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. TASK-DEVO-082 adds read-only Blueprint and Backlog detail pages with milestone/epic rollups, task filters, and selected-task detail. TASK-DEVO-083 adds read-only Batch, Queue, Handoff, and Progress pages with selected-artifact detail, queue item detail, handoff metadata, progress bars, milestone/epic progress, and CLI guidance. TASK-DEVO-084 adds workspace-safe Batch approval/review planning actions and approval metadata visibility. TASK-DEVO-088 adds read-only worker-run count/latest state to Project Overview and worker-run tracking metadata to Handoffs. Target execution controls, queue transitions from UI, Codex invocation, validation/build/test, commit/push, restore, scheduler modification, and model/API calls remain future or blocked scope.
 
 TASK-DEVO-087 documents future worker adapter UI expectations in `docs/codex-worker-adapter-design.md`. A future Worker Runs page should start read-only: status, transcript/log paths, queue item links, pause reason, resume guidance, review checklist, and copyable CLI commands. Launching Codex, running validation, committing, pushing, restoring, scheduler changes, target app runs, and model/API calls remain outside UI MVP scope.
 
@@ -158,16 +158,21 @@ This page is read-only. It does not create queues, start queues, resume queues, 
 
 ### B7. Handoffs Page
 
-Shows stored Codex handoff metadata.
+Shows stored Codex handoff metadata and read-only worker-run tracking metadata.
 
 Sections:
 
 - handoff count, latest handoff id, latest type, and latest status
+- worker run count, latest worker run id, and latest worker status
 - handoff list with source queue, batch, item, task, prompt path, and status
 - selected handoff metadata
+- latest worker run source handoff, report status, and next action
 - copyable CLI commands for `handoff-list`, `handoff-show`, `handoff-next`, `handoff-task`, `handoff-batch`, and `handoff-mark-used`
+- copyable CLI commands for `worker codex run-create`, `run-list`, `run-show`, and `run-status`
 
-Primary user question: "Which Codex handoff prompt exists, and what source artifact produced it?"
+Primary user question: "Which Codex handoff prompt exists, what source artifact produced it, and has a manual worker run been tracked?"
+
+This page is read-only. Worker run metadata does not run Codex, import reports, prove implementation complete, complete queue items, execute validation, commit, push, restore backups, modify schedulers, edit target files, or call model APIs.
 
 This page is read-only. It does not generate prompts, mark prompts used, invoke Codex, call AI APIs, or execute target commands from the UI.
 

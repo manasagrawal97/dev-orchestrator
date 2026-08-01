@@ -38,14 +38,14 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-086 planning pipeline operator guidance and input robustness
+- Latest completed source task: TASK-DEVO-088 Codex worker run/report tracking data model
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-DEVO-085 end-to-end planning pipeline dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: continue toward TASK-DEVO-088 worker run/report data model, keeping actual Codex execution deferred until design, report import, visibility, and safety gates are ready.
+- Next recommended action: continue toward TASK-DEVO-089 manual worker report import, keeping actual Codex execution deferred until report import, review, validation, and safety gates are ready.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -106,6 +106,7 @@ The working loop is:
 - TASK-DEVO-085 dogfoods the full planning pipeline on DevOrchestrator itself and records the result in `docs/dogfood/devo-pipeline-dogfood-085.md`. The run validated brief, blueprint, backlog, batch suggestion, batch approval/review, queue state, handoff prompt generation, and progress reporting. It found several small operator-friction issues: BOM-prefixed brief input can crash Windows console output, `backlog-approve` next-action guidance is stale, and `queue-next` prints a placeholder handoff command instead of the actual project/queue ids. Generated planning artifacts remain workspace-only and were not committed.
 - TASK-DEVO-086 fixes the main TASK-DEVO-085 dogfood friction: BOM-prefixed planning text inputs are handled safely for brief creation, starter backlog CLI/Markdown guidance now warns that deterministic backlogs are not implementation-ready by default, backlog approval points to real `batch-suggest --limit 10` commands, queue-next handoff guidance uses concrete project/queue ids, and UI verification docs clarify that `devo ui status` only checks reachability unless the local API/UI servers are running.
 - TASK-DEVO-087 adds `docs/codex-worker-adapter-design.md` as the design-only plan for a future Codex CLI/Desktop worker adapter. It documents manual handoff as Mode 0, assisted handoff/report import, supervised local Codex runs, one-at-a-time queue worker integration, future multi-worker agents, worker run storage under `workspace/projects/<project>/workers/codex/`, conservative queue state transitions, separate planning/execution/delivery/safety approvals, usage-limit pauses, validation/review handling, proposed future CLI commands, UI visibility, rollout tasks, and deferred autonomous/API-agent scope.
+- TASK-DEVO-088 adds workspace-only Codex worker run tracking under `workspace/projects/<project>/workers/codex/`, plus `devo worker codex run-create`, `run-list`, `run-show`, `run-status`, and `run-mark-used`. Worker records snapshot source handoff/queue/item/batch/task references, target repo path, allowed/forbidden scope, validation expectations, safety boundaries, status, next action, and placeholder report metadata. They do not run Codex, call AI APIs, execute target commands, import reports, trust worker output, complete queue/tasks, validate, commit, push, or modify target projects. Read models, API, and the Handoffs dashboard now expose worker-run count/latest state read-only.
 
 ## Readiness Estimate
 

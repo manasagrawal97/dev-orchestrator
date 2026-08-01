@@ -23,6 +23,8 @@ import type {
   UiActionExecutionResult,
   UiActionMetadata,
   UiActionsResponse,
+  WorkerRun,
+  WorkerRunsResponse,
   WorkPackageOverview
 } from '../types/devo';
 
@@ -86,6 +88,9 @@ export const devoApi = {
   getProjectHandoffs: (project: string) => getJson<ProjectHandoffsResponse>(`/api/projects/${encodeURIComponent(project)}/handoffs`),
   getProjectHandoff: (project: string, handoffId: string) =>
     getJson<CodexHandoff>(`/api/projects/${encodeURIComponent(project)}/handoffs/${encodeURIComponent(handoffId)}`),
+  getProjectWorkerRuns: (project: string) => getJson<WorkerRunsResponse>(`/api/projects/${encodeURIComponent(project)}/worker-runs`),
+  getProjectWorkerRun: (project: string, workerRunId: string) =>
+    getJson<WorkerRun>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}`),
   getProjectProgress: (project: string) => getJson<ProjectProgress>(`/api/projects/${encodeURIComponent(project)}/progress`),
   getProjectActivity: (project: string) => getJson<ProjectActivity>(`/api/projects/${encodeURIComponent(project)}/activity`),
   getProjectDoctor: (project: string) => getJson<DoctorReport>(`/api/projects/${encodeURIComponent(project)}/doctor`),

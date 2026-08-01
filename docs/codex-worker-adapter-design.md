@@ -117,7 +117,7 @@ The output is evidence, not proof of completion. Devo should still require valid
 
 ## Storage Model
 
-Future Codex worker artifacts should live under:
+Codex worker run tracking artifacts live under:
 
 ```text
 workspace/projects/<project>/workers/codex/
@@ -128,9 +128,11 @@ Suggested files:
 - `worker-run-index.json`
 - `worker-run-<id>.json`
 - `worker-run-<id>.md`
-- `logs/worker-run-<id>.log`
+- optional future `logs/worker-run-<id>.log`
 
 These are generated workspace artifacts and should not be committed. They are part of Devo runtime state, like planning artifacts, validation run evidence, reports, and handoff prompts.
+
+TASK-DEVO-088 implements the data model and read-only visibility only. `devo worker codex run-create --project <project> --handoff <handoffId>` creates a planned worker run record from an existing handoff and snapshots the handoff/queue/item/batch/task references. It does not launch Codex, call AI APIs, execute target commands, import execution reports, mark queue/task completion, commit, push, or modify target repositories.
 
 ## State Transitions
 
@@ -214,34 +216,46 @@ Final completion should require explicit user action, review evidence, or a futu
 
 ## CLI Command Roadmap
 
-Proposed future commands, not implemented by this task:
+Implemented tracking commands:
+
+```powershell
+devo worker codex run-create --project <project> --handoff <handoffId>
+devo worker codex run-list --project <project>
+devo worker codex run-show --project <project> --run <workerRunId>
+devo worker codex run-status --project <project> --run <workerRunId> --status <status> --note "<note>"
+devo worker codex run-mark-used --project <project> --run <workerRunId>
+```
+
+These commands mutate only Devo workspace worker artifacts. `run-status completed` means the manual/Codex session stopped and reported output; it does not mean the work passed validation, review, delivery checks, commit, push, or queue completion. `run-mark-used` marks only the linked handoff used and does not imply worker completion.
+
+Proposed future execution/report commands:
 
 ```powershell
 devo worker codex plan --project <project>
 devo worker codex run-next --project <project> --queue <queueId>
 devo worker codex run-task --project <project> --task <taskId>
-devo worker codex status --project <project> --run <workerRunId>
 devo worker codex logs --project <project> --run <workerRunId>
 devo worker codex import-report --project <project> --file <reportFile>
 devo worker codex resume --project <project> --queue <queueId>
 ```
 
-Command names are proposals and may change after the data model and manual report import are implemented.
+Command names are proposals and may change after manual report import and supervised execution are implemented.
 
 ## UI Roadmap
 
-Future UI should expose worker state cautiously:
+UI exposes worker state cautiously:
 
-- Worker Runs page
+- Handoffs page worker-run summary
 - worker run status
-- transcript/log path
+- source handoff
+- report status
 - current queue item
 - pause reason
 - resume guidance
 - review checklist
 - copyable CLI commands
 
-First UI version should be read-only. It should not include risky buttons for execution, validation, commit, push, restore, scheduler changes, target app runs, or model/API calls.
+The UI is read-only. It does not include risky buttons for execution, validation, commit, push, restore, scheduler changes, target app runs, or model/API calls.
 
 Later, the controlled Action Safety model may expose workspace-safe worker actions with explicit confirmation, such as generating worker plan artifacts or importing a worker report. Launching Codex from UI should require a stronger approval and safety model.
 
@@ -249,7 +263,7 @@ Later, the controlled Action Safety model may expose workspace-safe worker actio
 
 Recommended future sequence:
 
-1. TASK-DEVO-088: Worker run/report data model.
+1. TASK-DEVO-088: Worker run/report data model - completed.
 2. TASK-DEVO-089: Manual execution report import.
 3. TASK-DEVO-090: Worker run UI visibility.
 4. TASK-DEVO-091: Supervised Codex CLI adapter prototype.

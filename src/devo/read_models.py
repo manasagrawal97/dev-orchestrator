@@ -14,6 +14,7 @@ from .project_planning import (
     calculate_project_progress,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_runs,
     list_project_batches,
     list_execution_queues,
     load_project_backlog,
@@ -121,6 +122,10 @@ class ProjectOverview(BaseModel):
     latest_handoff_status: str | None = None
     latest_handoff_path: str | None = None
     handoff_next_action: str = "Create a Project Brief."
+    worker_run_count: int = 0
+    latest_worker_run_id: str | None = None
+    latest_worker_run_status: str | None = None
+    latest_worker_run_next_action: str | None = None
     project_completion_percent: float = 0.0
     backlog_readiness_percent: float = 0.0
     blocked_percent: float = 0.0
@@ -209,6 +214,10 @@ def build_project_overview_with_timing(
             latest_handoff_status=str(planning["latest_handoff_status"]) if planning["latest_handoff_status"] else None,
             latest_handoff_path=str(planning["latest_handoff_path"]) if planning["latest_handoff_path"] else None,
             handoff_next_action=str(planning["handoff_next_action"]),
+            worker_run_count=int(planning["worker_run_count"]),
+            latest_worker_run_id=str(planning["latest_worker_run_id"]) if planning["latest_worker_run_id"] else None,
+            latest_worker_run_status=str(planning["latest_worker_run_status"]) if planning["latest_worker_run_status"] else None,
+            latest_worker_run_next_action=str(planning["latest_worker_run_next_action"]) if planning["latest_worker_run_next_action"] else None,
             project_completion_percent=float(planning["project_completion_percent"]),
             backlog_readiness_percent=float(planning["backlog_readiness_percent"]),
             blocked_percent=float(planning["blocked_percent"]),
@@ -426,6 +435,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         batch_approvals = list_batch_approvals(project_name, workspace_root=workspace_root)
         queues = list_execution_queues(project_name, workspace_root=workspace_root)
         handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
+        worker_runs = list_codex_worker_runs(project_name, workspace_root=workspace_root)
         progress = calculate_project_progress(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
@@ -465,6 +475,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_handoff_status": None,
             "latest_handoff_path": None,
             "handoff_next_action": f"Review planning artifacts: {exc}",
+            "worker_run_count": 0,
+            "latest_worker_run_id": None,
+            "latest_worker_run_status": None,
+            "latest_worker_run_next_action": f"Review worker artifacts: {exc}",
             "project_completion_percent": 0.0,
             "backlog_readiness_percent": 0.0,
             "blocked_percent": 0.0,
@@ -477,6 +491,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     latest_batch_approval = next((approval for approval in batch_approvals if latest_batch and approval.batch_id == latest_batch.batch_id), None)
     latest_queue = queues[0] if queues else None
     latest_handoff = handoffs[0] if handoffs else None
+    latest_worker_run = worker_runs[0] if worker_runs else None
     if not brief:
         next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
     elif brief.status != "approved":
@@ -539,6 +554,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_handoff_status": latest_handoff.status if latest_handoff else None,
         "latest_handoff_path": latest_handoff.prompt_path if latest_handoff else None,
         "handoff_next_action": handoff_next_action,
+        "worker_run_count": len(worker_runs),
+        "latest_worker_run_id": latest_worker_run.worker_run_id if latest_worker_run else None,
+        "latest_worker_run_status": latest_worker_run.status if latest_worker_run else None,
+        "latest_worker_run_next_action": latest_worker_run.next_action if latest_worker_run else None,
         "project_completion_percent": progress.project_completion_percent,
         "backlog_readiness_percent": progress.backlog_readiness_percent,
         "blocked_percent": progress.blocked_percent,

@@ -5,7 +5,7 @@ import { KeyValueList } from '../components/KeyValueList';
 import { EmptyState, ErrorState, LoadingState } from '../components/SectionState';
 import { StatusBadge } from '../components/StatusBadge';
 import { SummaryCard } from '../components/SummaryCard';
-import type { CodexHandoff, ProjectHandoffsResponse } from '../types/devo';
+import type { CodexHandoff, ProjectHandoffsResponse, WorkerRunsResponse } from '../types/devo';
 
 interface HandoffsPageProps {
   selectedProject: string | null;
@@ -21,12 +21,14 @@ const emptyOptional = <T,>(): OptionalState<T> => ({ data: null, loading: false,
 
 export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
   const [handoffs, setHandoffs] = useState<OptionalState<ProjectHandoffsResponse>>(emptyOptional);
+  const [workerRuns, setWorkerRuns] = useState<OptionalState<WorkerRunsResponse>>(emptyOptional);
   const [selectedHandoffId, setSelectedHandoffId] = useState<string | null>(null);
   const [selectedHandoff, setSelectedHandoff] = useState<OptionalState<CodexHandoff>>(emptyOptional);
 
   useEffect(() => {
     if (!selectedProject) {
       setHandoffs(emptyOptional<ProjectHandoffsResponse>());
+      setWorkerRuns(emptyOptional<WorkerRunsResponse>());
       setSelectedHandoffId(null);
       setSelectedHandoff(emptyOptional<CodexHandoff>());
       return;
@@ -34,6 +36,7 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
 
     let active = true;
     setHandoffs({ data: null, loading: true, error: null });
+    setWorkerRuns({ data: null, loading: true, error: null });
     setSelectedHandoff(emptyOptional<CodexHandoff>());
 
     loadOptional(devoApi.getProjectHandoffs(selectedProject)).then((state) => {
@@ -42,6 +45,12 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
       }
       setHandoffs(state);
       setSelectedHandoffId((current) => current ?? state.data?.handoffs[0]?.handoff_id ?? null);
+    });
+
+    loadOptional(devoApi.getProjectWorkerRuns(selectedProject)).then((state) => {
+      if (active) {
+        setWorkerRuns(state);
+      }
     });
 
     return () => {
@@ -64,7 +73,9 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
   }, [selectedHandoffId, selectedProject]);
 
   const handoffList = handoffs.data?.handoffs ?? [];
+  const workerRunList = workerRuns.data?.worker_runs ?? [];
   const latestHandoff = handoffList[0] ?? null;
+  const latestWorkerRun = workerRunList[0] ?? null;
   const selected = selectedHandoff.data ?? handoffList.find((handoff) => handoff.handoff_id === selectedHandoffId) ?? null;
 
   if (!selectedProject) {
@@ -83,10 +94,14 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
         <SummaryCard title="Latest handoff" value={latestHandoff?.handoff_id ?? 'none'} />
         <SummaryCard title="Latest type" value={latestHandoff?.handoff_type ?? 'none'} />
         <SummaryCard title="Latest status" value={latestHandoff ? <StatusBadge status={latestHandoff.status} /> : 'none'} />
+        <SummaryCard title="Worker runs" value={workerRuns.loading ? 'Loading' : workerRuns.data?.count ?? 0} />
+        <SummaryCard title="Latest worker" value={latestWorkerRun?.worker_run_id ?? 'none'} />
+        <SummaryCard title="Worker status" value={latestWorkerRun ? <StatusBadge status={latestWorkerRun.status} /> : 'none'} />
       </div>
 
       {handoffs.loading ? <LoadingState message="Loading handoffs..." /> : null}
       {handoffs.error ? <ErrorState message={handoffs.error} /> : null}
+      {workerRuns.error ? <ErrorState message={workerRuns.error} /> : null}
       {!handoffs.loading && !handoffs.error && !handoffList.length ? (
         <EmptyState message="No handoff artifacts are available yet.">
           <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue <queueId>`} />
@@ -138,6 +153,28 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
             <CommandCopyBox command={`devo project handoff-task --project ${selectedProject} --task ${selected?.source_task_id ?? '<taskId>'}`} />
             <CommandCopyBox command={`devo project handoff-batch --project ${selectedProject} --batch ${selected?.source_batch_id ?? '<batchId>'}`} />
             <CommandCopyBox command={`devo project handoff-mark-used --project ${selectedProject} --handoff ${selectedHandoffId ?? '<handoffId>'}`} />
+          </SummaryCard>
+          <SummaryCard title="Worker Run Tracking">
+            <p className="muted compact">
+              Worker runs are read-only tracking records for manual Codex handoffs. They do not run Codex or prove delivery is complete.
+            </p>
+            {workerRuns.loading ? <LoadingState message="Loading worker runs..." /> : null}
+            {!workerRuns.loading && !workerRunList.length ? <p className="muted compact">No worker runs have been recorded yet.</p> : null}
+            {latestWorkerRun ? (
+              <KeyValueList
+                items={[
+                  ['Latest run', latestWorkerRun.worker_run_id],
+                  ['Status', latestWorkerRun.status],
+                  ['Source handoff', latestWorkerRun.source_handoff_id ?? 'none'],
+                  ['Report status', latestWorkerRun.report.report_status],
+                  ['Next action', latestWorkerRun.next_action]
+                ]}
+              />
+            ) : null}
+            <CommandCopyBox command={`devo worker codex run-create --project ${selectedProject} --handoff ${selectedHandoffId ?? '<handoffId>'}`} />
+            <CommandCopyBox command={`devo worker codex run-list --project ${selectedProject}`} />
+            <CommandCopyBox command={`devo worker codex run-show --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'}`} />
+            <CommandCopyBox command={`devo worker codex run-status --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'} --status waiting_review --note "<note>"`} />
           </SummaryCard>
         </>
       ) : null}
