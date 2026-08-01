@@ -70,6 +70,8 @@ from .project_planning import (
     ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    CodexWorkerReport,
+    WorkerReportValidationResult,
     WorkerRun,
     approve_project_batch,
     approve_project_backlog,
@@ -85,6 +87,7 @@ from .project_planning import (
     create_codex_handoff_for_queue_next,
     create_codex_handoff_for_task,
     create_codex_worker_run_from_handoff,
+    create_codex_worker_report_template,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
     complete_queue_item,
@@ -95,11 +98,13 @@ from .project_planning import (
     list_execution_queues,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_reports,
     list_codex_worker_runs,
     list_project_batches,
     load_execution_queue,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_report,
     load_codex_worker_run,
     load_project_backlog,
     load_project_batch,
@@ -117,6 +122,9 @@ from .project_planning import (
     start_execution_queue,
     update_codex_worker_run_status,
     validate_refined_backlog_file,
+    validate_codex_worker_report_file,
+    import_codex_worker_report,
+    worker_report_artifact_paths,
     worker_run_artifact_paths,
 )
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
@@ -600,6 +608,48 @@ def _print_worker_run(worker_run: WorkerRun, json_path: Path | None = None, mark
     if markdown_path:
         console.print(f"Markdown: {_named_path(markdown_path)}")
     console.print("Safety: this is workspace-only tracking. Devo did not run Codex, execute target commands, or mark implementation complete.")
+
+
+def _print_worker_report_validation(result: WorkerReportValidationResult) -> None:
+    console.print(f"Valid: {result.valid}")
+    console.print("Errors:")
+    for item in result.errors or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Warnings:")
+    for item in result.warnings or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    if result.report:
+        console.print(f"Worker reported status: {result.report.status_reported_by_worker}")
+        console.print(f"Changed files: {len(result.report.changed_files)}")
+        console.print(f"Validation results: {len(result.report.validation_results)}")
+
+
+def _print_worker_report(report: CodexWorkerReport, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Codex worker report: {report.worker_run_id}[/bold]")
+    console.print(f"Project: {report.project}")
+    console.print(f"Worker reported status: {report.status_reported_by_worker}")
+    console.print(f"Source handoff: {report.source_handoff_id or 'none'}")
+    console.print(f"Source queue: {report.source_queue_id or 'none'}")
+    console.print(f"Source item: {report.source_queue_item_id or 'none'}")
+    console.print(f"Source task: {report.source_task_id or 'none'}")
+    console.print(f"Summary: {report.summary}", soft_wrap=True)
+    console.print(f"Changed files: {len(report.changed_files)}")
+    console.print(f"Validation attempted: {report.validation_attempted}")
+    console.print(f"Validation results: {len(report.validation_results)}")
+    console.print(f"Commit hash: {report.commit_hash or 'none'}")
+    if report.safety_warnings:
+        console.print("Safety warnings:")
+        for warning in report.safety_warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    if report.blockers:
+        console.print("Blockers:")
+        for blocker in report.blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("Safety: imported reports are worker-provided evidence only; queue/task completion remains explicit.")
 
 
 def _print_json_model(model: object) -> None:
@@ -2209,6 +2259,113 @@ def mark_codex_worker_run_used_command(
     console.print(f"[green]Linked handoff marked used[/green] {project_name}")
     _print_worker_run(worker_run, json_path=json_path, markdown_path=markdown_path)
     console.print("This does not imply worker completion or queue/task completion.")
+
+
+@worker_codex_app.command("report-template")
+def create_codex_worker_report_template_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Create a JSON/Markdown template for a manual Codex worker report."""
+    project_name = _resolve_project(project_name)
+    try:
+        json_path, markdown_path, _template = create_codex_worker_report_template(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    console.print(f"[green]Codex worker report template saved[/green] {project_name}")
+    console.print(f"JSON template: {_named_path(json_path)}")
+    console.print(f"Markdown template: {_named_path(markdown_path)}")
+    console.print("Paste Codex's final report into the JSON structure, then run:")
+    console.print(f"  devo worker codex report-validate --project {project_name} --run {worker_run_id} --file {_named_path(json_path)}", soft_wrap=True)
+    console.print(f"  devo worker codex report-import --project {project_name} --run {worker_run_id} --file <filledReportFile>", soft_wrap=True)
+    console.print("This command does not import the report or modify the target project.")
+
+
+@worker_codex_app.command("report-validate")
+def validate_codex_worker_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    report_file: Path = typer.Option(..., "--file", help="Codex worker report JSON file."),
+) -> None:
+    """Validate a manual Codex worker report without importing it."""
+    project_name = _resolve_project(project_name)
+    result = validate_codex_worker_report_file(project_name, worker_run_id, report_file)
+    _print_worker_report_validation(result)
+    console.print("No queue item, backlog task, validation, Git, commit, push, or target repository state was modified.")
+    if not result.valid:
+        raise typer.Exit(1)
+
+
+@worker_codex_app.command("report-import")
+def import_codex_worker_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    report_file: Path = typer.Option(..., "--file", help="Codex worker report JSON file."),
+) -> None:
+    """Import a validated manual Codex worker report as workspace-only evidence."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_run, report, validation, report_json, report_markdown, worker_json, worker_markdown = import_codex_worker_report(
+            project_name,
+            worker_run_id,
+            report_file,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--file") from exc
+    console.print(f"[green]Codex worker report imported[/green] {project_name}")
+    _print_worker_report_validation(validation)
+    _print_worker_report(report, json_path=report_json, markdown_path=report_markdown)
+    _print_worker_run(worker_run, json_path=worker_json, markdown_path=worker_markdown)
+    console.print("Next suggested command:")
+    console.print(f"  devo worker codex report-show --project {project_name} --run {worker_run.worker_run_id}", soft_wrap=True)
+    console.print("Review report manually, verify validation independently, then use queue-complete-item only after review.")
+
+
+@worker_codex_app.command("report-show")
+def show_codex_worker_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Show imported Codex worker report metadata without mutating anything."""
+    project_name = _resolve_project(project_name)
+    try:
+        worker_run = load_codex_worker_run(project_name, worker_run_id)
+        report = load_codex_worker_report(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    if not worker_run:
+        console.print(f"[yellow]Codex worker run not found: {worker_run_id}[/yellow]")
+        return
+    if not report:
+        console.print(f"[yellow]Codex worker report not found for run: {worker_run_id}[/yellow]")
+        console.print(f"Suggested next command: devo worker codex report-template --project {project_name} --run {worker_run.worker_run_id}")
+        return
+    report_json, report_markdown = worker_report_artifact_paths(project_name, worker_run.worker_run_id)
+    _print_worker_report(report, json_path=report_json, markdown_path=report_markdown)
+    console.print(f"Worker run next action: {worker_run.next_action}", soft_wrap=True)
+
+
+@worker_codex_app.command("report-list")
+def list_codex_worker_reports_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List imported Codex worker reports for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        reports = list_codex_worker_reports(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Codex worker reports: {project_name}[/bold]")
+    if not reports:
+        console.print("[yellow]No Codex worker reports imported.[/yellow]")
+        console.print(f"Suggested next command: devo worker codex report-template --project {project_name} --run <workerRunId>")
+        return
+    for report in reports:
+        console.print(
+            f"{report.worker_run_id} | {report.status_reported_by_worker} | changed={len(report.changed_files)} "
+            f"validation={len(report.validation_results)} | {report.summary}",
+            soft_wrap=True,
+        )
 
 
 @project_app.command("activity")

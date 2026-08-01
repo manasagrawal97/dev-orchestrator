@@ -14,12 +14,14 @@ from .project_planning import (
     get_queue_next_item,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_reports,
     list_codex_worker_runs,
     list_project_batches,
     list_execution_queues,
     load_execution_queue,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_report,
     load_codex_worker_run,
     load_project_backlog,
     load_project_batch,
@@ -56,6 +58,8 @@ API_ROUTES = (
     "GET /api/projects/{project}/handoffs/{handoff_id}",
     "GET /api/projects/{project}/worker-runs",
     "GET /api/projects/{project}/worker-runs/{worker_run_id}",
+    "GET /api/projects/{project}/worker-runs/{worker_run_id}/report",
+    "GET /api/projects/{project}/worker-reports",
     "GET /api/projects/{project}/tasks",
     "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
@@ -253,6 +257,29 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
                 detail={"error": "worker_run_not_found", "message": f"Codex worker run not found: {worker_run_id}"},
             )
         return _model_dump(worker_run)
+
+    @api.get("/api/projects/{project}/worker-runs/{worker_run_id}/report")
+    def project_worker_run_report(project: str, worker_run_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        worker_run = load_codex_worker_run(project, worker_run_id, workspace_root=root)
+        if not worker_run:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "worker_run_not_found", "message": f"Codex worker run not found: {worker_run_id}"},
+            )
+        report = load_codex_worker_report(project, worker_run.worker_run_id, workspace_root=root)
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "worker_report_not_found", "message": f"Codex worker report not found: {worker_run_id}"},
+            )
+        return _model_dump(report)
+
+    @api.get("/api/projects/{project}/worker-reports")
+    def project_worker_reports(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        reports = list_codex_worker_reports(project, workspace_root=root)
+        return {"project": project, "count": len(reports), "reports": [_model_dump(report) for report in reports]}
 
     @api.get("/api/projects/{project}/tasks")
     def project_tasks(project: str) -> dict[str, object]:

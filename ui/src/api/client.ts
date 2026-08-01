@@ -4,6 +4,7 @@ import type {
   BatchApprovalsResponse,
   CurrentContext,
   DoctorReport,
+  CodexWorkerReport,
   CodexHandoff,
   ExecutionQueue,
   ProjectBacklog,
@@ -24,6 +25,7 @@ import type {
   UiActionMetadata,
   UiActionsResponse,
   WorkerRun,
+  WorkerReportsResponse,
   WorkerRunsResponse,
   WorkPackageOverview
 } from '../types/devo';
@@ -91,6 +93,9 @@ export const devoApi = {
   getProjectWorkerRuns: (project: string) => getJson<WorkerRunsResponse>(`/api/projects/${encodeURIComponent(project)}/worker-runs`),
   getProjectWorkerRun: (project: string, workerRunId: string) =>
     getJson<WorkerRun>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}`),
+  getProjectWorkerReports: (project: string) => getJson<WorkerReportsResponse>(`/api/projects/${encodeURIComponent(project)}/worker-reports`),
+  getProjectWorkerReport: (project: string, workerRunId: string) =>
+    getJson<CodexWorkerReport>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}/report`),
   getProjectProgress: (project: string) => getJson<ProjectProgress>(`/api/projects/${encodeURIComponent(project)}/progress`),
   getProjectActivity: (project: string) => getJson<ProjectActivity>(`/api/projects/${encodeURIComponent(project)}/activity`),
   getProjectDoctor: (project: string) => getJson<DoctorReport>(`/api/projects/${encodeURIComponent(project)}/doctor`),

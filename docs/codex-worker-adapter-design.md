@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-087 design, created after TASK-DEVO-085 dogfood and TASK-DEVO-086 planning-pipeline guidance fixes. This is a design document only. It does not implement Codex CLI execution, AI API usage, target command execution, or autonomous delivery.
+Source/freshness: TASK-DEVO-089 update, after manual Codex worker report import was added. This is still a design document for future worker execution. Devo does not implement Codex CLI execution, AI API usage, target command execution, or autonomous delivery.
 
 ## Purpose
 
@@ -28,9 +28,11 @@ The supported worker flow today is:
 4. The user pastes the prompt into Codex.
 5. Codex executes under normal Codex/Desktop safety boundaries.
 6. The user reviews the result.
-7. The user updates Devo queue/task/progress state manually with commands such as `queue-complete-item`, `queue-block-item`, `queue-pause`, or `queue-resume`.
+7. The user can import a structured manual worker report into Devo.
+8. The user reviews the report, validation evidence, and repository state.
+9. The user updates Devo queue/task/progress state manually with commands such as `queue-complete-item`, `queue-block-item`, `queue-pause`, or `queue-resume`.
 
-This is safe and already working. Devo does not run Codex, does not execute target commands, does not call AI APIs, does not validate or commit automatically, and does not mark implementation complete without explicit user action.
+This is safe and already working. Devo does not run Codex, does not execute target commands, does not call AI APIs, does not validate or commit automatically, and does not mark implementation complete without explicit user action. Imported reports are review evidence, not proof of delivery.
 
 ## Future Worker Modes
 
@@ -123,16 +125,20 @@ Codex worker run tracking artifacts live under:
 workspace/projects/<project>/workers/codex/
 ```
 
-Suggested files:
+Files:
 
 - `worker-run-index.json`
 - `worker-run-<id>.json`
 - `worker-run-<id>.md`
+- `reports/report-<worker_run_id>.json`
+- `reports/report-<worker_run_id>.md`
 - optional future `logs/worker-run-<id>.log`
 
 These are generated workspace artifacts and should not be committed. They are part of Devo runtime state, like planning artifacts, validation run evidence, reports, and handoff prompts.
 
-TASK-DEVO-088 implements the data model and read-only visibility only. `devo worker codex run-create --project <project> --handoff <handoffId>` creates a planned worker run record from an existing handoff and snapshots the handoff/queue/item/batch/task references. It does not launch Codex, call AI APIs, execute target commands, import execution reports, mark queue/task completion, commit, push, or modify target repositories.
+TASK-DEVO-088 implements worker run tracking. `devo worker codex run-create --project <project> --handoff <handoffId>` creates a planned worker run record from an existing handoff and snapshots the handoff/queue/item/batch/task references.
+
+TASK-DEVO-089 implements manual worker report import. `devo worker codex report-template`, `report-validate`, `report-import`, `report-show`, and `report-list` let a user capture what a manually run Codex worker reported. Import updates only Devo workspace worker artifacts with report status, changed-file summary, validation summary, safety warnings, reviewer notes, and next action. It does not launch Codex, call AI APIs, execute target commands, mark queue/task completion, validate, commit, push, or modify target repositories.
 
 ## State Transitions
 
@@ -228,18 +234,29 @@ devo worker codex run-mark-used --project <project> --run <workerRunId>
 
 These commands mutate only Devo workspace worker artifacts. `run-status completed` means the manual/Codex session stopped and reported output; it does not mean the work passed validation, review, delivery checks, commit, push, or queue completion. `run-mark-used` marks only the linked handoff used and does not imply worker completion.
 
-Proposed future execution/report commands:
+Implemented manual report commands:
+
+```powershell
+devo worker codex report-template --project <project> --run <workerRunId>
+devo worker codex report-validate --project <project> --run <workerRunId> --file <reportFile>
+devo worker codex report-import --project <project> --run <workerRunId> --file <reportFile>
+devo worker codex report-show --project <project> --run <workerRunId>
+devo worker codex report-list --project <project>
+```
+
+These commands mutate only Devo workspace worker report artifacts when importing. `report-import` maps worker-reported states conservatively: completed and partial reports become waiting-for-review states, failed reports become failed, approval blockers become blocked-needs-approval, and usage-limit reports become paused-usage-limit. It does not complete queues/tasks automatically.
+
+Proposed future execution commands:
 
 ```powershell
 devo worker codex plan --project <project>
 devo worker codex run-next --project <project> --queue <queueId>
 devo worker codex run-task --project <project> --task <taskId>
 devo worker codex logs --project <project> --run <workerRunId>
-devo worker codex import-report --project <project> --file <reportFile>
 devo worker codex resume --project <project> --queue <queueId>
 ```
 
-Command names are proposals and may change after manual report import and supervised execution are implemented.
+Command names are proposals and may change after supervised execution is implemented.
 
 ## UI Roadmap
 
@@ -249,11 +266,14 @@ UI exposes worker state cautiously:
 - worker run status
 - source handoff
 - report status
+- imported report summary
+- reported changed-file and validation counts
+- safety warnings
 - current queue item
 - pause reason
 - resume guidance
 - review checklist
-- copyable CLI commands
+- copyable CLI commands for report template, validation, import, show, and list
 
 The UI is read-only. It does not include risky buttons for execution, validation, commit, push, restore, scheduler changes, target app runs, or model/API calls.
 
@@ -264,8 +284,8 @@ Later, the controlled Action Safety model may expose workspace-safe worker actio
 Recommended future sequence:
 
 1. TASK-DEVO-088: Worker run/report data model - completed.
-2. TASK-DEVO-089: Manual execution report import.
-3. TASK-DEVO-090: Worker run UI visibility.
+2. TASK-DEVO-089: Manual execution report import - completed.
+3. TASK-DEVO-090: Worker run UI visibility and review affordance polish.
 4. TASK-DEVO-091: Supervised Codex CLI adapter prototype.
 5. TASK-DEVO-092: Queue integration for one item at a time.
 6. TASK-DEVO-093: Pause/resume/usage-limit handling.

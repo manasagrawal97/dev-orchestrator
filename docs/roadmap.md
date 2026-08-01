@@ -247,6 +247,10 @@ Added `docs/codex-worker-adapter-design.md` to define the future Codex CLI/Deskt
 
 Added workspace-only Codex worker run records under `workspace/projects/<project>/workers/codex/`, plus `devo worker codex run-create`, `run-list`, `run-show`, `run-status`, and `run-mark-used`. Worker records snapshot source handoff/queue/item/batch/task metadata, allowed/forbidden scope, validation expectations, safety boundaries, status, next action, and placeholder report metadata. Read models, the local API, and the Handoffs dashboard show worker-run summary state read-only. This does not run Codex, call AI APIs, execute target commands, import reports, trust worker output, complete queue/tasks, validate, commit, push, or modify target projects.
 
+### TASK-DEVO-089 Manual Codex Worker Report Import - Completed
+
+Added `devo worker codex report-template`, `report-validate`, `report-import`, `report-show`, and `report-list`. Reports live under `workspace/projects/<project>/workers/codex/reports/` and capture worker-reported status, summary, changed files, validation/tests/commands, optional commit hash, safety warnings, blockers, follow-ups, and notes. Import updates worker-run report metadata and conservative review-oriented next actions only; it does not run Codex, call AI APIs, execute target commands, trust completion, complete queue/tasks, validate, commit, push, or modify target projects. ProjectOverview, the local API, and the Handoffs dashboard expose report status and guidance read-only.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

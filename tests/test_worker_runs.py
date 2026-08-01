@@ -8,10 +8,13 @@ from typer.testing import CliRunner
 from devo.main import app
 from devo.project_planning import (
     list_codex_worker_runs,
+    load_codex_worker_report,
     load_codex_handoff,
     load_codex_worker_run,
     load_execution_queue,
     load_worker_run_index,
+    worker_report_artifact_paths,
+    worker_report_template_paths,
     worker_run_artifact_paths,
 )
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -191,6 +194,176 @@ def test_worker_run_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypat
     assert _target_snapshot(project_path) == before_target
 
 
+def test_worker_report_template_creates_template_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["worker", "codex", "report-template", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    json_path, markdown_path = worker_report_template_paths("sample", "WR001", workspace_root=workspace)
+    assert json_path.exists()
+    assert markdown_path.exists()
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["worker_run_id"] == "WR001"
+    assert data["status_reported_by_worker"] == "partial"
+    assert "report-validate" in result.output
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_worker_report_validate_accepts_valid_report(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    report = _worker_report_file(tmp_path, "WR001")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-validate", "--project", "sample", "--run", "WR001", "--file", str(report)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Valid: True" in result.output
+    assert "No queue item, backlog task" in result.output
+
+
+def test_worker_report_validate_rejects_mismatched_worker_run_id(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    report = _worker_report_file(tmp_path, "WR999")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-validate", "--project", "sample", "--run", "WR001", "--file", str(report)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1
+    assert "Report worker_run_id must be WR001" in result.output
+
+
+def test_worker_report_validate_rejects_invalid_worker_status(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    report = _worker_report_file(tmp_path, "WR001", status="done-ish")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-validate", "--project", "sample", "--run", "WR001", "--file", str(report)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid status_reported_by_worker" in result.output
+
+
+def test_worker_report_import_stores_report_and_updates_metadata(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+    report_file = _worker_report_file(tmp_path, "WR001", status="completed")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(report_file)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    report_json, report_markdown = worker_report_artifact_paths("sample", "WR001", workspace_root=workspace)
+    assert report_json.exists()
+    assert report_markdown.exists()
+    imported_report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert imported_report is not None
+    assert imported_report.status_reported_by_worker == "completed"
+    assert worker_run is not None
+    assert worker_run.report.report_status == "validated"
+    assert worker_run.report_path == str(report_markdown)
+    assert worker_run.report.reported_changed_files == ["src/example.py"]
+    assert worker_run.report.reported_validation == ["Focused tests passed.", "test: tests/test_example.py"]
+    assert worker_run.status == "waiting_review"
+    assert "queue-complete-item only after review" in worker_run.next_action
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_completed_report_import_does_not_mark_queue_or_task_completed(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    report_file = _worker_report_file(tmp_path, "WR001", status="completed")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(report_file)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "running"
+    assert queue.items[0].status == "running"
+
+
+def test_worker_report_import_maps_usage_limit_to_paused_usage_limit(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    report_file = _worker_report_file(tmp_path, "WR001", status="usage_limit")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(report_file)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "paused_usage_limit"
+    assert "usage resets" in worker_run.next_action
+
+
+def test_worker_report_import_maps_blocked_and_needs_approval_to_approval_blocker(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    blocked = _worker_report_file(tmp_path, "WR001", status="blocked")
+    blocked_result = runner.invoke(
+        app,
+        ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(blocked)],
+        terminal_width=240,
+    )
+    needs_approval = _worker_report_file(tmp_path, "WR001", status="needs_approval")
+    approval_result = runner.invoke(
+        app,
+        ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(needs_approval)],
+        terminal_width=240,
+    )
+
+    assert blocked_result.exit_code == 0, blocked_result.output
+    assert approval_result.exit_code == 0, approval_result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "blocked_needs_approval"
+    assert "explicit trusted approval" in worker_run.next_action
+
+
+def test_worker_report_show_and_list_work(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    report_file = _worker_report_file(tmp_path, "WR001")
+    runner.invoke(app, ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(report_file)])
+
+    shown = runner.invoke(app, ["worker", "codex", "report-show", "--project", "sample", "--run", "WR001"], terminal_width=240)
+    listed = runner.invoke(app, ["worker", "codex", "report-list", "--project", "sample"], terminal_width=240)
+
+    assert shown.exit_code == 0, shown.output
+    assert "Codex worker report: WR001" in shown.output
+    assert "worker-provided evidence only" in shown.output
+    assert listed.exit_code == 0, listed.output
+    assert "WR001 | completed" in listed.output
+
+
 def _create_worker_run(tmp_path: Path) -> None:
     _create_queue_handoff(tmp_path)
     result = runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
@@ -256,3 +429,31 @@ def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
 
 def _target_snapshot(project_path: Path) -> dict[str, str]:
     return {str(path.relative_to(project_path)): path.read_text(encoding="utf-8") for path in project_path.rglob("*") if path.is_file()}
+
+
+def _worker_report_file(tmp_path: Path, worker_run_id: str, status: str = "completed") -> Path:
+    path = tmp_path / f"report-{worker_run_id}-{status}.json"
+    data = {
+        "schema_version": "1",
+        "project": "sample",
+        "worker_run_id": worker_run_id,
+        "source_handoff_id": "H001",
+        "source_queue_id": "Q001",
+        "source_queue_item_id": "QI001",
+        "source_task_id": "T001",
+        "status_reported_by_worker": status,
+        "summary": f"Worker reported {status}.",
+        "changed_files": ["src/example.py"] if status == "completed" else [],
+        "validation_attempted": True,
+        "validation_results": ["Focused tests passed."],
+        "tests_run": ["tests/test_example.py"],
+        "commands_run": [],
+        "commit_hash": None,
+        "safety_warnings": [],
+        "blockers": ["Needs approval."] if status in {"blocked", "needs_approval"} else [],
+        "follow_up_needed": [],
+        "notes": ["Manual report fixture."],
+        "reported_at": "2026-07-22T00:00:00Z",
+    }
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path

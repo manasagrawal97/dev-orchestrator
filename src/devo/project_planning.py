@@ -29,6 +29,7 @@ HANDOFF_INDEX_JSON = "handoff-index.json"
 WORKERS_DIR_NAME = "workers"
 CODEX_WORKER_DIR_NAME = "codex"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
+WORKER_REPORTS_DIR_NAME = "reports"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
@@ -54,6 +55,7 @@ ALLOWED_WORKER_RUN_STATUSES = {
     "superseded",
 }
 ALLOWED_WORKER_REPORT_STATUSES = {"missing", "present", "validated", "rejected"}
+ALLOWED_WORKER_REPORTED_STATUSES = {"completed", "failed", "blocked", "partial", "usage_limit", "needs_approval"}
 SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -448,6 +450,40 @@ class WorkerReportMetadata(BaseModel):
     imported_at: datetime | None = None
 
 
+class CodexWorkerReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    worker_run_id: str
+    source_handoff_id: str | None = None
+    source_queue_id: str | None = None
+    source_queue_item_id: str | None = None
+    source_task_id: str | None = None
+    status_reported_by_worker: str
+    summary: str
+    changed_files: list[str] = Field(default_factory=list)
+    validation_attempted: bool = False
+    validation_results: list[str] = Field(default_factory=list)
+    tests_run: list[str] = Field(default_factory=list)
+    commands_run: list[str] = Field(default_factory=list)
+    commit_hash: str | None = None
+    safety_warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    follow_up_needed: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    reported_at: datetime | None = None
+
+
+class WorkerReportValidationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    report: CodexWorkerReport | None = None
+
+
 class WorkerRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -514,6 +550,7 @@ class WorkerArtifactPaths(BaseModel):
     worker_dir: Path
     codex_dir: Path
     worker_run_index_json: Path
+    reports_dir: Path
 
 
 class PlanningArtifactPaths(BaseModel):
@@ -566,6 +603,7 @@ def worker_artifact_paths(project_name: str, workspace_root: Path | None = None)
         worker_dir=worker_dir,
         codex_dir=codex_dir,
         worker_run_index_json=codex_dir / WORKER_RUN_INDEX_JSON,
+        reports_dir=codex_dir / WORKER_REPORTS_DIR_NAME,
     )
 
 
@@ -573,6 +611,18 @@ def worker_run_artifact_paths(project_name: str, worker_run_id: str, workspace_r
     paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_worker_run_id(worker_run_id)
     return paths.codex_dir / f"worker-run-{safe_id}.json", paths.codex_dir / f"worker-run-{safe_id}.md"
+
+
+def worker_report_template_paths(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_worker_run_id(worker_run_id)
+    return paths.reports_dir / f"report-{safe_id}-template.json", paths.reports_dir / f"report-{safe_id}-template.md"
+
+
+def worker_report_artifact_paths(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_worker_run_id(worker_run_id)
+    return paths.reports_dir / f"report-{safe_id}.json", paths.reports_dir / f"report-{safe_id}.md"
 
 
 def create_project_brief(
@@ -1800,6 +1850,212 @@ def mark_codex_worker_run_handoff_used(
     return _write_worker_run(project_name, updated, workspace_root=root)
 
 
+def create_codex_worker_report_template(
+    project_name: str,
+    worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path, CodexWorkerReport]:
+    root = workspace_root or get_workspace_root()
+    worker_run = _require_worker_run(project_name, worker_run_id, root)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = worker_report_template_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    template = CodexWorkerReport(
+        project=project_name,
+        worker_run_id=worker_run.worker_run_id,
+        source_handoff_id=worker_run.source_handoff_id,
+        source_queue_id=worker_run.source_queue_id,
+        source_queue_item_id=worker_run.source_queue_item_id,
+        source_task_id=worker_run.source_task_id,
+        status_reported_by_worker="partial",
+        summary="Replace this with the manual Codex final report summary.",
+        changed_files=[],
+        validation_attempted=False,
+        validation_results=[],
+        tests_run=[],
+        commands_run=[],
+        commit_hash=None,
+        safety_warnings=[],
+        blockers=[],
+        follow_up_needed=[],
+        notes=[
+            "Fill this template from the manual Codex final report.",
+            "This report is evidence, not proof of completion.",
+        ],
+        reported_at=datetime.now(UTC),
+    )
+    _write_model(json_path, template)
+    markdown_path.write_text(render_codex_worker_report_template_markdown(template), encoding="utf-8")
+    return json_path, markdown_path, template
+
+
+def validate_codex_worker_report_file(
+    project_name: str,
+    worker_run_id: str,
+    report_file: Path,
+    workspace_root: Path | None = None,
+) -> WorkerReportValidationResult:
+    root = workspace_root or get_workspace_root()
+    worker_run = _require_worker_run(project_name, worker_run_id, root)
+    source_path = report_file.expanduser().resolve()
+    if not source_path.exists():
+        return WorkerReportValidationResult(valid=False, errors=[f"Report file does not exist: {source_path}"])
+    if not source_path.is_file():
+        return WorkerReportValidationResult(valid=False, errors=[f"Report path must be a file: {source_path}"])
+    try:
+        report = CodexWorkerReport.model_validate_json(source_path.read_text(encoding="utf-8-sig"))
+    except (ValueError, ValidationError) as exc:
+        return WorkerReportValidationResult(valid=False, errors=[f"Invalid Codex worker report JSON: {exc}"])
+    errors: list[str] = []
+    warnings: list[str] = []
+    if report.project != project_name:
+        errors.append(f"Report project must be {project_name}, got {report.project}.")
+    if _normalize_worker_run_id(report.worker_run_id) != worker_run.worker_run_id:
+        errors.append(f"Report worker_run_id must be {worker_run.worker_run_id}, got {report.worker_run_id}.")
+    if report.source_handoff_id != worker_run.source_handoff_id:
+        warnings.append("Report source_handoff_id does not match the worker run source handoff.")
+    if report.status_reported_by_worker not in ALLOWED_WORKER_REPORTED_STATUSES:
+        errors.append(f"Invalid status_reported_by_worker: {report.status_reported_by_worker}.")
+    if not report.summary.strip():
+        errors.append("Report summary is required.")
+    if report.status_reported_by_worker == "completed" and not report.changed_files:
+        warnings.append("Worker reported completed but changed_files is empty.")
+    if not report.validation_results:
+        warnings.append("validation_results is empty; independent validation/review is still required.")
+    if report.commit_hash:
+        warnings.append("commit_hash is worker-reported only; verify delivery independently before trusting it.")
+    if report.commands_run:
+        warnings.append("commands_run is worker-reported only; Devo did not execute or verify those commands during import.")
+    return WorkerReportValidationResult(valid=not errors, errors=errors, warnings=warnings, report=report if not errors else None)
+
+
+def import_codex_worker_report(
+    project_name: str,
+    worker_run_id: str,
+    report_file: Path,
+    workspace_root: Path | None = None,
+) -> tuple[WorkerRun, CodexWorkerReport, WorkerReportValidationResult, Path, Path, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run = _require_worker_run(project_name, worker_run_id, root)
+    validation = validate_codex_worker_report_file(project_name, worker_run.worker_run_id, report_file, workspace_root=root)
+    if not validation.valid or not validation.report:
+        msg = "Codex worker report validation failed: " + "; ".join(validation.errors)
+        raise ValueError(msg)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = worker_report_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    report = validation.report.model_copy(update={"worker_run_id": worker_run.worker_run_id})
+    _write_model(json_path, report)
+    markdown_path.write_text(render_codex_worker_report_markdown(report, validation), encoding="utf-8")
+    now = datetime.now(UTC)
+    report_status = "validated" if not validation.warnings else "present"
+    metadata = WorkerReportMetadata(
+        report_status=report_status,
+        reported_changed_files=report.changed_files,
+        reported_validation=_reported_validation_summary(report),
+        reported_commit_hash=report.commit_hash,
+        safety_warnings=[*report.safety_warnings, *validation.warnings],
+        reviewer_notes=[
+            "Imported report is worker-provided evidence only.",
+            "Queue/task completion still requires independent validation/review and explicit Devo action.",
+        ],
+        imported_at=now,
+    )
+    mapped_status = _worker_status_from_report_status(report.status_reported_by_worker)
+    updated = worker_run.model_copy(
+        update={
+            "status": mapped_status,
+            "report_path": str(markdown_path),
+            "report": metadata,
+            "updated_at": now,
+            "completed_at": now if mapped_status == "failed" else worker_run.completed_at,
+            "status_note": f"Imported manual Codex report with worker status {report.status_reported_by_worker}.",
+            "next_action": _worker_report_next_action(project_name, worker_run.worker_run_id, report.status_reported_by_worker),
+        }
+    )
+    updated_worker_run, worker_json, worker_markdown = _write_worker_run(project_name, updated, workspace_root=root)
+    return updated_worker_run, report, validation, json_path, markdown_path, worker_json, worker_markdown
+
+
+def load_codex_worker_report(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> CodexWorkerReport | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = worker_report_artifact_paths(project_name, worker_run_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return CodexWorkerReport.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_worker_reports(project_name: str, workspace_root: Path | None = None) -> list[CodexWorkerReport]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    reports: list[CodexWorkerReport] = []
+    for path in sorted(paths.reports_dir.glob("report-*.json")):
+        if path.name.endswith("-template.json"):
+            continue
+        try:
+            reports.append(CodexWorkerReport.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(reports, key=lambda report: report.reported_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+
+def render_codex_worker_report_template_markdown(report: CodexWorkerReport) -> str:
+    return "\n".join(
+        [
+            f"# Codex Worker Report Template: {report.worker_run_id}",
+            "",
+            "Fill the JSON template from Codex's manual final report, then run:",
+            "",
+            f"```powershell\ndevo worker codex report-validate --project {report.project} --run {report.worker_run_id} --file <reportFile>\n```",
+            "",
+            "Do not treat this report as proof of completion. Import/review/validation remain separate Devo steps.",
+            "",
+        ]
+    )
+
+
+def render_codex_worker_report_markdown(report: CodexWorkerReport, validation: WorkerReportValidationResult | None = None) -> str:
+    lines = [
+        f"# Codex Worker Report: {report.worker_run_id}",
+        "",
+        f"- Project: `{report.project}`",
+        f"- Worker reported status: `{report.status_reported_by_worker}`",
+        f"- Source handoff: `{report.source_handoff_id or 'none'}`",
+        f"- Source queue: `{report.source_queue_id or 'none'}`",
+        f"- Source queue item: `{report.source_queue_item_id or 'none'}`",
+        f"- Source task: `{report.source_task_id or 'none'}`",
+        f"- Validation attempted: `{report.validation_attempted}`",
+        f"- Commit hash: `{report.commit_hash or 'none'}`",
+        f"- Reported at: `{report.reported_at.isoformat() if report.reported_at else 'none'}`",
+        "",
+        "## Summary",
+        "",
+        report.summary or "No summary recorded.",
+        "",
+    ]
+    _append_list_section(lines, "Changed Files", report.changed_files)
+    _append_list_section(lines, "Validation Results", report.validation_results)
+    _append_list_section(lines, "Tests Run", report.tests_run)
+    _append_list_section(lines, "Commands Run", report.commands_run)
+    _append_list_section(lines, "Safety Warnings", report.safety_warnings)
+    _append_list_section(lines, "Blockers", report.blockers)
+    _append_list_section(lines, "Follow-Up Needed", report.follow_up_needed)
+    _append_list_section(lines, "Notes", report.notes)
+    if validation:
+        _append_list_section(lines, "Import Warnings", validation.warnings)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "This imported report is worker-provided evidence only. Devo did not run Codex, execute target commands, verify validation, mark queue/task completion, commit, push, or modify the target repository during import.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_worker_run_markdown(worker_run: WorkerRun) -> str:
     lines = [
         f"# Codex Worker Run: {worker_run.worker_run_id}",
@@ -2830,6 +3086,14 @@ def _require_queue_item(queue: ExecutionQueue, item_id: str) -> QueueItem:
     raise ValueError(msg)
 
 
+def _require_worker_run(project_name: str, worker_run_id: str, workspace_root: Path) -> WorkerRun:
+    worker_run = load_codex_worker_run(project_name, worker_run_id, workspace_root=workspace_root)
+    if not worker_run:
+        msg = f"Codex worker run not found: {worker_run_id}"
+        raise ValueError(msg)
+    return worker_run
+
+
 def _find_queue_item(items: list[QueueItem], item_id: str | None) -> QueueItem | None:
     if not item_id:
         return None
@@ -3214,6 +3478,46 @@ def _worker_run_next_action(project_name: str, worker_run_id: str, status: str) 
     if status == "superseded":
         return "Use the newer worker run or handoff; this record remains historical only."
     return "Review worker run status."
+
+
+def _worker_status_from_report_status(status_reported_by_worker: str) -> str:
+    if status_reported_by_worker == "completed":
+        return "waiting_review"
+    if status_reported_by_worker == "failed":
+        return "failed"
+    if status_reported_by_worker in {"blocked", "needs_approval"}:
+        return "blocked_needs_approval"
+    if status_reported_by_worker == "usage_limit":
+        return "paused_usage_limit"
+    if status_reported_by_worker == "partial":
+        return "waiting_review"
+    return "waiting_review"
+
+
+def _worker_report_next_action(project_name: str, worker_run_id: str, status_reported_by_worker: str) -> str:
+    if status_reported_by_worker == "completed":
+        return (
+            "Review imported report manually, verify validation independently, then use "
+            f"devo project queue-complete-item only after review. Inspect with devo worker codex report-show --project {project_name} --run {worker_run_id}."
+        )
+    if status_reported_by_worker == "usage_limit":
+        return "Review partial report, pause/resume the linked queue if needed, and create a new worker run when usage resets."
+    if status_reported_by_worker in {"blocked", "needs_approval"}:
+        return "Review blockers and request explicit trusted approval before continuing."
+    if status_reported_by_worker == "failed":
+        return "Review failure evidence and create a new handoff or worker run only after the cause is understood."
+    return "Review imported report manually before any queue/task completion, validation, commit, or push."
+
+
+def _reported_validation_summary(report: CodexWorkerReport) -> list[str]:
+    values: list[str] = []
+    if report.validation_results:
+        values.extend(report.validation_results)
+    if report.tests_run:
+        values.extend(f"test: {item}" for item in report.tests_run)
+    if report.commands_run:
+        values.extend(f"command: {item}" for item in report.commands_run)
+    return values
 
 
 def _task_prompt_section(task: BacklogTask) -> list[str]:

@@ -49,6 +49,10 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.latest_worker_run_id is None
     assert overview.latest_worker_run_status is None
     assert overview.latest_worker_run_next_action is None
+    assert overview.latest_worker_report_status is None
+    assert overview.latest_worker_report_path is None
+    assert overview.latest_worker_report_summary is None
+    assert overview.latest_worker_report_next_action is None
     assert overview.project_completion_percent == 0.0
     assert overview.backlog_readiness_percent == 0.0
     assert overview.progress_next_action
@@ -150,6 +154,8 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "handoff_next_action" in overview_data
     assert "worker_run_count" in overview_data
     assert "latest_worker_run_next_action" in overview_data
+    assert "latest_worker_report_status" in overview_data
+    assert "latest_worker_report_summary" in overview_data
 
 
 def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkeypatch) -> None:
@@ -185,6 +191,33 @@ def test_project_overview_includes_worker_run_summary(tmp_path: Path, monkeypatc
     assert overview.latest_worker_run_status == "planned"
     assert overview.latest_worker_run_next_action is not None
     assert "Paste the linked handoff prompt" in overview.latest_worker_run_next_action
+
+
+def test_project_overview_includes_worker_report_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001", "--note", "Approved."])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
+    report_file = _worker_report_file(tmp_path, "WR001")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(report_file)],
+        terminal_width=240,
+    )
+    assert result.exit_code == 0, result.output
+
+    overview = build_project_overview("sample")
+
+    assert overview.latest_worker_report_status == "completed"
+    assert overview.latest_worker_report_path is not None
+    assert overview.latest_worker_report_summary == "Worker reported completion."
+    assert overview.latest_worker_report_next_action is not None
+    assert "queue-complete-item only after review" in overview.latest_worker_report_next_action
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:
@@ -233,6 +266,38 @@ def _create_backlog(tmp_path: Path) -> None:
     runner.invoke(app, ["project", "blueprint-approve", "--project", "sample"])
     runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
     runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+
+
+def _worker_report_file(tmp_path: Path, worker_run_id: str) -> Path:
+    path = tmp_path / f"report-{worker_run_id}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "project": "sample",
+                "worker_run_id": worker_run_id,
+                "source_handoff_id": "H001",
+                "source_queue_id": "Q001",
+                "source_queue_item_id": "QI001",
+                "source_task_id": "T001",
+                "status_reported_by_worker": "completed",
+                "summary": "Worker reported completion.",
+                "changed_files": ["src/example.py"],
+                "validation_attempted": True,
+                "validation_results": ["Focused tests passed."],
+                "tests_run": ["tests/test_example.py"],
+                "commands_run": [],
+                "commit_hash": None,
+                "safety_warnings": [],
+                "blockers": [],
+                "follow_up_needed": [],
+                "notes": ["Manual report fixture."],
+                "reported_at": "2026-07-22T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:

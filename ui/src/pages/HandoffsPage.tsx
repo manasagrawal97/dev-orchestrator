@@ -167,6 +167,10 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
                   ['Status', latestWorkerRun.status],
                   ['Source handoff', latestWorkerRun.source_handoff_id ?? 'none'],
                   ['Report status', latestWorkerRun.report.report_status],
+                  ['Report path', latestWorkerRun.report_path ?? 'none'],
+                  ['Reported changed files', latestWorkerRun.report.reported_changed_files.length],
+                  ['Reported validation', latestWorkerRun.report.reported_validation.length],
+                  ['Safety warnings', latestWorkerRun.report.safety_warnings.length],
                   ['Next action', latestWorkerRun.next_action]
                 ]}
               />
@@ -175,6 +179,10 @@ export function HandoffsPage({ selectedProject }: HandoffsPageProps) {
             <CommandCopyBox command={`devo worker codex run-list --project ${selectedProject}`} />
             <CommandCopyBox command={`devo worker codex run-show --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'}`} />
             <CommandCopyBox command={`devo worker codex run-status --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'} --status waiting_review --note "<note>"`} />
+            <CommandCopyBox command={`devo worker codex report-template --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'}`} />
+            <CommandCopyBox command={`devo worker codex report-validate --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'} --file <reportFile>`} />
+            <CommandCopyBox command={`devo worker codex report-import --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'} --file <reportFile>`} />
+            <CommandCopyBox command={`devo worker codex report-show --project ${selectedProject} --run ${latestWorkerRun?.worker_run_id ?? '<workerRunId>'}`} />
           </SummaryCard>
         </>
       ) : null}

@@ -14,9 +14,11 @@ from .project_planning import (
     calculate_project_progress,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_reports,
     list_codex_worker_runs,
     list_project_batches,
     list_execution_queues,
+    load_codex_worker_run,
     load_project_backlog,
     load_project_blueprint,
     load_project_brief,
@@ -126,6 +128,10 @@ class ProjectOverview(BaseModel):
     latest_worker_run_id: str | None = None
     latest_worker_run_status: str | None = None
     latest_worker_run_next_action: str | None = None
+    latest_worker_report_status: str | None = None
+    latest_worker_report_path: str | None = None
+    latest_worker_report_summary: str | None = None
+    latest_worker_report_next_action: str | None = None
     project_completion_percent: float = 0.0
     backlog_readiness_percent: float = 0.0
     blocked_percent: float = 0.0
@@ -218,6 +224,10 @@ def build_project_overview_with_timing(
             latest_worker_run_id=str(planning["latest_worker_run_id"]) if planning["latest_worker_run_id"] else None,
             latest_worker_run_status=str(planning["latest_worker_run_status"]) if planning["latest_worker_run_status"] else None,
             latest_worker_run_next_action=str(planning["latest_worker_run_next_action"]) if planning["latest_worker_run_next_action"] else None,
+            latest_worker_report_status=str(planning["latest_worker_report_status"]) if planning["latest_worker_report_status"] else None,
+            latest_worker_report_path=str(planning["latest_worker_report_path"]) if planning["latest_worker_report_path"] else None,
+            latest_worker_report_summary=str(planning["latest_worker_report_summary"]) if planning["latest_worker_report_summary"] else None,
+            latest_worker_report_next_action=str(planning["latest_worker_report_next_action"]) if planning["latest_worker_report_next_action"] else None,
             project_completion_percent=float(planning["project_completion_percent"]),
             backlog_readiness_percent=float(planning["backlog_readiness_percent"]),
             blocked_percent=float(planning["blocked_percent"]),
@@ -436,6 +446,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         queues = list_execution_queues(project_name, workspace_root=workspace_root)
         handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
         worker_runs = list_codex_worker_runs(project_name, workspace_root=workspace_root)
+        worker_reports = list_codex_worker_reports(project_name, workspace_root=workspace_root)
         progress = calculate_project_progress(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
@@ -479,6 +490,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_worker_run_id": None,
             "latest_worker_run_status": None,
             "latest_worker_run_next_action": f"Review worker artifacts: {exc}",
+            "latest_worker_report_status": None,
+            "latest_worker_report_path": None,
+            "latest_worker_report_summary": None,
+            "latest_worker_report_next_action": f"Review worker report artifacts: {exc}",
             "project_completion_percent": 0.0,
             "backlog_readiness_percent": 0.0,
             "blocked_percent": 0.0,
@@ -492,6 +507,13 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     latest_queue = queues[0] if queues else None
     latest_handoff = handoffs[0] if handoffs else None
     latest_worker_run = worker_runs[0] if worker_runs else None
+    latest_worker_report = worker_reports[0] if worker_reports else None
+    latest_worker_report_run = None
+    if latest_worker_report:
+        try:
+            latest_worker_report_run = load_codex_worker_run(project_name, latest_worker_report.worker_run_id, workspace_root=workspace_root)
+        except ValueError:
+            latest_worker_report_run = None
     if not brief:
         next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
     elif brief.status != "approved":
@@ -558,6 +580,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_worker_run_id": latest_worker_run.worker_run_id if latest_worker_run else None,
         "latest_worker_run_status": latest_worker_run.status if latest_worker_run else None,
         "latest_worker_run_next_action": latest_worker_run.next_action if latest_worker_run else None,
+        "latest_worker_report_status": latest_worker_report.status_reported_by_worker if latest_worker_report else None,
+        "latest_worker_report_path": latest_worker_report_run.report_path if latest_worker_report_run else None,
+        "latest_worker_report_summary": latest_worker_report.summary if latest_worker_report else None,
+        "latest_worker_report_next_action": latest_worker_report_run.next_action if latest_worker_report_run else None,
         "project_completion_percent": progress.project_completion_percent,
         "backlog_readiness_percent": progress.backlog_readiness_percent,
         "blocked_percent": progress.blocked_percent,

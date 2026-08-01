@@ -664,7 +664,19 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Progress, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress workflow. Blueprint, Backlog, Batches, Queues, Handoffs, and Progress provide detailed read-only inspection of planning artifacts, milestone/epic rollups, task filters, batch risk/lane summaries, queue item state, handoff and worker-run metadata, progress bars, warnings, and next actions. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
+Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Progress, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress workflow. Blueprint, Backlog, Batches, Queues, Handoffs, and Progress provide detailed read-only inspection of planning artifacts, milestone/epic rollups, task filters, batch risk/lane summaries, queue item state, handoff and worker-run/report metadata, progress bars, warnings, and next actions. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
+
+Manual Codex worker report import is available for assisted handoff workflows:
+
+```powershell
+devo worker codex report-template --project MyProject --run WR001
+devo worker codex report-validate --project MyProject --run WR001 --file report-WR001.json
+devo worker codex report-import --project MyProject --run WR001 --file report-WR001.json
+devo worker codex report-show --project MyProject --run WR001
+devo worker codex report-list --project MyProject
+```
+
+Reports are stored under `workspace/projects/<project>/workers/codex/reports/` and summarize what a manually run worker reported: status, changed files, validation, tests, commands, optional commit hash, warnings, blockers, follow-ups, and notes. Importing a report is not proof of completion. It does not run Codex, call AI APIs, execute target commands, complete queue/tasks, run validation, commit, push, or modify target repositories.
 
 ## Policy Gates
 

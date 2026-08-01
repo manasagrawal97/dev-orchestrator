@@ -213,7 +213,19 @@ devo worker codex run-status --project MyProject --run WR001 --status waiting_re
 devo worker codex run-mark-used --project MyProject --run WR001
 ```
 
-Worker run artifacts live under `workspace/projects/<project>/workers/codex/` as `worker-run-<id>.json`, `worker-run-<id>.md`, and `worker-run-index.json`. They are tracking records only. They do not run Codex, call AI APIs, execute target commands, prove implementation complete, import reports, complete queue items, validate, commit, push, or modify target source.
+Worker run artifacts live under `workspace/projects/<project>/workers/codex/` as `worker-run-<id>.json`, `worker-run-<id>.md`, and `worker-run-index.json`. They are tracking records only. They do not run Codex, call AI APIs, execute target commands, prove implementation complete, complete queue items, validate, commit, push, or modify target source.
+
+After the user runs Codex manually, create and import a structured worker report:
+
+```powershell
+devo worker codex report-template --project MyProject --run WR001
+devo worker codex report-validate --project MyProject --run WR001 --file report-WR001.json
+devo worker codex report-import --project MyProject --run WR001 --file report-WR001.json
+devo worker codex report-show --project MyProject --run WR001
+devo worker codex report-list --project MyProject
+```
+
+Imported reports live under `workspace/projects/<project>/workers/codex/reports/` as JSON and Markdown. They record what the worker claimed happened: status, summary, changed files, validation attempted/results, tests, commands, optional commit hash, safety warnings, blockers, follow-ups, and notes. Importing a report does not execute Codex, call AI APIs, run target commands, trust the report as proof, complete queue/tasks, run validation, commit, push, or modify target source. A completed worker report moves the worker run into a review-oriented state so the user can verify evidence before any queue or delivery update.
 
 Supervised Codex CLI worker execution remains future scope. Read `docs/codex-worker-adapter-design.md` before any worker adapter work. Manual handoff remains supported, and any future worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
 

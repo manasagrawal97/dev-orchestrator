@@ -112,6 +112,10 @@ export interface ProjectOverview {
   latest_worker_run_id: string | null;
   latest_worker_run_status: string | null;
   latest_worker_run_next_action: string | null;
+  latest_worker_report_status: string | null;
+  latest_worker_report_path: string | null;
+  latest_worker_report_summary: string | null;
+  latest_worker_report_next_action: string | null;
   project_completion_percent: number;
   backlog_readiness_percent: number;
   blocked_percent: number;
@@ -343,6 +347,28 @@ export interface WorkerReportMetadata {
   imported_at: string | null;
 }
 
+export interface CodexWorkerReport {
+  project: string;
+  worker_run_id: string;
+  source_handoff_id: string | null;
+  source_queue_id: string | null;
+  source_queue_item_id: string | null;
+  source_task_id: string | null;
+  status_reported_by_worker: string;
+  summary: string;
+  changed_files: string[];
+  validation_attempted: boolean;
+  validation_results: string[];
+  tests_run: string[];
+  commands_run: string[];
+  commit_hash: string | null;
+  safety_warnings: string[];
+  blockers: string[];
+  follow_up_needed: string[];
+  notes: string[];
+  reported_at: string | null;
+}
+
 export interface WorkerRun {
   project: string;
   worker_run_id: string;
@@ -376,6 +402,12 @@ export interface WorkerRunsResponse {
   project: string;
   count: number;
   worker_runs: WorkerRun[];
+}
+
+export interface WorkerReportsResponse {
+  project: string;
+  count: number;
+  reports: CodexWorkerReport[];
 }
 
 export interface ProjectProgress {

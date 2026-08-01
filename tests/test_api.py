@@ -16,6 +16,7 @@ from devo.project_planning import (
     create_project_batch,
     create_codex_handoff_for_queue_next,
     create_codex_worker_run_from_handoff,
+    import_codex_worker_report,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
     request_batch_approval,
@@ -320,6 +321,38 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
     assert missing.json()["detail"]["error"] == "worker_run_not_found"
 
 
+def test_project_worker_report_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    batch, _batch_json, _batch_md = create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    approved = batch.model_copy(update={"status": "approved", "approval_status": "approved"})
+    batch_json = workspace / "projects" / "sample" / "planning" / "batches" / "batch-B001.json"
+    batch_json.write_text(approved.model_dump_json(indent=2), encoding="utf-8")
+    create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+    create_codex_handoff_for_queue_next("sample", "Q001", workspace_root=workspace)
+    create_codex_worker_run_from_handoff("sample", "H001", workspace_root=workspace)
+    report_file = _worker_report_file(tmp_path, "WR001")
+    import_codex_worker_report("sample", "WR001", report_file, workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    reports = client.get("/api/projects/sample/worker-reports")
+    report = client.get("/api/projects/sample/worker-runs/WR001/report")
+    missing = client.get("/api/projects/sample/worker-runs/WR999/report")
+
+    assert reports.status_code == 200
+    assert reports.json()["count"] == 1
+    assert reports.json()["reports"][0]["worker_run_id"] == "WR001"
+    assert report.status_code == 200
+    assert report.json()["status_reported_by_worker"] == "completed"
+    assert report.json()["changed_files"] == ["src/example.py"]
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"] == "worker_run_not_found"
+
+
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
@@ -490,6 +523,8 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/handoffs/{handoff_id}" in result.output
     assert "GET /api/projects/{project}/worker-runs" in result.output
     assert "GET /api/projects/{project}/worker-runs/{worker_run_id}" in result.output
+    assert "GET /api/projects/{project}/worker-runs/{worker_run_id}/report" in result.output
+    assert "GET /api/projects/{project}/worker-reports" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
 
 
@@ -542,3 +577,36 @@ def _workspace_snapshot(workspace: Path) -> dict[str, str]:
     for path in sorted(item for item in workspace.rglob("*") if item.is_file()):
         snapshot[str(path.relative_to(workspace))] = path.read_text(encoding="utf-8")
     return snapshot
+
+
+def _worker_report_file(tmp_path: Path, worker_run_id: str) -> Path:
+    path = tmp_path / f"report-{worker_run_id}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "project": "sample",
+                "worker_run_id": worker_run_id,
+                "source_handoff_id": "H001",
+                "source_queue_id": "Q001",
+                "source_queue_item_id": "QI001",
+                "source_task_id": "T001",
+                "status_reported_by_worker": "completed",
+                "summary": "Worker reported completion.",
+                "changed_files": ["src/example.py"],
+                "validation_attempted": True,
+                "validation_results": ["Focused tests passed."],
+                "tests_run": ["tests/test_example.py"],
+                "commands_run": [],
+                "commit_hash": None,
+                "safety_warnings": [],
+                "blockers": [],
+                "follow_up_needed": [],
+                "notes": [],
+                "reported_at": "2026-07-22T00:00:00Z",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path

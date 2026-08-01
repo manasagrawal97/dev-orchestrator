@@ -39,6 +39,7 @@ Devo already has:
 - Execution queue state tracking
 - Codex handoff prompt generation from queue, batch, and task artifacts
 - Workspace-only Codex worker run tracking records
+- Manual Codex worker report templates, validation, import, show, and list commands
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -139,8 +140,8 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 13. TASK-DEVO-086: Planning pipeline operator guidance and input robustness - completed.
 14. TASK-DEVO-087: Codex CLI worker adapter design doc - completed.
 15. TASK-DEVO-088: Worker run/report data model - completed.
-16. TASK-DEVO-089: Manual execution report import - let users import worker-style reports from manually run Codex.
-17. TASK-DEVO-090: Worker run UI visibility - show worker run/report state read-only.
+16. TASK-DEVO-089: Manual execution report import - completed.
+17. TASK-DEVO-090: Worker run UI visibility and review affordance polish.
 18. TASK-DEVO-091: Supervised Codex CLI adapter prototype - launch Codex only after explicit approval.
 19. TASK-DEVO-092: Queue integration for one item at a time.
 20. TASK-DEVO-093: Pause/resume and usage-limit handling.

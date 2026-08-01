@@ -239,13 +239,15 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                   ['Latest handoff status', overview.latest_handoff_status ?? 'none'],
                   ['Worker runs', overview.worker_run_count],
                   ['Latest worker run', overview.latest_worker_run_id ?? 'none'],
-                  ['Latest worker status', overview.latest_worker_run_status ?? 'none']
+                  ['Latest worker status', overview.latest_worker_run_status ?? 'none'],
+                  ['Latest worker report', overview.latest_worker_report_status ?? 'none']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
               <p className="muted compact">{overview.batch_approval_next_action}</p>
               <p className="muted compact">{overview.handoff_next_action}</p>
               {overview.latest_worker_run_next_action ? <p className="muted compact">{overview.latest_worker_run_next_action}</p> : null}
+              {overview.latest_worker_report_summary ? <p className="muted compact">{overview.latest_worker_report_summary}</p> : null}
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project handoff-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
