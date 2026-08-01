@@ -10,7 +10,14 @@ from .backups import list_backup_inventory
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
-from .project_planning import load_project_backlog, load_project_blueprint, load_project_brief, list_project_batches, planning_artifact_paths
+from .project_planning import (
+    calculate_project_progress,
+    list_project_batches,
+    load_project_backlog,
+    load_project_blueprint,
+    load_project_brief,
+    planning_artifact_paths,
+)
 from .project_settings import load_project_settings, project_settings_path
 from .projects import get_workspace_root
 from .runs import list_runs, load_current_selection, load_run
@@ -90,6 +97,11 @@ class ProjectOverview(BaseModel):
     approved_batch_count: int = 0
     latest_batch_id: str | None = None
     latest_batch_status: str | None = None
+    project_completion_percent: float = 0.0
+    backlog_readiness_percent: float = 0.0
+    blocked_percent: float = 0.0
+    batch_completion_percent: float = 0.0
+    progress_next_action: str = "Create a Project Brief."
     planning_next_action: str = "Create a Project Brief."
     recent_runs: list[RunOverview] = Field(default_factory=list)
     recent_work_packages: list[WorkPackageOverview] = Field(default_factory=list)
@@ -152,6 +164,11 @@ def build_project_overview_with_timing(
             approved_batch_count=int(planning["approved_batch_count"]),
             latest_batch_id=str(planning["latest_batch_id"]) if planning["latest_batch_id"] else None,
             latest_batch_status=str(planning["latest_batch_status"]) if planning["latest_batch_status"] else None,
+            project_completion_percent=float(planning["project_completion_percent"]),
+            backlog_readiness_percent=float(planning["backlog_readiness_percent"]),
+            blocked_percent=float(planning["blocked_percent"]),
+            batch_completion_percent=float(planning["batch_completion_percent"]),
+            progress_next_action=str(planning["progress_next_action"]),
             planning_next_action=str(planning["planning_next_action"]),
             recent_runs=runs,
             recent_work_packages=work,
@@ -361,6 +378,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         blueprint = load_project_blueprint(project_name, workspace_root=workspace_root)
         backlog = load_project_backlog(project_name, workspace_root=workspace_root)
         batches = list_project_batches(project_name, workspace_root=workspace_root)
+        progress = calculate_project_progress(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
             "brief_status": "unknown",
@@ -378,6 +396,11 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "approved_batch_count": 0,
             "latest_batch_id": None,
             "latest_batch_status": None,
+            "project_completion_percent": 0.0,
+            "backlog_readiness_percent": 0.0,
+            "blocked_percent": 0.0,
+            "batch_completion_percent": 0.0,
+            "progress_next_action": f"Review planning artifacts: {exc}",
             "planning_next_action": f"Review planning artifacts: {exc}",
         }
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
@@ -416,6 +439,11 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "approved_batch_count": sum(1 for batch in batches if batch.approval_status == "approved"),
         "latest_batch_id": latest_batch.batch_id if latest_batch else None,
         "latest_batch_status": latest_batch.status if latest_batch else None,
+        "project_completion_percent": progress.project_completion_percent,
+        "backlog_readiness_percent": progress.backlog_readiness_percent,
+        "blocked_percent": progress.blocked_percent,
+        "batch_completion_percent": progress.batch_completion_percent,
+        "progress_next_action": progress.next_action,
         "planning_next_action": next_action,
     }
 

@@ -9,6 +9,7 @@ from devo.main import app
 from devo.project_planning import (
     BacklogTask,
     ProjectBacklog,
+    calculate_project_progress,
     generate_backlog_refinement_prompt,
     list_project_batches,
     load_project_backlog,
@@ -16,6 +17,7 @@ from devo.project_planning import (
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    project_batch_artifact_paths,
 )
 from devo.read_models import build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -459,6 +461,108 @@ def test_batch_commands_fail_for_unknown_project_and_missing_backlog(tmp_path: P
     assert "Project backlog not found" in missing_backlog.output
 
 
+def test_progress_command_works_with_no_planning_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "progress", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Project progress: sample" in result.output
+    assert "Brief: missing" in result.output
+    progress = calculate_project_progress("sample", workspace_root=workspace)
+    assert progress.has_brief is False
+    assert progress.project_completion_percent == 0.0
+    assert "Project Brief is missing" in "\n".join(progress.warnings)
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_progress_command_works_with_brief_and_blueprint_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_blueprint(tmp_path)
+
+    progress = calculate_project_progress("sample", workspace_root=workspace)
+
+    assert progress.has_brief is True
+    assert progress.brief_status == "approved"
+    assert progress.has_blueprint is True
+    assert progress.blueprint_status == "approved"
+    assert progress.has_backlog is False
+    assert progress.task_count == 0
+    assert "backlog-create" in progress.next_action
+
+
+def test_progress_calculates_task_counts_and_percentages(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    _write_backlog_statuses(workspace, ["completed", "blocked", "approved", "ready", "draft", "superseded"])
+
+    result = runner.invoke(app, ["project", "progress", "--project", "sample", "--json"], terminal_width=240)
+    progress = calculate_project_progress("sample", workspace_root=workspace)
+    data = json.loads(result.output)
+
+    assert result.exit_code == 0, result.output
+    assert progress.task_count == 6
+    assert progress.active_task_count == 5
+    assert progress.completed_task_count == 1
+    assert progress.blocked_task_count == 1
+    assert progress.approved_task_count == 1
+    assert progress.ready_task_count == 1
+    assert progress.draft_task_count == 1
+    assert progress.project_completion_percent == 20.0
+    assert progress.backlog_readiness_percent == 60.0
+    assert progress.blocked_percent == 20.0
+    assert data["project_completion_percent"] == 20.0
+
+
+def test_progress_percent_handles_zero_active_tasks(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    _write_backlog_statuses(workspace, ["superseded", "superseded"])
+
+    progress = calculate_project_progress("sample", workspace_root=workspace)
+
+    assert progress.active_task_count == 0
+    assert progress.project_completion_percent == 0.0
+    assert progress.backlog_readiness_percent == 0.0
+    assert progress.blocked_percent == 0.0
+
+
+def test_progress_aggregates_milestone_and_epic_progress(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    _write_backlog_statuses(workspace, ["completed", "blocked"])
+
+    progress = calculate_project_progress("sample", workspace_root=workspace)
+
+    milestone = next(item for item in progress.milestone_progress if item.id == "M001")
+    epic_1 = next(item for item in progress.epic_progress if item.id == "E001")
+    epic_2 = next(item for item in progress.epic_progress if item.id == "E002")
+    assert milestone.task_count == 2
+    assert milestone.completed_task_count == 1
+    assert milestone.blocked_task_count == 1
+    assert milestone.completion_percent == 50.0
+    assert epic_1.completed_task_count == 1
+    assert epic_2.blocked_task_count == 1
+
+
+def test_progress_aggregates_batch_progress(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "Second batch", "--tasks", "T002"])
+    _write_batch_status(workspace, "B001", status="completed", approval_status="approved")
+    _write_batch_status(workspace, "B002", status="approved", approval_status="approved")
+
+    progress = calculate_project_progress("sample", workspace_root=workspace)
+
+    assert progress.batch_count == 2
+    assert progress.active_batch_count == 2
+    assert progress.approved_batch_count == 2
+    assert progress.completed_batch_count == 1
+    assert progress.batch_completion_percent == 50.0
+
+
 def test_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     brief_file = _brief_file(tmp_path)
@@ -629,6 +733,38 @@ def _refined_backlog_file(
     path = tmp_path / "refined-backlog.json"
     path.write_text(backlog.model_dump_json(indent=2), encoding="utf-8")
     return path
+
+
+def _write_backlog_statuses(workspace: Path, statuses: list[str]) -> None:
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    template = backlog.tasks[0]
+    tasks: list[BacklogTask] = []
+    for index, status in enumerate(statuses, start=1):
+        base = backlog.tasks[index - 1] if index <= len(backlog.tasks) else template
+        epic_id = "E001" if index % 2 else "E002"
+        tasks.append(
+            base.model_copy(
+                update={
+                    "id": f"T{index:03d}",
+                    "title": f"Progress task {index}",
+                    "status": status,
+                    "milestone_id": "M001",
+                    "epic_id": epic_id,
+                }
+            )
+        )
+    updated = backlog.model_copy(update={"tasks": tasks, "task_count": len(tasks)})
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    paths.backlog_json.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _write_batch_status(workspace: Path, batch_id: str, *, status: str, approval_status: str) -> None:
+    batch = load_project_batch("sample", batch_id, workspace_root=workspace)
+    assert batch is not None
+    updated = batch.model_copy(update={"status": status, "approval_status": approval_status})
+    json_path, _markdown_path = project_batch_artifact_paths("sample", batch_id, workspace_root=workspace)
+    json_path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
 
 
 def _create_blueprint(tmp_path: Path) -> None:

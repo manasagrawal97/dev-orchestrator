@@ -193,6 +193,27 @@ def test_project_batch_endpoints_return_json(tmp_path: Path, monkeypatch) -> Non
     assert missing.json()["detail"]["error"] == "batch_not_found"
 
 
+def test_project_progress_endpoint_returns_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/progress")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["project"] == "sample"
+    assert data["task_count"] == 2
+    assert data["batch_count"] == 1
+    assert "project_completion_percent" in data
+    assert "milestone_progress" in data
+
+
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
@@ -353,6 +374,7 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/backlog/prompt" in result.output
     assert "GET /api/projects/{project}/batches" in result.output
     assert "GET /api/projects/{project}/batches/{batch_id}" in result.output
+    assert "GET /api/projects/{project}/progress" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
 
 

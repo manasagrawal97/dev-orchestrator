@@ -139,6 +139,17 @@ devo project batch-approve --project MyProject --batch B001
 
 Batch artifacts live under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Suggestions prefer selectable backlog tasks whose dependencies are completed or already included, with lower-risk tasks first. Execution queue and Codex handoff prompts come later.
 
+## Planning Progress
+
+Progress is derived from existing planning artifacts. It is deterministic and count-based; it does not use weighted scoring, execution queue state, Codex execution state, or AI/API calls.
+
+```powershell
+devo project progress --project MyProject
+devo project progress --project MyProject --json
+```
+
+The summary includes Project Brief/Blueprint/Backlog status, task counts, active/completed/ready/approved/draft/blocked counts, project completion percent, backlog readiness percent, blocked percent, batch completion percent, latest batch, milestone progress, epic progress, warnings, and the next planning action. Execution queue progress comes later in TASK-DEVO-079.
+
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
 ```mermaid

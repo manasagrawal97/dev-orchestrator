@@ -87,6 +87,11 @@ export interface ProjectOverview {
   approved_batch_count: number;
   latest_batch_id: string | null;
   latest_batch_status: string | null;
+  project_completion_percent: number;
+  backlog_readiness_percent: number;
+  blocked_percent: number;
+  batch_completion_percent: number;
+  progress_next_action: string;
   planning_next_action: string;
   recent_runs: RunOverview[];
   recent_work_packages: WorkPackageOverview[];

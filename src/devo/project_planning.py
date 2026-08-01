@@ -218,6 +218,58 @@ class BatchSuggestionResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PlanningProgressGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    title: str | None = None
+    task_count: int = 0
+    active_task_count: int = 0
+    completed_task_count: int = 0
+    blocked_task_count: int = 0
+    ready_task_count: int = 0
+    approved_task_count: int = 0
+    draft_task_count: int = 0
+    completion_percent: float = 0.0
+    readiness_percent: float = 0.0
+    blocked_percent: float = 0.0
+
+
+class ProjectProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    has_brief: bool = False
+    brief_status: str = "missing"
+    has_blueprint: bool = False
+    blueprint_status: str = "missing"
+    has_backlog: bool = False
+    backlog_status: str = "missing"
+    task_count: int = 0
+    completed_task_count: int = 0
+    active_task_count: int = 0
+    blocked_task_count: int = 0
+    approved_task_count: int = 0
+    ready_task_count: int = 0
+    draft_task_count: int = 0
+    project_completion_percent: float = 0.0
+    backlog_readiness_percent: float = 0.0
+    blocked_percent: float = 0.0
+    batch_count: int = 0
+    approved_batch_count: int = 0
+    completed_batch_count: int = 0
+    active_batch_count: int = 0
+    batch_completion_percent: float = 0.0
+    latest_batch_id: str | None = None
+    latest_batch_status: str | None = None
+    milestone_progress: list[PlanningProgressGroup] = Field(default_factory=list)
+    epic_progress: list[PlanningProgressGroup] = Field(default_factory=list)
+    next_action: str = "Create a Project Brief."
+    warnings: list[str] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -705,6 +757,93 @@ def project_batch_artifact_paths(project_name: str, batch_id: str, workspace_roo
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_batch_id(batch_id)
     return paths.batches_dir / f"batch-{safe_id}.json", paths.batches_dir / f"batch-{safe_id}.md"
+
+
+def calculate_project_progress(project_name: str, workspace_root: Path | None = None) -> ProjectProgress:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    brief = load_project_brief(project_name, workspace_root=root)
+    blueprint = load_project_blueprint(project_name, workspace_root=root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    batches = list_project_batches(project_name, workspace_root=root)
+    tasks = backlog.tasks if backlog else []
+    active_tasks = [task for task in tasks if task.status != "superseded"]
+    active_task_count = len(active_tasks)
+    completed_task_count = sum(1 for task in active_tasks if task.status == "completed")
+    blocked_task_count = sum(1 for task in active_tasks if task.status == "blocked")
+    approved_task_count = sum(1 for task in active_tasks if task.status == "approved")
+    ready_task_count = sum(1 for task in active_tasks if task.status == "ready")
+    draft_task_count = sum(1 for task in active_tasks if task.status == "draft")
+    ready_like_count = sum(1 for task in active_tasks if task.status in {"ready", "approved", "completed"})
+    active_batches = [batch for batch in batches if batch.status != "superseded"]
+    latest_batch = batches[0] if batches else None
+    warnings = _progress_warnings(brief, blueprint, backlog, active_tasks, batches)
+    return ProjectProgress(
+        project=project_name,
+        has_brief=brief is not None,
+        brief_status=brief.status if brief else "missing",
+        has_blueprint=blueprint is not None,
+        blueprint_status=blueprint.status if blueprint else "missing",
+        has_backlog=backlog is not None,
+        backlog_status=backlog.status if backlog else "missing",
+        task_count=len(tasks),
+        completed_task_count=completed_task_count,
+        active_task_count=active_task_count,
+        blocked_task_count=blocked_task_count,
+        approved_task_count=approved_task_count,
+        ready_task_count=ready_task_count,
+        draft_task_count=draft_task_count,
+        project_completion_percent=_percent(completed_task_count, active_task_count),
+        backlog_readiness_percent=_percent(ready_like_count, active_task_count),
+        blocked_percent=_percent(blocked_task_count, active_task_count),
+        batch_count=len(batches),
+        approved_batch_count=sum(1 for batch in active_batches if batch.approval_status == "approved"),
+        completed_batch_count=sum(1 for batch in active_batches if batch.status == "completed"),
+        active_batch_count=len(active_batches),
+        batch_completion_percent=_percent(sum(1 for batch in active_batches if batch.status == "completed"), len(active_batches)),
+        latest_batch_id=latest_batch.batch_id if latest_batch else None,
+        latest_batch_status=latest_batch.status if latest_batch else None,
+        milestone_progress=_aggregate_progress_groups(active_tasks, blueprint.milestones if blueprint else [], "milestone_id"),
+        epic_progress=_aggregate_progress_groups(active_tasks, blueprint.epics if blueprint else [], "epic_id"),
+        next_action=_progress_next_action(project_name, brief, blueprint, backlog, batches),
+        warnings=warnings,
+        generated_at=datetime.now(UTC),
+    )
+
+
+def render_project_progress_markdown(progress: ProjectProgress) -> str:
+    lines = [
+        f"# Project Progress: {progress.project}",
+        "",
+        f"- Generated: `{progress.generated_at.isoformat()}`",
+        f"- Brief: `{progress.brief_status}`",
+        f"- Blueprint: `{progress.blueprint_status}`",
+        f"- Backlog: `{progress.backlog_status}`",
+        f"- Tasks: `{progress.task_count}`",
+        f"- Active tasks: `{progress.active_task_count}`",
+        f"- Completed tasks: `{progress.completed_task_count}`",
+        f"- Blocked tasks: `{progress.blocked_task_count}`",
+        f"- Project completion: `{progress.project_completion_percent:.1f}%`",
+        f"- Backlog readiness: `{progress.backlog_readiness_percent:.1f}%`",
+        f"- Blocked: `{progress.blocked_percent:.1f}%`",
+        f"- Batches: `{progress.batch_count}`",
+        f"- Approved batches: `{progress.approved_batch_count}`",
+        f"- Completed batches: `{progress.completed_batch_count}`",
+        f"- Batch completion: `{progress.batch_completion_percent:.1f}%`",
+        f"- Latest batch: `{progress.latest_batch_id or 'none'}`",
+        f"- Latest batch status: `{progress.latest_batch_status or 'none'}`",
+        "",
+        "## Next Action",
+        "",
+        progress.next_action,
+        "",
+    ]
+    _append_list_section(lines, "Warnings", progress.warnings)
+    lines.extend(["## Milestone Progress", ""])
+    _append_progress_groups(lines, progress.milestone_progress)
+    lines.extend(["## Epic Progress", ""])
+    _append_progress_groups(lines, progress.epic_progress)
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def render_project_batch_markdown(batch: ProjectBatch) -> str:
@@ -1196,6 +1335,102 @@ def _suggestion_reason(task: BacklogTask) -> str:
     return f"{task.status} task, {task.risk_level} risk, {dependency_text}."
 
 
+def _progress_next_action(
+    project_name: str,
+    brief: ProjectBrief | None,
+    blueprint: ProjectBlueprint | None,
+    backlog: ProjectBacklog | None,
+    batches: list[ProjectBatch],
+) -> str:
+    if not brief:
+        return f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
+    if brief.status != "approved":
+        return f"Approve the Project Brief: devo project brief-approve --project {project_name}"
+    if not blueprint:
+        return f"Create a Blueprint: devo project blueprint-create --project {project_name}"
+    if blueprint.status != "approved":
+        return f"Approve the Blueprint: devo project blueprint-approve --project {project_name}"
+    if not backlog:
+        return f"Create a Backlog: devo project backlog-create --project {project_name}"
+    if backlog.status != "approved":
+        return f"Approve the Backlog: devo project backlog-approve --project {project_name}"
+    if not batches:
+        return f"Create or suggest a Batch: devo project batch-suggest --project {project_name}"
+    latest_batch = batches[0]
+    if not any(batch.approval_status == "approved" for batch in batches):
+        return f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id}"
+    return "Approved planning batch is ready; execution queue comes in TASK-DEVO-079."
+
+
+def _progress_warnings(
+    brief: ProjectBrief | None,
+    blueprint: ProjectBlueprint | None,
+    backlog: ProjectBacklog | None,
+    active_tasks: list[BacklogTask],
+    batches: list[ProjectBatch],
+) -> list[str]:
+    warnings: list[str] = []
+    if not brief:
+        warnings.append("Project Brief is missing.")
+    if not blueprint:
+        warnings.append("Blueprint is missing.")
+    if not backlog:
+        warnings.append("Backlog is missing.")
+    if backlog and not active_tasks:
+        warnings.append("Backlog has no active tasks.")
+    blocked = [task.id for task in active_tasks if task.status == "blocked"]
+    if blocked:
+        warnings.append(f"Blocked tasks: {', '.join(blocked)}.")
+    if batches and not any(batch.approval_status == "approved" for batch in batches):
+        warnings.append("No planning batch is approved.")
+    return warnings
+
+
+def _aggregate_progress_groups(
+    tasks: list[BacklogTask],
+    groups: list[BlueprintMilestone] | list[BlueprintEpic],
+    field_name: str,
+) -> list[PlanningProgressGroup]:
+    title_by_id = {group.id: group.title for group in groups}
+    group_ids = set(title_by_id)
+    for task in tasks:
+        group_id = getattr(task, field_name) or "unassigned"
+        group_ids.add(group_id)
+    results: list[PlanningProgressGroup] = []
+    for group_id in sorted(group_ids):
+        group_tasks = [task for task in tasks if (getattr(task, field_name) or "unassigned") == group_id]
+        active_count = len(group_tasks)
+        completed = sum(1 for task in group_tasks if task.status == "completed")
+        blocked = sum(1 for task in group_tasks if task.status == "blocked")
+        ready = sum(1 for task in group_tasks if task.status == "ready")
+        approved = sum(1 for task in group_tasks if task.status == "approved")
+        draft = sum(1 for task in group_tasks if task.status == "draft")
+        ready_like = sum(1 for task in group_tasks if task.status in {"ready", "approved", "completed"})
+        results.append(
+            PlanningProgressGroup(
+                id=group_id,
+                title=title_by_id.get(group_id),
+                task_count=active_count,
+                active_task_count=active_count,
+                completed_task_count=completed,
+                blocked_task_count=blocked,
+                ready_task_count=ready,
+                approved_task_count=approved,
+                draft_task_count=draft,
+                completion_percent=_percent(completed, active_count),
+                readiness_percent=_percent(ready_like, active_count),
+                blocked_percent=_percent(blocked, active_count),
+            )
+        )
+    return results
+
+
+def _percent(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round((numerator / denominator) * 100, 1)
+
+
 def _summary_list(values: list[str]) -> str:
     if not values:
         return ""
@@ -1347,6 +1582,26 @@ def _append_mapping_section(lines: list[str], title: str, values: dict[str, int]
     else:
         lines.append("No items recorded.")
     lines.append("")
+
+
+def _append_progress_groups(lines: list[str], groups: list[PlanningProgressGroup]) -> None:
+    if not groups:
+        lines.extend(["No progress groups recorded.", ""])
+        return
+    for group in groups:
+        label = f"{group.id}: {group.title}" if group.title else group.id
+        lines.extend(
+            [
+                f"### {label}",
+                "",
+                f"- Tasks: `{group.task_count}`",
+                f"- Completed: `{group.completed_task_count}`",
+                f"- Blocked: `{group.blocked_task_count}`",
+                f"- Completion: `{group.completion_percent:.1f}%`",
+                f"- Readiness: `{group.readiness_percent:.1f}%`",
+                "",
+            ]
+        )
 
 
 def _write_model(path: Path, model: BaseModel) -> None:

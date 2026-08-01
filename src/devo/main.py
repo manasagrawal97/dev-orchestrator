@@ -61,6 +61,7 @@ from .project_planning import (
     BacklogTask,
     BacklogValidationResult,
     BatchSuggestionResult,
+    ProjectProgress,
     ProjectBacklog,
     ProjectBatch,
     ProjectBlueprint,
@@ -69,6 +70,7 @@ from .project_planning import (
     approve_project_backlog,
     approve_project_blueprint,
     approve_project_brief,
+    calculate_project_progress,
     create_project_batch,
     create_project_backlog,
     create_project_blueprint,
@@ -257,6 +259,8 @@ def _print_project_overview(overview: ProjectOverview) -> None:
     console.print(f"Brief: {overview.brief_status}")
     console.print(f"Blueprint: {overview.blueprint_status} milestones={overview.blueprint_milestone_count} epics={overview.blueprint_epic_count}")
     console.print(f"Batches: {overview.batch_count} approved={overview.approved_batch_count} latest={overview.latest_batch_id or 'none'}")
+    console.print(f"Project completion: {overview.project_completion_percent:.1f}%")
+    console.print(f"Backlog readiness: {overview.backlog_readiness_percent:.1f}%")
     console.print(f"Planning next action: {overview.planning_next_action}", soft_wrap=True)
     console.print(f"Recent runs: {len(overview.recent_runs)}")
     console.print(f"Recent work packages: {len(overview.recent_work_packages)}")
@@ -386,6 +390,48 @@ def _print_batch_suggestion(result: BatchSuggestionResult) -> None:
         console.print("Warnings:")
         for item in result.warnings:
             console.print(f"  - {item}", soft_wrap=True)
+
+
+def _print_project_progress(progress: ProjectProgress) -> None:
+    console.print(f"[bold]Project progress: {progress.project}[/bold]")
+    console.print(f"Brief: {progress.brief_status}")
+    console.print(f"Blueprint: {progress.blueprint_status}")
+    console.print(f"Backlog: {progress.backlog_status}")
+    console.print(
+        f"Tasks: total={progress.task_count} active={progress.active_task_count} "
+        f"completed={progress.completed_task_count} ready={progress.ready_task_count} "
+        f"approved={progress.approved_task_count} draft={progress.draft_task_count} blocked={progress.blocked_task_count}",
+        soft_wrap=True,
+    )
+    console.print(f"Project completion: {progress.project_completion_percent:.1f}%")
+    console.print(f"Backlog readiness: {progress.backlog_readiness_percent:.1f}%")
+    console.print(f"Blocked: {progress.blocked_percent:.1f}%")
+    console.print(
+        f"Batches: total={progress.batch_count} active={progress.active_batch_count} "
+        f"approved={progress.approved_batch_count} completed={progress.completed_batch_count}",
+        soft_wrap=True,
+    )
+    console.print(f"Batch completion: {progress.batch_completion_percent:.1f}%")
+    console.print(f"Latest batch: {progress.latest_batch_id or 'none'} status={progress.latest_batch_status or 'none'}")
+    console.print(f"Next action: {progress.next_action}", soft_wrap=True)
+    if progress.warnings:
+        console.print("Warnings:")
+        for warning in progress.warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Milestones:")
+    for item in progress.milestone_progress or []:
+        console.print(
+            f"  - {item.id} | tasks={item.task_count} completed={item.completed_task_count} "
+            f"blocked={item.blocked_task_count} completion={item.completion_percent:.1f}% {item.title or ''}",
+            soft_wrap=True,
+        )
+    console.print("Epics:")
+    for item in progress.epic_progress or []:
+        console.print(
+            f"  - {item.id} | tasks={item.task_count} completed={item.completed_task_count} "
+            f"blocked={item.blocked_task_count} completion={item.completion_percent:.1f}% {item.title or ''}",
+            soft_wrap=True,
+        )
 
 
 def _print_json_model(model: object) -> None:
@@ -1502,6 +1548,23 @@ def review_batch_command(
     console.print(f"[green]Project batch reviewed[/green] {project_name}")
     _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
     console.print(f"Suggested next command: devo project batch-approve --project {project_name} --batch {batch.batch_id}")
+
+
+@project_app.command("progress")
+def show_project_progress_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Compute deterministic planning progress from brief, blueprint, backlog, and batches."""
+    project_name = _resolve_project(project_name, announce=not json_output)
+    try:
+        progress = calculate_project_progress(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    if json_output:
+        _print_json_model(progress)
+        return
+    _print_project_progress(progress)
 
 
 @project_app.command("activity")

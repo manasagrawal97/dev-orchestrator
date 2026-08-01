@@ -234,6 +234,25 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
             overviewLoading ? <LoadingState message="Loading planning summary..." /> : <ErrorState message="Planning summary is unavailable." />
           )}
         </SummaryCard>
+        <SummaryCard title="Progress">
+          {overview ? (
+            <>
+              <KeyValueList
+                items={[
+                  ['Project completion', `${overview.project_completion_percent.toFixed(1)}%`],
+                  ['Backlog readiness', `${overview.backlog_readiness_percent.toFixed(1)}%`],
+                  ['Blocked', `${overview.blocked_percent.toFixed(1)}%`],
+                  ['Batch completion', `${overview.batch_completion_percent.toFixed(1)}%`],
+                  ['Latest batch status', overview.latest_batch_status ?? 'none']
+                ]}
+              />
+              <p className="muted compact">{overview.progress_next_action}</p>
+              <CommandCopyBox command={`devo project progress --project ${selectedProject}`} />
+            </>
+          ) : (
+            overviewLoading ? <LoadingState message="Loading progress summary..." /> : <ErrorState message="Progress summary is unavailable." />
+          )}
+        </SummaryCard>
       </div>
 
       <SummaryCard title="Suggested next action">

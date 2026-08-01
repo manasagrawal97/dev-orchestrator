@@ -162,6 +162,15 @@ devo project batch-approve --project MyProject --batch B001
 
 Batch artifacts are stored under `workspace/projects/<project>/planning/batches/` as `batch-<batch_id>.json`, `batch-<batch_id>.md`, and `batch-index.json`. Batch approval is planning approval only; it does not run Codex, create an execution queue, approve implementation, run validation, commit, push, or modify the target project.
 
+Compute deterministic planning progress:
+
+```powershell
+devo project progress --project MyProject
+devo project progress --project MyProject --json
+```
+
+Progress is derived from Project Brief, Blueprint, Backlog/Task, and Batch artifacts. It reports count-based task completion, backlog readiness, blocked percentage, batch completion, and milestone/epic rollups. Weighted scoring, execution queue progress, Codex execution tracking, and AI/API automation are deferred.
+
 List registered projects:
 
 ```powershell

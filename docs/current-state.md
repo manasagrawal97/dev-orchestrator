@@ -38,13 +38,13 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-077 planning batch model and selection
+- Latest completed source task: TASK-DEVO-078 planning progress summaries
 - Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-030 end-to-end dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: start TASK-DEVO-078 Progress calculation and project completion percent, following `docs/remaining-roadmap.md`.
+- Next recommended action: start TASK-DEVO-079 Execution queue state machine, following `docs/remaining-roadmap.md`.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -95,6 +95,7 @@ The working loop is:
 - TASK-DEVO-075 adds deterministic Backlog and Task planning artifacts under `workspace/projects/<project>/planning/`, plus `devo project backlog-*` and `devo project task-*` read commands, read-model backlog counts, read-only API endpoints for backlog/tasks, and dashboard Planning card backlog counts. This does not add batches, execution queue, AI API calls, Codex CLI automation, implementation approval, or target project mutation.
 - TASK-DEVO-076 adds `devo project backlog-prompt`, `devo project backlog-validate`, and `devo project backlog-import`. Devo can now generate a Codex-ready planning handoff prompt under `workspace/projects/<project>/planning/backlog-refinement-prompt.md`, validate refined backlog JSON, and import it as a draft backlog. This does not call Codex, call AI APIs, approve implementation, create batches, create an execution queue, or modify target projects.
 - TASK-DEVO-077 adds Project Batch planning artifacts under `workspace/projects/<project>/planning/batches/`, plus `devo project batch-create`, `batch-suggest`, `batch-list`, `batch-show`, `batch-review`, and `batch-approve`. Batch selection is deterministic and workspace-only; batch approval is planning approval only and does not run Codex, create an execution queue, approve implementation, run validation, commit, push, or modify target projects.
+- TASK-DEVO-078 adds deterministic planning progress summaries with `devo project progress` and `--json`, derived from Project Brief, Blueprint, Backlog/Task, and Batch artifacts. Progress reports count-based task completion, backlog readiness, blocked percentage, batch completion, milestone/epic rollups, read-model/API fields, and a read-only dashboard Progress card. Weighted scoring, execution queue progress, Codex execution tracking, AI/API automation, and target project mutation remain deferred.
 
 ## Readiness Estimate
 
@@ -182,6 +183,7 @@ The next product step should focus on the planning pipeline in `docs/remaining-r
 - TASK-DEVO-075 Backlog and Task planning artifacts
 - TASK-DEVO-076 backlog refinement handoff prompt
 - TASK-DEVO-077 planning batch model and selection
+- TASK-DEVO-078 planning progress summaries
 
 ## Recovery Pointers
 
