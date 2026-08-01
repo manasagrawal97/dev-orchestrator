@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-082 UI Blueprint/Backlog pages
 - TASK-DEVO-083 UI Batch Queue and Progress dashboard
 
 ## Updated Roadmap Phases
@@ -219,6 +218,10 @@ Added Codex handoff artifacts under `workspace/projects/<project>/planning/hando
 ### TASK-DEVO-081 UI Planning Intake Page - Completed
 
 Added a read-only Planning Intake page to the React/Vite dashboard. The page visualizes the brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress workflow as a pipeline, shows status/count summaries from existing read-only API endpoints, surfaces artifact/path context when available, and provides copyable CLI commands for each stage. It has section-level loading, empty, and error states and does not add UI controls for creating briefs, approving artifacts, running Codex, executing target commands, validation/build/test, commit/push, backup restore/delete, scheduler modification, target source edits, or model/API calls.
+
+### TASK-DEVO-082 UI Blueprint And Backlog Pages - Completed
+
+Added dedicated read-only Blueprint and Backlog pages to the React/Vite dashboard. Blueprint uses existing API responses to show blueprint status, vision, architecture notes, risks, validation strategy, open questions, milestones, linked epics, and milestone/epic progress rollups. Backlog shows backlog counts, readiness and blocked percentages, refinement prompt status, task filters by status/lane/risk/search, and a selected-task detail panel with acceptance criteria, validation expectations, allowed/forbidden scope, dependencies, notes, and source. The pages add copyable CLI guidance only and do not create, approve, import, execute, validate, commit, push, restore, modify schedulers, edit target files, or call model APIs.
 
 ### TASK-023 Safe Validation Runner
 

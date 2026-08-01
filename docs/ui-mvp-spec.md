@@ -16,7 +16,7 @@ It does not replace the CLI. It does not execute risky actions. UI v1 is read-on
 
 The longer-term UI should follow the company-model vision in `docs/devo-company-model.md`: project brief, blueprint, backlog, batches, queue, and progress views around Codex-powered execution. The implementation order for those planning/progress screens is tracked in `docs/remaining-roadmap.md`. It should not become a general chat clone.
 
-After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. UI write controls for creating, importing, approving, queue transitions, handoff generation, or executing planning artifacts remain future scope.
+After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. TASK-DEVO-082 adds read-only Blueprint and Backlog detail pages with milestone/epic rollups, task filters, and selected-task detail. UI write controls for creating, importing, approving, queue transitions, handoff generation, or executing planning artifacts remain future scope.
 
 ## UI MVP Principles
 
@@ -85,6 +85,43 @@ Sections:
 Primary user question: "Where am I in the Devo planning workflow, and which CLI command should I run next?"
 
 This page is read-only. It does not create briefs from the UI, approve artifacts, run Codex, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, or call model APIs.
+
+### B3. Blueprint Page
+
+Shows the stored Project Blueprint in detail.
+
+Sections:
+
+- status, title, and vision summary
+- architecture notes
+- risk summary
+- validation strategy
+- open questions
+- milestones with linked epics and progress rollups
+- epics with milestone links and progress rollups
+- artifact path and copyable CLI commands
+
+Primary user question: "What plan did Devo approve, and how does it map to progress?"
+
+This page is read-only. It does not create or approve blueprint artifacts from the UI.
+
+### B4. Backlog Page
+
+Shows the stored Backlog and Tasks in detail.
+
+Sections:
+
+- backlog status and counts
+- readiness and blocked percentages
+- refinement prompt availability
+- task filters by status, lane, risk, and text search
+- task list
+- selected task detail with summary, dependencies, acceptance criteria, validation expectations, allowed scope, forbidden scope, notes, and source
+- artifact path and copyable CLI commands
+
+Primary user question: "Which task should I inspect or prepare next?"
+
+This page is read-only. It does not create, import, approve, execute, or mutate backlog/task artifacts from the UI.
 
 ### C. Work Package / Run Detail Page
 

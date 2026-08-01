@@ -128,9 +128,26 @@ export interface ProjectBrief {
 export interface ProjectBlueprint {
   project: string;
   title: string;
+  vision_summary: string;
   status: string;
-  milestones: Array<{ id: string; title: string; status: string }>;
-  epics: Array<{ id: string; title: string; status: string }>;
+  milestones: Array<{
+    id: string;
+    title: string;
+    summary: string;
+    target_outcome: string;
+    status: string;
+  }>;
+  epics: Array<{
+    id: string;
+    milestone_id: string | null;
+    title: string;
+    summary: string;
+    status: string;
+  }>;
+  architecture_notes: string[];
+  risk_summary: string[];
+  validation_strategy: string[];
+  open_questions: string[];
   artifact_paths?: ArtifactPaths;
 }
 
@@ -143,6 +160,30 @@ export interface ProjectBacklog {
   blocked_task_count: number;
   completed_task_count: number;
   artifact_paths?: ArtifactPaths;
+}
+
+export interface BacklogTask {
+  id: string;
+  title: string;
+  summary: string;
+  milestone_id: string | null;
+  epic_id: string | null;
+  lane: string;
+  risk_level: string;
+  status: string;
+  dependencies: string[];
+  acceptance_criteria: string[];
+  validation_expectations: string[];
+  allowed_scope: string[];
+  forbidden_scope: string[];
+  notes: string[];
+  source: string;
+}
+
+export interface ProjectTasksResponse {
+  project: string;
+  count: number;
+  tasks: BacklogTask[];
 }
 
 export interface ProjectBatchesResponse {
@@ -199,6 +240,23 @@ export interface ProjectProgress {
   batch_completion_percent: number;
   next_action: string;
   warnings: string[];
+  milestone_progress: PlanningProgressGroup[];
+  epic_progress: PlanningProgressGroup[];
+}
+
+export interface PlanningProgressGroup {
+  id: string;
+  title: string | null;
+  task_count: number;
+  active_task_count: number;
+  completed_task_count: number;
+  blocked_task_count: number;
+  ready_task_count: number;
+  approved_task_count: number;
+  draft_task_count: number;
+  completion_percent: number;
+  readiness_percent: number;
+  blocked_percent: number;
 }
 
 export interface ProjectActivity {

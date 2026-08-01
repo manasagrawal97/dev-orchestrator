@@ -19,6 +19,7 @@ import type {
 
 interface PlanningIntakePageProps {
   selectedProject: string | null;
+  onOpenPage?: (page: 'blueprint' | 'backlog') => void;
 }
 
 interface OptionalState<T> {
@@ -31,7 +32,7 @@ type StageState = 'complete' | 'current' | 'upcoming';
 
 const emptyOptional = <T,>(): OptionalState<T> => ({ data: null, loading: false, error: null });
 
-export function PlanningIntakePage({ selectedProject }: PlanningIntakePageProps) {
+export function PlanningIntakePage({ selectedProject, onOpenPage }: PlanningIntakePageProps) {
   const [overview, setOverview] = useState<OptionalState<ProjectOverview>>(emptyOptional);
   const [brief, setBrief] = useState<OptionalState<ProjectBrief>>(emptyOptional);
   const [blueprint, setBlueprint] = useState<OptionalState<ProjectBlueprint>>(emptyOptional);
@@ -134,6 +135,11 @@ export function PlanningIntakePage({ selectedProject }: PlanningIntakePageProps)
           )}
           <CommandCopyBox command={`devo project blueprint-create --project ${selectedProject}`} />
           <CommandCopyBox command={`devo project blueprint-approve --project ${selectedProject}`} />
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('blueprint')}>
+              Open Blueprint detail
+            </button>
+          ) : null}
         </PlanningSection>
 
         <PlanningSection title="Backlog" state={backlog}>
@@ -155,6 +161,11 @@ export function PlanningIntakePage({ selectedProject }: PlanningIntakePageProps)
           <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
           <CommandCopyBox command={`devo project backlog-import --project ${selectedProject} --file <file>`} />
           <CommandCopyBox command={`devo project backlog-approve --project ${selectedProject}`} />
+          {onOpenPage ? (
+            <button className="link-button detail-link" type="button" onClick={() => onOpenPage('backlog')}>
+              Open Backlog detail
+            </button>
+          ) : null}
         </PlanningSection>
 
         <PlanningSection title="Batch" state={batches}>

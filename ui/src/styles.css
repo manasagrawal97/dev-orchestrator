@@ -609,6 +609,68 @@ tr:last-child td {
   margin-top: 22px;
 }
 
+.detail-link {
+  margin-top: 14px;
+}
+
+.detail-panel {
+  margin-top: 22px;
+}
+
+.detail-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.detail-card,
+.task-detail {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  background: #f8fafc;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.detail-card p,
+.task-detail p {
+  margin: 0;
+  color: #556174;
+  line-height: 1.45;
+}
+
+.detail-card-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-card-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-list {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.selected-row {
+  border-color: #2aa876;
+  box-shadow: 0 0 0 3px rgba(42, 168, 118, 0.12);
+}
+
 .json-details {
   margin-top: 22px;
   background: #ffffff;
