@@ -11,7 +11,10 @@ from .doctor import run_doctor_with_timing
 from .project_planning import (
     calculate_project_progress,
     get_backlog_task,
+    get_queue_next_item,
     list_project_batches,
+    list_execution_queues,
+    load_execution_queue,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
@@ -38,6 +41,9 @@ API_ROUTES = (
     "GET /api/projects/{project}/batches",
     "GET /api/projects/{project}/batches/{batch_id}",
     "GET /api/projects/{project}/progress",
+    "GET /api/projects/{project}/queues",
+    "GET /api/projects/{project}/queues/{queue_id}",
+    "GET /api/projects/{project}/queues/{queue_id}/next",
     "GET /api/projects/{project}/tasks",
     "GET /api/projects/{project}/tasks/{task_id}",
     "GET /api/projects/{project}/activity",
@@ -167,6 +173,29 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
     def project_progress(project: str) -> dict[str, object]:
         _require_project(project, root)
         return _model_dump(calculate_project_progress(project, workspace_root=root))
+
+    @api.get("/api/projects/{project}/queues")
+    def project_queues(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        queues = list_execution_queues(project, workspace_root=root)
+        return {"project": project, "count": len(queues), "queues": [_model_dump(queue) for queue in queues]}
+
+    @api.get("/api/projects/{project}/queues/{queue_id}")
+    def project_queue(project: str, queue_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        queue = load_execution_queue(project, queue_id, workspace_root=root)
+        if not queue:
+            raise HTTPException(status_code=404, detail={"error": "queue_not_found", "message": f"Execution queue not found: {queue_id}"})
+        return _model_dump(queue)
+
+    @api.get("/api/projects/{project}/queues/{queue_id}/next")
+    def project_queue_next(project: str, queue_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        try:
+            queue, item = get_queue_next_item(project, queue_id, workspace_root=root)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail={"error": "queue_not_found", "message": str(exc)}) from exc
+        return {"project": project, "queue_id": queue.queue_id, "queue_status": queue.status, "item": _model_dump(item) if item else None}
 
     @api.get("/api/projects/{project}/tasks")
     def project_tasks(project: str) -> dict[str, object]:

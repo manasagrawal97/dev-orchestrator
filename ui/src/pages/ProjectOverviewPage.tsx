@@ -223,7 +223,10 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
                   ['Batches', overview.batch_count],
                   ['Approved batches', overview.approved_batch_count],
                   ['Latest batch', overview.latest_batch_id ?? 'none'],
-                  ['Latest batch status', overview.latest_batch_status ?? 'none']
+                  ['Latest batch status', overview.latest_batch_status ?? 'none'],
+                  ['Queues', overview.queue_count],
+                  ['Latest queue', overview.latest_queue_id ?? 'none'],
+                  ['Latest queue status', overview.latest_queue_status ?? 'none']
                 ]}
               />
               <p className="muted compact">{overview.planning_next_action}</p>
@@ -243,11 +246,15 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun }: ProjectOve
                   ['Backlog readiness', `${overview.backlog_readiness_percent.toFixed(1)}%`],
                   ['Blocked', `${overview.blocked_percent.toFixed(1)}%`],
                   ['Batch completion', `${overview.batch_completion_percent.toFixed(1)}%`],
-                  ['Latest batch status', overview.latest_batch_status ?? 'none']
+                  ['Current queue item', overview.current_queue_item ?? 'none'],
+                  ['Queue pending', overview.queue_pending_count],
+                  ['Queue completed', overview.queue_completed_count],
+                  ['Queue blocked', overview.queue_blocked_count]
                 ]}
               />
-              <p className="muted compact">{overview.progress_next_action}</p>
+              <p className="muted compact">{overview.queue_count ? overview.queue_next_action : overview.progress_next_action}</p>
               <CommandCopyBox command={`devo project progress --project ${selectedProject}`} />
+              <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${overview.latest_queue_id ?? '<queueId>'}`} />
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading progress summary..." /> : <ErrorState message="Progress summary is unavailable." />

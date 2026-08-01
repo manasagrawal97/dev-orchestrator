@@ -148,7 +148,30 @@ devo project progress --project MyProject
 devo project progress --project MyProject --json
 ```
 
-The summary includes Project Brief/Blueprint/Backlog status, task counts, active/completed/ready/approved/draft/blocked counts, project completion percent, backlog readiness percent, blocked percent, batch completion percent, latest batch, milestone progress, epic progress, warnings, and the next planning action. Execution queue progress comes later in TASK-DEVO-079.
+The summary includes Project Brief/Blueprint/Backlog status, task counts, active/completed/ready/approved/draft/blocked counts, project completion percent, backlog readiness percent, blocked percent, batch completion percent, latest batch, milestone progress, epic progress, warnings, and the next planning action. Codex handoff prompts and deeper execution tracking come later.
+
+## Execution Queue State
+
+Execution queues are deterministic state tracking artifacts created from approved planning batches. They do not run Codex, generate execution prompts, run validation, run Git commands, commit, push, or modify target project source. Codex handoff prompts come next in TASK-DEVO-080.
+
+```powershell
+devo project queue-create --project MyProject --batch B001
+devo project queue-list --project MyProject
+devo project queue-show --project MyProject --queue Q001
+devo project queue-start --project MyProject --queue Q001
+devo project queue-next --project MyProject --queue Q001
+```
+
+Use queue state commands to track manual/Codex-adjacent progress:
+
+```powershell
+devo project queue-complete-item --project MyProject --queue Q001 --item QI001 --note "Completed manually."
+devo project queue-block-item --project MyProject --queue Q001 --item QI002 --note "Needs review."
+devo project queue-pause --project MyProject --queue Q001 --reason usage_limit --note "Resume when usage resets."
+devo project queue-resume --project MyProject --queue Q001
+```
+
+Queue artifacts live under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. Completing or blocking a queue item can update the corresponding Devo backlog task status so progress reflects queue state, but it still does not edit the target repository.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

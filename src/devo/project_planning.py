@@ -21,11 +21,16 @@ BACKLOG_MD = "backlog.md"
 BACKLOG_REFINEMENT_PROMPT_MD = "backlog-refinement-prompt.md"
 BATCHES_DIR_NAME = "batches"
 BATCH_INDEX_JSON = "batch-index.json"
+QUEUES_DIR_NAME = "queues"
+QUEUE_INDEX_JSON = "queue-index.json"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
 ALLOWED_RISK_LEVELS = {"low", "medium", "high", "critical"}
 ALLOWED_BATCH_STATUSES = {"draft", "reviewed", "approved", "in_progress", "completed", "blocked", "superseded"}
+ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
+ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
+PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
 SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -270,6 +275,72 @@ class ProjectProgress(BaseModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class QueueItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    task_id: str
+    title: str
+    lane: str
+    risk_level: str
+    status: str = "pending"
+    batch_id: str
+    dependencies: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    validation_expectations: list[str] = Field(default_factory=list)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+class ExecutionQueue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    queue_id: str
+    title: str
+    source_batch_id: str
+    source_backlog_reference: str
+    status: str = "ready"
+    items: list[QueueItem] = Field(default_factory=list)
+    item_count: int = 0
+    pending_count: int = 0
+    running_count: int = 0
+    completed_count: int = 0
+    blocked_count: int = 0
+    failed_count: int = 0
+    pause_reason: str | None = None
+    resume_hint: str | None = None
+    current_item_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class QueueIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    queue_id: str
+    title: str
+    source_batch_id: str
+    status: str
+    item_count: int
+    pending_count: int
+    completed_count: int
+    blocked_count: int
+    path: str
+    updated_at: datetime
+
+
+class QueueIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    queues: list[QueueIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class PlanningArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -283,6 +354,8 @@ class PlanningArtifactPaths(BaseModel):
     backlog_refinement_prompt: Path
     batches_dir: Path
     batch_index_json: Path
+    queues_dir: Path
+    queue_index_json: Path
 
 
 def planning_artifact_paths(project_name: str, workspace_root: Path | None = None) -> PlanningArtifactPaths:
@@ -299,6 +372,8 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         backlog_refinement_prompt=planning_dir / BACKLOG_REFINEMENT_PROMPT_MD,
         batches_dir=planning_dir / BATCHES_DIR_NAME,
         batch_index_json=planning_dir / BATCHES_DIR_NAME / BATCH_INDEX_JSON,
+        queues_dir=planning_dir / QUEUES_DIR_NAME,
+        queue_index_json=planning_dir / QUEUES_DIR_NAME / QUEUE_INDEX_JSON,
     )
 
 
@@ -846,6 +921,346 @@ def render_project_progress_markdown(progress: ProjectProgress) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def create_execution_queue_from_batch(
+    project_name: str,
+    batch_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    batch = load_project_batch(project_name, batch_id, workspace_root=root)
+    if not batch:
+        msg = f"Project batch not found: {batch_id}"
+        raise ValueError(msg)
+    if batch.approval_status != "approved" or batch.status not in {"approved", "in_progress", "completed"}:
+        msg = f"Project batch must be approved before queue creation: {batch.batch_id}"
+        raise ValueError(msg)
+    queue_id = _next_queue_id(project_name, workspace_root=root)
+    now = datetime.now(UTC)
+    items = [
+        QueueItem(
+            item_id=f"QI{index:03d}",
+            task_id=task.task_id,
+            title=task.title,
+            lane=task.lane,
+            risk_level=task.risk_level,
+            status="pending",
+            batch_id=batch.batch_id,
+            dependencies=task.dependencies,
+            acceptance_criteria=[task.acceptance_criteria_summary] if task.acceptance_criteria_summary else [],
+            validation_expectations=[task.validation_expectations_summary] if task.validation_expectations_summary else [],
+        )
+        for index, task in enumerate(batch.task_snapshots, start=1)
+    ]
+    queue = _with_queue_counts(
+        ExecutionQueue(
+            project=project_name,
+            queue_id=queue_id,
+            title=f"Execution queue for {batch.title}",
+            source_batch_id=batch.batch_id,
+            source_backlog_reference=batch.source_backlog_reference,
+            status="ready",
+            items=items,
+            pause_reason=None,
+            resume_hint="Start the queue when ready. Codex handoff prompts come in TASK-DEVO-080.",
+            current_item_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return _write_execution_queue(project_name, queue, workspace_root=root)
+
+
+def list_execution_queues(project_name: str, workspace_root: Path | None = None) -> list[ExecutionQueue]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    if not paths.queues_dir.exists():
+        return []
+    queues: list[ExecutionQueue] = []
+    for path in sorted(paths.queues_dir.glob("queue-*.json")):
+        if path.name == QUEUE_INDEX_JSON:
+            continue
+        try:
+            queues.append(ExecutionQueue.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(queues, key=lambda queue: queue.updated_at, reverse=True)
+
+
+def load_queue_index(project_name: str, workspace_root: Path | None = None) -> QueueIndex:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.queue_index_json.exists():
+        return QueueIndex(project=project_name)
+    return QueueIndex.model_validate_json(paths.queue_index_json.read_text(encoding="utf-8"))
+
+
+def load_execution_queue(project_name: str, queue_id: str, workspace_root: Path | None = None) -> ExecutionQueue | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = queue_artifact_paths(project_name, queue_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return ExecutionQueue.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def start_execution_queue(project_name: str, queue_id: str, workspace_root: Path | None = None) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    if queue.status not in {"draft", "ready", *PAUSED_QUEUE_STATUSES}:
+        msg = f"Queue cannot be started from status: {queue.status}"
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    items = [item.model_copy() for item in queue.items]
+    current_item_id = queue.current_item_id if _find_queue_item(items, queue.current_item_id) else None
+    running_item = next((item for item in items if item.status == "running"), None)
+    if running_item:
+        current_item_id = running_item.item_id
+    elif current_item_id:
+        current = _find_queue_item(items, current_item_id)
+        if current and current.status in {"pending", "paused", "blocked"}:
+            replacement = current.model_copy(update={"status": "running", "started_at": current.started_at or now})
+            _replace_queue_item(items, replacement)
+            current_item_id = replacement.item_id
+    elif not current_item_id:
+        next_item = next((item for item in items if item.status == "pending"), None)
+        if next_item:
+            replacement = next_item.model_copy(update={"status": "running", "started_at": next_item.started_at or now})
+            _replace_queue_item(items, replacement)
+            current_item_id = replacement.item_id
+    updated = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": "running" if current_item_id else "completed",
+                "items": items,
+                "pause_reason": None,
+                "resume_hint": "Queue is running. Generate Codex handoff prompts in TASK-DEVO-080.",
+                "current_item_id": current_item_id,
+                "updated_at": now,
+            }
+        )
+    )
+    return _write_execution_queue(project_name, updated, workspace_root=root)
+
+
+def get_queue_next_item(project_name: str, queue_id: str, workspace_root: Path | None = None) -> tuple[ExecutionQueue, QueueItem | None]:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    current = _find_queue_item(queue.items, queue.current_item_id)
+    if current and current.status == "running":
+        return queue, current
+    pending = next((item for item in queue.items if item.status == "pending"), None)
+    return queue, pending
+
+
+def complete_queue_item(
+    project_name: str,
+    queue_id: str,
+    item_id: str,
+    note: str,
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    now = datetime.now(UTC)
+    item = _require_queue_item(queue, item_id)
+    notes = _append_note(item.notes, note, now)
+    completed = item.model_copy(update={"status": "completed", "completed_at": now, "notes": notes})
+    items = [entry.model_copy() for entry in queue.items]
+    _replace_queue_item(items, completed)
+    current_item_id: str | None = None
+    status = queue.status
+    if status == "running":
+        next_item = next((entry for entry in items if entry.status == "pending"), None)
+        if next_item:
+            running = next_item.model_copy(update={"status": "running", "started_at": next_item.started_at or now})
+            _replace_queue_item(items, running)
+            current_item_id = running.item_id
+        else:
+            status = "completed"
+    elif all(entry.status in {"completed", "skipped", "superseded"} for entry in items):
+        status = "completed"
+    updated = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": status,
+                "items": items,
+                "current_item_id": current_item_id,
+                "pause_reason": None if status == "completed" else queue.pause_reason,
+                "resume_hint": "Queue completed." if status == "completed" else queue.resume_hint,
+                "updated_at": now,
+            }
+        )
+    )
+    _update_backlog_task_status(project_name, item.task_id, "completed", workspace_root=root)
+    return _write_execution_queue(project_name, updated, workspace_root=root)
+
+
+def block_queue_item(
+    project_name: str,
+    queue_id: str,
+    item_id: str,
+    note: str,
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    now = datetime.now(UTC)
+    item = _require_queue_item(queue, item_id)
+    notes = _append_note(item.notes, note, now)
+    blocked = item.model_copy(update={"status": "blocked", "notes": notes})
+    items = [entry.model_copy() for entry in queue.items]
+    _replace_queue_item(items, blocked)
+    updated = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": "waiting_review",
+                "items": items,
+                "pause_reason": "blocked_item",
+                "resume_hint": f"Review blocked item {blocked.item_id}; Codex handoff prompts come in TASK-DEVO-080.",
+                "current_item_id": blocked.item_id,
+                "updated_at": now,
+            }
+        )
+    )
+    _update_backlog_task_status(project_name, item.task_id, "blocked", workspace_root=root)
+    return _write_execution_queue(project_name, updated, workspace_root=root)
+
+
+def pause_execution_queue(
+    project_name: str,
+    queue_id: str,
+    reason: str,
+    note: str,
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    normalized_reason = reason.strip().lower()
+    if normalized_reason == "usage_limit":
+        status = "paused_usage_limit"
+    elif normalized_reason == "failure":
+        status = "paused_failure"
+    elif normalized_reason in {"review", "manual"}:
+        status = "waiting_review"
+    else:
+        msg = "Pause reason must be one of: usage_limit, failure, review, manual."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    items = [entry.model_copy() for entry in queue.items]
+    current = _find_queue_item(items, queue.current_item_id)
+    if current and current.status == "running":
+        _replace_queue_item(items, current.model_copy(update={"status": "paused"}))
+    updated = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": status,
+                "items": items,
+                "pause_reason": normalized_reason,
+                "resume_hint": note.strip() or f"Resume when {normalized_reason} is resolved.",
+                "updated_at": now,
+            }
+        )
+    )
+    return _write_execution_queue(project_name, updated, workspace_root=root)
+
+
+def resume_execution_queue(project_name: str, queue_id: str, workspace_root: Path | None = None) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    if queue.status not in PAUSED_QUEUE_STATUSES:
+        msg = f"Queue cannot be resumed from status: {queue.status}"
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    items = [entry.model_copy() for entry in queue.items]
+    current_item_id = queue.current_item_id
+    current = _find_queue_item(items, current_item_id)
+    if current and current.status in {"paused", "blocked"}:
+        running = current.model_copy(update={"status": "running", "started_at": current.started_at or now})
+        _replace_queue_item(items, running)
+        current_item_id = running.item_id
+    elif not current_item_id:
+        next_item = next((entry for entry in items if entry.status == "pending"), None)
+        if next_item:
+            running = next_item.model_copy(update={"status": "running", "started_at": next_item.started_at or now})
+            _replace_queue_item(items, running)
+            current_item_id = running.item_id
+    status = "running" if current_item_id else "completed"
+    updated = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": status,
+                "items": items,
+                "pause_reason": None,
+                "resume_hint": "Queue resumed. Codex handoff prompts come in TASK-DEVO-080.",
+                "current_item_id": current_item_id,
+                "updated_at": now,
+            }
+        )
+    )
+    return _write_execution_queue(project_name, updated, workspace_root=root)
+
+
+def queue_artifact_paths(project_name: str, queue_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_queue_id(queue_id)
+    return paths.queues_dir / f"queue-{safe_id}.json", paths.queues_dir / f"queue-{safe_id}.md"
+
+
+def render_execution_queue_markdown(queue: ExecutionQueue) -> str:
+    lines = [
+        f"# {queue.title}",
+        "",
+        f"- Project: `{queue.project}`",
+        f"- Queue id: `{queue.queue_id}`",
+        f"- Source batch: `{queue.source_batch_id}`",
+        f"- Status: `{queue.status}`",
+        f"- Current item: `{queue.current_item_id or 'none'}`",
+        f"- Items: `{queue.item_count}`",
+        f"- Pending: `{queue.pending_count}`",
+        f"- Running: `{queue.running_count}`",
+        f"- Completed: `{queue.completed_count}`",
+        f"- Blocked: `{queue.blocked_count}`",
+        f"- Failed: `{queue.failed_count}`",
+        f"- Pause reason: `{queue.pause_reason or 'none'}`",
+        f"- Resume hint: {queue.resume_hint or 'none'}",
+        f"- Created: `{queue.created_at.isoformat()}`",
+        f"- Updated: `{queue.updated_at.isoformat()}`",
+        "",
+        "## Items",
+        "",
+    ]
+    if not queue.items:
+        lines.extend(["No queue items recorded.", ""])
+    for item in queue.items:
+        lines.extend(
+            [
+                f"### {item.item_id}: {item.title}",
+                "",
+                f"- Task: `{item.task_id}`",
+                f"- Status: `{item.status}`",
+                f"- Lane: `{item.lane}`",
+                f"- Risk: `{item.risk_level}`",
+                f"- Dependencies: `{', '.join(item.dependencies) if item.dependencies else 'none'}`",
+                f"- Started: `{item.started_at.isoformat() if item.started_at else 'none'}`",
+                f"- Completed: `{item.completed_at.isoformat() if item.completed_at else 'none'}`",
+                "",
+            ]
+        )
+        _append_list_section(lines, "Acceptance Criteria", item.acceptance_criteria)
+        _append_list_section(lines, "Validation Expectations", item.validation_expectations)
+        _append_list_section(lines, "Notes", item.notes)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "Execution queue state is tracking only. Devo does not run Codex, generate execution prompts, run validation, commit, push, or modify target repositories from this queue.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_project_batch_markdown(batch: ProjectBatch) -> str:
     lines = [
         f"# {batch.title}",
@@ -1195,11 +1610,28 @@ def _normalize_batch_id(batch_id: str) -> str:
     return cleaned.upper()
 
 
+def _normalize_queue_id(queue_id: str) -> str:
+    cleaned = queue_id.strip()
+    if cleaned.lower().startswith("queue-"):
+        cleaned = cleaned[6:]
+    return cleaned.upper()
+
+
 def _next_batch_id(project_name: str, workspace_root: Path | None = None) -> str:
     existing = {_normalize_batch_id(batch.batch_id) for batch in list_project_batches(project_name, workspace_root=workspace_root)}
     index = 1
     while True:
         candidate = f"B{index:03d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _next_queue_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_queue_id(queue.queue_id) for queue in list_execution_queues(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"Q{index:03d}"
         if candidate not in existing:
             return candidate
         index += 1
@@ -1271,6 +1703,118 @@ def _write_batch_index(project_name: str, workspace_root: Path | None = None) ->
     index = BatchIndex(project=project_name, batches=entries, updated_at=datetime.now(UTC))
     _write_model(paths.batch_index_json, index)
     return index
+
+
+def _write_execution_queue(project_name: str, queue: ExecutionQueue, workspace_root: Path | None = None) -> tuple[ExecutionQueue, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.queues_dir.mkdir(parents=True, exist_ok=True)
+    queue = _with_queue_counts(queue)
+    json_path, markdown_path = queue_artifact_paths(project_name, queue.queue_id, workspace_root=root)
+    _write_model(json_path, queue)
+    markdown_path.write_text(render_execution_queue_markdown(queue), encoding="utf-8")
+    _write_queue_index(project_name, workspace_root=root)
+    return queue, json_path, markdown_path
+
+
+def _write_queue_index(project_name: str, workspace_root: Path | None = None) -> QueueIndex:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.queues_dir.mkdir(parents=True, exist_ok=True)
+    queues = list_execution_queues(project_name, workspace_root=root)
+    entries = [
+        QueueIndexEntry(
+            queue_id=queue.queue_id,
+            title=queue.title,
+            source_batch_id=queue.source_batch_id,
+            status=queue.status,
+            item_count=queue.item_count,
+            pending_count=queue.pending_count,
+            completed_count=queue.completed_count,
+            blocked_count=queue.blocked_count,
+            path=str(queue_artifact_paths(project_name, queue.queue_id, workspace_root=root)[0]),
+            updated_at=queue.updated_at,
+        )
+        for queue in queues
+    ]
+    index = QueueIndex(project=project_name, queues=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.queue_index_json, index)
+    return index
+
+
+def _with_queue_counts(queue: ExecutionQueue) -> ExecutionQueue:
+    items = queue.items
+    return queue.model_copy(
+        update={
+            "item_count": len(items),
+            "pending_count": sum(1 for item in items if item.status == "pending"),
+            "running_count": sum(1 for item in items if item.status == "running"),
+            "completed_count": sum(1 for item in items if item.status == "completed"),
+            "blocked_count": sum(1 for item in items if item.status == "blocked"),
+            "failed_count": sum(1 for item in items if item.status == "failed"),
+        }
+    )
+
+
+def _require_queue(project_name: str, queue_id: str, workspace_root: Path) -> ExecutionQueue:
+    queue = load_execution_queue(project_name, queue_id, workspace_root=workspace_root)
+    if not queue:
+        msg = f"Execution queue not found: {queue_id}"
+        raise ValueError(msg)
+    return queue
+
+
+def _require_queue_item(queue: ExecutionQueue, item_id: str) -> QueueItem:
+    normalized = item_id.strip().upper()
+    for item in queue.items:
+        if item.item_id.upper() == normalized:
+            return item
+    msg = f"Queue item not found: {item_id}"
+    raise ValueError(msg)
+
+
+def _find_queue_item(items: list[QueueItem], item_id: str | None) -> QueueItem | None:
+    if not item_id:
+        return None
+    normalized = item_id.strip().upper()
+    return next((item for item in items if item.item_id.upper() == normalized), None)
+
+
+def _replace_queue_item(items: list[QueueItem], replacement: QueueItem) -> None:
+    for index, item in enumerate(items):
+        if item.item_id.upper() == replacement.item_id.upper():
+            items[index] = replacement
+            return
+
+
+def _append_note(notes: list[str], note: str, timestamp: datetime) -> list[str]:
+    cleaned = note.strip()
+    if not cleaned:
+        cleaned = "No note provided."
+    return [*notes, f"{timestamp.isoformat()}: {cleaned}"]
+
+
+def _update_backlog_task_status(project_name: str, task_id: str, status: str, workspace_root: Path | None = None) -> None:
+    root = workspace_root or get_workspace_root()
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not backlog:
+        return
+    now = datetime.now(UTC)
+    updated_tasks: list[BacklogTask] = []
+    changed = False
+    normalized = task_id.strip().upper()
+    for task in backlog.tasks:
+        if task.id.strip().upper() == normalized:
+            updated_tasks.append(task.model_copy(update={"status": status, "updated_at": now}))
+            changed = True
+        else:
+            updated_tasks.append(task)
+    if not changed:
+        return
+    updated = _with_backlog_counts(backlog.model_copy(update={"tasks": updated_tasks, "updated_at": now}))
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    _write_model(paths.backlog_json, updated)
+    paths.backlog_markdown.write_text(render_project_backlog_markdown(updated), encoding="utf-8")
 
 
 def _task_snapshot(task: BacklogTask) -> BatchTaskSnapshot:

@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-079 Execution queue state machine
 - TASK-DEVO-080 Codex handoff prompts for next task/batch
 - TASK-DEVO-081 UI Planning Intake page
 - TASK-DEVO-082 UI Blueprint/Backlog pages
@@ -210,6 +209,10 @@ Added Project Batch planning artifacts under `workspace/projects/<project>/plann
 ### TASK-DEVO-078 Planning Progress Summaries - Completed
 
 Added deterministic count-based progress summaries derived from Project Brief, Blueprint, Backlog/Task, and Batch artifacts. `devo project progress` and `--json` report task completion, backlog readiness, blocked percentage, batch completion, milestone progress, epic progress, warnings, and next action. ProjectOverview, the read-only API, and the dashboard Project Overview page expose progress summary fields. Weighted scoring, execution queue progress, Codex execution tracking, direct AI/API usage, and target repository mutation remain deferred.
+
+### TASK-DEVO-079 Execution Queue State Machine - Completed
+
+Added execution queue artifacts under `workspace/projects/<project>/planning/queues/`, with JSON/Markdown queue files and `queue-index.json`. Queues are created from approved planning batches only and support deterministic state transitions for ready, running, paused for usage limits, paused for failure/review, blocked, and completed work. `devo project queue-*` commands can create, list, show, start, inspect next item, complete items, block items, pause, and resume queues. This is state tracking only: Devo still does not run Codex, generate execution prompts, call AI APIs, run validation/Git commands, commit, push, or modify target repositories.
 
 ### TASK-023 Safe Validation Runner
 

@@ -61,6 +61,8 @@ from .project_planning import (
     BacklogTask,
     BacklogValidationResult,
     BatchSuggestionResult,
+    ExecutionQueue,
+    QueueItem,
     ProjectProgress,
     ProjectBacklog,
     ProjectBatch,
@@ -70,23 +72,32 @@ from .project_planning import (
     approve_project_backlog,
     approve_project_blueprint,
     approve_project_brief,
+    block_queue_item,
     calculate_project_progress,
     create_project_batch,
     create_project_backlog,
     create_project_blueprint,
     create_project_brief,
+    create_execution_queue_from_batch,
     create_suggested_project_batch,
+    complete_queue_item,
     generate_backlog_refinement_prompt,
     get_backlog_task,
+    get_queue_next_item,
     import_refined_backlog,
+    list_execution_queues,
     list_project_batches,
+    load_execution_queue,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    pause_execution_queue,
     review_project_batch,
+    resume_execution_queue,
     suggest_project_batch,
+    start_execution_queue,
     validate_refined_backlog_file,
 )
 from .project_settings import ProjectSettings, load_project_settings, project_settings_path, update_project_settings
@@ -259,6 +270,7 @@ def _print_project_overview(overview: ProjectOverview) -> None:
     console.print(f"Brief: {overview.brief_status}")
     console.print(f"Blueprint: {overview.blueprint_status} milestones={overview.blueprint_milestone_count} epics={overview.blueprint_epic_count}")
     console.print(f"Batches: {overview.batch_count} approved={overview.approved_batch_count} latest={overview.latest_batch_id or 'none'}")
+    console.print(f"Queues: {overview.queue_count} latest={overview.latest_queue_id or 'none'} status={overview.latest_queue_status or 'none'}")
     console.print(f"Project completion: {overview.project_completion_percent:.1f}%")
     console.print(f"Backlog readiness: {overview.backlog_readiness_percent:.1f}%")
     console.print(f"Planning next action: {overview.planning_next_action}", soft_wrap=True)
@@ -432,6 +444,51 @@ def _print_project_progress(progress: ProjectProgress) -> None:
             f"blocked={item.blocked_task_count} completion={item.completion_percent:.1f}% {item.title or ''}",
             soft_wrap=True,
         )
+
+
+def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Execution queue: {queue.queue_id}[/bold]")
+    console.print(f"Title: {queue.title}")
+    console.print(f"Source batch: {queue.source_batch_id}")
+    console.print(f"Status: {queue.status}")
+    console.print(f"Current item: {queue.current_item_id or 'none'}")
+    console.print(
+        f"Items: total={queue.item_count} pending={queue.pending_count} running={queue.running_count} "
+        f"completed={queue.completed_count} blocked={queue.blocked_count} failed={queue.failed_count}",
+        soft_wrap=True,
+    )
+    console.print(f"Pause reason: {queue.pause_reason or 'none'}")
+    console.print(f"Resume hint: {queue.resume_hint or 'none'}", soft_wrap=True)
+    console.print("Queue items:")
+    for item in queue.items:
+        console.print(f"  - {item.item_id} | task={item.task_id} | {item.status} | lane={item.lane} | risk={item.risk_level} | {item.title}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+def _print_queue_item(item: QueueItem | None) -> None:
+    if not item:
+        console.print("[yellow]No current or pending queue item.[/yellow]")
+        console.print("Codex handoff prompts come in TASK-DEVO-080.")
+        return
+    console.print(f"[bold]Queue item: {item.item_id}[/bold]")
+    console.print(f"Task: {item.task_id}")
+    console.print(f"Status: {item.status}")
+    console.print(f"Lane: {item.lane}")
+    console.print(f"Risk: {item.risk_level}")
+    console.print(f"Title: {item.title}", soft_wrap=True)
+    console.print("Dependencies:")
+    for dependency in item.dependencies or ["none"]:
+        console.print(f"  - {dependency}")
+    console.print("Acceptance criteria:")
+    for criterion in item.acceptance_criteria or ["none"]:
+        console.print(f"  - {criterion}", soft_wrap=True)
+    console.print("Validation expectations:")
+    for expectation in item.validation_expectations or ["none"]:
+        console.print(f"  - {expectation}", soft_wrap=True)
+    console.print("Codex handoff prompts come in TASK-DEVO-080.")
 
 
 def _print_json_model(model: object) -> None:
@@ -1565,6 +1622,164 @@ def show_project_progress_command(
         _print_json_model(progress)
         return
     _print_project_progress(progress)
+
+
+@project_app.command("queue-create")
+def create_queue_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Approved planning batch id."),
+) -> None:
+    """Create an execution queue from an approved planning Batch without executing it."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, json_path, markdown_path = create_execution_queue_from_batch(project_name, batch_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[green]Execution queue saved[/green] {project_name}")
+    _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Suggested next command: devo project queue-start --project {project_name} --queue {queue.queue_id}")
+    console.print("Queue is state tracking only. Codex handoff prompts come in TASK-DEVO-080.")
+
+
+@project_app.command("queue-list")
+def list_queues_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List execution queues for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        queues = list_execution_queues(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Execution queues: {project_name}[/bold]")
+    if not queues:
+        console.print("[yellow]No queues recorded.[/yellow]")
+        console.print(f"Suggested next command: devo project queue-create --project {project_name} --batch <batchId>")
+        return
+    for queue in queues:
+        console.print(
+            f"{queue.queue_id} | batch={queue.source_batch_id} | {queue.status} | "
+            f"pending={queue.pending_count} completed={queue.completed_count} blocked={queue.blocked_count} | {queue.title}",
+            soft_wrap=True,
+        )
+
+
+@project_app.command("queue-show")
+def show_queue_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Show execution queue details without mutating them."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue = load_execution_queue(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    if not queue:
+        console.print(f"[yellow]Execution queue not found: {queue_id}[/yellow]")
+        console.print(f"Suggested next command: devo project queue-list --project {project_name}")
+        return
+    _print_execution_queue(queue)
+    console.print("Queue is state tracking only. Codex handoff prompts come in TASK-DEVO-080.")
+
+
+@project_app.command("queue-start")
+def start_queue_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Move a queue to running and mark the first pending item running without executing it."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, json_path, markdown_path = start_execution_queue(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    console.print(f"[green]Execution queue started[/green] {project_name}")
+    _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
+    current = next((item for item in queue.items if item.item_id == queue.current_item_id), None)
+    _print_queue_item(current)
+
+
+@project_app.command("queue-next")
+def next_queue_item_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Show the current running or next pending queue item without generating prompts."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, item = get_queue_next_item(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    console.print(f"[bold]Execution queue next: {queue.queue_id}[/bold]")
+    console.print(f"Queue status: {queue.status}")
+    _print_queue_item(item)
+
+
+@project_app.command("queue-complete-item")
+def complete_queue_item_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    item_id: str = typer.Option(..., "--item", help="Queue item id."),
+    note: str = typer.Option(..., "--note", help="Completion note."),
+) -> None:
+    """Mark one queue item completed and advance queue state without executing commands."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, json_path, markdown_path = complete_queue_item(project_name, queue_id, item_id, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--item") from exc
+    console.print(f"[green]Queue item completed[/green] {project_name}")
+    _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("queue-block-item")
+def block_queue_item_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    item_id: str = typer.Option(..., "--item", help="Queue item id."),
+    note: str = typer.Option(..., "--note", help="Blocker note."),
+) -> None:
+    """Mark one queue item blocked and pause the queue for review."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, json_path, markdown_path = block_queue_item(project_name, queue_id, item_id, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--item") from exc
+    console.print(f"[yellow]Queue item blocked[/yellow] {project_name}")
+    _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("queue-pause")
+def pause_queue_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    reason: str = typer.Option(..., "--reason", help="Pause reason: usage_limit, failure, review, manual."),
+    note: str = typer.Option(..., "--note", help="Pause note/resume hint."),
+) -> None:
+    """Pause queue state without executing or stopping external processes."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, json_path, markdown_path = pause_execution_queue(project_name, queue_id, reason, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--reason") from exc
+    console.print(f"[yellow]Execution queue paused[/yellow] {project_name}")
+    _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("queue-resume")
+def resume_queue_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Resume a paused execution queue without executing it."""
+    project_name = _resolve_project(project_name)
+    try:
+        queue, json_path, markdown_path = resume_execution_queue(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    console.print(f"[green]Execution queue resumed[/green] {project_name}")
+    _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
 
 
 @project_app.command("activity")

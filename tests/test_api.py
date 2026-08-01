@@ -14,6 +14,7 @@ from devo.project_planning import (
     create_project_blueprint,
     create_project_brief,
     create_project_batch,
+    create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
 )
 from devo.runs import save_current_selection
@@ -214,6 +215,36 @@ def test_project_progress_endpoint_returns_json(tmp_path: Path, monkeypatch) -> 
     assert "milestone_progress" in data
 
 
+def test_project_queue_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    batch, _batch_json, _batch_md = create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    approved = batch.model_copy(update={"status": "approved", "approval_status": "approved"})
+    batch_json = workspace / "projects" / "sample" / "planning" / "batches" / "batch-B001.json"
+    batch_json.write_text(approved.model_dump_json(indent=2), encoding="utf-8")
+    create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    queues = client.get("/api/projects/sample/queues")
+    queue = client.get("/api/projects/sample/queues/Q001")
+    next_item = client.get("/api/projects/sample/queues/Q001/next")
+    missing = client.get("/api/projects/sample/queues/Q999")
+
+    assert queues.status_code == 200
+    assert queues.json()["count"] == 1
+    assert queues.json()["queues"][0]["queue_id"] == "Q001"
+    assert queue.status_code == 200
+    assert queue.json()["source_batch_id"] == "B001"
+    assert next_item.status_code == 200
+    assert next_item.json()["item"]["item_id"] == "QI001"
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"] == "queue_not_found"
+
+
 def test_project_brief_and_blueprint_endpoints_return_404_when_missing(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
@@ -375,6 +406,9 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/batches" in result.output
     assert "GET /api/projects/{project}/batches/{batch_id}" in result.output
     assert "GET /api/projects/{project}/progress" in result.output
+    assert "GET /api/projects/{project}/queues" in result.output
+    assert "GET /api/projects/{project}/queues/{queue_id}" in result.output
+    assert "GET /api/projects/{project}/queues/{queue_id}/next" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
 
 

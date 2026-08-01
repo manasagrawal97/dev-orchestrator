@@ -87,6 +87,14 @@ export interface ProjectOverview {
   approved_batch_count: number;
   latest_batch_id: string | null;
   latest_batch_status: string | null;
+  queue_count: number;
+  latest_queue_id: string | null;
+  latest_queue_status: string | null;
+  current_queue_item: string | null;
+  queue_pending_count: number;
+  queue_completed_count: number;
+  queue_blocked_count: number;
+  queue_next_action: string;
   project_completion_percent: number;
   backlog_readiness_percent: number;
   blocked_percent: number;

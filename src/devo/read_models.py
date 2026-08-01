@@ -13,6 +13,7 @@ from .project_onboarding import build_project_onboarding_report
 from .project_planning import (
     calculate_project_progress,
     list_project_batches,
+    list_execution_queues,
     load_project_backlog,
     load_project_blueprint,
     load_project_brief,
@@ -97,6 +98,14 @@ class ProjectOverview(BaseModel):
     approved_batch_count: int = 0
     latest_batch_id: str | None = None
     latest_batch_status: str | None = None
+    queue_count: int = 0
+    latest_queue_id: str | None = None
+    latest_queue_status: str | None = None
+    current_queue_item: str | None = None
+    queue_pending_count: int = 0
+    queue_completed_count: int = 0
+    queue_blocked_count: int = 0
+    queue_next_action: str = "Create a Project Brief."
     project_completion_percent: float = 0.0
     backlog_readiness_percent: float = 0.0
     blocked_percent: float = 0.0
@@ -164,6 +173,14 @@ def build_project_overview_with_timing(
             approved_batch_count=int(planning["approved_batch_count"]),
             latest_batch_id=str(planning["latest_batch_id"]) if planning["latest_batch_id"] else None,
             latest_batch_status=str(planning["latest_batch_status"]) if planning["latest_batch_status"] else None,
+            queue_count=int(planning["queue_count"]),
+            latest_queue_id=str(planning["latest_queue_id"]) if planning["latest_queue_id"] else None,
+            latest_queue_status=str(planning["latest_queue_status"]) if planning["latest_queue_status"] else None,
+            current_queue_item=str(planning["current_queue_item"]) if planning["current_queue_item"] else None,
+            queue_pending_count=int(planning["queue_pending_count"]),
+            queue_completed_count=int(planning["queue_completed_count"]),
+            queue_blocked_count=int(planning["queue_blocked_count"]),
+            queue_next_action=str(planning["queue_next_action"]),
             project_completion_percent=float(planning["project_completion_percent"]),
             backlog_readiness_percent=float(planning["backlog_readiness_percent"]),
             blocked_percent=float(planning["blocked_percent"]),
@@ -378,6 +395,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         blueprint = load_project_blueprint(project_name, workspace_root=workspace_root)
         backlog = load_project_backlog(project_name, workspace_root=workspace_root)
         batches = list_project_batches(project_name, workspace_root=workspace_root)
+        queues = list_execution_queues(project_name, workspace_root=workspace_root)
         progress = calculate_project_progress(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
@@ -396,6 +414,14 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "approved_batch_count": 0,
             "latest_batch_id": None,
             "latest_batch_status": None,
+            "queue_count": 0,
+            "latest_queue_id": None,
+            "latest_queue_status": None,
+            "current_queue_item": None,
+            "queue_pending_count": 0,
+            "queue_completed_count": 0,
+            "queue_blocked_count": 0,
+            "queue_next_action": f"Review planning artifacts: {exc}",
             "project_completion_percent": 0.0,
             "backlog_readiness_percent": 0.0,
             "blocked_percent": 0.0,
@@ -405,6 +431,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         }
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     latest_batch = batches[0] if batches else None
+    latest_queue = queues[0] if queues else None
     if not brief:
         next_action = f"Create a Project Brief: devo project brief-create --project {project_name} --title \"<title>\" --file <brief.md>"
     elif brief.status != "approved":
@@ -421,8 +448,11 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         next_action = f"Create or suggest a Batch: devo project batch-suggest --project {project_name}"
     elif not any(batch.approval_status == "approved" for batch in batches):
         next_action = f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
+    elif not queues:
+        next_action = f"Create an Execution Queue: devo project queue-create --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
     else:
-        next_action = "Approved planning batch is ready; execution queue comes in TASK-DEVO-079."
+        next_action = f"Continue the Execution Queue: devo project queue-next --project {project_name} --queue {latest_queue.queue_id if latest_queue else '<queueId>'}"
+    queue_next_action = _queue_next_action(project_name, latest_queue)
     return {
         "brief_status": brief.status if brief else "missing",
         "blueprint_status": blueprint.status if blueprint else "missing",
@@ -439,6 +469,14 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "approved_batch_count": sum(1 for batch in batches if batch.approval_status == "approved"),
         "latest_batch_id": latest_batch.batch_id if latest_batch else None,
         "latest_batch_status": latest_batch.status if latest_batch else None,
+        "queue_count": len(queues),
+        "latest_queue_id": latest_queue.queue_id if latest_queue else None,
+        "latest_queue_status": latest_queue.status if latest_queue else None,
+        "current_queue_item": latest_queue.current_item_id if latest_queue else None,
+        "queue_pending_count": latest_queue.pending_count if latest_queue else 0,
+        "queue_completed_count": latest_queue.completed_count if latest_queue else 0,
+        "queue_blocked_count": latest_queue.blocked_count if latest_queue else 0,
+        "queue_next_action": queue_next_action,
         "project_completion_percent": progress.project_completion_percent,
         "backlog_readiness_percent": progress.backlog_readiness_percent,
         "blocked_percent": progress.blocked_percent,
@@ -446,6 +484,20 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "progress_next_action": progress.next_action,
         "planning_next_action": next_action,
     }
+
+
+def _queue_next_action(project_name: str, queue: object | None) -> str:
+    if not queue:
+        return f"Create an Execution Queue: devo project queue-create --project {project_name} --batch <batchId>"
+    queue_id = getattr(queue, "queue_id", "<queueId>")
+    status = getattr(queue, "status", "unknown")
+    if status in {"draft", "ready", "paused_usage_limit", "paused_failure", "waiting_review"}:
+        return f"Start or resume the Queue: devo project queue-start --project {project_name} --queue {queue_id}"
+    if status == "running":
+        return f"Inspect the current Queue item: devo project queue-next --project {project_name} --queue {queue_id}"
+    if status == "completed":
+        return "Queue completed; Codex handoff and review workflow improvements continue in later tasks."
+    return f"Review Queue status: devo project queue-show --project {project_name} --queue {queue_id}"
 
 
 def _latest_validation(project_name: str, run_id: str, workspace_root: Path):

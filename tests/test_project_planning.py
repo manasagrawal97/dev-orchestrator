@@ -10,14 +10,18 @@ from devo.project_planning import (
     BacklogTask,
     ProjectBacklog,
     calculate_project_progress,
+    create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
+    list_execution_queues,
     list_project_batches,
+    load_execution_queue,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
     project_batch_artifact_paths,
+    queue_artifact_paths,
 )
 from devo.read_models import build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -563,6 +567,178 @@ def test_progress_aggregates_batch_progress(tmp_path: Path, monkeypatch) -> None
     assert progress.batch_completion_percent == 50.0
 
 
+def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_batch(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Execution queue saved" in result.output
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    queue_json = paths.queues_dir / "queue-Q001.json"
+    queue_md = paths.queues_dir / "queue-Q001.md"
+    assert queue_json.exists()
+    assert queue_md.exists()
+    assert paths.queue_index_json.exists()
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "ready"
+    assert queue.item_count == 2
+    assert queue.pending_count == 2
+    assert queue.items[0].task_id == "T001"
+    assert "state is tracking only" in queue_md.read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_create_rejects_unapproved_and_unknown_batch(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "Draft batch", "--tasks", "T001"])
+
+    unapproved = runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"], terminal_width=240)
+    unknown = runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B999"], terminal_width=240)
+
+    assert unapproved.exit_code != 0
+    assert "must be approved" in unapproved.output
+    assert unknown.exit_code != 0
+    assert "Project batch not found" in unknown.output
+
+
+def test_queue_list_and_show_work(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+
+    listed = runner.invoke(app, ["project", "queue-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["project", "queue-show", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert "Q001" in listed.output
+    assert "batch=B001" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Execution queue: Q001" in shown.output
+    assert "QI001" in shown.output
+
+
+def test_queue_start_moves_to_running_and_marks_first_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+
+    result = runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "running"
+    assert queue.current_item_id == "QI001"
+    assert queue.items[0].status == "running"
+    assert queue.running_count == 1
+
+
+def test_queue_next_shows_current_or_next_item(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+
+    before_start = runner.invoke(app, ["project", "queue-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+    after_start = runner.invoke(app, ["project", "queue-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert before_start.exit_code == 0, before_start.output
+    assert "QI001" in before_start.output
+    assert after_start.exit_code == 0, after_start.output
+    assert "Status: running" in after_start.output
+    assert "TASK-DEVO-080" in after_start.output
+
+
+def test_queue_complete_item_marks_completed_and_advances(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Done."],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "running"
+    assert queue.current_item_id == "QI002"
+    assert queue.items[0].status == "completed"
+    assert queue.items[1].status == "running"
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    assert backlog.tasks[0].status == "completed"
+
+
+def test_queue_complete_item_completes_queue_when_all_done(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Done."])
+
+    result = runner.invoke(app, ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI002", "--note", "Done."], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "completed"
+    assert queue.current_item_id is None
+    assert queue.completed_count == 2
+
+
+def test_queue_block_item_marks_blocked_and_waiting_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+
+    result = runner.invoke(app, ["project", "queue-block-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Needs review."], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "waiting_review"
+    assert queue.items[0].status == "blocked"
+    assert queue.blocked_count == 1
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    assert backlog.tasks[0].status == "blocked"
+
+
+def test_queue_pause_usage_limit_and_resume(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+
+    paused = runner.invoke(app, ["project", "queue-pause", "--project", "sample", "--queue", "Q001", "--reason", "usage_limit", "--note", "Resume when usage resets."], terminal_width=240)
+    resumed = runner.invoke(app, ["project", "queue-resume", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert paused.exit_code == 0, paused.output
+    assert resumed.exit_code == 0, resumed.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "running"
+    assert queue.current_item_id == "QI001"
+    assert queue.items[0].status == "running"
+
+
+def test_empty_queue_edge_case_starts_as_completed(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_batch(tmp_path, task_ids="")
+    queue, _json_path, _markdown_path = create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+
+    started = runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", queue.queue_id], terminal_width=240)
+
+    assert started.exit_code == 0, started.output
+    loaded = load_execution_queue("sample", queue.queue_id, workspace_root=workspace)
+    assert loaded is not None
+    assert loaded.status == "completed"
+    assert loaded.item_count == 0
+
+
 def test_unknown_project_fails_clearly(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     brief_file = _brief_file(tmp_path)
@@ -647,7 +823,18 @@ def test_read_models_include_planning_summary(tmp_path: Path, monkeypatch) -> No
     assert with_batch.approved_batch_count == 1
     assert with_batch.latest_batch_id == "B001"
     assert with_batch.latest_batch_status == "approved"
-    assert "TASK-DEVO-079" in with_batch.planning_next_action
+    assert "queue-create" in with_batch.planning_next_action
+
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+
+    with_queue = build_project_overview("sample", workspace_root=workspace)
+    assert with_queue.queue_count == 1
+    assert with_queue.latest_queue_id == "Q001"
+    assert with_queue.latest_queue_status == "running"
+    assert with_queue.current_queue_item == "QI001"
+    assert with_queue.queue_pending_count == 0
+    assert with_queue.queue_next_action.endswith("--queue Q001")
 
 
 def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
@@ -668,6 +855,12 @@ def test_planning_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch
     runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "Safe planning batch", "--tasks", "T001"])
     runner.invoke(app, ["project", "batch-review", "--project", "sample", "--batch", "B001", "--note", "Planning review only."])
     runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["project", "queue-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["project", "queue-pause", "--project", "sample", "--queue", "Q001", "--reason", "usage_limit", "--note", "Pause only."])
+    runner.invoke(app, ["project", "queue-resume", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Done."])
 
     assert _target_snapshot(project_path) == before_target
 
@@ -765,6 +958,38 @@ def _write_batch_status(workspace: Path, batch_id: str, *, status: str, approval
     updated = batch.model_copy(update={"status": status, "approval_status": approval_status})
     json_path, _markdown_path = project_batch_artifact_paths("sample", batch_id, workspace_root=workspace)
     json_path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _create_approved_batch(tmp_path: Path, task_ids: str = "T001,T002") -> None:
+    _create_backlog(tmp_path)
+    if task_ids:
+        runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "Approved batch", "--tasks", task_ids])
+    else:
+        from devo.project_planning import ProjectBatch
+
+        paths = planning_artifact_paths("sample")
+        batch = ProjectBatch(
+            project="sample",
+            batch_id="B001",
+            title="Empty approved batch",
+            summary="Empty test batch.",
+            source_backlog_reference=str(paths.backlog_json),
+            status="approved",
+            task_ids=[],
+            task_count=0,
+            approval_status="approved",
+        )
+        paths.batches_dir.mkdir(parents=True, exist_ok=True)
+        json_path, markdown_path = project_batch_artifact_paths("sample", "B001")
+        json_path.write_text(batch.model_dump_json(indent=2), encoding="utf-8")
+        markdown_path.write_text("# Empty approved batch\n", encoding="utf-8")
+        return
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+
+
+def _create_queue(tmp_path: Path) -> None:
+    _create_approved_batch(tmp_path)
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
 
 
 def _create_blueprint(tmp_path: Path) -> None:

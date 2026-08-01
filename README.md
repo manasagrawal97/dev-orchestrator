@@ -171,6 +171,22 @@ devo project progress --project MyProject --json
 
 Progress is derived from Project Brief, Blueprint, Backlog/Task, and Batch artifacts. It reports count-based task completion, backlog readiness, blocked percentage, batch completion, and milestone/epic rollups. Weighted scoring, execution queue progress, Codex execution tracking, and AI/API automation are deferred.
 
+Create and track an execution queue from an approved planning batch:
+
+```powershell
+devo project queue-create --project MyProject --batch B001
+devo project queue-list --project MyProject
+devo project queue-show --project MyProject --queue Q001
+devo project queue-start --project MyProject --queue Q001
+devo project queue-next --project MyProject --queue Q001
+devo project queue-complete-item --project MyProject --queue Q001 --item QI001 --note "Completed manually."
+devo project queue-block-item --project MyProject --queue Q001 --item QI002 --note "Needs review."
+devo project queue-pause --project MyProject --queue Q001 --reason usage_limit --note "Resume when usage resets."
+devo project queue-resume --project MyProject --queue Q001
+```
+
+Queue artifacts are stored under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. The execution queue is state tracking only. It does not run Codex, generate execution prompts, run validation, run Git commands, commit, push, or modify target project source. Codex handoff prompts come next in TASK-DEVO-080.
+
 List registered projects:
 
 ```powershell
