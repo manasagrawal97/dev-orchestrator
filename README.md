@@ -643,7 +643,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages backed by the local API. It shows dashboard selection separately from saved CLI current context, uses section-level loading for slower project overview and doctor checks, keeps raw paths tucked behind quieter activity sections, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
+Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress workflow, with status summaries and copyable CLI commands. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
 
 ## Policy Gates
 

@@ -112,6 +112,95 @@ export interface ProjectOverview {
   suggested_next_action: string;
 }
 
+export interface ArtifactPaths {
+  json?: string;
+  markdown?: string;
+}
+
+export interface ProjectBrief {
+  project: string;
+  title: string;
+  summary: string;
+  status: string;
+  artifact_paths?: ArtifactPaths;
+}
+
+export interface ProjectBlueprint {
+  project: string;
+  title: string;
+  status: string;
+  milestones: Array<{ id: string; title: string; status: string }>;
+  epics: Array<{ id: string; title: string; status: string }>;
+  artifact_paths?: ArtifactPaths;
+}
+
+export interface ProjectBacklog {
+  project: string;
+  title: string;
+  status: string;
+  task_count: number;
+  ready_task_count: number;
+  blocked_task_count: number;
+  completed_task_count: number;
+  artifact_paths?: ArtifactPaths;
+}
+
+export interface ProjectBatchesResponse {
+  project: string;
+  count: number;
+  batches: Array<{
+    batch_id: string;
+    title: string;
+    status: string;
+    approval_status: string;
+    task_count: number;
+  }>;
+}
+
+export interface ProjectQueuesResponse {
+  project: string;
+  count: number;
+  queues: Array<{
+    queue_id: string;
+    title: string;
+    source_batch_id: string;
+    status: string;
+    current_item_id: string | null;
+    pending_count: number;
+    completed_count: number;
+    blocked_count: number;
+  }>;
+}
+
+export interface ProjectHandoffsResponse {
+  project: string;
+  count: number;
+  handoffs: Array<{
+    handoff_id: string;
+    handoff_type: string;
+    title: string;
+    status: string;
+    source_queue_id: string | null;
+    source_batch_id: string | null;
+    source_item_id: string | null;
+    source_task_id: string | null;
+    prompt_path: string;
+  }>;
+}
+
+export interface ProjectProgress {
+  project: string;
+  brief_status: string;
+  blueprint_status: string;
+  backlog_status: string;
+  project_completion_percent: number;
+  backlog_readiness_percent: number;
+  blocked_percent: number;
+  batch_completion_percent: number;
+  next_action: string;
+  warnings: string[];
+}
+
 export interface ProjectActivity {
   project: string;
   recent_runs: string[];

@@ -461,7 +461,7 @@ Open:
 http://127.0.0.1:5173
 ```
 
-The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. The dashboard includes Projects, Project Overview, Work Package, Activity, Health, and Action Safety pages. It distinguishes dashboard selection from saved CLI current context, uses section-level loading hints for slower overview/doctor checks, keeps Activity evidence quieter by default, can display read models and copy CLI commands, and shows action safety metadata. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation. It does not approve/reject, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs.
+The frontend defaults to `http://127.0.0.1:8765` for the API. Override it with `VITE_DEVO_API_BASE` when needed. The dashboard includes Projects, Project Overview, Planning Intake, Work Package, Activity, Health, and Action Safety pages. Planning Intake is a read-only operator guide for brief, blueprint, backlog, batch, queue, handoff, and progress state; it shows status/count summaries and copyable CLI commands. It does not create briefs from the UI, run Codex, execute target commands, run validation/build/test/app commands, commit, push, restore/delete backups, modify scheduler settings, edit target files, or call model APIs. The Action Safety page can create a new Devo run/work-package draft and execute the approved workspace-safe artifact generation actions after explicit confirmation.
 
 ## Safety
 

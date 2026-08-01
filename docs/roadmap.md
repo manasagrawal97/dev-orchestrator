@@ -16,7 +16,6 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-081 UI Planning Intake page
 - TASK-DEVO-082 UI Blueprint/Backlog pages
 - TASK-DEVO-083 UI Batch Queue and Progress dashboard
 
@@ -216,6 +215,10 @@ Added execution queue artifacts under `workspace/projects/<project>/planning/que
 ### TASK-DEVO-080 Codex Handoff Prompts - Completed
 
 Added Codex handoff artifacts under `workspace/projects/<project>/planning/handoffs/`, with JSON/Markdown handoff files and `handoff-index.json`. `devo project handoff-next`, `handoff-task`, and `handoff-batch` generate Codex-ready prompts from queue items, backlog tasks, or planning batches, while `handoff-list`, `handoff-show`, and `handoff-mark-used` provide read/workspace-only tracking. Handoff prompts include project path, source queue/batch/task details, lane/risk, dependencies, acceptance criteria, validation expectations, allowed/forbidden scope, safety boundaries, files not to stage, and final report expectations. Devo still does not run Codex, call AI APIs, execute target commands, run validation, commit, push, or modify target repositories.
+
+### TASK-DEVO-081 UI Planning Intake Page - Completed
+
+Added a read-only Planning Intake page to the React/Vite dashboard. The page visualizes the brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress workflow as a pipeline, shows status/count summaries from existing read-only API endpoints, surfaces artifact/path context when available, and provides copyable CLI commands for each stage. It has section-level loading, empty, and error states and does not add UI controls for creating briefs, approving artifacts, running Codex, executing target commands, validation/build/test, commit/push, backup restore/delete, scheduler modification, target source edits, or model/API calls.
 
 ### TASK-023 Safe Validation Runner
 

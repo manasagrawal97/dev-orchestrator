@@ -3,16 +3,18 @@ import { devoApi } from './api/client';
 import { ActionSafetyPage } from './pages/ActionSafetyPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { HealthPage } from './pages/HealthPage';
+import { PlanningIntakePage } from './pages/PlanningIntakePage';
 import { ProjectOverviewPage } from './pages/ProjectOverviewPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { WorkPackagePage } from './pages/WorkPackagePage';
 import type { CurrentContext } from './types/devo';
 
-type PageId = 'projects' | 'overview' | 'work' | 'activity' | 'health' | 'actions';
+type PageId = 'projects' | 'overview' | 'planning' | 'work' | 'activity' | 'health' | 'actions';
 
 const pages: Array<{ id: PageId; label: string }> = [
   { id: 'projects', label: 'Projects' },
   { id: 'overview', label: 'Project Overview' },
+  { id: 'planning', label: 'Planning Intake' },
   { id: 'work', label: 'Work Package' },
   { id: 'activity', label: 'Activity' },
   { id: 'health', label: 'Health' },
@@ -118,6 +120,7 @@ export default function App() {
 
           {activePage === 'projects' ? <ProjectsPage selectedProject={selectedProject} onSelectProject={selectProject} /> : null}
           {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} onSelectRun={selectRun} /> : null}
+          {activePage === 'planning' ? <PlanningIntakePage selectedProject={selectedProject} /> : null}
           {activePage === 'work' ? (
             <WorkPackagePage
               selectedProject={selectedProject}

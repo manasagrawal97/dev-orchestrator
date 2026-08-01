@@ -16,7 +16,7 @@ It does not replace the CLI. It does not execute risky actions. UI v1 is read-on
 
 The longer-term UI should follow the company-model vision in `docs/devo-company-model.md`: project brief, blueprint, backlog, batches, queue, and progress views around Codex-powered execution. The implementation order for those planning/progress screens is tracked in `docs/remaining-roadmap.md`. It should not become a general chat clone.
 
-After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. UI write controls for creating, importing, approving, queue transitions, handoff generation, or executing planning artifacts remain future scope.
+After TASK-DEVO-074, Project Overview includes a read-only Planning card backed by `ProjectOverview` fields for brief status, blueprint status, milestone count, epic count, and the planning next action. TASK-DEVO-075 extends that card with backlog status, task count, ready count, blocked count, and completed count. TASK-DEVO-076 adds read-only refinement prompt metadata and a copyable CLI command. TASK-DEVO-077 adds read-only batch count/latest-batch metadata and a copyable `batch-suggest` command. TASK-DEVO-078 adds a read-only Progress card with count-based project completion, backlog readiness, blocked percentage, batch completion, latest batch status, and a copyable `devo project progress` command. TASK-DEVO-079 adds read-only queue count/latest queue/current item metadata and copyable queue inspection guidance. TASK-DEVO-080 adds read-only handoff count/latest handoff metadata and copyable handoff CLI guidance. TASK-DEVO-081 adds a dedicated read-only Planning Intake page that shows the full brief -> blueprint -> backlog -> batch -> queue -> handoff -> progress pipeline with section-level status summaries and copyable CLI commands. UI write controls for creating, importing, approving, queue transitions, handoff generation, or executing planning artifacts remain future scope.
 
 ## UI MVP Principles
 
@@ -65,6 +65,26 @@ Sections:
 - suggested next command
 
 Primary user question: "Is this project ready, and what should I do next?"
+
+### B2. Planning Intake Page
+
+Shows the planning workflow from Project Brief through Progress.
+
+Sections:
+
+- workflow pipeline / stepper
+- Project Brief status and artifact context
+- Blueprint milestone/epic counts
+- Backlog counts and refinement prompt status
+- Batch counts/latest batch
+- Queue counts/latest queue/current item
+- Handoff counts/latest handoff/path
+- Progress percentages and warnings
+- copyable CLI commands for each stage
+
+Primary user question: "Where am I in the Devo planning workflow, and which CLI command should I run next?"
+
+This page is read-only. It does not create briefs from the UI, approve artifacts, run Codex, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, or call model APIs.
 
 ### C. Work Package / Run Detail Page
 
