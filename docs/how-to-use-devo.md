@@ -446,6 +446,8 @@ Check whether the local API/UI are already running:
 devo ui status
 ```
 
+`devo ui status` is only a short reachability check. It does not start servers and it does not verify dashboard pages unless the local API and UI dev server are already running. For a browser/page smoke review, start the API and UI first, then open `http://127.0.0.1:5173`.
+
 Open the UI in the default browser when the UI dev server is reachable:
 
 ```powershell

@@ -633,7 +633,7 @@ devo ui status
 devo ui open
 ```
 
-`devo ui status` checks whether the local API and UI dev server are reachable without starting them. `devo ui open` opens `http://127.0.0.1:5173` only when the UI is already reachable; otherwise it prints the manual start commands.
+`devo ui status` checks whether the local API and UI dev server are reachable without starting them. It is a reachability check only; it does not prove dashboard pages load unless the API and UI servers are already running. For browser/page verification, start both servers first, then open the UI. `devo ui open` opens `http://127.0.0.1:5173` only when the UI is already reachable; otherwise it prints the manual start commands.
 
 Start the backend:
 

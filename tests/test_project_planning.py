@@ -59,6 +59,29 @@ def test_brief_create_from_file_creates_json_and_markdown_artifacts(tmp_path: Pa
     assert _target_snapshot(project_path) == before_target
 
 
+def test_brief_create_handles_utf8_bom_input_without_storing_bom(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "bom-brief.md"
+    brief_file.write_text("\ufeff# BOM Brief\n\nBuild reliable planning guidance.\n", encoding="utf-8")
+
+    created = runner.invoke(
+        app,
+        ["project", "brief-create", "--project", "sample", "--title", "\ufeffBOM Product", "--file", str(brief_file)],
+        terminal_width=240,
+    )
+    shown = runner.invoke(app, ["project", "brief-show", "--project", "sample"], terminal_width=240)
+
+    assert created.exit_code == 0, created.output
+    assert shown.exit_code == 0, shown.output
+    brief = load_project_brief("sample", workspace_root=workspace)
+    assert brief is not None
+    assert brief.title == "BOM Product"
+    assert "\ufeff" not in brief.summary
+    assert "\ufeff" not in shown.output
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    assert "\ufeff" not in paths.brief_markdown.read_text(encoding="utf-8")
+
+
 def test_brief_show_works(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     brief_file = _brief_file(tmp_path)
@@ -155,6 +178,8 @@ def test_backlog_create_from_blueprint_creates_json_and_markdown_artifacts(tmp_p
     assert [task.id for task in backlog.tasks] == ["T001", "T002"]
     assert backlog.tasks[0].epic_id == "E001"
     assert "Deterministic starter task" in paths.backlog_markdown.read_text(encoding="utf-8")
+    assert "This is a deterministic starter backlog" in paths.backlog_markdown.read_text(encoding="utf-8")
+    assert "backlog-prompt --project sample" in paths.backlog_markdown.read_text(encoding="utf-8")
     assert _target_snapshot(project_path) == before_target
 
 
@@ -168,6 +193,8 @@ def test_backlog_show_works(tmp_path: Path, monkeypatch) -> None:
     assert "Project backlog: sample" in result.output
     assert "Status: draft" in result.output
     assert "Tasks: 2" in result.output
+    assert "not implementation-ready" in result.output
+    assert "backlog-prompt --project sample" in result.output
 
 
 def test_backlog_approve_marks_approved_and_tasks_ready(tmp_path: Path, monkeypatch) -> None:
@@ -178,7 +205,9 @@ def test_backlog_approve_marks_approved_and_tasks_ready(tmp_path: Path, monkeypa
 
     assert result.exit_code == 0, result.output
     assert "Project backlog approved" in result.output
-    assert "TASK-DEVO-077" in result.output
+    assert "batch-suggest --project sample --limit 10" in result.output
+    assert "batch-suggest --project sample --limit 10 --write" in result.output
+    assert "TASK-DEVO-077" not in result.output
     backlog = load_project_backlog("sample", workspace_root=workspace)
     assert backlog is not None
     assert backlog.status == "approved"
@@ -733,7 +762,10 @@ def test_queue_next_shows_current_or_next_item(tmp_path: Path, monkeypatch) -> N
     assert "QI001" in before_start.output
     assert after_start.exit_code == 0, after_start.output
     assert "Status: running" in after_start.output
-    assert "handoff-next" in after_start.output
+    assert "devo project handoff-next --project sample --queue Q001" in after_start.output
+    assert "devo project handoff-task --project sample --task T001" in after_start.output
+    assert "<queueId>" not in after_start.output
+    assert "<project>" not in after_start.output
 
 
 def test_queue_complete_item_marks_completed_and_advances(tmp_path: Path, monkeypatch) -> None:

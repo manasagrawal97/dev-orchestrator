@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-086 Planning pipeline operator guidance and input robustness
+- TASK-DEVO-087 Codex CLI worker adapter design doc
 
 ## Updated Roadmap Phases
 
@@ -234,6 +234,10 @@ Added explicit workspace-only Batch approval artifacts under `workspace/projects
 ### TASK-DEVO-085 End-To-End Planning Pipeline Dogfood - Completed
 
 Ran the current planning pipeline on DevOrchestrator itself and documented the results in `docs/dogfood/devo-pipeline-dogfood-085.md`. The dogfood run created and approved a Project Brief, Blueprint, Backlog, suggested Batch `B001`, Batch approval artifact, execution Queue `Q001`, Codex handoff `H001`, and progress summary. Generated planning artifacts stayed under `workspace/` and were not committed. Findings: BOM-prefixed brief input can trigger Windows console rendering failures, `backlog-approve` still prints stale batch guidance, `queue-next` prints placeholder handoff commands, and the deterministic starter backlog needs clearer reminders before real implementation. TASK-DEVO-086 should address these operator-friction issues before a larger Codex CLI worker adapter design task.
+
+### TASK-DEVO-086 Planning Pipeline Guidance And Input Robustness - Completed
+
+Fixed the main TASK-DEVO-085 dogfood friction before adding new workflow features. Brief creation now reads planning text with UTF-8 BOM handling and strips BOM markers before storing/rendering summaries. Starter backlog CLI output and generated `backlog.md` now warn that deterministic backlogs are not implementation-ready by default and point to `backlog-prompt`/`backlog-import` before batch creation. `backlog-approve` now suggests concrete `batch-suggest --limit 10` commands, and `queue-next` now prints actual project/queue/task handoff commands instead of placeholders. UI verification docs now clarify that `devo ui status` is a reachability check and browser page review requires the local API/UI servers to be running.
 
 ### TASK-023 Safe Validation Runner
 

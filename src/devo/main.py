@@ -341,6 +341,11 @@ def _print_project_backlog(backlog: ProjectBacklog | None, project_name: str) ->
     console.print(f"Completed: {backlog.completed_task_count}")
     console.print(f"JSON: {_named_path(paths.backlog_json)}")
     console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
+    console.print("Starter backlog guidance:")
+    console.print("  - This deterministic starter backlog is not implementation-ready by default.", soft_wrap=True)
+    console.print(f"  - Refine it with: devo project backlog-prompt --project {project_name}", soft_wrap=True)
+    console.print(f"  - Import refined JSON with: devo project backlog-import --project {project_name} --file <refined-backlog.json>", soft_wrap=True)
+    console.print("  - Review and approve the refined backlog before batch creation.", soft_wrap=True)
 
 
 def _print_backlog_task(task: BacklogTask) -> None:
@@ -519,7 +524,7 @@ def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None,
         console.print(f"Markdown: {_named_path(markdown_path)}")
 
 
-def _print_queue_item(item: QueueItem | None) -> None:
+def _print_queue_item(item: QueueItem | None, project_name: str | None = None, queue_id: str | None = None) -> None:
     if not item:
         console.print("[yellow]No current or pending queue item.[/yellow]")
         return
@@ -538,7 +543,11 @@ def _print_queue_item(item: QueueItem | None) -> None:
     console.print("Validation expectations:")
     for expectation in item.validation_expectations or ["none"]:
         console.print(f"  - {expectation}", soft_wrap=True)
-    console.print("Suggested handoff command: devo project handoff-next --project <project> --queue <queueId>")
+    if project_name and queue_id:
+        typer.echo(f"Suggested handoff command: devo project handoff-next --project {project_name} --queue {queue_id}")
+        typer.echo(f"Optional task handoff command: devo project handoff-task --project {project_name} --task {item.task_id}")
+    else:
+        console.print("Suggested handoff command: devo project handoff-next --project <project> --queue <queueId>")
 
 
 def _print_codex_handoff(handoff: CodexHandoff, json_path: Path | None = None, prompt_path: Path | None = None) -> None:
@@ -1423,7 +1432,12 @@ def create_backlog_command(
     console.print(f"Completed: {backlog.completed_task_count}")
     console.print(f"JSON: {_named_path(paths.backlog_json)}")
     console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
-    console.print(f"Suggested next command: devo project backlog-approve --project {project_name}")
+    console.print("Starter backlog guidance:")
+    console.print("  - This deterministic starter backlog is not implementation-ready by default.", soft_wrap=True)
+    console.print(f"  - Refine it with: devo project backlog-prompt --project {project_name}", soft_wrap=True)
+    console.print(f"  - Import refined JSON with: devo project backlog-import --project {project_name} --file <refined-backlog.json>", soft_wrap=True)
+    console.print("  - Review and approve the refined backlog before batch creation.", soft_wrap=True)
+    console.print(f"Suggested next command: devo project backlog-prompt --project {project_name}")
 
 
 @project_app.command("backlog-show")
@@ -1455,7 +1469,8 @@ def approve_backlog_command(
     console.print(f"Ready: {backlog.ready_task_count}")
     console.print(f"JSON: {_named_path(paths.backlog_json)}")
     console.print(f"Markdown: {_named_path(paths.backlog_markdown)}")
-    console.print("Suggested next command: batch creation is TASK-DEVO-077.")
+    typer.echo(f"Suggested next command: devo project batch-suggest --project {project_name} --limit 10")
+    typer.echo(f"Suggested write command: devo project batch-suggest --project {project_name} --limit 10 --write")
 
 
 @project_app.command("task-list")
@@ -1874,7 +1889,7 @@ def start_queue_command(
     console.print(f"[green]Execution queue started[/green] {project_name}")
     _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
     current = next((item for item in queue.items if item.item_id == queue.current_item_id), None)
-    _print_queue_item(current)
+    _print_queue_item(current, project_name=project_name, queue_id=queue.queue_id)
 
 
 @project_app.command("queue-next")
@@ -1890,7 +1905,7 @@ def next_queue_item_command(
         raise typer.BadParameter(str(exc), param_hint="--queue") from exc
     console.print(f"[bold]Execution queue next: {queue.queue_id}[/bold]")
     console.print(f"Queue status: {queue.status}")
-    _print_queue_item(item)
+    _print_queue_item(item, project_name=project_name, queue_id=queue.queue_id)
 
 
 @project_app.command("queue-complete-item")

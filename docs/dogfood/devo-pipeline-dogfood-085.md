@@ -179,3 +179,13 @@ Recommended scope:
 - Add focused tests for these CLI guidance paths.
 
 Keep Codex CLI worker adapter design as the next larger planning task after these dogfood friction fixes.
+
+## TASK-DEVO-086 Follow-Up
+
+TASK-DEVO-086 addressed the immediate friction from this dogfood run:
+
+- BOM-prefixed planning text input is handled for brief creation.
+- Starter backlog output now reminds operators that deterministic backlogs are not implementation-ready by default.
+- `backlog-approve` points to real batch suggestion commands.
+- `queue-next` prints concrete handoff commands with the selected project and queue id.
+- UI verification docs now clarify that `devo ui status` is reachability-only and page review requires running the API/UI servers first.

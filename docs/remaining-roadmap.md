@@ -135,7 +135,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 10. TASK-DEVO-083: UI Batch Queue and Progress dashboard - completed.
 11. TASK-DEVO-084: Batch approval/review workflow - completed.
 12. TASK-DEVO-085: End-to-end workflow dogfood run on DevOrchestrator - completed.
-13. TASK-DEVO-086: Planning pipeline operator guidance and input robustness - fix dogfood findings around BOM input handling, stale next-action guidance, concrete queue/handoff commands, and clearer starter-backlog warnings.
+13. TASK-DEVO-086: Planning pipeline operator guidance and input robustness - completed.
 14. TASK-DEVO-087: Codex CLI worker adapter design doc - design controlled future automation without implementing it prematurely.
 15. TASK-DEVO-088: Optional Codex CLI worker MVP - add a bounded adapter only after the manual handoff flow is solid.
 16. TASK-DEVO-089: Agent worker abstraction - define the stable worker interface for manual, Codex CLI, and future model adapters.

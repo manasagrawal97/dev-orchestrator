@@ -490,7 +490,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     elif backlog.status != "approved":
         next_action = f"Approve the Backlog: devo project backlog-approve --project {project_name}"
     elif not batches:
-        next_action = f"Create or suggest a Batch: devo project batch-suggest --project {project_name}"
+        next_action = f"Create or suggest a Batch: devo project batch-suggest --project {project_name} --limit 10"
     elif not any(batch.approval_status == "approved" for batch in batches):
         if latest_batch_approval and latest_batch_approval.approval_status == "requested":
             next_action = f"Review requested Batch approval: devo project batch-approval-show --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"

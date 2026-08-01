@@ -478,13 +478,13 @@ def create_project_brief(
         msg = f"Brief source path must be a file: {source_path}"
         raise ValueError(msg)
 
-    text = source_path.read_text(encoding="utf-8")
+    text = _read_planning_text_file(source_path)
     now = datetime.now(UTC)
     existing = load_project_brief(project_name, workspace_root=root)
     created_at = existing.created_at if existing else now
     brief = ProjectBrief(
         project=project_name,
-        title=title.strip(),
+        title=_clean_planning_text(title).strip(),
         summary=_summarize_text(text),
         problem_statement=_extract_section(text, ("problem", "problem statement")),
         goals=_extract_list_section(text, ("goals", "objectives")),
@@ -689,7 +689,7 @@ def validate_refined_backlog_file(
     errors: list[str] = []
     warnings: list[str] = []
     try:
-        backlog = ProjectBacklog.model_validate_json(source_path.read_text(encoding="utf-8"))
+        backlog = ProjectBacklog.model_validate_json(source_path.read_text(encoding="utf-8-sig"))
     except (ValueError, ValidationError) as exc:
         return BacklogValidationResult(valid=False, errors=[f"Invalid backlog JSON: {exc}"]), None
 
@@ -2039,6 +2039,16 @@ def render_project_backlog_markdown(backlog: ProjectBacklog) -> str:
         f"- Created: `{backlog.created_at.isoformat()}`",
         f"- Updated: `{backlog.updated_at.isoformat()}`",
         "",
+        "## Starter Backlog Guidance",
+        "",
+        "This is a deterministic starter backlog. It is not implementation-ready by default.",
+        "",
+        "Before using it for real implementation work:",
+        "",
+        f"- Run `devo project backlog-prompt --project {backlog.project}` to generate a Codex/manual planning handoff.",
+        "- Use `devo project backlog-import --project <project> --file <refined-backlog.json>` to import a refined backlog.",
+        "- Review and approve the refined backlog before creating or approving batches.",
+        "",
         "## Tasks",
         "",
     ]
@@ -2643,7 +2653,7 @@ def _progress_next_action(
     if backlog.status != "approved":
         return f"Approve the Backlog: devo project backlog-approve --project {project_name}"
     if not batches:
-        return f"Create or suggest a Batch: devo project batch-suggest --project {project_name}"
+        return f"Create or suggest a Batch: devo project batch-suggest --project {project_name} --limit 10"
     latest_batch = batches[0]
     if not any(batch.approval_status == "approved" for batch in batches):
         return f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id}"
@@ -2871,12 +2881,22 @@ def _default_open_questions(brief: ProjectBrief) -> list[str]:
     return questions
 
 
+def _read_planning_text_file(path: Path) -> str:
+    return _clean_planning_text(path.read_text(encoding="utf-8-sig"))
+
+
+def _clean_planning_text(text: str) -> str:
+    return text.replace("\ufeff", "")
+
+
 def _extract_section(text: str, headings: tuple[str, ...]) -> str:
+    text = _clean_planning_text(text)
     items = _extract_list_section(text, headings)
     return " ".join(items).strip()
 
 
 def _extract_list_section(text: str, headings: tuple[str, ...]) -> list[str]:
+    text = _clean_planning_text(text)
     lines = text.splitlines()
     captured: list[str] = []
     in_section = False
@@ -2910,6 +2930,7 @@ def _clean_list_item(line: str) -> str:
 
 
 def _summarize_text(text: str) -> str:
+    text = _clean_planning_text(text)
     for paragraph in re.split(r"\n\s*\n", text.strip()):
         cleaned = " ".join(line.strip().lstrip("#").strip() for line in paragraph.splitlines() if line.strip())
         if cleaned:
