@@ -5,6 +5,7 @@ import type {
   CurrentContext,
   DoctorReport,
   CodexWorkerReport,
+  CodexQueueWorkerStatus,
   CodexRunPlan,
   CodexRunPlansResponse,
   CodexHandoff,
@@ -90,6 +91,8 @@ export const devoApi = {
   getProjectQueues: (project: string) => getJson<ProjectQueuesResponse>(`/api/projects/${encodeURIComponent(project)}/queues`),
   getProjectQueue: (project: string, queueId: string) =>
     getJson<ExecutionQueue>(`/api/projects/${encodeURIComponent(project)}/queues/${encodeURIComponent(queueId)}`),
+  getProjectQueueWorkerStatus: (project: string, queueId: string) =>
+    getJson<CodexQueueWorkerStatus>(`/api/projects/${encodeURIComponent(project)}/queues/${encodeURIComponent(queueId)}/worker-status`),
   getProjectHandoffs: (project: string) => getJson<ProjectHandoffsResponse>(`/api/projects/${encodeURIComponent(project)}/handoffs`),
   getProjectHandoff: (project: string, handoffId: string) =>
     getJson<CodexHandoff>(`/api/projects/${encodeURIComponent(project)}/handoffs/${encodeURIComponent(handoffId)}`),

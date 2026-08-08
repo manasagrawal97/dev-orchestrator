@@ -246,6 +246,15 @@ devo worker codex execute --project DevOrchestrator --run WR001 --plan RP001 --c
 devo worker codex execute-log --project DevOrchestrator --run WR001
 ```
 
+TASK-DEVO-093 adds the queue-first operator shortcut for that flow:
+
+```powershell
+devo worker codex prepare-next --project DevOrchestrator --queue Q001
+devo worker codex queue-status --project DevOrchestrator --queue Q001
+```
+
+The shortcut prepares one linked handoff, worker run, and run plan, then stops for approval/execution review. A successful worker exit moves the linked queue item to `waiting_review`, not completed, so the user still performs review, validation, and explicit `queue-complete-item` afterward.
+
 It requires an approved run plan and explicit confirmation, launches one Codex process, captures logs, and moves the worker run to review/failure/pause/block state only. It does not complete queue/tasks, run validation, commit, push, or add UI execute buttons.
 
 ### Short Final Reports

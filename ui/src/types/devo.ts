@@ -102,6 +102,12 @@ export interface ProjectOverview {
   queue_completed_count: number;
   queue_blocked_count: number;
   queue_next_action: string;
+  linked_worker_run_id: string | null;
+  linked_worker_run_status: string | null;
+  linked_run_plan_id: string | null;
+  current_queue_item_worker_status: string | null;
+  current_queue_item_review_status: string | null;
+  queue_worker_next_action: string | null;
   handoff_count: number;
   latest_handoff_id: string | null;
   latest_handoff_type: string | null;
@@ -323,6 +329,23 @@ export interface ExecutionQueue {
   current_item_id: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface CodexQueueWorkerStatus {
+  project: string;
+  queue_id: string;
+  queue_status: string;
+  current_item_id: string | null;
+  current_item_status: string | null;
+  current_task_id: string | null;
+  linked_worker_run_id: string | null;
+  linked_worker_run_status: string | null;
+  linked_run_plan_id: string | null;
+  linked_run_plan_status: string | null;
+  latest_worker_execution_status: string | null;
+  latest_worker_execution_exit_code: number | null;
+  latest_worker_execution_log_path: string | null;
+  next_action: string;
 }
 
 export interface ProjectHandoffsResponse {

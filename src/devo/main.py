@@ -72,6 +72,7 @@ from .project_planning import (
     ProjectBrief,
     CodexExecutionPreview,
     CodexExecutionResult,
+    CodexQueueWorkerStatus,
     CodexPreflightResult,
     CodexRunPlan,
     CodexWorkerReport,
@@ -100,6 +101,7 @@ from .project_planning import (
     complete_queue_item,
     generate_backlog_refinement_prompt,
     get_backlog_task,
+    get_codex_queue_worker_status,
     get_queue_next_item,
     import_refined_backlog,
     list_execution_queues,
@@ -123,6 +125,7 @@ from .project_planning import (
     pause_execution_queue,
     mark_codex_handoff_used,
     mark_codex_worker_run_handoff_used,
+    prepare_codex_worker_for_queue_next,
     preview_codex_worker_execution,
     reject_project_batch,
     request_batch_approval,
@@ -741,6 +744,24 @@ def _print_codex_execution_result(result: CodexExecutionResult) -> None:
     console.print(f"Completed: {result.completed_at.isoformat()}")
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
     console.print("Safety: Codex output is evidence only. Devo did not validate, commit, push, or complete queue/task state.")
+
+
+def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
+    console.print(f"[bold]Codex queue worker status: {status.queue_id}[/bold]")
+    console.print(f"Project: {status.project}")
+    console.print(f"Queue status: {status.queue_status}")
+    console.print(f"Current item: {status.current_item_id or 'none'}")
+    console.print(f"Current item status: {status.current_item_status or 'none'}")
+    console.print(f"Current task: {status.current_task_id or 'none'}")
+    console.print(f"Linked worker run: {status.linked_worker_run_id or 'none'}")
+    console.print(f"Linked worker status: {status.linked_worker_run_status or 'none'}")
+    console.print(f"Linked run plan: {status.linked_run_plan_id or 'none'}")
+    console.print(f"Linked run plan status: {status.linked_run_plan_status or 'none'}")
+    console.print(f"Latest execution status: {status.latest_worker_execution_status or 'none'}")
+    console.print(f"Latest execution exit code: {status.latest_worker_execution_exit_code if status.latest_worker_execution_exit_code is not None else 'none'}")
+    console.print(f"Latest execution log path: {status.latest_worker_execution_log_path or 'none'}", soft_wrap=True)
+    console.print(f"Next action: {status.next_action}", soft_wrap=True)
+    console.print("Safety: queue worker status is read-only. Queue item completion remains explicit.")
 
 
 def _print_json_model(model: object) -> None:
@@ -2459,6 +2480,44 @@ def list_codex_worker_reports_command(
         )
 
 
+@worker_codex_app.command("prepare-next")
+def prepare_codex_worker_for_queue_next_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Prepare handoff, worker run, and run plan for one queue item without approval or execution."""
+    project_name = _resolve_project(project_name)
+    try:
+        handoff, worker_run, plan, preflight, plan_json, plan_markdown = prepare_codex_worker_for_queue_next(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    console.print(f"[green]Codex queue worker prepared[/green] {project_name}")
+    console.print(f"Handoff: {handoff.handoff_id}")
+    _print_worker_run(worker_run)
+    _print_codex_preflight(preflight)
+    _print_codex_run_plan(plan, json_path=plan_json, markdown_path=plan_markdown)
+    console.print("Next commands:")
+    console.print(f"  devo worker codex run-plan-show --project {project_name} --plan {plan.plan_id}")
+    console.print(f"  devo worker codex run-plan-approve --project {project_name} --plan {plan.plan_id} --note \"<review note>\"")
+    console.print(f"  devo worker codex execute-preview --project {project_name} --run {worker_run.worker_run_id} --plan {plan.plan_id}")
+    console.print(f"  devo worker codex execute --project {project_name} --run {worker_run.worker_run_id} --plan {plan.plan_id} --confirm-execute")
+    console.print("Safety: prepare-next does not approve the plan, execute Codex, run validation, commit, push, or complete queue/task state.")
+
+
+@worker_codex_app.command("queue-status")
+def codex_queue_worker_status_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+) -> None:
+    """Show queue worker linkage and next safe command without mutating state."""
+    project_name = _resolve_project(project_name)
+    try:
+        status = get_codex_queue_worker_status(project_name, queue_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    _print_codex_queue_worker_status(status)
+
+
 @worker_codex_app.command("preflight")
 def preflight_codex_worker_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -2486,7 +2545,7 @@ def create_codex_worker_run_plan_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
 ) -> None:
-    """Create a safe preview run-plan artifact for future supervised Codex execution."""
+    """Create a safe preview run-plan artifact for supervised Codex execution."""
     project_name = _resolve_project(project_name)
     try:
         plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id)
@@ -2495,7 +2554,7 @@ def create_codex_worker_run_plan_command(
     console.print(f"[green]Codex run plan saved[/green] {project_name}")
     _print_codex_preflight(preflight)
     _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
-    console.print("Supervised Codex execution is future work and is not implemented yet.")
+    console.print("Use execute-preview first; guarded execution still requires approval and --confirm-execute.")
 
 
 @worker_codex_app.command("run-plan-list")

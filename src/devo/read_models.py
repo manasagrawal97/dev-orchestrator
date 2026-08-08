@@ -12,6 +12,7 @@ from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
 from .project_planning import (
     calculate_project_progress,
+    get_codex_queue_worker_status,
     list_batch_approvals,
     list_codex_handoffs,
     list_codex_run_plans,
@@ -119,6 +120,12 @@ class ProjectOverview(BaseModel):
     queue_completed_count: int = 0
     queue_blocked_count: int = 0
     queue_next_action: str = "Create a Project Brief."
+    linked_worker_run_id: str | None = None
+    linked_worker_run_status: str | None = None
+    linked_run_plan_id: str | None = None
+    current_queue_item_worker_status: str | None = None
+    current_queue_item_review_status: str | None = None
+    queue_worker_next_action: str | None = None
     handoff_count: int = 0
     latest_handoff_id: str | None = None
     latest_handoff_type: str | None = None
@@ -224,6 +231,16 @@ def build_project_overview_with_timing(
             queue_completed_count=int(planning["queue_completed_count"]),
             queue_blocked_count=int(planning["queue_blocked_count"]),
             queue_next_action=str(planning["queue_next_action"]),
+            linked_worker_run_id=str(planning["linked_worker_run_id"]) if planning["linked_worker_run_id"] else None,
+            linked_worker_run_status=str(planning["linked_worker_run_status"]) if planning["linked_worker_run_status"] else None,
+            linked_run_plan_id=str(planning["linked_run_plan_id"]) if planning["linked_run_plan_id"] else None,
+            current_queue_item_worker_status=(
+                str(planning["current_queue_item_worker_status"]) if planning["current_queue_item_worker_status"] else None
+            ),
+            current_queue_item_review_status=(
+                str(planning["current_queue_item_review_status"]) if planning["current_queue_item_review_status"] else None
+            ),
+            queue_worker_next_action=str(planning["queue_worker_next_action"]) if planning["queue_worker_next_action"] else None,
             handoff_count=int(planning["handoff_count"]),
             latest_handoff_id=str(planning["latest_handoff_id"]) if planning["latest_handoff_id"] else None,
             latest_handoff_type=str(planning["latest_handoff_type"]) if planning["latest_handoff_type"] else None,
@@ -502,6 +519,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "queue_completed_count": 0,
             "queue_blocked_count": 0,
             "queue_next_action": f"Review planning artifacts: {exc}",
+            "linked_worker_run_id": None,
+            "linked_worker_run_status": None,
+            "linked_run_plan_id": None,
+            "current_queue_item_worker_status": None,
+            "current_queue_item_review_status": None,
+            "queue_worker_next_action": f"Review queue worker artifacts: {exc}",
             "handoff_count": 0,
             "latest_handoff_id": None,
             "latest_handoff_type": None,
@@ -540,6 +563,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     latest_worker_run = worker_runs[0] if worker_runs else None
     latest_worker_report = worker_reports[0] if worker_reports else None
     latest_run_plan = run_plans[0] if run_plans else None
+    queue_worker_status = None
+    if latest_queue:
+        try:
+            queue_worker_status = get_codex_queue_worker_status(project_name, latest_queue.queue_id, workspace_root=workspace_root)
+        except Exception:
+            queue_worker_status = None
     latest_worker_report_run = None
     if latest_worker_report:
         try:
@@ -602,6 +631,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "queue_completed_count": latest_queue.completed_count if latest_queue else 0,
         "queue_blocked_count": latest_queue.blocked_count if latest_queue else 0,
         "queue_next_action": queue_next_action,
+        "linked_worker_run_id": queue_worker_status.linked_worker_run_id if queue_worker_status else None,
+        "linked_worker_run_status": queue_worker_status.linked_worker_run_status if queue_worker_status else None,
+        "linked_run_plan_id": queue_worker_status.linked_run_plan_id if queue_worker_status else None,
+        "current_queue_item_worker_status": queue_worker_status.latest_worker_execution_status if queue_worker_status else None,
+        "current_queue_item_review_status": queue_worker_status.current_item_status if queue_worker_status else None,
+        "queue_worker_next_action": queue_worker_status.next_action if queue_worker_status else None,
         "handoff_count": len(handoffs),
         "latest_handoff_id": latest_handoff.handoff_id if latest_handoff else None,
         "latest_handoff_type": latest_handoff.handoff_type if latest_handoff else None,

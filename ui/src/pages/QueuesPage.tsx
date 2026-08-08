@@ -5,7 +5,7 @@ import { KeyValueList } from '../components/KeyValueList';
 import { EmptyState, ErrorState, LoadingState } from '../components/SectionState';
 import { StatusBadge } from '../components/StatusBadge';
 import { SummaryCard } from '../components/SummaryCard';
-import type { ExecutionQueue, ProjectProgress, ProjectQueuesResponse, QueueItem } from '../types/devo';
+import type { CodexQueueWorkerStatus, ExecutionQueue, ProjectProgress, ProjectQueuesResponse, QueueItem } from '../types/devo';
 
 interface QueuesPageProps {
   selectedProject: string | null;
@@ -24,6 +24,7 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
   const [progress, setProgress] = useState<OptionalState<ProjectProgress>>(emptyOptional);
   const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
   const [selectedQueue, setSelectedQueue] = useState<OptionalState<ExecutionQueue>>(emptyOptional);
+  const [workerStatus, setWorkerStatus] = useState<OptionalState<CodexQueueWorkerStatus>>(emptyOptional);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -31,6 +32,7 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
       setProgress(emptyOptional<ProjectProgress>());
       setSelectedQueueId(null);
       setSelectedQueue(emptyOptional<ExecutionQueue>());
+      setWorkerStatus(emptyOptional<CodexQueueWorkerStatus>());
       return;
     }
 
@@ -38,6 +40,7 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
     setQueues({ data: null, loading: true, error: null });
     setProgress({ data: null, loading: true, error: null });
     setSelectedQueue(emptyOptional<ExecutionQueue>());
+    setWorkerStatus(emptyOptional<CodexQueueWorkerStatus>());
 
     loadOptional(devoApi.getProjectQueues(selectedProject)).then((state) => {
       if (!active) {
@@ -56,12 +59,15 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
   useEffect(() => {
     if (!selectedProject || !selectedQueueId) {
       setSelectedQueue(emptyOptional<ExecutionQueue>());
+      setWorkerStatus(emptyOptional<CodexQueueWorkerStatus>());
       return;
     }
 
     let active = true;
     setSelectedQueue({ data: null, loading: true, error: null });
+    setWorkerStatus({ data: null, loading: true, error: null });
     loadOptional(devoApi.getProjectQueue(selectedProject, selectedQueueId)).then((state) => active && setSelectedQueue(state));
+    loadOptional(devoApi.getProjectQueueWorkerStatus(selectedProject, selectedQueueId)).then((state) => active && setWorkerStatus(state));
     return () => {
       active = false;
     };
@@ -111,6 +117,7 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
 
       {queues.loading ? <LoadingState message="Loading queues..." /> : null}
       {queues.error ? <ErrorState message={queues.error} /> : null}
+      {workerStatus.error ? <ErrorState message={workerStatus.error} /> : null}
       {!queues.loading && !queues.error && !queueList.length ? (
         <EmptyState message="No execution queue artifacts are available yet.">
           <CommandCopyBox command={`devo project queue-create --project ${selectedProject} --batch <batchId>`} />
@@ -159,8 +166,28 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
             <CommandCopyBox command={`devo project queue-create --project ${selectedProject} --batch ${selected?.source_batch_id ?? '<batchId>'}`} />
             <CommandCopyBox command={`devo project queue-start --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
             <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
+            <CommandCopyBox command={`devo worker codex prepare-next --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
+            <CommandCopyBox command={`devo worker codex queue-status --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
+            {workerStatus.data?.linked_worker_run_id && workerStatus.data?.linked_run_plan_id ? (
+              <>
+                <CommandCopyBox
+                  command={`devo worker codex execute-preview --project ${selectedProject} --run ${workerStatus.data.linked_worker_run_id} --plan ${workerStatus.data.linked_run_plan_id}`}
+                />
+                <CommandCopyBox
+                  command={`devo worker codex execute --project ${selectedProject} --run ${workerStatus.data.linked_worker_run_id} --plan ${workerStatus.data.linked_run_plan_id} --confirm-execute`}
+                />
+              </>
+            ) : null}
             <CommandCopyBox command={`devo project queue-pause --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'} --reason usage_limit --note "<note>"`} />
             <CommandCopyBox command={`devo project queue-resume --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
+          </SummaryCard>
+
+          <SummaryCard title="Queue Worker Link">
+            {workerStatus.loading ? <LoadingState message="Loading queue worker status..." /> : null}
+            {workerStatus.data ? <QueueWorkerStatusPanel status={workerStatus.data} /> : null}
+            {!workerStatus.loading && !workerStatus.data ? (
+              <p className="muted compact">No linked Codex worker status is available for this queue yet.</p>
+            ) : null}
           </SummaryCard>
         </>
       ) : null}
@@ -168,6 +195,33 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
       {progress.loading ? <LoadingState message="Loading queue progress..." /> : null}
       {progress.error ? <ErrorState message={progress.error} /> : null}
     </section>
+  );
+}
+
+function QueueWorkerStatusPanel({ status }: { status: CodexQueueWorkerStatus }) {
+  return (
+    <div className="task-detail">
+      <KeyValueList
+        items={[
+          ['Queue status', status.queue_status],
+          ['Current item', status.current_item_id ?? 'none'],
+          ['Current item status', status.current_item_status ?? 'none'],
+          ['Current task', status.current_task_id ?? 'none'],
+          ['Linked worker run', status.linked_worker_run_id ?? 'none'],
+          ['Linked worker status', status.linked_worker_run_status ?? 'none'],
+          ['Linked run plan', status.linked_run_plan_id ?? 'none'],
+          ['Linked run plan status', status.linked_run_plan_status ?? 'none'],
+          ['Latest execution status', status.latest_worker_execution_status ?? 'none'],
+          ['Latest execution exit code', status.latest_worker_execution_exit_code ?? 'none'],
+          ['Latest execution log', status.latest_worker_execution_log_path ?? 'none'],
+          ['Next action', status.next_action]
+        ]}
+      />
+      <p className="muted compact">
+        A worker exit can move this queue to waiting review, but completion still requires review, validation evidence, and an explicit
+        queue-complete-item command.
+      </p>
+    </div>
   );
 }
 

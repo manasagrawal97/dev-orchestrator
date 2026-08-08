@@ -43,7 +43,7 @@ ALLOWED_BATCH_STATUSES = {"draft", "reviewed", "approved", "in_progress", "compl
 ALLOWED_BATCH_APPROVAL_STATUSES = {"not_requested", "requested", "approved", "rejected"}
 ALLOWED_BATCH_REVIEW_STATUSES = {"not_reviewed", "reviewed", "needs_changes"}
 ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
-ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
+ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "waiting_review", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
 ALLOWED_HANDOFF_STATUSES = {"draft", "used", "superseded"}
 ALLOWED_HANDOFF_TYPES = {"task", "batch", "queue_next"}
@@ -667,6 +667,25 @@ class CodexExecutionResult(BaseModel):
     stderr_log_path: str
     started_at: datetime
     completed_at: datetime
+    next_action: str
+
+
+class CodexQueueWorkerStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    queue_id: str
+    queue_status: str
+    current_item_id: str | None = None
+    current_item_status: str | None = None
+    current_task_id: str | None = None
+    linked_worker_run_id: str | None = None
+    linked_worker_run_status: str | None = None
+    linked_run_plan_id: str | None = None
+    linked_run_plan_status: str | None = None
+    latest_worker_execution_status: str | None = None
+    latest_worker_execution_exit_code: int | None = None
+    latest_worker_execution_log_path: str | None = None
     next_action: str
 
 
@@ -1590,7 +1609,7 @@ def get_queue_next_item(project_name: str, queue_id: str, workspace_root: Path |
     root = workspace_root or get_workspace_root()
     queue = _require_queue(project_name, queue_id, root)
     current = _find_queue_item(queue.items, queue.current_item_id)
-    if current and current.status == "running":
+    if current and current.status in {"running", "waiting_review", "paused", "blocked", "failed"}:
         return queue, current
     pending = next((item for item in queue.items if item.status == "pending"), None)
     return queue, pending
@@ -1899,6 +1918,49 @@ def create_codex_worker_run_from_handoff(
         next_action=_worker_run_next_action(project_name, worker_run_id, "planned"),
     )
     return _write_worker_run(project_name, worker_run, workspace_root=root)
+
+
+def prepare_codex_worker_for_queue_next(
+    project_name: str,
+    queue_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[CodexHandoff, WorkerRun, CodexRunPlan, CodexPreflightResult, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    queue, item = get_queue_next_item(project_name, queue_id, workspace_root=root)
+    if not item:
+        msg = f"Execution queue has no running or pending item: {queue.queue_id}"
+        raise ValueError(msg)
+    handoff = _find_handoff_for_queue_item(project_name, queue.queue_id, item.item_id, workspace_root=root)
+    if not handoff:
+        handoff, _handoff_json, _handoff_md = create_codex_handoff_for_queue_next(project_name, queue.queue_id, workspace_root=root)
+    worker_run, _worker_json, _worker_md = create_codex_worker_run_from_handoff(project_name, handoff.handoff_id, workspace_root=root)
+    plan, preflight, plan_json, plan_md = create_codex_worker_run_plan(project_name, worker_run.worker_run_id, workspace_root=root)
+    return handoff, worker_run, plan, preflight, plan_json, plan_md
+
+
+def get_codex_queue_worker_status(project_name: str, queue_id: str, workspace_root: Path | None = None) -> CodexQueueWorkerStatus:
+    root = workspace_root or get_workspace_root()
+    queue, item = get_queue_next_item(project_name, queue_id, workspace_root=root)
+    if not item and queue.current_item_id:
+        item = _find_queue_item(queue.items, queue.current_item_id)
+    worker_run = _latest_worker_run_for_queue_item(project_name, queue.queue_id, item.item_id if item else None, workspace_root=root)
+    run_plan = _latest_run_plan_for_worker(project_name, worker_run.worker_run_id if worker_run else None, workspace_root=root)
+    return CodexQueueWorkerStatus(
+        project=project_name,
+        queue_id=queue.queue_id,
+        queue_status=queue.status,
+        current_item_id=item.item_id if item else None,
+        current_item_status=item.status if item else None,
+        current_task_id=item.task_id if item else None,
+        linked_worker_run_id=worker_run.worker_run_id if worker_run else None,
+        linked_worker_run_status=worker_run.status if worker_run else None,
+        linked_run_plan_id=run_plan.plan_id if run_plan else None,
+        linked_run_plan_status=run_plan.status if run_plan else None,
+        latest_worker_execution_status=worker_run.status if worker_run and worker_run.execution_exit_code is not None else None,
+        latest_worker_execution_exit_code=worker_run.execution_exit_code if worker_run else None,
+        latest_worker_execution_log_path=worker_run.execution_log_path if worker_run else None,
+        next_action=_queue_worker_next_action(project_name, queue.queue_id, item, worker_run, run_plan),
+    )
 
 
 def load_worker_run_index(project_name: str, workspace_root: Path | None = None) -> WorkerRunIndex:
@@ -2317,7 +2379,10 @@ def approve_codex_run_plan(project_name: str, plan_id: str, note: str = "", work
             "approval_status": "approved",
             "approval_note": note.strip() or plan.approval_note,
             "updated_at": datetime.now(UTC),
-            "next_action": "Planning approval recorded only. Supervised Codex execution is future work and is not implemented yet.",
+            "next_action": (
+                "Planning approval recorded. Preview or run the guarded one-shot execution only with "
+                "execute-preview or execute --confirm-execute; review is still required afterward."
+            ),
         }
     )
     return _write_codex_run_plan(project_name, updated, workspace_root=root)
@@ -2429,6 +2494,7 @@ def execute_codex_worker_run(
         }
     )
     written_run, _json_path, _markdown_path = _write_worker_run(project_name, updated_run, workspace_root=root)
+    _update_linked_queue_from_worker_execution(project_name, written_run, status, workspace_root=root)
     result = CodexExecutionResult(
         project=project_name,
         worker_run_id=worker_run.worker_run_id,
@@ -3377,6 +3443,10 @@ def _write_execution_queue(project_name: str, queue: ExecutionQueue, workspace_r
     root = workspace_root or get_workspace_root()
     paths = planning_artifact_paths(project_name, workspace_root=root)
     paths.queues_dir.mkdir(parents=True, exist_ok=True)
+    for item in queue.items:
+        if item.status not in ALLOWED_QUEUE_ITEM_STATUSES:
+            msg = f"Invalid queue item status: {item.status}"
+            raise ValueError(msg)
     queue = _with_queue_counts(queue)
     json_path, markdown_path = queue_artifact_paths(project_name, queue.queue_id, workspace_root=root)
     _write_model(json_path, queue)
@@ -3619,6 +3689,150 @@ def _write_codex_run_plan_index(project_name: str, workspace_root: Path | None =
     index = CodexRunPlanIndex(project=project_name, run_plans=entries, updated_at=datetime.now(UTC))
     _write_model(paths.run_plan_index_json, index)
     return index
+
+
+def _find_handoff_for_queue_item(project_name: str, queue_id: str, item_id: str, workspace_root: Path | None = None) -> CodexHandoff | None:
+    for handoff in list_codex_handoffs(project_name, workspace_root=workspace_root):
+        if (
+            handoff.handoff_type == "queue_next"
+            and handoff.source_queue_id == _normalize_queue_id(queue_id)
+            and handoff.source_item_id == item_id.strip().upper()
+        ):
+            return handoff
+    return None
+
+
+def _latest_worker_run_for_queue_item(
+    project_name: str,
+    queue_id: str,
+    item_id: str | None,
+    workspace_root: Path | None = None,
+) -> WorkerRun | None:
+    if not item_id:
+        return None
+    normalized_queue = _normalize_queue_id(queue_id)
+    normalized_item = item_id.strip().upper()
+    return next(
+        (
+            worker_run
+            for worker_run in list_codex_worker_runs(project_name, workspace_root=workspace_root)
+            if worker_run.source_queue_id == normalized_queue and worker_run.source_queue_item_id == normalized_item
+        ),
+        None,
+    )
+
+
+def _latest_run_plan_for_worker(project_name: str, worker_run_id: str | None, workspace_root: Path | None = None) -> CodexRunPlan | None:
+    if not worker_run_id:
+        return None
+    normalized_worker = _normalize_worker_run_id(worker_run_id)
+    return next(
+        (plan for plan in list_codex_run_plans(project_name, workspace_root=workspace_root) if plan.worker_run_id == normalized_worker),
+        None,
+    )
+
+
+def _update_linked_queue_from_worker_execution(
+    project_name: str,
+    worker_run: WorkerRun,
+    worker_status: str,
+    workspace_root: Path | None = None,
+) -> None:
+    if not worker_run.source_queue_id or not worker_run.source_queue_item_id:
+        return
+    root = workspace_root or get_workspace_root()
+    queue = load_execution_queue(project_name, worker_run.source_queue_id, workspace_root=root)
+    if not queue:
+        return
+    item = _find_queue_item(queue.items, worker_run.source_queue_item_id)
+    if not item:
+        return
+    now = datetime.now(UTC)
+    queue_status, item_status, pause_reason, resume_hint = _queue_state_for_worker_status(worker_status, item.item_id)
+    notes = _append_note(item.notes, _queue_note_for_worker_status(worker_run.worker_run_id, worker_status), now)
+    updated_item = item.model_copy(update={"status": item_status, "notes": notes})
+    items = [entry.model_copy() for entry in queue.items]
+    _replace_queue_item(items, updated_item)
+    updated_queue = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": queue_status,
+                "items": items,
+                "pause_reason": pause_reason,
+                "resume_hint": resume_hint,
+                "current_item_id": updated_item.item_id,
+                "updated_at": now,
+            }
+        )
+    )
+    _write_execution_queue(project_name, updated_queue, workspace_root=root)
+
+
+def _queue_state_for_worker_status(worker_status: str, item_id: str) -> tuple[str, str, str | None, str]:
+    if worker_status == "waiting_review":
+        return (
+            "waiting_review",
+            "waiting_review",
+            "worker_waiting_review",
+            f"Review worker output for {item_id}; complete the item only after human review and validation.",
+        )
+    if worker_status == "paused_usage_limit":
+        return (
+            "paused_usage_limit",
+            "paused",
+            "usage_limit",
+            f"Resume when Codex usage resets, then create or execute another worker run for {item_id}.",
+        )
+    if worker_status == "blocked_needs_approval":
+        return (
+            "waiting_review",
+            "blocked",
+            "worker_needs_approval",
+            f"Review approval/safety blocker for {item_id} before continuing.",
+        )
+    if worker_status == "failed":
+        return (
+            "paused_failure",
+            "failed",
+            "worker_failed",
+            f"Review worker failure for {item_id}; create a new handoff or worker run only after cause is understood.",
+        )
+    return (
+        "waiting_review",
+        "waiting_review",
+        "worker_review",
+        f"Review worker state for {item_id} before continuing.",
+    )
+
+
+def _queue_note_for_worker_status(worker_run_id: str, worker_status: str) -> str:
+    return f"Worker run {worker_run_id} ended with status {worker_status}; queue item is not completed automatically."
+
+
+def _queue_worker_next_action(
+    project_name: str,
+    queue_id: str,
+    item: QueueItem | None,
+    worker_run: WorkerRun | None,
+    run_plan: CodexRunPlan | None,
+) -> str:
+    if not item:
+        return f"No active queue item found. Inspect the queue with devo project queue-show --project {project_name} --queue {queue_id}."
+    if not worker_run:
+        return f"Prepare a worker for the item: devo worker codex prepare-next --project {project_name} --queue {queue_id}"
+    if not run_plan:
+        return f"Create a run plan: devo worker codex run-plan --project {project_name} --run {worker_run.worker_run_id}"
+    if run_plan.approval_status != "approved":
+        return f"Review and approve the run plan if safe: devo worker codex run-plan-approve --project {project_name} --plan {run_plan.plan_id}"
+    if worker_run.execution_exit_code is None:
+        return (
+            f"Preview or execute the approved worker run: devo worker codex execute-preview --project {project_name} --run {worker_run.worker_run_id} --plan {run_plan.plan_id}"
+        )
+    if worker_run.status == "waiting_review":
+        return (
+            f"Review logs and import a worker report, then complete explicitly only if safe: devo project queue-complete-item --project {project_name} --queue {queue_id} --item {item.item_id} --note \"<reviewed result>\""
+        )
+    return worker_run.next_action or "Review worker and queue status."
 
 
 def _with_queue_counts(queue: ExecutionQueue) -> ExecutionQueue:
@@ -4028,7 +4242,7 @@ def _worker_run_next_action(project_name: str, worker_run_id: str, status: str) 
     if status == "planned":
         return (
             f"Inspect preflight or create a run plan with devo worker codex preflight --project {project_name} --run {worker_run_id}. "
-            "Paste the linked handoff prompt into Codex manually when executing today; supervised Codex execution is future work."
+            "Use the guarded run-plan and execute-preview flow before any supervised execute --confirm-execute run."
         )
     if status == "running":
         return f"Track the supervised Codex session; Devo will update status after process exit or use devo worker codex run-status --project {project_name} --run {worker_run_id} if manual correction is needed."
@@ -4191,7 +4405,7 @@ def _codex_preflight_result(
         next_action = f"Review warnings, then create a safe preview with devo worker codex run-plan --project {project_name} --run {worker_run_id}."
     else:
         status = "passed"
-        next_action = f"Create a safe preview with devo worker codex run-plan --project {project_name} --run {worker_run_id}. Supervised Codex execution is future work."
+        next_action = f"Create a safe preview with devo worker codex run-plan --project {project_name} --run {worker_run_id}."
     return CodexPreflightResult(
         project=project_name,
         worker_run_id=worker_run_id,
@@ -4208,7 +4422,7 @@ def _run_plan_next_action(project_name: str, plan_id: str, preflight_status: str
         return f"Resolve blocked preflight checks, then recreate the run plan: devo worker codex run-plan --project {project_name} --run <workerRunId>."
     return (
         f"Inspect this run plan with devo worker codex run-plan-show --project {project_name} --plan {plan_id}. "
-        "Supervised Codex execution is future work and is not implemented yet."
+        "If approval is recorded and preflight is acceptable, use execute-preview before any guarded execute --confirm-execute run."
     )
 
 

@@ -271,6 +271,8 @@ export function WorkerRunsPage({ selectedProject }: WorkerRunsPageProps) {
               <CommandCopyBox command={`devo worker codex execute-log --project ${selectedProject} --run ${selectedWorkerRunId ?? '<workerRunId>'}`} />
               {selected?.source_queue_id ? (
                 <>
+                  <CommandCopyBox command={`devo worker codex queue-status --project ${selectedProject} --queue ${selected.source_queue_id}`} />
+                  <CommandCopyBox command={`devo worker codex prepare-next --project ${selectedProject} --queue ${selected.source_queue_id}`} />
                   <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${selected.source_queue_id}`} />
                   <CommandCopyBox
                     command={`devo project queue-complete-item --project ${selectedProject} --queue ${selected.source_queue_id} --item ${

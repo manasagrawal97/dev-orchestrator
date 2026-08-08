@@ -249,6 +249,7 @@ def test_project_queue_endpoints_return_json(tmp_path: Path, monkeypatch) -> Non
     queues = client.get("/api/projects/sample/queues")
     queue = client.get("/api/projects/sample/queues/Q001")
     next_item = client.get("/api/projects/sample/queues/Q001/next")
+    worker_status = client.get("/api/projects/sample/queues/Q001/worker-status")
     missing = client.get("/api/projects/sample/queues/Q999")
 
     assert queues.status_code == 200
@@ -258,6 +259,9 @@ def test_project_queue_endpoints_return_json(tmp_path: Path, monkeypatch) -> Non
     assert queue.json()["source_batch_id"] == "B001"
     assert next_item.status_code == 200
     assert next_item.json()["item"]["item_id"] == "QI001"
+    assert worker_status.status_code == 200
+    assert worker_status.json()["linked_worker_run_id"] is None
+    assert worker_status.json()["next_action"].startswith("Prepare a worker")
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "queue_not_found"
 
@@ -305,11 +309,13 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
     create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
     create_codex_handoff_for_queue_next("sample", "Q001", workspace_root=workspace)
     create_codex_worker_run_from_handoff("sample", "H001", workspace_root=workspace)
+    create_codex_worker_run_plan("sample", "WR001", workspace_root=workspace)
     client = TestClient(create_app(workspace_root=workspace))
 
     worker_runs = client.get("/api/projects/sample/worker-runs")
     worker_run = client.get("/api/projects/sample/worker-runs/WR001")
     execution = client.get("/api/projects/sample/worker-runs/WR001/execution")
+    queue_worker_status = client.get("/api/projects/sample/queues/Q001/worker-status")
     missing = client.get("/api/projects/sample/worker-runs/WR999")
 
     assert worker_runs.status_code == 200
@@ -323,6 +329,9 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
     assert execution.json()["worker_run_id"] == "WR001"
     assert execution.json()["execution_exit_code"] is None
     assert execution.json()["execution_log_path"].endswith("worker-run-WR001.log")
+    assert queue_worker_status.status_code == 200
+    assert queue_worker_status.json()["linked_worker_run_id"] == "WR001"
+    assert queue_worker_status.json()["linked_run_plan_id"] == "RP001"
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "worker_run_not_found"
 
@@ -556,6 +565,7 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/queues" in result.output
     assert "GET /api/projects/{project}/queues/{queue_id}" in result.output
     assert "GET /api/projects/{project}/queues/{queue_id}/next" in result.output
+    assert "GET /api/projects/{project}/queues/{queue_id}/worker-status" in result.output
     assert "GET /api/projects/{project}/handoffs" in result.output
     assert "GET /api/projects/{project}/handoffs/{handoff_id}" in result.output
     assert "GET /api/projects/{project}/worker-runs" in result.output

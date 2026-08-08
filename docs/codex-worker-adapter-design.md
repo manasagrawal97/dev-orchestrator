@@ -150,11 +150,13 @@ TASK-DEVO-091 implements read-only preflight and run-plan preview artifacts. `de
 
 TASK-DEVO-092 implements the first supervised single-run execution path. `devo worker codex execute-preview` is read-only. `devo worker codex execute --confirm-execute` launches Codex once only after the worker run and approved run plan pass execution checks. `devo worker codex execute-log` reads stored logs. Execution updates the worker run to review/failure/pause/block states but never completes queue/tasks, validates, commits, pushes, or trusts Codex output as proof.
 
+TASK-DEVO-093 integrates that supervised path with one execution queue item at a time. `devo worker codex prepare-next --project <project> --queue <queueId>` creates or reuses the current queue-item handoff, creates a linked worker run, creates a run plan, and runs preflight without approval or execution. `devo worker codex queue-status` is read-only visibility into the queue item, linked worker run, linked run plan, latest execution state, and next CLI command.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
 
-- Worker completed successfully -> queue item may become `ready_for_review` or stay running until explicit review.
+- Worker completed successfully -> worker, queue item, and queue become `waiting_review`.
 - Worker failed -> queue should become `paused_failure`.
 - Usage limit detected -> queue should become `paused_usage_limit`.
 - Safety gate blocked -> queue should become `waiting_review`.
@@ -225,7 +227,7 @@ Future behavior should support:
 - worker-reported validation attempted/result fields
 - validation result import from structured evidence
 - links to Devo validation runner records when safe validation commands are run
-- queue state `ready_for_review` or `waiting_review` before final completion
+- queue state `waiting_review` before final completion
 - explicit review action before `queue-complete-item` or future equivalent completion
 
 Final completion should require explicit user action, review evidence, or a future controlled review action. A worker transcript alone is not enough.
@@ -271,17 +273,18 @@ These commands are the safety foundation for a future supervised adapter. They d
 Implemented supervised one-run execution commands:
 
 ```powershell
+devo worker codex prepare-next --project <project> --queue <queueId>
+devo worker codex queue-status --project <project> --queue <queueId>
 devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId>
 devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute
 devo worker codex execute-log --project <project> --run <workerRunId>
 ```
 
-`execute` is intentionally not a queue worker. It launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates only the worker-run record. Exit code `0` becomes `waiting_review`; non-zero failures become `failed` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery.
+`prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery.
 
 Proposed future execution commands:
 
 ```powershell
-devo worker codex run-next --project <project> --queue <queueId>
 devo worker codex run-task --project <project> --task <taskId>
 devo worker codex resume --project <project> --queue <queueId>
 ```

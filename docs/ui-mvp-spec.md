@@ -190,7 +190,8 @@ Sections:
 - imported report detail with status reported by worker, summary, changed files, validation attempted/results, tests run, commands run, optional commit hash, safety warnings, blockers, follow-up needed, notes, and imported/reported timestamps
 - selected run-plan preview with preflight status, approval status, proposed working directory, safe command preview, preflight checks, blocked reasons, warnings, allowed/forbidden scope, validation expectations, safety boundaries, and next action
 - related handoff and queue context when available
-- copyable CLI commands for `worker codex run-list`, `run-show`, `run-status`, `preflight`, `run-plan`, `run-plan-list`, `run-plan-show`, `execute-preview`, guarded `execute --confirm-execute`, `execute-log`, `report-template`, `report-validate`, `report-import`, `report-show`, `report-list`, plus post-review `queue-next` and `queue-complete-item` guidance
+- copyable CLI commands for `worker codex prepare-next`, `queue-status`, `run-list`, `run-show`, `run-status`, `preflight`, `run-plan`, `run-plan-list`, `run-plan-show`, `execute-preview`, guarded `execute --confirm-execute`, `execute-log`, `report-template`, `report-validate`, `report-import`, `report-show`, `report-list`, plus post-review `queue-next` and `queue-complete-item` guidance
+- read-only queue-worker linkage fields: linked worker run, linked run plan, current item review status, latest execution status, and next CLI command
 
 Primary user question: "What did the manual Codex worker run report, is a future supervised run ready to plan, and what should I review before touching queue/task state?"
 

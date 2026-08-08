@@ -43,6 +43,12 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.queue_count == 0
     assert overview.latest_queue_id is None
     assert overview.queue_pending_count == 0
+    assert overview.linked_worker_run_id is None
+    assert overview.linked_worker_run_status is None
+    assert overview.linked_run_plan_id is None
+    assert overview.current_queue_item_worker_status is None
+    assert overview.current_queue_item_review_status is None
+    assert overview.queue_worker_next_action is None
     assert overview.handoff_count == 0
     assert overview.latest_handoff_id is None
     assert overview.handoff_next_action
@@ -160,6 +166,12 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "progress_next_action" in overview_data
     assert "queue_count" in overview_data
     assert "queue_next_action" in overview_data
+    assert "linked_worker_run_id" in overview_data
+    assert "linked_worker_run_status" in overview_data
+    assert "linked_run_plan_id" in overview_data
+    assert "current_queue_item_worker_status" in overview_data
+    assert "current_queue_item_review_status" in overview_data
+    assert "queue_worker_next_action" in overview_data
     assert "handoff_count" in overview_data
     assert "handoff_next_action" in overview_data
     assert "worker_run_count" in overview_data
@@ -205,7 +217,7 @@ def test_project_overview_includes_worker_run_summary(tmp_path: Path, monkeypatc
     assert overview.latest_worker_run_id == "WR001"
     assert overview.latest_worker_run_status == "planned"
     assert overview.latest_worker_run_next_action is not None
-    assert "Paste the linked handoff prompt" in overview.latest_worker_run_next_action
+    assert "execute-preview" in overview.latest_worker_run_next_action
 
 
 def test_project_overview_includes_worker_report_summary(tmp_path: Path, monkeypatch) -> None:
@@ -254,7 +266,7 @@ def test_project_overview_includes_codex_run_plan_summary(tmp_path: Path, monkey
     assert overview.latest_codex_run_plan_status == "ready"
     assert overview.latest_codex_preflight_status in {"passed", "warnings"}
     assert overview.latest_codex_run_plan_next_action is not None
-    assert "Supervised Codex execution is future work" in overview.latest_codex_run_plan_next_action
+    assert "execute-preview" in overview.latest_codex_run_plan_next_action
 
 
 def test_project_overview_includes_worker_execution_summary(tmp_path: Path, monkeypatch) -> None:
@@ -282,6 +294,13 @@ def test_project_overview_includes_worker_execution_summary(tmp_path: Path, monk
     assert overview.latest_worker_execution_exit_code == 0
     assert overview.latest_worker_execution_log_path is not None
     assert overview.latest_worker_execution_next_action is not None
+    assert overview.linked_worker_run_id == "WR001"
+    assert overview.linked_worker_run_status == "waiting_review"
+    assert overview.linked_run_plan_id == "RP001"
+    assert overview.current_queue_item_worker_status == "waiting_review"
+    assert overview.current_queue_item_review_status == "waiting_review"
+    assert overview.queue_worker_next_action is not None
+    assert "queue-complete-item" in overview.queue_worker_next_action
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:

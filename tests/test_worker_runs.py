@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from devo.main import app
 from devo.project_planning import (
+    list_codex_handoffs,
     list_codex_run_plans,
     list_codex_worker_runs,
     load_codex_run_plan,
@@ -56,6 +57,82 @@ def test_worker_run_create_from_handoff_creates_artifacts(tmp_path: Path, monkey
     index = load_worker_run_index("sample", workspace_root=workspace)
     assert index.worker_runs[0].worker_run_id == "WR001"
     assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_prepare_next_creates_handoff_worker_run_and_run_plan_for_queue_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_started_queue(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["worker", "codex", "prepare-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Codex queue worker prepared" in result.output
+    assert "run-plan-show --project sample --plan RP001" in result.output
+    assert "run-plan-approve --project sample --plan RP001" in result.output
+    assert "execute-preview --project sample --run WR001 --plan RP001" in result.output
+    assert "execute --project sample --run WR001 --plan RP001" in result.output
+    assert "--confirm-execute" in result.output
+    handoff = load_codex_handoff("sample", "H001", workspace_root=workspace)
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert handoff is not None
+    assert handoff.source_queue_id == "Q001"
+    assert handoff.source_item_id == "QI001"
+    assert worker_run is not None
+    assert worker_run.status == "planned"
+    assert worker_run.source_queue_id == "Q001"
+    assert worker_run.source_queue_item_id == "QI001"
+    assert worker_run.source_task_id == "T001"
+    assert worker_run.execution_exit_code is None
+    assert plan is not None
+    assert plan.worker_run_id == "WR001"
+    assert plan.queue_id == "Q001"
+    assert plan.queue_item_id == "QI001"
+    assert plan.approval_status == "not_requested"
+    assert plan.preflight_status == "passed"
+    assert queue is not None
+    assert queue.status == "running"
+    assert queue.items[0].status == "running"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_prepare_next_reuses_existing_queue_handoff_without_executing(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_handoff(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["worker", "codex", "prepare-next", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert len(list_codex_handoffs("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_runs("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_run_plans("sample", workspace_root=workspace)) == 1
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.execution_log_path is None
+    assert plan is not None
+    assert plan.approval_status == "not_requested"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_queue_status_command_shows_linked_worker_and_plan(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_started_queue(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    runner.invoke(app, ["worker", "codex", "prepare-next", "--project", "sample", "--queue", "Q001"])
+
+    result = runner.invoke(app, ["worker", "codex", "queue-status", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Codex queue worker status: Q001" in result.output
+    assert "Linked worker run: WR001" in result.output
+    assert "Linked run plan: RP001" in result.output
+    assert "run-plan-approve --project sample --plan RP001" in result.output
 
 
 def test_worker_run_create_rejects_unknown_handoff(tmp_path: Path, monkeypatch) -> None:
@@ -427,7 +504,7 @@ def test_codex_run_plan_creates_artifacts_and_index(tmp_path: Path, monkeypatch)
 
     assert result.exit_code == 0, result.output
     assert "Codex run plan saved" in result.output
-    assert "Supervised Codex execution is future work" in result.output
+    assert "execute-preview" in result.output
     json_path, markdown_path = worker_run_plan_artifact_paths("sample", "RP001", workspace_root=workspace)
     assert json_path.exists()
     assert markdown_path.exists()
@@ -481,7 +558,7 @@ def test_codex_run_plan_list_show_and_approve_work(tmp_path: Path, monkeypatch) 
     assert plan.approval_status == "approved"
     assert plan.approval_note == "Looks safe."
     assert "Looks safe." not in plan.warnings
-    assert "Supervised Codex execution is future work" in plan.next_action
+    assert "execute-preview" in plan.next_action
 
 
 def test_codex_run_plan_commands_do_not_mutate_target_repo_or_queue(tmp_path: Path, monkeypatch) -> None:
@@ -636,7 +713,9 @@ def test_codex_execute_success_sets_waiting_review_and_writes_logs(tmp_path: Pat
     assert worker_run.execution_log_path is not None
     assert "fake codex completed" in Path(worker_run.execution_log_path).read_text(encoding="utf-8")
     assert queue is not None
-    assert queue.items[0].status == "running"
+    assert queue.status == "waiting_review"
+    assert queue.items[0].status == "waiting_review"
+    assert queue.current_item_id == "QI001"
     assert task.status == "ready"
     assert _target_snapshot(project_path) == before_target
 
@@ -653,11 +732,17 @@ def test_codex_execute_failure_sets_failed_and_writes_logs(tmp_path: Path, monke
 
     assert result.exit_code == 0, result.output
     worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    task = get_backlog_task("sample", "T001", workspace_root=workspace)
     assert worker_run is not None
     assert worker_run.status == "failed"
     assert worker_run.execution_exit_code == 7
     assert worker_run.execution_stderr_log_path is not None
     assert "fake codex failed" in Path(worker_run.execution_stderr_log_path).read_text(encoding="utf-8")
+    assert queue is not None
+    assert queue.status == "paused_failure"
+    assert queue.items[0].status == "failed"
+    assert task.status == "ready"
 
 
 def test_codex_execute_usage_limit_output_sets_paused_usage_limit(tmp_path: Path, monkeypatch) -> None:
@@ -672,8 +757,12 @@ def test_codex_execute_usage_limit_output_sets_paused_usage_limit(tmp_path: Path
 
     assert result.exit_code == 0, result.output
     worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
     assert worker_run is not None
     assert worker_run.status == "paused_usage_limit"
+    assert queue is not None
+    assert queue.status == "paused_usage_limit"
+    assert queue.items[0].status == "paused"
 
 
 def test_codex_execute_safety_output_sets_blocked_needs_approval(tmp_path: Path, monkeypatch) -> None:
@@ -688,8 +777,37 @@ def test_codex_execute_safety_output_sets_blocked_needs_approval(tmp_path: Path,
 
     assert result.exit_code == 0, result.output
     worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
     assert worker_run is not None
     assert worker_run.status == "blocked_needs_approval"
+    assert queue is not None
+    assert queue.status == "waiting_review"
+    assert queue.items[0].status == "blocked"
+
+
+def test_queue_complete_item_still_required_after_worker_waiting_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+
+    before_review_queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    before_review_task = get_backlog_task("sample", "T001", workspace_root=workspace)
+    completed = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed and validated."],
+        terminal_width=240,
+    )
+    after_review_queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    after_review_task = get_backlog_task("sample", "T001", workspace_root=workspace)
+
+    assert before_review_queue is not None
+    assert before_review_queue.items[0].status == "waiting_review"
+    assert before_review_task.status == "ready"
+    assert completed.exit_code == 0, completed.output
+    assert after_review_queue is not None
+    assert after_review_queue.status == "completed"
+    assert after_review_queue.items[0].status == "completed"
+    assert after_review_task.status == "completed"
 
 
 def test_codex_execute_log_shows_log_tail(tmp_path: Path, monkeypatch) -> None:
@@ -727,14 +845,19 @@ def _create_approved_run_plan(
 
 
 def _create_queue_handoff(tmp_path: Path) -> None:
+    _create_started_queue(tmp_path)
+    result = runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    assert result.exit_code == 0, result.output
+
+
+def _create_started_queue(tmp_path: Path) -> None:
     _create_backlog(tmp_path)
     runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
     runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
     runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001", "--note", "Approved."])
     runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
-    runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
-    result = runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
-    assert result.exit_code == 0, result.output
+    started = runner.invoke(app, ["project", "queue-start", "--project", "sample", "--queue", "Q001"])
+    assert started.exit_code == 0, started.output
 
 
 def _create_backlog(tmp_path: Path) -> None:

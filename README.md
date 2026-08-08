@@ -207,6 +207,15 @@ devo project handoff-mark-used --project MyProject --handoff H001
 
 Handoff artifacts are stored under `workspace/projects/<project>/planning/handoffs/` as `handoff-<handoff_id>.json`, `handoff-<handoff_id>.md`, and `handoff-index.json`. Handoff prompts are the first safe bridge from Devo planning to Codex execution: Devo writes a prompt, then the user manually pastes it into Codex. Devo still does not run Codex, call AI APIs, execute target commands, approve implementation, run validation, commit, push, or modify target project source.
 
+Prepare one queue-linked supervised Codex worker without executing it:
+
+```powershell
+devo worker codex prepare-next --project MyProject --queue Q001
+devo worker codex queue-status --project MyProject --queue Q001
+```
+
+`prepare-next` finds the current running or next pending queue item, generates or reuses its handoff, creates a linked worker run, creates a run plan, and runs safe preflight. It does not approve the run plan, launch Codex, run validation, complete queue/tasks, commit, or push. `queue-status` is read-only status visibility for the queue item, linked worker run, linked run plan, latest execution status, and next CLI command.
+
 Track manual Codex worker attempts without running Codex:
 
 ```powershell
@@ -219,7 +228,7 @@ devo worker codex run-mark-used --project MyProject --run WR001
 
 Worker run artifacts are stored under `workspace/projects/<project>/workers/codex/` as `worker-run-<id>.json`, `worker-run-<id>.md`, and `worker-run-index.json`. These are workspace-only tracking records. They do not run Codex, call AI APIs, execute target commands, prove implementation complete, import execution reports, mark queue/task completion, validate, commit, push, or modify target project source.
 
-Preflight future supervised Codex runs and create safe run-plan previews:
+Preflight supervised Codex runs and create safe run-plan previews:
 
 ```powershell
 devo worker codex preflight --project MyProject --run WR001
@@ -229,7 +238,7 @@ devo worker codex run-plan-show --project MyProject --plan RP001
 devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
 ```
 
-Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; supervised Codex execution remains future work.
+Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
 
 Run one supervised Codex CLI worker for an approved run plan:
 
@@ -239,7 +248,7 @@ devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm
 devo worker codex execute-log --project MyProject --run WR001
 ```
 
-Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, a Codex executable is found on `PATH`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run to `waiting_review`, not `completed`; failures become `failed`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval`. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically.
+Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, a Codex executable is found on `PATH`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run and linked queue item to `waiting_review`, not `completed`; failures become `failed`/`paused_failure`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval` with the queue waiting for review. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically. Queue item completion still requires `devo project queue-complete-item` after human review and validation evidence.
 
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 
