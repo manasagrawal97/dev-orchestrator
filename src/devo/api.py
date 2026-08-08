@@ -30,6 +30,7 @@ from .project_planning import (
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    worker_execution_log_paths,
 )
 from .projects import get_workspace_root, list_projects
 from .read_models import build_project_overview_with_timing, build_run_overview, build_work_package_overview
@@ -60,6 +61,7 @@ API_ROUTES = (
     "GET /api/projects/{project}/handoffs/{handoff_id}",
     "GET /api/projects/{project}/worker-runs",
     "GET /api/projects/{project}/worker-runs/{worker_run_id}",
+    "GET /api/projects/{project}/worker-runs/{worker_run_id}/execution",
     "GET /api/projects/{project}/worker-runs/{worker_run_id}/report",
     "GET /api/projects/{project}/worker-reports",
     "GET /api/projects/{project}/worker-run-plans",
@@ -261,6 +263,29 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
                 detail={"error": "worker_run_not_found", "message": f"Codex worker run not found: {worker_run_id}"},
             )
         return _model_dump(worker_run)
+
+    @api.get("/api/projects/{project}/worker-runs/{worker_run_id}/execution")
+    def project_worker_run_execution(project: str, worker_run_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        worker_run = load_codex_worker_run(project, worker_run_id, workspace_root=root)
+        if not worker_run:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "worker_run_not_found", "message": f"Codex worker run not found: {worker_run_id}"},
+            )
+        log_path, stderr_log_path = worker_execution_log_paths(project, worker_run.worker_run_id, workspace_root=root)
+        return {
+            "project": project,
+            "worker_run_id": worker_run.worker_run_id,
+            "status": worker_run.status,
+            "execution_exit_code": worker_run.execution_exit_code,
+            "execution_command_label": worker_run.execution_command_label,
+            "execution_started_by": worker_run.execution_started_by,
+            "execution_log_path": worker_run.execution_log_path or str(log_path),
+            "execution_stderr_log_path": worker_run.execution_stderr_log_path or str(stderr_log_path),
+            "next_action": worker_run.next_action,
+            "status_note": worker_run.status_note,
+        }
 
     @api.get("/api/projects/{project}/worker-runs/{worker_run_id}/report")
     def project_worker_run_report(project: str, worker_run_id: str) -> dict[str, object]:

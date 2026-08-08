@@ -70,6 +70,8 @@ from .project_planning import (
     ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    CodexExecutionPreview,
+    CodexExecutionResult,
     CodexPreflightResult,
     CodexRunPlan,
     CodexWorkerReport,
@@ -94,6 +96,7 @@ from .project_planning import (
     create_codex_worker_report_template,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
+    execute_codex_worker_run,
     complete_queue_item,
     generate_backlog_refinement_prompt,
     get_backlog_task,
@@ -120,6 +123,7 @@ from .project_planning import (
     pause_execution_queue,
     mark_codex_handoff_used,
     mark_codex_worker_run_handoff_used,
+    preview_codex_worker_execution,
     reject_project_batch,
     request_batch_approval,
     review_project_batch,
@@ -132,6 +136,7 @@ from .project_planning import (
     validate_codex_worker_report_file,
     import_codex_worker_report,
     worker_report_artifact_paths,
+    worker_execution_log_paths,
     worker_run_plan_artifact_paths,
     worker_run_artifact_paths,
 )
@@ -698,6 +703,44 @@ def _print_codex_run_plan(plan: CodexRunPlan, json_path: Path | None = None, mar
     if markdown_path:
         console.print(f"Markdown: {_named_path(markdown_path)}")
     console.print("Safety: this is a preview artifact only. Devo did not run Codex, execute target commands, or modify target source.")
+
+
+def _print_codex_execution_preview(preview: CodexExecutionPreview) -> None:
+    console.print(f"[bold]Codex execution preview: {preview.worker_run_id} / {preview.plan_id}[/bold]")
+    console.print(f"Project: {preview.project}")
+    console.print(f"Ready: {preview.ready}")
+    console.print(f"Executable: {preview.executable_path or 'not found'}")
+    console.print(f"Command label: {preview.command_label}")
+    console.print(f"Working directory: {preview.proposed_working_directory}", soft_wrap=True)
+    console.print(f"Prompt path: {preview.prompt_path}", soft_wrap=True)
+    console.print(f"Log path: {preview.log_path}", soft_wrap=True)
+    console.print(f"Stderr log path: {preview.stderr_log_path}", soft_wrap=True)
+    console.print(f"Approval status: {preview.approval_status}")
+    console.print(f"Preflight status: {preview.preflight_status}")
+    console.print("Blocked reasons:")
+    for item in preview.blocked_reasons or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Warnings:")
+    for item in preview.warnings or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Safety boundaries:")
+    for item in preview.safety_boundaries or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"Next action: {preview.next_action}", soft_wrap=True)
+    console.print("Safety: preview is read-only. Devo did not run Codex or target repo commands.")
+
+
+def _print_codex_execution_result(result: CodexExecutionResult) -> None:
+    console.print(f"[bold]Codex execution result: {result.worker_run_id} / {result.plan_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Status: {result.status}")
+    console.print(f"Exit code: {result.exit_code}")
+    console.print(f"Log path: {result.log_path}", soft_wrap=True)
+    console.print(f"Stderr log path: {result.stderr_log_path}", soft_wrap=True)
+    console.print(f"Started: {result.started_at.isoformat()}")
+    console.print(f"Completed: {result.completed_at.isoformat()}")
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print("Safety: Codex output is evidence only. Devo did not validate, commit, push, or complete queue/task state.")
 
 
 def _print_json_model(model: object) -> None:
@@ -2504,6 +2547,82 @@ def approve_codex_worker_run_plan_command(
     console.print(f"[green]Codex run plan planning approval recorded[/green] {project_name}")
     _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
     console.print("This approval is planning-only. It does not execute Codex or authorize future execution by itself.")
+
+
+@worker_codex_app.command("execute-preview")
+def preview_codex_worker_execution_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    plan_id: str = typer.Option(..., "--plan", help="Approved Codex run plan id."),
+) -> None:
+    """Preview one supervised Codex execution without running anything."""
+    project_name = _resolve_project(project_name)
+    try:
+        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_codex_execution_preview(preview)
+
+
+@worker_codex_app.command("execute")
+def execute_codex_worker_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    plan_id: str = typer.Option(..., "--plan", help="Approved Codex run plan id."),
+    confirm_execute: bool = typer.Option(False, "--confirm-execute", help="Required explicit confirmation to launch Codex CLI."),
+    started_by: str = typer.Option("operator", "--started-by", help="Operator label recorded in the worker run."),
+) -> None:
+    """Launch Codex once for an approved run plan and capture logs."""
+    project_name = _resolve_project(project_name)
+    if not confirm_execute:
+        console.print("[red]Refusing to execute Codex without --confirm-execute.[/red]")
+        console.print(f"Preview first: devo worker codex execute-preview --project {project_name} --run {worker_run_id} --plan {plan_id}")
+        raise typer.Exit(1)
+    try:
+        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_codex_execution_preview(preview)
+    if preview.blocked_reasons:
+        console.print("[red]Execution blocked. Resolve blockers before running Codex.[/red]")
+        raise typer.Exit(1)
+    console.print("[yellow]Launching Codex CLI once for this approved run plan.[/yellow]")
+    console.print("[yellow]Devo will capture logs and move the worker run to review/failure state only; it will not validate, commit, push, or complete queue/task state.[/yellow]")
+    try:
+        result, _worker_run, _log_path, _stderr_path = execute_codex_worker_run(project_name, worker_run_id, plan_id, started_by=started_by)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_codex_execution_result(result)
+    console.print(f"Suggested next command: devo worker codex report-template --project {project_name} --run {result.worker_run_id}")
+
+
+@worker_codex_app.command("execute-log")
+def show_codex_worker_execution_log_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    tail_chars: int = typer.Option(4000, "--tail-chars", min=200, max=20000, help="Characters to show from the end of stdout/stderr logs."),
+) -> None:
+    """Show stored supervised execution log paths and a small safe tail."""
+    project_name = _resolve_project(project_name)
+    worker_run = load_codex_worker_run(project_name, worker_run_id)
+    if not worker_run:
+        console.print(f"[yellow]Codex worker run not found: {worker_run_id}[/yellow]")
+        raise typer.Exit(1)
+    log_path = Path(worker_run.execution_log_path) if worker_run.execution_log_path else worker_execution_log_paths(project_name, worker_run.worker_run_id)[0]
+    stderr_log_path = Path(worker_run.execution_stderr_log_path) if worker_run.execution_stderr_log_path else worker_execution_log_paths(project_name, worker_run.worker_run_id)[1]
+    console.print(f"[bold]Codex execution logs: {worker_run.worker_run_id}[/bold]")
+    console.print(f"Status: {worker_run.status}")
+    console.print(f"Exit code: {worker_run.execution_exit_code if worker_run.execution_exit_code is not None else 'none'}")
+    console.print(f"Log path: {_named_path(log_path)}")
+    console.print(f"Stderr log path: {_named_path(stderr_log_path)}")
+    for label, path in [("stdout/log", log_path), ("stderr", stderr_log_path)]:
+        console.print(f"[bold]{label} tail[/bold]")
+        if not path.exists():
+            console.print("  - log not found")
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        console.print(text[-tail_chars:] if text else "  - empty", soft_wrap=True)
+    console.print("Safety: logs are evidence only. Review/import a worker report before queue/task or delivery updates.")
 
 
 @project_app.command("activity")

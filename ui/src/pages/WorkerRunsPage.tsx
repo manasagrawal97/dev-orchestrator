@@ -262,6 +262,13 @@ export function WorkerRunsPage({ selectedProject }: WorkerRunsPageProps) {
               <CommandCopyBox command={`devo worker codex run-plan --project ${selectedProject} --run ${selectedWorkerRunId ?? '<workerRunId>'}`} />
               <CommandCopyBox command={`devo worker codex run-plan-list --project ${selectedProject}`} />
               <CommandCopyBox command={`devo worker codex run-plan-show --project ${selectedProject} --plan ${selectedRunPlan?.plan_id ?? '<planId>'}`} />
+              <CommandCopyBox
+                command={`devo worker codex execute-preview --project ${selectedProject} --run ${selectedWorkerRunId ?? '<workerRunId>'} --plan ${selectedRunPlan?.plan_id ?? '<planId>'}`}
+              />
+              <CommandCopyBox
+                command={`devo worker codex execute --project ${selectedProject} --run ${selectedWorkerRunId ?? '<workerRunId>'} --plan ${selectedRunPlan?.plan_id ?? '<planId>'} --confirm-execute`}
+              />
+              <CommandCopyBox command={`devo worker codex execute-log --project ${selectedProject} --run ${selectedWorkerRunId ?? '<workerRunId>'}`} />
               {selected?.source_queue_id ? (
                 <>
                   <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${selected.source_queue_id}`} />
@@ -311,6 +318,11 @@ function WorkerRunDetail({
           ['Transcript path', workerRun.transcript_path ?? 'none'],
           ['Report path', workerRun.report_path ?? 'none'],
           ['Target repo', workerRun.target_repo_path],
+          ['Execution exit code', workerRun.execution_exit_code ?? 'none'],
+          ['Execution command', workerRun.execution_command_label ?? 'none'],
+          ['Execution started by', workerRun.execution_started_by ?? 'none'],
+          ['Execution log path', workerRun.execution_log_path ?? 'none'],
+          ['Execution stderr path', workerRun.execution_stderr_log_path ?? 'none'],
           ['Report status', workerRun.report.report_status],
           ['Reported changed files', workerRun.report.reported_changed_files.length],
           ['Reported validation', workerRun.report.reported_validation.length],

@@ -129,6 +129,10 @@ class ProjectOverview(BaseModel):
     latest_worker_run_id: str | None = None
     latest_worker_run_status: str | None = None
     latest_worker_run_next_action: str | None = None
+    latest_worker_execution_status: str | None = None
+    latest_worker_execution_exit_code: int | None = None
+    latest_worker_execution_log_path: str | None = None
+    latest_worker_execution_next_action: str | None = None
     latest_worker_report_status: str | None = None
     latest_worker_report_path: str | None = None
     latest_worker_report_summary: str | None = None
@@ -230,6 +234,12 @@ def build_project_overview_with_timing(
             latest_worker_run_id=str(planning["latest_worker_run_id"]) if planning["latest_worker_run_id"] else None,
             latest_worker_run_status=str(planning["latest_worker_run_status"]) if planning["latest_worker_run_status"] else None,
             latest_worker_run_next_action=str(planning["latest_worker_run_next_action"]) if planning["latest_worker_run_next_action"] else None,
+            latest_worker_execution_status=str(planning["latest_worker_execution_status"]) if planning["latest_worker_execution_status"] else None,
+            latest_worker_execution_exit_code=(
+                int(planning["latest_worker_execution_exit_code"]) if planning["latest_worker_execution_exit_code"] is not None else None
+            ),
+            latest_worker_execution_log_path=str(planning["latest_worker_execution_log_path"]) if planning["latest_worker_execution_log_path"] else None,
+            latest_worker_execution_next_action=str(planning["latest_worker_execution_next_action"]) if planning["latest_worker_execution_next_action"] else None,
             latest_worker_report_status=str(planning["latest_worker_report_status"]) if planning["latest_worker_report_status"] else None,
             latest_worker_report_path=str(planning["latest_worker_report_path"]) if planning["latest_worker_report_path"] else None,
             latest_worker_report_summary=str(planning["latest_worker_report_summary"]) if planning["latest_worker_report_summary"] else None,
@@ -502,6 +512,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_worker_run_id": None,
             "latest_worker_run_status": None,
             "latest_worker_run_next_action": f"Review worker artifacts: {exc}",
+            "latest_worker_execution_status": None,
+            "latest_worker_execution_exit_code": None,
+            "latest_worker_execution_log_path": None,
+            "latest_worker_execution_next_action": f"Review worker execution artifacts: {exc}",
             "latest_worker_report_status": None,
             "latest_worker_report_path": None,
             "latest_worker_report_summary": None,
@@ -598,6 +612,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_worker_run_id": latest_worker_run.worker_run_id if latest_worker_run else None,
         "latest_worker_run_status": latest_worker_run.status if latest_worker_run else None,
         "latest_worker_run_next_action": latest_worker_run.next_action if latest_worker_run else None,
+        "latest_worker_execution_status": latest_worker_run.status if latest_worker_run and latest_worker_run.execution_exit_code is not None else None,
+        "latest_worker_execution_exit_code": latest_worker_run.execution_exit_code if latest_worker_run else None,
+        "latest_worker_execution_log_path": latest_worker_run.execution_log_path if latest_worker_run else None,
+        "latest_worker_execution_next_action": latest_worker_run.next_action if latest_worker_run and latest_worker_run.execution_exit_code is not None else None,
         "latest_worker_report_status": latest_worker_report.status_reported_by_worker if latest_worker_report else None,
         "latest_worker_report_path": latest_worker_report_run.report_path if latest_worker_report_run else None,
         "latest_worker_report_summary": latest_worker_report.summary if latest_worker_report else None,

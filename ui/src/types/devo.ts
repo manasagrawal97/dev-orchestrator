@@ -112,6 +112,10 @@ export interface ProjectOverview {
   latest_worker_run_id: string | null;
   latest_worker_run_status: string | null;
   latest_worker_run_next_action: string | null;
+  latest_worker_execution_status: string | null;
+  latest_worker_execution_exit_code: number | null;
+  latest_worker_execution_log_path: string | null;
+  latest_worker_execution_next_action: string | null;
   latest_worker_report_status: string | null;
   latest_worker_report_path: string | null;
   latest_worker_report_summary: string | null;
@@ -390,6 +394,11 @@ export interface WorkerRun {
   transcript_path: string | null;
   report_path: string | null;
   target_repo_path: string;
+  execution_exit_code: number | null;
+  execution_command_label: string | null;
+  execution_started_by: string | null;
+  execution_log_path: string | null;
+  execution_stderr_log_path: string | null;
   allowed_scope: string[];
   forbidden_scope: string[];
   validation_expectations: string[];
@@ -407,6 +416,19 @@ export interface WorkerRunsResponse {
   project: string;
   count: number;
   worker_runs: WorkerRun[];
+}
+
+export interface WorkerExecutionMetadata {
+  project: string;
+  worker_run_id: string;
+  status: string;
+  execution_exit_code: number | null;
+  execution_command_label: string | null;
+  execution_started_by: string | null;
+  execution_log_path: string;
+  execution_stderr_log_path: string;
+  next_action: string;
+  status_note: string;
 }
 
 export interface CodexPreflightCheck {

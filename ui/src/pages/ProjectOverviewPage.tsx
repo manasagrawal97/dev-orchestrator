@@ -240,6 +240,8 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
                   ['Worker runs', overview.worker_run_count],
                   ['Latest worker run', overview.latest_worker_run_id ?? 'none'],
                   ['Latest worker status', overview.latest_worker_run_status ?? 'none'],
+                  ['Latest execution', overview.latest_worker_execution_status ?? 'none'],
+                  ['Latest exit code', overview.latest_worker_execution_exit_code ?? 'none'],
                   ['Latest worker report', overview.latest_worker_report_status ?? 'none'],
                   ['Codex run plans', overview.codex_run_plan_count],
                   ['Latest run plan', overview.latest_codex_run_plan_id ?? 'none'],
@@ -250,6 +252,7 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
               <p className="muted compact">{overview.batch_approval_next_action}</p>
               <p className="muted compact">{overview.handoff_next_action}</p>
               {overview.latest_worker_run_next_action ? <p className="muted compact">{overview.latest_worker_run_next_action}</p> : null}
+              {overview.latest_worker_execution_next_action ? <p className="muted compact">{overview.latest_worker_execution_next_action}</p> : null}
               {overview.latest_worker_report_summary ? <p className="muted compact">{overview.latest_worker_report_summary}</p> : null}
               <CommandCopyBox command={`devo project backlog-prompt --project ${selectedProject}`} />
               <CommandCopyBox command={`devo project batch-suggest --project ${selectedProject}`} />

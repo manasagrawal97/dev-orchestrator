@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -14,8 +15,10 @@ from devo.project_planning import (
     load_codex_handoff,
     load_codex_worker_run,
     load_execution_queue,
+    get_backlog_task,
     load_codex_run_plan_index,
     load_worker_run_index,
+    worker_execution_log_paths,
     worker_run_plan_artifact_paths,
     worker_report_artifact_paths,
     worker_report_template_paths,
@@ -499,10 +502,228 @@ def test_codex_run_plan_commands_do_not_mutate_target_repo_or_queue(tmp_path: Pa
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_execute_preview_works_without_running_executable(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute-preview", "--project", "sample", "--run", "WR001", "--plan", "RP001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Codex execution preview" in result.output
+    assert "Ready: True" in result.output
+    log_path, _stderr_log_path = worker_execution_log_paths("sample", "WR001", workspace_root=workspace)
+    assert not log_path.exists()
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_execute_refuses_without_confirm_execute(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Refusing to execute Codex without --confirm-execute" in result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "planned"
+
+
+def test_codex_execute_refuses_unapproved_run_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"])
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "approval status is not_requested" in result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "planned"
+
+
+def test_codex_execute_refuses_blocked_preflight(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    handoff = load_codex_handoff("sample", "H001")
+    assert handoff is not None
+    Path(handoff.prompt_path).unlink()
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"])
+    runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Run plan preflight is blocked" in result.output
+
+
+def test_codex_execute_refuses_missing_prompt(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch)
+    handoff = load_codex_handoff("sample", "H001")
+    assert handoff is not None
+    Path(handoff.prompt_path).unlink()
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Prompt file is missing" in result.output
+
+
+def test_codex_execute_refuses_missing_target_repo(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch)
+    for path in project_path.rglob("*"):
+        if path.is_file():
+            path.unlink()
+    project_path.rmdir()
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Target repo path is missing" in result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "planned"
+
+
+def test_codex_execute_success_sets_waiting_review_and_writes_logs(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    task = get_backlog_task("sample", "T001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "waiting_review"
+    assert worker_run.mode == "supervised_cli"
+    assert worker_run.execution_exit_code == 0
+    assert worker_run.execution_log_path is not None
+    assert "fake codex completed" in Path(worker_run.execution_log_path).read_text(encoding="utf-8")
+    assert queue is not None
+    assert queue.items[0].status == "running"
+    assert task.status == "ready"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_execute_failure_sets_failed_and_writes_logs(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stderr="fake codex failed", exit_code=7)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "failed"
+    assert worker_run.execution_exit_code == 7
+    assert worker_run.execution_stderr_log_path is not None
+    assert "fake codex failed" in Path(worker_run.execution_stderr_log_path).read_text(encoding="utf-8")
+
+
+def test_codex_execute_usage_limit_output_sets_paused_usage_limit(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="usage limit reached", exit_code=0)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "paused_usage_limit"
+
+
+def test_codex_execute_safety_output_sets_blocked_needs_approval(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stderr="approval required by safety policy", exit_code=1)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "blocked_needs_approval"
+
+
+def test_codex_execute_log_shows_log_tail(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="visible log tail", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+
+    result = runner.invoke(app, ["worker", "codex", "execute-log", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "visible log tail" in result.output
+    assert "execution logs" in result.output
+
+
 def _create_worker_run(tmp_path: Path) -> None:
     _create_queue_handoff(tmp_path)
     result = runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
     assert result.exit_code == 0, result.output
+
+
+def _create_approved_run_plan(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    stdout: str = "fake codex ok",
+    stderr: str = "",
+    exit_code: int = 0,
+) -> None:
+    _create_worker_run(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch, stdout=stdout, stderr=stderr, exit_code=exit_code)
+    created = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
+    assert created.exit_code == 0, created.output
+    approved = runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"], terminal_width=240)
+    assert approved.exit_code == 0, approved.output
 
 
 def _create_queue_handoff(tmp_path: Path) -> None:
@@ -566,12 +787,19 @@ def _target_snapshot(project_path: Path) -> dict[str, str]:
     return {str(path.relative_to(project_path)): path.read_text(encoding="utf-8") for path in project_path.rglob("*") if path.is_file()}
 
 
-def _add_fake_codex_to_path(tmp_path: Path, monkeypatch) -> None:
+def _add_fake_codex_to_path(tmp_path: Path, monkeypatch, *, stdout: str = "", stderr: str = "", exit_code: int = 0) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake_codex = bin_dir / "codex.cmd"
-    fake_codex.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
-    monkeypatch.setenv("PATH", f"{bin_dir};")
+    lines = ["@echo off"]
+    if stdout:
+        lines.append(f"echo {stdout}")
+    if stderr:
+        lines.append(f"echo {stderr} 1>&2")
+    lines.append(f"exit /b {exit_code}")
+    fake_codex.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    existing_value = os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", f"{bin_dir};{existing_value}")
 
 
 def _worker_report_file(tmp_path: Path, worker_run_id: str, status: str = "completed") -> Path:

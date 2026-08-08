@@ -26,6 +26,7 @@ import type {
   UiActionExecutionResult,
   UiActionMetadata,
   UiActionsResponse,
+  WorkerExecutionMetadata,
   WorkerRun,
   WorkerReportsResponse,
   WorkerRunsResponse,
@@ -95,6 +96,8 @@ export const devoApi = {
   getProjectWorkerRuns: (project: string) => getJson<WorkerRunsResponse>(`/api/projects/${encodeURIComponent(project)}/worker-runs`),
   getProjectWorkerRun: (project: string, workerRunId: string) =>
     getJson<WorkerRun>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}`),
+  getProjectWorkerRunExecution: (project: string, workerRunId: string) =>
+    getJson<WorkerExecutionMetadata>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}/execution`),
   getProjectWorkerReports: (project: string) => getJson<WorkerReportsResponse>(`/api/projects/${encodeURIComponent(project)}/worker-reports`),
   getProjectWorkerReport: (project: string, workerRunId: string) =>
     getJson<CodexWorkerReport>(`/api/projects/${encodeURIComponent(project)}/worker-runs/${encodeURIComponent(workerRunId)}/report`),

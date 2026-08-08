@@ -231,6 +231,16 @@ devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Plan
 
 Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; supervised Codex execution remains future work.
 
+Run one supervised Codex CLI worker for an approved run plan:
+
+```powershell
+devo worker codex execute-preview --project MyProject --run WR001 --plan RP001
+devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute
+devo worker codex execute-log --project MyProject --run WR001
+```
+
+Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, a Codex executable is found on `PATH`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run to `waiting_review`, not `completed`; failures become `failed`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval`. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically.
+
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 
 List registered projects:
@@ -676,7 +686,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, Progress, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> worker run -> progress workflow. Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, and Progress provide detailed read-only inspection of planning artifacts, milestone/epic rollups, task filters, batch risk/lane summaries, queue item state, handoff and worker-run/report/run-plan metadata, progress bars, warnings, and next actions. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
+Open `http://127.0.0.1:5173`. The dashboard includes Projects, Project Overview, Planning Intake, Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, Progress, Work Package, Activity, Health, and Action Safety pages backed by the local API. Planning Intake is a read-only operator guide for the brief -> blueprint -> backlog -> batch -> queue -> handoff -> worker run -> progress workflow. Blueprint, Backlog, Batches, Queues, Handoffs, Worker Runs, and Progress provide detailed read-only inspection of planning artifacts, milestone/epic rollups, task filters, batch risk/lane summaries, queue item state, handoff and worker-run/report/run-plan/execution metadata, progress bars, warnings, and next actions. The dashboard shows selection separately from saved CLI current context, uses section-level loading for slower project data, keeps raw paths quieter, shows UI action safety metadata, provides copyable CLI commands, can create Devo work-package drafts, and can generate the approved workspace-only artifacts from the Action Safety page after confirmation. CLI/Codex remains the execution path for approvals, validation, implementation, commit, push, restore, scheduler work, target app runs, and model/API agents.
 
 Manual Codex worker report import is available for assisted handoff workflows:
 
@@ -701,6 +711,16 @@ devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Plan
 ```
 
 Run plans live under `workspace/projects/<project>/workers/codex/run-plans/`. They store readiness checks, blocked reasons, warnings, a safe command preview, allowed/forbidden scope, validation expectations, and next action guidance. They do not execute Codex, call AI APIs, run target commands, trust implementation complete, validate, commit, push, or complete queue/task state. `run-plan-approve` is a planning-review marker only.
+
+Supervised Codex execution is available only through an approved run plan and explicit confirmation:
+
+```powershell
+devo worker codex execute-preview --project MyProject --run WR001 --plan RP001
+devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute
+devo worker codex execute-log --project MyProject --run WR001
+```
+
+The command launches one Codex CLI process, passes the linked prompt through stdin, uses the run-plan working directory, captures stdout/stderr logs, and updates the worker-run record cautiously. It does not run validation, complete queue/task state, commit, push, or treat Codex output as delivery proof. Review logs, then use `report-template`/`report-import` and explicit queue/task commands only after human review.
 
 ## Policy Gates
 

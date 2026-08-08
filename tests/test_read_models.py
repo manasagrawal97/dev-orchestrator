@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -49,6 +50,10 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.latest_worker_run_id is None
     assert overview.latest_worker_run_status is None
     assert overview.latest_worker_run_next_action is None
+    assert overview.latest_worker_execution_status is None
+    assert overview.latest_worker_execution_exit_code is None
+    assert overview.latest_worker_execution_log_path is None
+    assert overview.latest_worker_execution_next_action is None
     assert overview.latest_worker_report_status is None
     assert overview.latest_worker_report_path is None
     assert overview.latest_worker_report_summary is None
@@ -159,6 +164,9 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "handoff_next_action" in overview_data
     assert "worker_run_count" in overview_data
     assert "latest_worker_run_next_action" in overview_data
+    assert "latest_worker_execution_status" in overview_data
+    assert "latest_worker_execution_exit_code" in overview_data
+    assert "latest_worker_execution_log_path" in overview_data
     assert "latest_worker_report_status" in overview_data
     assert "latest_worker_report_summary" in overview_data
     assert "codex_run_plan_count" in overview_data
@@ -249,6 +257,33 @@ def test_project_overview_includes_codex_run_plan_summary(tmp_path: Path, monkey
     assert "Supervised Codex execution is future work" in overview.latest_codex_run_plan_next_action
 
 
+def test_project_overview_includes_worker_execution_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001", "--note", "Approved."])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
+    _add_fake_codex_to_path(tmp_path, monkeypatch, stdout="fake codex ok")
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"])
+    runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+    assert result.exit_code == 0, result.output
+
+    overview = build_project_overview("sample")
+
+    assert overview.latest_worker_execution_status == "waiting_review"
+    assert overview.latest_worker_execution_exit_code == 0
+    assert overview.latest_worker_execution_log_path is not None
+    assert overview.latest_worker_execution_next_action is not None
+
+
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     package = start_work_package("sample", "docs-only", "Human package", workspace_root=workspace)
@@ -327,6 +362,20 @@ def _worker_report_file(tmp_path: Path, worker_run_id: str) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _add_fake_codex_to_path(tmp_path: Path, monkeypatch, *, stdout: str = "", stderr: str = "", exit_code: int = 0) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake_codex = bin_dir / "codex.cmd"
+    lines = ["@echo off"]
+    if stdout:
+        lines.append(f"echo {stdout}")
+    if stderr:
+        lines.append(f"echo {stderr} 1>&2")
+    lines.append(f"exit /b {exit_code}")
+    fake_codex.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{bin_dir};{os.environ.get('PATH', '')}")
 
 
 def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:

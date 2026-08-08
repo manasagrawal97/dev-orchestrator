@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from datetime import UTC, datetime
 from pydantic import ValidationError
 from pathlib import Path
@@ -33,6 +34,7 @@ WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
 WORKER_RUN_PLANS_DIR_NAME = "run-plans"
 WORKER_RUN_PLAN_INDEX_JSON = "run-plan-index.json"
+WORKER_LOGS_DIR_NAME = "logs"
 PLANNING_SCHEMA_VERSION = "1"
 ALLOWED_BACKLOG_STATUSES = {"draft", "reviewed", "approved", "superseded"}
 ALLOWED_TASK_STATUSES = {"draft", "ready", "approved", "in_progress", "blocked", "completed", "superseded"}
@@ -509,6 +511,11 @@ class WorkerRun(BaseModel):
     transcript_path: str | None = None
     report_path: str | None = None
     target_repo_path: str
+    execution_exit_code: int | None = None
+    execution_command_label: str | None = None
+    execution_started_by: str | None = None
+    execution_log_path: str | None = None
+    execution_stderr_log_path: str | None = None
     allowed_scope: list[str] = Field(default_factory=list)
     forbidden_scope: list[str] = Field(default_factory=list)
     validation_expectations: list[str] = Field(default_factory=list)
@@ -627,6 +634,42 @@ class CodexRunPlanIndex(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class CodexExecutionPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    worker_run_id: str
+    plan_id: str
+    ready: bool
+    executable_path: str | None = None
+    command_label: str = "Codex CLI supervised worker"
+    proposed_working_directory: str
+    prompt_path: str
+    log_path: str
+    stderr_log_path: str
+    approval_status: str
+    preflight_status: str
+    blocked_reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    safety_boundaries: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class CodexExecutionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    worker_run_id: str
+    plan_id: str
+    status: str
+    exit_code: int
+    log_path: str
+    stderr_log_path: str
+    started_at: datetime
+    completed_at: datetime
+    next_action: str
+
+
 class WorkerArtifactPaths(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -636,6 +679,7 @@ class WorkerArtifactPaths(BaseModel):
     reports_dir: Path
     run_plans_dir: Path
     run_plan_index_json: Path
+    logs_dir: Path
 
 
 class PlanningArtifactPaths(BaseModel):
@@ -691,6 +735,7 @@ def worker_artifact_paths(project_name: str, workspace_root: Path | None = None)
         reports_dir=codex_dir / WORKER_REPORTS_DIR_NAME,
         run_plans_dir=codex_dir / WORKER_RUN_PLANS_DIR_NAME,
         run_plan_index_json=codex_dir / WORKER_RUN_PLANS_DIR_NAME / WORKER_RUN_PLAN_INDEX_JSON,
+        logs_dir=codex_dir / WORKER_LOGS_DIR_NAME,
     )
 
 
@@ -716,6 +761,12 @@ def worker_run_plan_artifact_paths(project_name: str, plan_id: str, workspace_ro
     paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_run_plan_id(plan_id)
     return paths.run_plans_dir / f"run-plan-{safe_id}.json", paths.run_plans_dir / f"run-plan-{safe_id}.md"
+
+
+def worker_execution_log_paths(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_worker_run_id(worker_run_id)
+    return paths.logs_dir / f"worker-run-{safe_id}.log", paths.logs_dir / f"worker-run-{safe_id}.stderr.log"
 
 
 def create_project_brief(
@@ -2272,6 +2323,127 @@ def approve_codex_run_plan(project_name: str, plan_id: str, note: str = "", work
     return _write_codex_run_plan(project_name, updated, workspace_root=root)
 
 
+def preview_codex_worker_execution(
+    project_name: str,
+    worker_run_id: str,
+    plan_id: str,
+    workspace_root: Path | None = None,
+) -> CodexExecutionPreview:
+    root = workspace_root or get_workspace_root()
+    worker_run, plan = _load_worker_run_and_plan_for_execution(project_name, worker_run_id, plan_id, root)
+    log_path, stderr_log_path = worker_execution_log_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    blocked_reasons, warnings, executable_path = _codex_execution_blockers(worker_run, plan)
+    return CodexExecutionPreview(
+        project=project_name,
+        worker_run_id=worker_run.worker_run_id,
+        plan_id=plan.plan_id,
+        ready=not blocked_reasons,
+        executable_path=executable_path,
+        command_label=plan.proposed_command_label,
+        proposed_working_directory=plan.proposed_working_directory,
+        prompt_path=plan.prompt_path,
+        log_path=str(log_path),
+        stderr_log_path=str(stderr_log_path),
+        approval_status=plan.approval_status,
+        preflight_status=plan.preflight_status,
+        blocked_reasons=blocked_reasons,
+        warnings=warnings,
+        safety_boundaries=plan.safety_boundaries,
+        next_action=_execution_preview_next_action(project_name, worker_run.worker_run_id, plan.plan_id, blocked_reasons),
+    )
+
+
+def execute_codex_worker_run(
+    project_name: str,
+    worker_run_id: str,
+    plan_id: str,
+    *,
+    started_by: str = "operator",
+    workspace_root: Path | None = None,
+    timeout_seconds: int = 3600,
+) -> tuple[CodexExecutionResult, WorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run, plan = _load_worker_run_and_plan_for_execution(project_name, worker_run_id, plan_id, root)
+    preview = preview_codex_worker_execution(project_name, worker_run.worker_run_id, plan.plan_id, workspace_root=root)
+    if preview.blocked_reasons:
+        msg = "Codex execution is blocked: " + "; ".join(preview.blocked_reasons)
+        raise ValueError(msg)
+    if not preview.executable_path:
+        raise ValueError("Codex executable was not found on PATH.")
+
+    prompt_text = Path(plan.prompt_path).read_text(encoding="utf-8")
+    log_path = Path(preview.log_path)
+    stderr_log_path = Path(preview.stderr_log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now(UTC)
+    running = worker_run.model_copy(
+        update={
+            "mode": "supervised_cli",
+            "status": "running",
+            "started_at": worker_run.started_at or started_at,
+            "updated_at": started_at,
+            "execution_command_label": plan.proposed_command_label,
+            "execution_started_by": started_by.strip() or "operator",
+            "execution_log_path": str(log_path),
+            "execution_stderr_log_path": str(stderr_log_path),
+            "transcript_path": str(log_path),
+            "status_note": "Supervised Codex process started by Devo.",
+            "next_action": _worker_run_next_action(project_name, worker_run.worker_run_id, "running"),
+        }
+    )
+    _write_worker_run(project_name, running, workspace_root=root)
+
+    try:
+        completed = subprocess.run(
+            [preview.executable_path],
+            input=prompt_text,
+            text=True,
+            capture_output=True,
+            cwd=plan.proposed_working_directory,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        exit_code = int(completed.returncode)
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        exit_code = 124
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
+        stderr = (stderr + "\nCodex execution timed out.").strip() + "\n"
+
+    completed_at = datetime.now(UTC)
+    log_path.write_text(_render_execution_log(plan, started_at, completed_at, exit_code, stdout), encoding="utf-8")
+    stderr_log_path.write_text(stderr, encoding="utf-8")
+    status = _classify_codex_execution_status(exit_code, stdout, stderr)
+    next_action = _worker_run_next_action(project_name, worker_run.worker_run_id, status)
+    status_note = _execution_status_note(status, exit_code)
+    updated_run = running.model_copy(
+        update={
+            "status": status,
+            "completed_at": completed_at,
+            "updated_at": completed_at,
+            "execution_exit_code": exit_code,
+            "status_note": status_note,
+            "next_action": next_action,
+        }
+    )
+    written_run, _json_path, _markdown_path = _write_worker_run(project_name, updated_run, workspace_root=root)
+    result = CodexExecutionResult(
+        project=project_name,
+        worker_run_id=worker_run.worker_run_id,
+        plan_id=plan.plan_id,
+        status=status,
+        exit_code=exit_code,
+        log_path=str(log_path),
+        stderr_log_path=str(stderr_log_path),
+        started_at=started_at,
+        completed_at=completed_at,
+        next_action=next_action,
+    )
+    return result, written_run, log_path, stderr_log_path
+
+
 def render_codex_run_plan_markdown(plan: CodexRunPlan) -> str:
     lines = [
         f"# Codex Run Plan: {plan.plan_id}",
@@ -2387,6 +2559,11 @@ def render_codex_worker_run_markdown(worker_run: WorkerRun) -> str:
         f"- Prompt path: `{worker_run.prompt_path}`",
         f"- Transcript path: `{worker_run.transcript_path or 'none'}`",
         f"- Report path: `{worker_run.report_path or 'none'}`",
+        f"- Execution exit code: `{worker_run.execution_exit_code if worker_run.execution_exit_code is not None else 'none'}`",
+        f"- Execution command label: `{worker_run.execution_command_label or 'none'}`",
+        f"- Execution started by: `{worker_run.execution_started_by or 'none'}`",
+        f"- Execution log path: `{worker_run.execution_log_path or 'none'}`",
+        f"- Execution stderr log path: `{worker_run.execution_stderr_log_path or 'none'}`",
         f"- Source handoff: `{worker_run.source_handoff_id or 'none'}`",
         f"- Source queue: `{worker_run.source_queue_id or 'none'}`",
         f"- Source queue item: `{worker_run.source_queue_item_id or 'none'}`",
@@ -2428,7 +2605,7 @@ def render_codex_worker_run_markdown(worker_run: WorkerRun) -> str:
         [
             "## Safety Note",
             "",
-            "This worker run is a workspace-only tracking record. Devo did not run Codex, call AI APIs, execute target commands, trust worker output, mark queue/task completion, commit, push, or modify the target repository.",
+            "This worker run is a workspace-only tracking record. A supervised execution may launch Codex only through the explicit guarded execute command. Devo does not trust worker output, mark queue/task completion, run validation, commit, push, or modify delivery state automatically.",
             "",
         ]
     )
@@ -3840,8 +4017,8 @@ def _worker_validation_expectations(task: BacklogTask | None, queue_item: QueueI
 def _worker_safety_boundaries(project_name: str) -> list[str]:
     return [
         "Worker run records are workspace-only tracking artifacts.",
-        "Manual handoff remains the execution path; Devo does not invoke Codex for this record.",
-        "Codex output is not trusted as implementation complete until reviewed/imported in a future workflow.",
+        "Codex may be invoked only by the guarded execute command with an approved run plan and explicit confirmation.",
+        "Codex output is not trusted as implementation complete until reviewed/imported.",
         "Target repository source must not be changed by worker-run create/list/show/status commands.",
         f"Keep work inside the registered project scope for {project_name}.",
     ]
@@ -3854,9 +4031,9 @@ def _worker_run_next_action(project_name: str, worker_run_id: str, status: str) 
             "Paste the linked handoff prompt into Codex manually when executing today; supervised Codex execution is future work."
         )
     if status == "running":
-        return f"Track the manual Codex session; update status with devo worker codex run-status --project {project_name} --run {worker_run_id}."
+        return f"Track the supervised Codex session; Devo will update status after process exit or use devo worker codex run-status --project {project_name} --run {worker_run_id} if manual correction is needed."
     if status == "completed":
-        return "Review/import worker report evidence in future TASK-DEVO-089; do not automatically complete queue/task state."
+        return f"Review/import worker report evidence with devo worker codex report-template --project {project_name} --run {worker_run_id}; do not automatically complete queue/task state."
     if status == "failed":
         return "Review the failure, preserve evidence, and create a new handoff or worker run only after scope is clear."
     if status == "paused_usage_limit":
@@ -3866,7 +4043,7 @@ def _worker_run_next_action(project_name: str, worker_run_id: str, status: str) 
     if status == "cancelled":
         return "No automatic queue/task change was made; create a fresh handoff if work should continue."
     if status == "waiting_review":
-        return "Review worker evidence manually before any queue/task completion, validation, commit, or push."
+        return f"Review worker evidence manually and prepare a report with devo worker codex report-template --project {project_name} --run {worker_run_id} before any queue/task completion, validation, commit, or push."
     if status == "superseded":
         return "Use the newer worker run or handoff; this record remains historical only."
     return "Review worker run status."
@@ -3899,6 +4076,104 @@ def _worker_report_next_action(project_name: str, worker_run_id: str, status_rep
     if status_reported_by_worker == "failed":
         return "Review failure evidence and create a new handoff or worker run only after the cause is understood."
     return "Review imported report manually before any queue/task completion, validation, commit, or push."
+
+
+def _load_worker_run_and_plan_for_execution(
+    project_name: str,
+    worker_run_id: str,
+    plan_id: str,
+    workspace_root: Path,
+) -> tuple[WorkerRun, CodexRunPlan]:
+    worker_run = load_codex_worker_run(project_name, worker_run_id, workspace_root=workspace_root)
+    if not worker_run:
+        msg = f"Codex worker run not found: {worker_run_id}"
+        raise ValueError(msg)
+    plan = load_codex_run_plan(project_name, plan_id, workspace_root=workspace_root)
+    if not plan:
+        msg = f"Codex run plan not found: {plan_id}"
+        raise ValueError(msg)
+    if plan.worker_run_id != worker_run.worker_run_id:
+        msg = f"Run plan {plan.plan_id} belongs to worker run {plan.worker_run_id}, not {worker_run.worker_run_id}."
+        raise ValueError(msg)
+    return worker_run, plan
+
+
+def _codex_execution_blockers(worker_run: WorkerRun, plan: CodexRunPlan) -> tuple[list[str], list[str], str | None]:
+    blocked_reasons: list[str] = []
+    warnings: list[str] = list(plan.warnings)
+    if plan.approval_status != "approved":
+        blocked_reasons.append(f"Run plan approval status is {plan.approval_status}; approval is required before execution.")
+    if plan.preflight_status == "blocked":
+        blocked_reasons.append("Run plan preflight is blocked.")
+    elif plan.preflight_status not in {"passed", "warnings"}:
+        blocked_reasons.append(f"Run plan preflight status is {plan.preflight_status}; passed or warnings is required.")
+    if plan.status == "blocked":
+        blocked_reasons.extend(plan.blocked_reasons or ["Run plan status is blocked."])
+    prompt_path = Path(plan.prompt_path)
+    if not prompt_path.exists() or not prompt_path.is_file():
+        blocked_reasons.append(f"Prompt file is missing: {prompt_path}.")
+    target_repo_path = Path(plan.proposed_working_directory)
+    if not target_repo_path.exists() or not target_repo_path.is_dir():
+        blocked_reasons.append(f"Target repo path is missing: {target_repo_path}.")
+    if Path(worker_run.target_repo_path) != Path(plan.proposed_working_directory):
+        warnings.append("Run plan working directory differs from worker-run target repo path; review before execution.")
+    executable_path = shutil.which("codex")
+    if not executable_path:
+        blocked_reasons.append("Codex executable was not found on PATH.")
+    return blocked_reasons, warnings, executable_path
+
+
+def _execution_preview_next_action(project_name: str, worker_run_id: str, plan_id: str, blocked_reasons: list[str]) -> str:
+    if blocked_reasons:
+        return "Resolve execution blockers before running Codex."
+    return (
+        f"Run only when ready: devo worker codex execute --project {project_name} --run {worker_run_id} --plan {plan_id} --confirm-execute. "
+        "After execution, manually review logs and import a worker report."
+    )
+
+
+def _classify_codex_execution_status(exit_code: int, stdout: str, stderr: str) -> str:
+    combined = f"{stdout}\n{stderr}".lower()
+    usage_limit_signals = ["usage limit", "rate limit", "quota", "limit reached", "too many requests"]
+    approval_block_signals = ["approval required", "permission denied", "blocked by policy", "requires approval", "safety"]
+    if any(signal in combined for signal in usage_limit_signals):
+        return "paused_usage_limit"
+    if any(signal in combined for signal in approval_block_signals):
+        return "blocked_needs_approval"
+    if exit_code == 0:
+        return "waiting_review"
+    return "failed"
+
+
+def _execution_status_note(status: str, exit_code: int) -> str:
+    if status == "waiting_review":
+        return f"Supervised Codex process exited with code {exit_code}. Review logs and import a worker report before queue/task updates."
+    if status == "paused_usage_limit":
+        return f"Supervised Codex output looked like a usage limit pause. Exit code: {exit_code}."
+    if status == "blocked_needs_approval":
+        return f"Supervised Codex output looked like a safety or approval block. Exit code: {exit_code}."
+    return f"Supervised Codex process failed or stopped with exit code {exit_code}. Review logs before deciding next action."
+
+
+def _render_execution_log(plan: CodexRunPlan, started_at: datetime, completed_at: datetime, exit_code: int, stdout: str) -> str:
+    return "\n".join(
+        [
+            f"# Codex Execution Log: {plan.worker_run_id}",
+            "",
+            f"Project: {plan.project}",
+            f"Run plan: {plan.plan_id}",
+            f"Started: {started_at.isoformat()}",
+            f"Completed: {completed_at.isoformat()}",
+            f"Exit code: {exit_code}",
+            "",
+            "Safety: this log is execution evidence only. It is not proof of completion, validation, review, commit, push, or queue/task completion.",
+            "",
+            "## Stdout",
+            "",
+            stdout or "",
+            "",
+        ]
+    )
 
 
 def _codex_preflight_result(

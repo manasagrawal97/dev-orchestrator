@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-091 update, after read-only Codex worker preflight checks and run-plan artifacts were added. This remains a design document for future worker execution. Devo does not implement Codex CLI execution, AI API usage, target command execution, or autonomous delivery.
+Source/freshness: TASK-DEVO-092 update, after the first guarded one-run Codex CLI execution prototype was added. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
 
 ## Purpose
 
@@ -34,7 +34,7 @@ The supported worker flow today is:
 
 This is safe and already working. Devo does not run Codex, does not execute target commands, does not call AI APIs, does not validate or commit automatically, and does not mark implementation complete without explicit user action. Imported reports are review evidence, not proof of delivery.
 
-Devo can now also preflight a tracked worker run and write a run-plan preview for a future supervised path. These artifacts are readiness checks and planning records only; they do not launch Codex or authorize execution.
+Devo can now also preflight a tracked worker run, write a run-plan preview, and launch one supervised Codex CLI process only when the run plan is approved and `--confirm-execute` is supplied. Execution logs are evidence only; they do not complete queue/task state or prove delivery.
 
 ## Future Worker Modes
 
@@ -137,7 +137,8 @@ Files:
 - `run-plans/run-plan-index.json`
 - `run-plans/run-plan-<plan_id>.json`
 - `run-plans/run-plan-<plan_id>.md`
-- optional future `logs/worker-run-<id>.log`
+- `logs/worker-run-<worker_run_id>.log`
+- `logs/worker-run-<worker_run_id>.stderr.log`
 
 These are generated workspace artifacts and should not be committed. They are part of Devo runtime state, like planning artifacts, validation run evidence, reports, and handoff prompts.
 
@@ -146,6 +147,8 @@ TASK-DEVO-088 implements worker run tracking. `devo worker codex run-create --pr
 TASK-DEVO-089 implements manual worker report import. `devo worker codex report-template`, `report-validate`, `report-import`, `report-show`, and `report-list` let a user capture what a manually run Codex worker reported. Import updates only Devo workspace worker artifacts with report status, changed-file summary, validation summary, safety warnings, reviewer notes, and next action. It does not launch Codex, call AI APIs, execute target commands, mark queue/task completion, validate, commit, push, or modify target repositories.
 
 TASK-DEVO-091 implements read-only preflight and run-plan preview artifacts. `devo worker codex preflight` checks project registration, worker run readiness, linked handoff/prompt file existence, target repo path existence, linked metadata where available, and Codex executable presence using safe `PATH` detection only. `devo worker codex run-plan` writes JSON/Markdown/index artifacts with a safe command preview, blocked reasons, warnings, scope, validation expectations, and next action. `run-plan-approve` is planning approval only; it does not grant execution approval.
+
+TASK-DEVO-092 implements the first supervised single-run execution path. `devo worker codex execute-preview` is read-only. `devo worker codex execute --confirm-execute` launches Codex once only after the worker run and approved run plan pass execution checks. `devo worker codex execute-log` reads stored logs. Execution updates the worker run to review/failure/pause/block states but never completes queue/tasks, validates, commits, pushes, or trusts Codex output as proof.
 
 ## State Transitions
 
@@ -265,12 +268,21 @@ devo worker codex run-plan-approve --project <project> --plan <planId> --note "<
 
 These commands are the safety foundation for a future supervised adapter. They do not invoke Codex, call AI APIs, execute target commands, validate, commit, push, or modify target repositories. The proposed command is stored as a preview only. `run-plan-approve` records that the preview was reviewed as planning metadata; it is not execution approval for a future worker launch.
 
+Implemented supervised one-run execution commands:
+
+```powershell
+devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId>
+devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute
+devo worker codex execute-log --project <project> --run <workerRunId>
+```
+
+`execute` is intentionally not a queue worker. It launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates only the worker-run record. Exit code `0` becomes `waiting_review`; non-zero failures become `failed` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery.
+
 Proposed future execution commands:
 
 ```powershell
 devo worker codex run-next --project <project> --queue <queueId>
 devo worker codex run-task --project <project> --task <taskId>
-devo worker codex logs --project <project> --run <workerRunId>
 devo worker codex resume --project <project> --queue <queueId>
 ```
 
@@ -287,6 +299,7 @@ UI exposes worker state cautiously:
 - report status
 - run-plan count/status
 - latest preflight status
+- execution status, exit code, and log path
 - imported report summary
 - blocked reasons and warnings
 - reported changed-file and validation counts
@@ -295,9 +308,9 @@ UI exposes worker state cautiously:
 - pause reason
 - resume guidance
 - review checklist
-- copyable CLI commands for preflight, run-plan, run-plan list/show, report template, validation, import, show, and list
+- copyable CLI commands for preflight, run-plan, run-plan list/show, execute preview/log/guarded execute, report template, validation, import, show, and list
 
-The UI is read-only. The Worker Runs page inspects existing worker run/report/run-plan artifacts and shows review guidance, but it does not import reports from the UI, launch Codex, execute target commands, complete queue items, validate, commit, push, restore, modify scheduler settings, run target apps, or call model/API agents.
+The UI is read-only. The Worker Runs page inspects existing worker run/report/run-plan/execution artifacts and shows copyable CLI guidance, but it does not import reports from the UI, launch Codex, execute target commands, complete queue items, validate, commit, push, restore, modify scheduler settings, run target apps, or call model/API agents.
 
 Later, the controlled Action Safety model may expose workspace-safe worker actions with explicit confirmation, such as generating worker plan artifacts or importing a worker report. Launching Codex from UI should require a stronger approval and safety model.
 
@@ -309,7 +322,7 @@ Recommended future sequence:
 2. TASK-DEVO-089: Manual execution report import - completed.
 3. TASK-DEVO-090: Worker run UI visibility and review affordance polish - completed.
 4. TASK-DEVO-091: Codex worker preflight and run-plan model - completed.
-5. TASK-DEVO-092: Supervised Codex CLI adapter prototype.
+5. TASK-DEVO-092: Supervised Codex CLI adapter prototype - completed.
 6. TASK-DEVO-093: Queue integration for one item at a time.
 7. TASK-DEVO-094: Pause/resume/usage-limit handling.
 8. TASK-DEVO-095: Validation/review integration.

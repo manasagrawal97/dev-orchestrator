@@ -309,6 +309,7 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
 
     worker_runs = client.get("/api/projects/sample/worker-runs")
     worker_run = client.get("/api/projects/sample/worker-runs/WR001")
+    execution = client.get("/api/projects/sample/worker-runs/WR001/execution")
     missing = client.get("/api/projects/sample/worker-runs/WR999")
 
     assert worker_runs.status_code == 200
@@ -318,6 +319,10 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
     assert worker_run.status_code == 200
     assert worker_run.json()["status"] == "planned"
     assert worker_run.json()["report"]["report_status"] == "missing"
+    assert execution.status_code == 200
+    assert execution.json()["worker_run_id"] == "WR001"
+    assert execution.json()["execution_exit_code"] is None
+    assert execution.json()["execution_log_path"].endswith("worker-run-WR001.log")
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "worker_run_not_found"
 
@@ -555,6 +560,7 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/handoffs/{handoff_id}" in result.output
     assert "GET /api/projects/{project}/worker-runs" in result.output
     assert "GET /api/projects/{project}/worker-runs/{worker_run_id}" in result.output
+    assert "GET /api/projects/{project}/worker-runs/{worker_run_id}/execution" in result.output
     assert "GET /api/projects/{project}/worker-runs/{worker_run_id}/report" in result.output
     assert "GET /api/projects/{project}/worker-reports" in result.output
     assert "GET /api/projects/{project}/worker-run-plans" in result.output
