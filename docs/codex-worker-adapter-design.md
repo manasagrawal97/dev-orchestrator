@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-097 update, after supervised worker operator polish added explicit executable overrides, completed-item evidence visibility, and a compact flow summary. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
+Source/freshness: TASK-DEVO-099 update, after the first real supervised Codex dry-run attempt found a WindowsApps `codex.exe` launch failure. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
 
 ## Purpose
 
@@ -61,6 +61,7 @@ Smallest next step after design.
 First real adapter mode.
 
 - Devo starts a Codex process only after explicit approval.
+- The executable path must be accessible to `subprocess.run`; WindowsApps package paths may pass detection but fail at `CreateProcess`.
 - User can inspect the generated prompt before launch.
 - Devo captures transcript/log output.
 - Devo records worker status and next recommended action.
@@ -161,6 +162,8 @@ TASK-DEVO-096 dogfooded the full supervised path with a fake no-op `codex.cmd`; 
 TASK-DEVO-097 addresses that operator friction. `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` support `--codex-path` for explicit controlled executable selection. Run plans store executable path/source/resolution notes. `queue-status` can inspect `--item` and defaults to the most recently completed item after queue completion, so linked worker/report/review evidence remains visible. `flow-summary` provides a compact read-only status and next-command view for the whole queue-linked worker flow.
 
 TASK-DEVO-098 adds the first real supervised Codex dry-run runbook: `docs/runbooks/real-codex-supervised-dry-run.md`. Read it before launching real Codex through Devo. The first real run should target DevOrchestrator, use no-op/docs-only scope, validate orchestration rather than productivity, and stop before automatic validation, completion, commit, push, or delivery automation.
+
+TASK-DEVO-099 attempted that first real dry-run and documented the result in `docs/dogfood/devo-real-codex-dry-run-099.md`. Preflight and preview passed, but Windows denied `CreateProcess` for the detected WindowsApps package `codex.exe` path before Codex produced output. WR002 was imported as failed, review was rejected, and the queue item was blocked. Before retrying real Codex, Devo should support a stable accessible launcher path and catch launch-time `OSError`/`PermissionError` so worker/queue state and logs are recorded automatically.
 
 ## State Transitions
 
@@ -356,9 +359,10 @@ Recommended future sequence:
 9. TASK-DEVO-096: End-to-end supervised worker dogfood - completed.
 10. TASK-DEVO-097: Worker flow operator polish - completed.
 11. TASK-DEVO-098: Real Codex supervised dry-run checklist - completed.
-12. TASK-DEVO-099: First real Codex supervised dry-run execution report.
-13. TASK-DEVO-100: Pause/resume/usage-limit handling.
-14. TASK-DEVO-101: Optional commit/push delivery integration after safety review.
+12. TASK-DEVO-099: First real Codex supervised dry-run execution report - completed.
+13. TASK-DEVO-100: Harden real Codex launch path and launch-failure handling.
+14. TASK-DEVO-101: Pause/resume/usage-limit handling.
+15. TASK-DEVO-102: Optional commit/push delivery integration after safety review.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

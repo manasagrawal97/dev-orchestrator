@@ -35,6 +35,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [UI/API architecture](docs/ui-architecture.md)
 - [UI MVP specification](docs/ui-mvp-spec.md)
 - [TASK-DEVO-085 planning pipeline dogfood report](docs/dogfood/devo-pipeline-dogfood-085.md)
+- [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
 - [Roadmap](docs/roadmap.md)
 - [How to use Devo](docs/how-to-use-devo.md)
@@ -274,6 +275,8 @@ Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/
 The fake-worker end-to-end dogfood for this flow is documented in [docs/dogfood/devo-supervised-worker-dogfood-096.md](docs/dogfood/devo-supervised-worker-dogfood-096.md).
 
 Before the first real Codex supervised worker launch, read [docs/runbooks/real-codex-supervised-dry-run.md](docs/runbooks/real-codex-supervised-dry-run.md). The first real run should be no-op or docs-only, target DevOrchestrator first, and validate orchestration/review gates rather than productivity. It must not auto-validate, complete queues/tasks, commit, push, or touch PersonalOS.
+
+The first real dry-run attempt is documented in [docs/dogfood/devo-real-codex-dry-run-099.md](docs/dogfood/devo-real-codex-dry-run-099.md). It reached the guarded launch step, but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. Do not retry real supervised execution until the launch path and failure handling are hardened.
 
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 

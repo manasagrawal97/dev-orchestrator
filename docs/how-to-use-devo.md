@@ -286,6 +286,8 @@ Supervised Codex CLI worker execution is intentionally single-run and queue-link
 
 Before the first real supervised Codex launch, read `docs/runbooks/real-codex-supervised-dry-run.md`. The first real run should target DevOrchestrator, use no-op/docs-only scope, and prove the approval/preview/execution/report/review gate. It should not touch PersonalOS, run target commands, trust validation automatically, commit, push, or complete queue/task state without explicit review.
 
+The TASK-DEVO-099 first real launch attempt is documented in `docs/dogfood/devo-real-codex-dry-run-099.md`. It reached the approved guarded launch step but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. Do not retry real supervised execution until the launch path and launch-failure handling are hardened.
+
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
 ```mermaid

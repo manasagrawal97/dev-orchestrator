@@ -287,6 +287,10 @@ Added explicit `--codex-path` support to `devo worker codex preflight`, `run-pla
 
 Added `docs/runbooks/real-codex-supervised-dry-run.md`, a safety checklist and operator playbook for the first real Codex supervised worker dry-run through Devo. The runbook requires DevOrchestrator as the first target, no-op/docs-only scope, clean repo and backup health preconditions, explicit preflight/run-plan approval, `execute-preview`, guarded `execute --confirm-execute`, report import, review-gated completion, recovery steps, and success criteria. It documents `PATH` versus `--codex-path` guidance and explicitly excludes PersonalOS, target commands, backup/scheduler changes, validation trust, automatic completion, commit, push, and delivery automation.
 
+### TASK-DEVO-099 First Real Codex Supervised Dry-Run Report - Completed
+
+Attempted the first real Codex supervised worker dry-run through Devo and documented it in `docs/dogfood/devo-real-codex-dry-run-099.md`. The run used a refined DevOrchestrator-only no-op/docs-inspection task, approved batch `B003`, queue `Q003`, handoff `H003`, worker run `WR002`, and run plan `RP003`. Preflight and preview passed, but guarded execution failed before Codex launched because Windows denied `CreateProcess` for the detected WindowsApps Codex executable path. Report import marked WR002 failed, review `REV-WR002` was rejected with failed validation evidence, queue item `QI001` was blocked, and no source files or PersonalOS files were modified. Next work should harden launch path resolution and launch-exception handling before retrying real Codex or designing delivery automation.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.
