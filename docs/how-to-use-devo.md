@@ -19,6 +19,8 @@ For the plain-language product model, read:
 
 - [Devo vision](devo-vision.md)
 - [Company-model vision](devo-company-model.md)
+- [Codex worker adapter design](codex-worker-adapter-design.md)
+- [Real Codex supervised dry-run runbook](runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](remaining-roadmap.md)
 - [Current capabilities](current-capabilities.md)
 - [Agent workflow](agent-workflow.md)
@@ -281,6 +283,8 @@ Queue completion is now review-aware for Codex-linked or waiting-review items. `
 The fake-worker dogfood report for this path is `docs/dogfood/devo-supervised-worker-dogfood-096.md`.
 
 Supervised Codex CLI worker execution is intentionally single-run and queue-linked only when explicitly prepared. Read `docs/codex-worker-adapter-design.md` before worker adapter work. Manual handoff remains supported, and every worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
+
+Before the first real supervised Codex launch, read `docs/runbooks/real-codex-supervised-dry-run.md`. The first real run should target DevOrchestrator, use no-op/docs-only scope, and prove the approval/preview/execution/report/review gate. It should not touch PersonalOS, run target commands, trust validation automatically, commit, push, or complete queue/task state without explicit review.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

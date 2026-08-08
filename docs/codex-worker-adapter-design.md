@@ -160,6 +160,8 @@ TASK-DEVO-096 dogfooded the full supervised path with a fake no-op `codex.cmd`; 
 
 TASK-DEVO-097 addresses that operator friction. `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` support `--codex-path` for explicit controlled executable selection. Run plans store executable path/source/resolution notes. `queue-status` can inspect `--item` and defaults to the most recently completed item after queue completion, so linked worker/report/review evidence remains visible. `flow-summary` provides a compact read-only status and next-command view for the whole queue-linked worker flow.
 
+TASK-DEVO-098 adds the first real supervised Codex dry-run runbook: `docs/runbooks/real-codex-supervised-dry-run.md`. Read it before launching real Codex through Devo. The first real run should target DevOrchestrator, use no-op/docs-only scope, validate orchestration rather than productivity, and stop before automatic validation, completion, commit, push, or delivery automation.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -353,8 +355,10 @@ Recommended future sequence:
 8. TASK-DEVO-095: Review-gated queue completion - completed.
 9. TASK-DEVO-096: End-to-end supervised worker dogfood - completed.
 10. TASK-DEVO-097: Worker flow operator polish - completed.
-11. TASK-DEVO-098: Pause/resume/usage-limit handling.
-12. TASK-DEVO-099: Optional commit/push delivery integration after safety review.
+11. TASK-DEVO-098: Real Codex supervised dry-run checklist - completed.
+12. TASK-DEVO-099: First real Codex supervised dry-run execution report.
+13. TASK-DEVO-100: Pause/resume/usage-limit handling.
+14. TASK-DEVO-101: Optional commit/push delivery integration after safety review.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

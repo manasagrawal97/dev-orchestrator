@@ -26,6 +26,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
 - [Codex worker adapter design](docs/codex-worker-adapter-design.md)
+- [Real Codex supervised dry-run runbook](docs/runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](docs/remaining-roadmap.md)
 - [Current capabilities](docs/current-capabilities.md)
 - [Agent workflow](docs/agent-workflow.md)
@@ -271,6 +272,8 @@ Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/
 `devo project queue-complete-item` is review-aware for queue items linked to Codex worker runs or waiting in review. It refuses completion by default unless the linked worker review is `reviewed_passed` and validation evidence is not failed. If evidence is missing, needs changes, rejected, or failed, Devo prints the next review commands instead of completing the item. The emergency `--confirm-without-review` override exists for legacy/manual cases only, requires a non-empty note, and records a warning in queue item notes. No validation, commit, push, or target command is run automatically.
 
 The fake-worker end-to-end dogfood for this flow is documented in [docs/dogfood/devo-supervised-worker-dogfood-096.md](docs/dogfood/devo-supervised-worker-dogfood-096.md).
+
+Before the first real Codex supervised worker launch, read [docs/runbooks/real-codex-supervised-dry-run.md](docs/runbooks/real-codex-supervised-dry-run.md). The first real run should be no-op or docs-only, target DevOrchestrator first, and validate orchestration/review gates rather than productivity. It must not auto-validate, complete queues/tasks, commit, push, or touch PersonalOS.
 
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 

@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -40,12 +40,12 @@ The working loop is:
 
 - Latest completed source task: TASK-DEVO-097 worker flow operator polish
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
-- Latest docs task: TASK-DEVO-073B reprioritizes the remaining roadmap around brief intake, blueprint/backlog, batches, execution queue, Codex handoff, progress tracking, and review/resume.
+- Latest docs task: TASK-DEVO-098 real Codex supervised dry-run checklist
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-DEVO-096 end-to-end supervised worker dogfood run on DevOrchestrator itself
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: TASK-DEVO-098 pause/resume and usage-limit recovery polish; broader delivery automation remains deferred until review/validation gates mature.
+- Next recommended action: TASK-DEVO-099 first real Codex supervised dry-run execution report, using `docs/runbooks/real-codex-supervised-dry-run.md`; broader delivery automation remains deferred until review/validation gates mature.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -116,17 +116,18 @@ The working loop is:
 - TASK-DEVO-095 makes `devo project queue-complete-item` review-aware for Codex-linked or waiting-review queue items. Completion now requires a linked worker review with `reviewed_passed` status unless the operator uses the discouraged `--confirm-without-review` override with a note. Missing reviews, needs-changes/rejected reviews, and failed validation evidence block completion and print review commands. Devo still does not run validation, execute targets, commit, push, or complete queue/task state automatically.
 - TASK-DEVO-096 dogfooded the full supervised worker path against DevOrchestrator using a fake no-op `codex.cmd`. The flow proved planning/batch/queue/handoff/run-plan/fake execution/report import/review evidence/review-gated completion end to end without running real Codex or modifying source through the worker. Findings are documented in `docs/dogfood/devo-supervised-worker-dogfood-096.md`; key follow-ups are fake executable ergonomics, completed queue item evidence visibility, and shorter operator summaries.
 - TASK-DEVO-097 polishes the supervised worker operator flow. `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` now accept `--codex-path` for controlled fake/dogfood executable selection while preserving normal `PATH` detection. Run plans store executable path/source/resolution notes. `queue-status` can inspect `--item` and defaults to the most recently completed item after queue completion so linked worker/report/review evidence stays visible. `devo worker codex flow-summary` adds a compact read-only queue -> handoff -> worker -> run plan -> report -> review -> completion readiness view. API/UI status surfaces expose these fields read-only. Devo still does not run real Codex in tests, auto-validate, auto-complete queues/tasks, commit, push, or add UI execution controls.
+- TASK-DEVO-098 adds `docs/runbooks/real-codex-supervised-dry-run.md`, the safety checklist and operator playbook for the first real Codex supervised worker dry-run. It requires DevOrchestrator as the first target, no-op/docs-only scope, clean repo and healthy backup preconditions, explicit preview/approval/`--confirm-execute`, report import, review-gated completion, recovery guidance, and success criteria. It does not run real Codex, add automation, modify source, or touch PersonalOS.
 
 ## Readiness Estimate
 
 - Practical personal-use Devo after TASK-DEVO-073B: around 65-70% complete.
 - Long-term ideal Devo, including dashboard maturity and optional worker/model adapters: around 40-45% complete.
 
-The latest personal-use completion target was brief intake, blueprint/backlog, batch approval, Codex handoff, progress tracking, UI progress visibility, and one dogfood end-to-end run. That target is now dogfooded; Devo is around 80-85% complete for personal use, with the next gap being operator guidance polish rather than new planning primitives.
+The latest personal-use completion target was brief intake, blueprint/backlog, batch approval, Codex handoff, progress tracking, UI progress visibility, and one dogfood end-to-end run. That target is now dogfooded; Devo is around 80-85% complete for personal use, with the next gap being a carefully documented first real Codex supervised dry-run rather than new planning primitives.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Codex-ready handoff prompts from planning queue/batch/task artifacts, track manual Codex worker runs and imported worker reports as review evidence, preflight future Codex worker runs, store run-plan previews with optional explicit executable paths for controlled dogfood/testing, launch one supervised Codex CLI run only from an approved plan with explicit confirmation, summarize queue-linked worker flow evidence after completion, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP with read-only Planning Intake, Blueprint, Backlog, Batch, Queue, Handoff, Worker Runs, and Progress pages, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Codex-ready handoff prompts from planning queue/batch/task artifacts, track manual Codex worker runs and imported worker reports as review evidence, preflight future Codex worker runs, store run-plan previews with optional explicit executable paths for controlled dogfood/testing, launch one supervised Codex CLI run only from an approved plan with explicit confirmation, summarize queue-linked worker flow evidence after completion, provide a real-Codex dry-run safety runbook, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP with read-only Planning Intake, Blueprint, Backlog, Batch, Queue, Handoff, Worker Runs, and Progress pages, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete a manual-assisted end-to-end dogfood run.
 
-The next product step should focus on the planning pipeline in `docs/remaining-roadmap.md`. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
+The next product step should use `docs/runbooks/real-codex-supervised-dry-run.md` to perform and document the first real Codex supervised dry-run on DevOrchestrator. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
 ## Completed Work
 
@@ -223,13 +224,14 @@ If chat context is lost, start here:
 3. Read `docs/devo-company-model.md`.
 4. Read `docs/remaining-roadmap.md`.
 5. Read `docs/codex-worker-adapter-design.md` before worker adapter work.
-6. Read `docs/current-capabilities.md`.
-7. Read `docs/agent-workflow.md`.
-8. Read `docs/ui-architecture.md` when continuing UI/API planning.
-9. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
-10. Read `docs/roadmap.md`.
-11. Read `docs/operating-model.md`.
-12. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-13. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-14. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
-15. Continue from the latest planned next task.
+6. Read `docs/runbooks/real-codex-supervised-dry-run.md` before any real supervised Codex launch.
+7. Read `docs/current-capabilities.md`.
+8. Read `docs/agent-workflow.md`.
+9. Read `docs/ui-architecture.md` when continuing UI/API planning.
+10. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
+11. Read `docs/roadmap.md`.
+12. Read `docs/operating-model.md`.
+13. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+14. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+15. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+16. Continue from the latest planned next task.
