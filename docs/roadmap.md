@@ -275,6 +275,10 @@ Added workspace-only review artifacts under `workspace/projects/<project>/worker
 
 Made `devo project queue-complete-item` review-aware for Codex-linked or waiting-review queue items. Completion is refused by default unless the linked worker review is `reviewed_passed` and validation evidence is not failed. Missing reviews, needs-changes/rejected reviews, and failed validation evidence print review guidance instead of mutating queue/task state. The explicit `--confirm-without-review` override is discouraged, requires a note, and records a warning. Queue status/read models/API/UI now expose completion readiness and blockers read-only.
 
+### TASK-DEVO-096 Supervised Worker Dogfood - Completed
+
+Dogfooded the supervised worker flow against DevOrchestrator with a fake no-op `codex.cmd`, proving the planning -> batch -> queue -> handoff -> worker run -> run plan -> guarded fake execution -> report import -> review evidence -> review-gated completion path end to end. No real Codex CLI was executed and no source files were changed through the worker. The dogfood report is `docs/dogfood/devo-supervised-worker-dogfood-096.md`; follow-ups include fake executable ergonomics, completed queue item evidence visibility, and shorter operator summary commands.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

@@ -264,6 +264,8 @@ Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/
 
 `devo project queue-complete-item` is review-aware for queue items linked to Codex worker runs or waiting in review. It refuses completion by default unless the linked worker review is `reviewed_passed` and validation evidence is not failed. If evidence is missing, needs changes, rejected, or failed, Devo prints the next review commands instead of completing the item. The emergency `--confirm-without-review` override exists for legacy/manual cases only, requires a non-empty note, and records a warning in queue item notes. No validation, commit, push, or target command is run automatically.
 
+The fake-worker end-to-end dogfood for this flow is documented in [docs/dogfood/devo-supervised-worker-dogfood-096.md](docs/dogfood/devo-supervised-worker-dogfood-096.md).
+
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 
 List registered projects:

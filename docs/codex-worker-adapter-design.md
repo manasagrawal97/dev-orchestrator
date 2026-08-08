@@ -156,6 +156,8 @@ TASK-DEVO-094 adds worker review evidence. `review-template`, `review-attach-evi
 
 TASK-DEVO-095 gates queue completion on that evidence. `devo project queue-complete-item` checks linked worker review state for Codex-linked or waiting-review items and refuses completion unless the review is `reviewed_passed` and validation evidence is not failed. Missing reviews, needs-changes/rejected decisions, and failed validation evidence print the next review commands instead. `--confirm-without-review` is reserved for emergency/manual legacy cases, requires a note, and records a warning.
 
+TASK-DEVO-096 dogfooded the full supervised path with a fake no-op `codex.cmd`; see `docs/dogfood/devo-supervised-worker-dogfood-096.md`. The path worked end to end, including review-gated completion. The main friction was fake executable/PATH setup and post-completion evidence visibility.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -341,8 +343,10 @@ Recommended future sequence:
 6. TASK-DEVO-093: Queue integration for one item at a time.
 7. TASK-DEVO-094: Validation/review integration - completed.
 8. TASK-DEVO-095: Review-gated queue completion - completed.
-9. TASK-DEVO-096: Pause/resume/usage-limit handling.
-10. TASK-DEVO-097: Optional commit/push delivery integration after safety review.
+9. TASK-DEVO-096: End-to-end supervised worker dogfood - completed.
+10. TASK-DEVO-097: Worker flow operator polish.
+11. TASK-DEVO-098: Pause/resume/usage-limit handling.
+12. TASK-DEVO-099: Optional commit/push delivery integration after safety review.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

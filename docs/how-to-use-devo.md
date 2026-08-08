@@ -272,6 +272,8 @@ Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/
 
 Queue completion is now review-aware for Codex-linked or waiting-review items. `devo project queue-complete-item` refuses completion by default when the linked worker review is missing, `reviewed_needs_changes`, `rejected`, or has failed validation evidence. A `reviewed_passed` review allows the explicit completion command. `--confirm-without-review` is an emergency/manual override only; it requires a note and records a warning.
 
+The fake-worker dogfood report for this path is `docs/dogfood/devo-supervised-worker-dogfood-096.md`.
+
 Supervised Codex CLI worker execution is intentionally single-run and queue-linked only when explicitly prepared. Read `docs/codex-worker-adapter-design.md` before worker adapter work. Manual handoff remains supported, and every worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
