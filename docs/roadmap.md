@@ -267,6 +267,10 @@ Added a guarded one-run Codex CLI execution path with `devo worker codex execute
 
 Added `devo worker codex prepare-next --project <project> --queue <queueId>` and read-only `devo worker codex queue-status`. `prepare-next` prepares exactly one current running or next pending queue item by creating/reusing its handoff, creating a linked worker run, creating a run plan, and running preflight without approving or executing anything. Guarded execution now updates linked queue state conservatively: successful exit moves the worker, queue item, and queue to `waiting_review`; failures pause as failure; usage-limit output pauses as usage limit; safety/approval output blocks the item and waits for review. Completion remains explicit with `devo project queue-complete-item` only after review and validation evidence. Read models, API, and read-only UI pages expose linked worker/run-plan/queue status and copyable commands without UI execute buttons.
 
+### TASK-DEVO-094 Worker Review Tracking - Completed
+
+Added workspace-only review artifacts under `workspace/projects/<project>/workers/codex/reviews/` and the commands `devo worker codex review-template`, `review-attach-evidence`, `review-record`, `review-show`, and `review-list`. Reviews record validation evidence, changed-file review, safety review, acceptance criteria review, follow-up items, reviewer decision, and next queue guidance. `review-record --status reviewed_passed` does not complete queue items or backlog tasks; it only records the decision and prints the explicit `queue-complete-item` command. Read models, API endpoints, Queues UI, and Worker Runs UI expose review/validation status read-only.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

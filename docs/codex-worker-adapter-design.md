@@ -152,6 +152,8 @@ TASK-DEVO-092 implements the first supervised single-run execution path. `devo w
 
 TASK-DEVO-093 integrates that supervised path with one execution queue item at a time. `devo worker codex prepare-next --project <project> --queue <queueId>` creates or reuses the current queue-item handoff, creates a linked worker run, creates a run plan, and runs preflight without approval or execution. `devo worker codex queue-status` is read-only visibility into the queue item, linked worker run, linked run plan, latest execution state, and next CLI command.
 
+TASK-DEVO-094 adds worker review evidence. `review-template`, `review-attach-evidence`, `review-record`, `review-show`, and `review-list` create workspace-only review artifacts under `workers/codex/reviews/`. Reviews capture validation evidence, changed-file review, safety review, acceptance criteria review, follow-up items, reviewer decision, and queue completion guidance. They do not run validation, commit, push, modify target repositories, or complete queue/tasks automatically.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -278,9 +280,16 @@ devo worker codex queue-status --project <project> --queue <queueId>
 devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId>
 devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute
 devo worker codex execute-log --project <project> --run <workerRunId>
+devo worker codex review-template --project <project> --run <workerRunId>
+devo worker codex review-attach-evidence --project <project> --run <workerRunId> --status <provided|passed|failed|partial> --summary "<summary>"
+devo worker codex review-record --project <project> --run <workerRunId> --status <reviewed_passed|reviewed_needs_changes|rejected> --reviewer "<name>" --note "<note>"
+devo worker codex review-show --project <project> --run <workerRunId>
+devo worker codex review-list --project <project>
 ```
 
 `prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery.
+
+`review-record --status reviewed_passed` still does not complete the queue item. It only records the reviewer decision and prints the explicit `devo project queue-complete-item` command for the operator to run if the evidence is sufficient.
 
 Proposed future execution commands:
 
@@ -304,6 +313,7 @@ UI exposes worker state cautiously:
 - latest preflight status
 - execution status, exit code, and log path
 - imported report summary
+- review status, reviewer, decision note, and validation evidence status
 - blocked reasons and warnings
 - reported changed-file and validation counts
 - safety warnings
@@ -311,7 +321,7 @@ UI exposes worker state cautiously:
 - pause reason
 - resume guidance
 - review checklist
-- copyable CLI commands for preflight, run-plan, run-plan list/show, execute preview/log/guarded execute, report template, validation, import, show, and list
+- copyable CLI commands for preflight, run-plan, run-plan list/show, execute preview/log/guarded execute, report template, validation, import, show/list, review template/evidence/record/show/list, and explicit post-review queue completion
 
 The UI is read-only. The Worker Runs page inspects existing worker run/report/run-plan/execution artifacts and shows copyable CLI guidance, but it does not import reports from the UI, launch Codex, execute target commands, complete queue items, validate, commit, push, restore, modify scheduler settings, run target apps, or call model/API agents.
 

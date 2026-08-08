@@ -13,6 +13,7 @@ from devo.project_planning import (
     list_codex_worker_runs,
     load_codex_run_plan,
     load_codex_worker_report,
+    load_codex_worker_review,
     load_codex_handoff,
     load_codex_worker_run,
     load_execution_queue,
@@ -23,6 +24,7 @@ from devo.project_planning import (
     worker_run_plan_artifact_paths,
     worker_report_artifact_paths,
     worker_report_template_paths,
+    worker_review_artifact_paths,
     worker_run_artifact_paths,
 )
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -446,6 +448,174 @@ def test_worker_report_show_and_list_work(tmp_path: Path, monkeypatch) -> None:
     assert "worker-provided evidence only" in shown.output
     assert listed.exit_code == 0, listed.output
     assert "WR001 | completed" in listed.output
+
+
+def test_worker_review_template_creates_artifacts_and_index(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["worker", "codex", "review-template", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Codex worker review template saved" in result.output
+    json_path, markdown_path = worker_review_artifact_paths("sample", "WR001", workspace_root=workspace)
+    index_path = workspace / "projects" / "sample" / "workers" / "codex" / "reviews" / "review-index.json"
+    assert json_path.exists()
+    assert markdown_path.exists()
+    assert index_path.exists()
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "draft"
+    assert review.source_queue_id == "Q001"
+    assert review.acceptance_criteria_review
+    review_markdown = markdown_path.read_text(encoding="utf-8")
+    assert "Codex Worker Review: WR001" in review_markdown
+    assert "workspace-only evidence" in review_markdown
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_worker_review_show_and_list_work(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    runner.invoke(app, ["worker", "codex", "review-template", "--project", "sample", "--run", "WR001"])
+
+    shown = runner.invoke(app, ["worker", "codex", "review-show", "--project", "sample", "--run", "WR001"], terminal_width=240)
+    listed = runner.invoke(app, ["worker", "codex", "review-list", "--project", "sample"], terminal_width=240)
+
+    assert shown.exit_code == 0, shown.output
+    assert "Codex worker review: WR001" in shown.output
+    assert "Review status: draft" in shown.output
+    assert listed.exit_code == 0, listed.output
+    assert "WR001 | draft" in listed.output
+
+
+def test_worker_review_attach_evidence_updates_validation_summary(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-attach-evidence",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "passed",
+            "--summary",
+            "Focused validation passed.",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.validation_evidence.validation_status == "passed"
+    assert review.validation_evidence.validation_summary == "Focused validation passed."
+    assert any("Devo did not run validation" in warning for warning in review.validation_evidence.warnings)
+
+
+def test_worker_review_record_passed_does_not_complete_queue_or_task(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+
+    result = runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_passed",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Reviewed evidence.",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "queue-complete-item" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    task = get_backlog_task("sample", "T001", workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "reviewed_passed"
+    assert review.reviewer == "Manas"
+    assert worker_run is not None
+    assert worker_run.status == "waiting_review"
+    assert queue is not None
+    assert queue.status == "waiting_review"
+    assert queue.items[0].status == "waiting_review"
+    assert task.status == "ready"
+
+
+def test_worker_review_record_needs_changes_and_rejected_keep_queue_incomplete(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+
+    needs_changes = runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_needs_changes",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Needs another pass.",
+        ],
+        terminal_width=240,
+    )
+    rejected = runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "rejected",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Wrong scope.",
+        ],
+        terminal_width=240,
+    )
+
+    assert needs_changes.exit_code == 0, needs_changes.output
+    assert rejected.exit_code == 0, rejected.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    task = get_backlog_task("sample", "T001", workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "rejected"
+    assert queue is not None
+    assert queue.items[0].status == "waiting_review"
+    assert task.status == "ready"
 
 
 def test_codex_preflight_passes_for_valid_worker_run(tmp_path: Path, monkeypatch) -> None:

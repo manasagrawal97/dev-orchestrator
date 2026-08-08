@@ -17,6 +17,7 @@ from .project_planning import (
     list_codex_handoffs,
     list_codex_run_plans,
     list_codex_worker_reports,
+    list_codex_worker_reviews,
     list_codex_worker_runs,
     list_project_batches,
     list_execution_queues,
@@ -144,6 +145,12 @@ class ProjectOverview(BaseModel):
     latest_worker_report_path: str | None = None
     latest_worker_report_summary: str | None = None
     latest_worker_report_next_action: str | None = None
+    latest_worker_review_id: str | None = None
+    latest_worker_review_status: str | None = None
+    latest_worker_validation_status: str | None = None
+    latest_worker_review_reviewer: str | None = None
+    latest_worker_review_decision_note: str | None = None
+    review_next_action: str | None = None
     codex_run_plan_count: int = 0
     latest_codex_run_plan_id: str | None = None
     latest_codex_run_plan_status: str | None = None
@@ -261,6 +268,16 @@ def build_project_overview_with_timing(
             latest_worker_report_path=str(planning["latest_worker_report_path"]) if planning["latest_worker_report_path"] else None,
             latest_worker_report_summary=str(planning["latest_worker_report_summary"]) if planning["latest_worker_report_summary"] else None,
             latest_worker_report_next_action=str(planning["latest_worker_report_next_action"]) if planning["latest_worker_report_next_action"] else None,
+            latest_worker_review_id=str(planning["latest_worker_review_id"]) if planning["latest_worker_review_id"] else None,
+            latest_worker_review_status=str(planning["latest_worker_review_status"]) if planning["latest_worker_review_status"] else None,
+            latest_worker_validation_status=(
+                str(planning["latest_worker_validation_status"]) if planning["latest_worker_validation_status"] else None
+            ),
+            latest_worker_review_reviewer=str(planning["latest_worker_review_reviewer"]) if planning["latest_worker_review_reviewer"] else None,
+            latest_worker_review_decision_note=(
+                str(planning["latest_worker_review_decision_note"]) if planning["latest_worker_review_decision_note"] else None
+            ),
+            review_next_action=str(planning["review_next_action"]) if planning["review_next_action"] else None,
             codex_run_plan_count=int(planning["codex_run_plan_count"]),
             latest_codex_run_plan_id=str(planning["latest_codex_run_plan_id"]) if planning["latest_codex_run_plan_id"] else None,
             latest_codex_run_plan_status=str(planning["latest_codex_run_plan_status"]) if planning["latest_codex_run_plan_status"] else None,
@@ -485,6 +502,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
         worker_runs = list_codex_worker_runs(project_name, workspace_root=workspace_root)
         worker_reports = list_codex_worker_reports(project_name, workspace_root=workspace_root)
+        worker_reviews = list_codex_worker_reviews(project_name, workspace_root=workspace_root)
         run_plans = list_codex_run_plans(project_name, workspace_root=workspace_root)
         progress = calculate_project_progress(project_name, workspace_root=workspace_root)
     except Exception as exc:
@@ -543,6 +561,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_worker_report_path": None,
             "latest_worker_report_summary": None,
             "latest_worker_report_next_action": f"Review worker report artifacts: {exc}",
+            "latest_worker_review_id": None,
+            "latest_worker_review_status": None,
+            "latest_worker_validation_status": None,
+            "latest_worker_review_reviewer": None,
+            "latest_worker_review_decision_note": None,
+            "review_next_action": f"Review worker review artifacts: {exc}",
             "codex_run_plan_count": 0,
             "latest_codex_run_plan_id": None,
             "latest_codex_run_plan_status": None,
@@ -562,6 +586,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     latest_handoff = handoffs[0] if handoffs else None
     latest_worker_run = worker_runs[0] if worker_runs else None
     latest_worker_report = worker_reports[0] if worker_reports else None
+    latest_worker_review = worker_reviews[0] if worker_reviews else None
     latest_run_plan = run_plans[0] if run_plans else None
     queue_worker_status = None
     if latest_queue:
@@ -655,6 +680,12 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_worker_report_path": latest_worker_report_run.report_path if latest_worker_report_run else None,
         "latest_worker_report_summary": latest_worker_report.summary if latest_worker_report else None,
         "latest_worker_report_next_action": latest_worker_report_run.next_action if latest_worker_report_run else None,
+        "latest_worker_review_id": latest_worker_review.review_id if latest_worker_review else None,
+        "latest_worker_review_status": latest_worker_review.review_status if latest_worker_review else None,
+        "latest_worker_validation_status": latest_worker_review.validation_evidence.validation_status if latest_worker_review else None,
+        "latest_worker_review_reviewer": latest_worker_review.reviewer if latest_worker_review else None,
+        "latest_worker_review_decision_note": latest_worker_review.decision_note if latest_worker_review else None,
+        "review_next_action": latest_worker_review.next_action if latest_worker_review else None,
         "codex_run_plan_count": len(run_plans),
         "latest_codex_run_plan_id": latest_run_plan.plan_id if latest_run_plan else None,
         "latest_codex_run_plan_status": latest_run_plan.status if latest_run_plan else None,

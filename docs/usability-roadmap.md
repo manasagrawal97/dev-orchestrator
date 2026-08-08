@@ -53,7 +53,7 @@ Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. 
 
 The long-term direction is documented in `docs/devo-company-model.md`: Devo should become a local software-development company operating system around AI workers. The next major usability layer should support project brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. The prioritized task order is documented in `docs/remaining-roadmap.md`.
 
-TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. TASK-DEVO-076 adds a Codex/manual backlog refinement prompt and safe refined-backlog import path. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds deterministic count-based progress summaries and a read-only dashboard Progress card. TASK-DEVO-079 adds execution queue state tracking and read-only queue summaries. TASK-DEVO-080 adds Codex-ready handoff prompts and read-only handoff summaries. TASK-DEVO-081 adds the first dedicated read-only Planning Intake page for the full planning pipeline. TASK-DEVO-082 adds detailed read-only Blueprint and Backlog pages. TASK-DEVO-083 adds detailed read-only Batch, Queue, Handoff, and Progress pages. TASK-DEVO-084 adds explicit workspace-only Batch approval/review artifacts and decisions. TASK-DEVO-085 proves the full planning pipeline through dogfood, TASK-DEVO-086 tightens the main operator guidance and input robustness issues found there, TASK-DEVO-087 documents the future Codex worker adapter safety model, TASK-DEVO-088 adds worker run tracking without implementing Codex automation, TASK-DEVO-089 adds manual worker report templates/import as review evidence, TASK-DEVO-090 adds a read-only Worker Runs page for detailed review visibility, TASK-DEVO-091 adds read-only preflight checks and run-plan previews for future supervised Codex execution, and TASK-DEVO-092 adds the first guarded one-run Codex CLI execution prototype.
+TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. TASK-DEVO-076 adds a Codex/manual backlog refinement prompt and safe refined-backlog import path. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds deterministic count-based progress summaries and a read-only dashboard Progress card. TASK-DEVO-079 adds execution queue state tracking and read-only queue summaries. TASK-DEVO-080 adds Codex-ready handoff prompts and read-only handoff summaries. TASK-DEVO-081 adds the first dedicated read-only Planning Intake page for the full planning pipeline. TASK-DEVO-082 adds detailed read-only Blueprint and Backlog pages. TASK-DEVO-083 adds detailed read-only Batch, Queue, Handoff, and Progress pages. TASK-DEVO-084 adds explicit workspace-only Batch approval/review artifacts and decisions. TASK-DEVO-085 proves the full planning pipeline through dogfood, TASK-DEVO-086 tightens the main operator guidance and input robustness issues found there, TASK-DEVO-087 documents the future Codex worker adapter safety model, TASK-DEVO-088 adds worker run tracking without implementing Codex automation, TASK-DEVO-089 adds manual worker report templates/import as review evidence, TASK-DEVO-090 adds a read-only Worker Runs page for detailed review visibility, TASK-DEVO-091 adds read-only preflight checks and run-plan previews for future supervised Codex execution, TASK-DEVO-092 adds the first guarded one-run Codex CLI execution prototype, TASK-DEVO-093 adds a queue-first worker preparation shortcut, and TASK-DEVO-094 adds explicit worker review and validation-evidence records before any queue completion.
 
 ### Work Packages - MVP Added
 
@@ -215,7 +215,7 @@ devo worker codex run-list --project DevOrchestrator
 devo worker codex run-status --project DevOrchestrator --run WR001 --status waiting_review --note "Manual session stopped."
 ```
 
-The record captures source handoff/queue/item/batch/task references, scope, safety boundaries, current status, next action, and report metadata. It is deliberately not proof of completion. Validation/review trust, queue completion, supervised Codex CLI execution, and any commit/push automation remain future safety-gated work.
+The record captures source handoff/queue/item/batch/task references, scope, safety boundaries, current status, next action, and report metadata. It is deliberately not proof of completion. Queue completion and any commit/push automation remain separate safety-gated actions.
 
 Manual report import is now the assisted-handoff bridge:
 
@@ -226,7 +226,19 @@ devo worker codex report-import --project DevOrchestrator --run WR001 --file rep
 devo worker codex report-show --project DevOrchestrator --run WR001
 ```
 
-The import stores worker-reported status, summary, changed files, validation/tests/commands, safety warnings, blockers, follow-ups, and notes under `workspace/projects/<project>/workers/codex/reports/`. It does not run Codex, execute target commands, validate, commit, push, complete queue items, or prove delivery. Validation/review trust, queue completion, supervised Codex CLI execution, and any commit/push automation remain future safety-gated work.
+The import stores worker-reported status, summary, changed files, validation/tests/commands, safety warnings, blockers, follow-ups, and notes under `workspace/projects/<project>/workers/codex/reports/`. It does not run Codex, execute target commands, validate, commit, push, complete queue items, or prove delivery.
+
+Worker review records now separate review and validation evidence from queue completion:
+
+```powershell
+devo worker codex review-template --project DevOrchestrator --run WR001
+devo worker codex review-attach-evidence --project DevOrchestrator --run WR001 --status passed --summary "Validation passed."
+devo worker codex review-record --project DevOrchestrator --run WR001 --status reviewed_passed --reviewer "Manas" --note "Safe to complete manually."
+devo worker codex review-show --project DevOrchestrator --run WR001
+devo worker codex review-list --project DevOrchestrator
+```
+
+Review records store reviewer decisions and manual validation evidence under `workspace/projects/<project>/workers/codex/reviews/`. They do not run validation, complete queue items, complete tasks, commit, push, or prove delivery by themselves. A passed review prints the explicit `queue-complete-item` command when linked queue context exists, so the final transition remains intentional.
 
 Run-plan previews are now the safe preparation layer before any future supervised Codex launch:
 

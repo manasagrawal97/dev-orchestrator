@@ -258,6 +258,18 @@ devo worker codex report-list --project MyProject
 
 Imported reports live under `workspace/projects/<project>/workers/codex/reports/` as JSON and Markdown. They record what the worker claimed happened: status, summary, changed files, validation attempted/results, tests, commands, optional commit hash, safety warnings, blockers, follow-ups, and notes. Importing a report does not execute Codex, call AI APIs, run target commands, trust the report as proof, complete queue/tasks, run validation, commit, push, or modify target source. A completed worker report moves the worker run into a review-oriented state so the user can verify evidence before any queue or delivery update.
 
+Record review and validation evidence after worker execution/report import:
+
+```powershell
+devo worker codex review-template --project MyProject --run WR001
+devo worker codex review-attach-evidence --project MyProject --run WR001 --status provided --summary "<validation summary>"
+devo worker codex review-record --project MyProject --run WR001 --status reviewed_passed --reviewer "<name>" --note "<note>"
+devo worker codex review-show --project MyProject --run WR001
+devo worker codex review-list --project MyProject
+```
+
+Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/`. They are the bridge between worker output and queue completion: checklist notes, validation evidence, changed-file review, safety review, follow-up items, reviewer decision, and next action. They do not run validation, complete queue/task state, commit, push, or modify target source. Queue completion remains a separate explicit `devo project queue-complete-item` command after review.
+
 Supervised Codex CLI worker execution is intentionally single-run and queue-linked only when explicitly prepared. Read `docs/codex-worker-adapter-design.md` before worker adapter work. Manual handoff remains supported, and every worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.

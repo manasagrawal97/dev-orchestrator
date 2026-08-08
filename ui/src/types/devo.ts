@@ -126,6 +126,12 @@ export interface ProjectOverview {
   latest_worker_report_path: string | null;
   latest_worker_report_summary: string | null;
   latest_worker_report_next_action: string | null;
+  latest_worker_review_id: string | null;
+  latest_worker_review_status: string | null;
+  latest_worker_validation_status: string | null;
+  latest_worker_review_reviewer: string | null;
+  latest_worker_review_decision_note: string | null;
+  review_next_action: string | null;
   codex_run_plan_count: number;
   latest_codex_run_plan_id: string | null;
   latest_codex_run_plan_status: string | null;
@@ -345,6 +351,9 @@ export interface CodexQueueWorkerStatus {
   latest_worker_execution_status: string | null;
   latest_worker_execution_exit_code: number | null;
   latest_worker_execution_log_path: string | null;
+  latest_worker_review_id: string | null;
+  latest_worker_review_status: string | null;
+  latest_worker_validation_status: string | null;
   next_action: string;
 }
 
@@ -377,6 +386,43 @@ export interface WorkerReportMetadata {
   safety_warnings: string[];
   reviewer_notes: string[];
   imported_at: string | null;
+}
+
+export interface ValidationEvidence {
+  validation_status: string;
+  commands_reported: string[];
+  tests_reported: string[];
+  validation_summary: string;
+  evidence_paths: string[];
+  warnings: string[];
+}
+
+export interface WorkerReview {
+  project: string;
+  review_id: string;
+  worker_run_id: string;
+  source_queue_id: string | null;
+  source_queue_item_id: string | null;
+  source_task_id: string | null;
+  source_handoff_id: string | null;
+  source_report_path: string | null;
+  review_status: string;
+  reviewer: string | null;
+  decision_note: string;
+  validation_evidence: ValidationEvidence;
+  changed_files_review: string[];
+  safety_review: string[];
+  acceptance_criteria_review: string[];
+  follow_up_items: string[];
+  next_action: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkerReviewsResponse {
+  project: string;
+  count: number;
+  reviews: WorkerReview[];
 }
 
 export interface CodexWorkerReport {

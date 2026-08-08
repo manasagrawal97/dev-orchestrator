@@ -214,6 +214,9 @@ function QueueWorkerStatusPanel({ status }: { status: CodexQueueWorkerStatus }) 
           ['Latest execution status', status.latest_worker_execution_status ?? 'none'],
           ['Latest execution exit code', status.latest_worker_execution_exit_code ?? 'none'],
           ['Latest execution log', status.latest_worker_execution_log_path ?? 'none'],
+          ['Latest review', status.latest_worker_review_id ?? 'none'],
+          ['Review status', status.latest_worker_review_status ?? 'none'],
+          ['Validation status', status.latest_worker_validation_status ?? 'none'],
           ['Next action', status.next_action]
         ]}
       />

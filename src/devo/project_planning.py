@@ -32,6 +32,8 @@ WORKERS_DIR_NAME = "workers"
 CODEX_WORKER_DIR_NAME = "codex"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
+WORKER_REVIEWS_DIR_NAME = "reviews"
+WORKER_REVIEW_INDEX_JSON = "review-index.json"
 WORKER_RUN_PLANS_DIR_NAME = "run-plans"
 WORKER_RUN_PLAN_INDEX_JSON = "run-plan-index.json"
 WORKER_LOGS_DIR_NAME = "logs"
@@ -61,6 +63,8 @@ ALLOWED_WORKER_RUN_STATUSES = {
 }
 ALLOWED_WORKER_REPORT_STATUSES = {"missing", "present", "validated", "rejected"}
 ALLOWED_WORKER_REPORTED_STATUSES = {"completed", "failed", "blocked", "partial", "usage_limit", "needs_approval"}
+ALLOWED_WORKER_REVIEW_STATUSES = {"draft", "reviewed_passed", "reviewed_needs_changes", "rejected"}
+ALLOWED_VALIDATION_EVIDENCE_STATUSES = {"not_provided", "provided", "passed", "failed", "partial"}
 ALLOWED_WORKER_RUN_PLAN_STATUSES = {"draft", "ready", "blocked", "superseded"}
 ALLOWED_WORKER_RUN_PLAN_APPROVAL_STATUSES = {"not_requested", "requested", "approved", "rejected"}
 ALLOWED_WORKER_PREFLIGHT_STATUSES = {"not_run", "passed", "warnings", "blocked"}
@@ -492,6 +496,63 @@ class WorkerReportValidationResult(BaseModel):
     report: CodexWorkerReport | None = None
 
 
+class ValidationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    validation_status: str = "not_provided"
+    commands_reported: list[str] = Field(default_factory=list)
+    tests_reported: list[str] = Field(default_factory=list)
+    validation_summary: str = ""
+    evidence_paths: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WorkerReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    review_id: str
+    worker_run_id: str
+    source_queue_id: str | None = None
+    source_queue_item_id: str | None = None
+    source_task_id: str | None = None
+    source_handoff_id: str | None = None
+    source_report_path: str | None = None
+    review_status: str = "draft"
+    reviewer: str | None = None
+    decision_note: str = ""
+    validation_evidence: ValidationEvidence = Field(default_factory=ValidationEvidence)
+    changed_files_review: list[str] = Field(default_factory=list)
+    safety_review: list[str] = Field(default_factory=list)
+    acceptance_criteria_review: list[str] = Field(default_factory=list)
+    follow_up_items: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    next_action: str = ""
+
+
+class WorkerReviewIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: str
+    worker_run_id: str
+    review_status: str
+    validation_status: str
+    reviewer: str | None = None
+    path: str
+    updated_at: datetime
+
+
+class WorkerReviewIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    reviews: list[WorkerReviewIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class WorkerRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -686,6 +747,9 @@ class CodexQueueWorkerStatus(BaseModel):
     latest_worker_execution_status: str | None = None
     latest_worker_execution_exit_code: int | None = None
     latest_worker_execution_log_path: str | None = None
+    latest_worker_review_id: str | None = None
+    latest_worker_review_status: str | None = None
+    latest_worker_validation_status: str | None = None
     next_action: str
 
 
@@ -696,6 +760,8 @@ class WorkerArtifactPaths(BaseModel):
     codex_dir: Path
     worker_run_index_json: Path
     reports_dir: Path
+    reviews_dir: Path
+    review_index_json: Path
     run_plans_dir: Path
     run_plan_index_json: Path
     logs_dir: Path
@@ -752,6 +818,8 @@ def worker_artifact_paths(project_name: str, workspace_root: Path | None = None)
         codex_dir=codex_dir,
         worker_run_index_json=codex_dir / WORKER_RUN_INDEX_JSON,
         reports_dir=codex_dir / WORKER_REPORTS_DIR_NAME,
+        reviews_dir=codex_dir / WORKER_REVIEWS_DIR_NAME,
+        review_index_json=codex_dir / WORKER_REVIEWS_DIR_NAME / WORKER_REVIEW_INDEX_JSON,
         run_plans_dir=codex_dir / WORKER_RUN_PLANS_DIR_NAME,
         run_plan_index_json=codex_dir / WORKER_RUN_PLANS_DIR_NAME / WORKER_RUN_PLAN_INDEX_JSON,
         logs_dir=codex_dir / WORKER_LOGS_DIR_NAME,
@@ -774,6 +842,12 @@ def worker_report_artifact_paths(project_name: str, worker_run_id: str, workspac
     paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_worker_run_id(worker_run_id)
     return paths.reports_dir / f"report-{safe_id}.json", paths.reports_dir / f"report-{safe_id}.md"
+
+
+def worker_review_artifact_paths(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_worker_run_id(worker_run_id)
+    return paths.reviews_dir / f"review-{safe_id}.json", paths.reviews_dir / f"review-{safe_id}.md"
 
 
 def worker_run_plan_artifact_paths(project_name: str, plan_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
@@ -1945,6 +2019,7 @@ def get_codex_queue_worker_status(project_name: str, queue_id: str, workspace_ro
         item = _find_queue_item(queue.items, queue.current_item_id)
     worker_run = _latest_worker_run_for_queue_item(project_name, queue.queue_id, item.item_id if item else None, workspace_root=root)
     run_plan = _latest_run_plan_for_worker(project_name, worker_run.worker_run_id if worker_run else None, workspace_root=root)
+    review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root) if worker_run else None
     return CodexQueueWorkerStatus(
         project=project_name,
         queue_id=queue.queue_id,
@@ -1959,6 +2034,9 @@ def get_codex_queue_worker_status(project_name: str, queue_id: str, workspace_ro
         latest_worker_execution_status=worker_run.status if worker_run and worker_run.execution_exit_code is not None else None,
         latest_worker_execution_exit_code=worker_run.execution_exit_code if worker_run else None,
         latest_worker_execution_log_path=worker_run.execution_log_path if worker_run else None,
+        latest_worker_review_id=review.review_id if review else None,
+        latest_worker_review_status=review.review_status if review else None,
+        latest_worker_validation_status=review.validation_evidence.validation_status if review else None,
         next_action=_queue_worker_next_action(project_name, queue.queue_id, item, worker_run, run_plan),
     )
 
@@ -2205,6 +2283,172 @@ def list_codex_worker_reports(project_name: str, workspace_root: Path | None = N
         except (ValueError, ValidationError):
             continue
     return sorted(reports, key=lambda report: report.reported_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+
+def create_codex_worker_review_template(
+    project_name: str,
+    worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[WorkerReview, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run = _require_worker_run(project_name, worker_run_id, root)
+    existing = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root)
+    if existing:
+        json_path, markdown_path = worker_review_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+        return existing, json_path, markdown_path
+    report = load_codex_worker_report(project_name, worker_run.worker_run_id, workspace_root=root)
+    queue_item = _linked_queue_item(project_name, worker_run, workspace_root=root)
+    report_json, _report_md = worker_report_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    evidence = ValidationEvidence(
+        validation_status="provided" if report and (report.validation_results or report.tests_run or report.commands_run) else "not_provided",
+        commands_reported=report.commands_run if report else [],
+        tests_reported=report.tests_run if report else [],
+        validation_summary="; ".join(report.validation_results) if report and report.validation_results else "",
+        evidence_paths=[str(report_json)] if report and report_json.exists() else [],
+        warnings=["Worker-reported validation must be independently reviewed."] if report and (report.commands_run or report.tests_run) else [],
+    )
+    review = WorkerReview(
+        project=project_name,
+        review_id=f"REV-{worker_run.worker_run_id}",
+        worker_run_id=worker_run.worker_run_id,
+        source_queue_id=worker_run.source_queue_id,
+        source_queue_item_id=worker_run.source_queue_item_id,
+        source_task_id=worker_run.source_task_id,
+        source_handoff_id=worker_run.source_handoff_id,
+        source_report_path=str(report_json) if report and report_json.exists() else None,
+        validation_evidence=evidence,
+        changed_files_review=[f"Review changed file: {path}" for path in (report.changed_files if report else worker_run.report.reported_changed_files)],
+        safety_review=[*worker_run.safety_boundaries, *(report.safety_warnings if report else worker_run.report.safety_warnings)],
+        acceptance_criteria_review=queue_item.acceptance_criteria if queue_item else [],
+        follow_up_items=report.follow_up_needed if report else [],
+        next_action=_worker_review_next_action(project_name, worker_run, "draft"),
+    )
+    return _write_worker_review(project_name, review, workspace_root=root)
+
+
+def load_worker_review_index(project_name: str, workspace_root: Path | None = None) -> WorkerReviewIndex:
+    paths = worker_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.review_index_json.exists():
+        return WorkerReviewIndex(project=project_name)
+    return WorkerReviewIndex.model_validate_json(paths.review_index_json.read_text(encoding="utf-8"))
+
+
+def load_codex_worker_review(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> WorkerReview | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = worker_review_artifact_paths(project_name, worker_run_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return WorkerReview.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_worker_reviews(project_name: str, workspace_root: Path | None = None) -> list[WorkerReview]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    reviews: list[WorkerReview] = []
+    if paths.review_index_json.exists():
+        index = load_worker_review_index(project_name, workspace_root=root)
+        for entry in index.reviews:
+            review = load_codex_worker_review(project_name, entry.worker_run_id, workspace_root=root)
+            if review:
+                reviews.append(review)
+    else:
+        for path in sorted(paths.reviews_dir.glob("review-*.json")):
+            if path.name == WORKER_REVIEW_INDEX_JSON:
+                continue
+            try:
+                reviews.append(WorkerReview.model_validate_json(path.read_text(encoding="utf-8")))
+            except (ValueError, ValidationError):
+                continue
+    return sorted(reviews, key=lambda item: item.updated_at, reverse=True)
+
+
+def attach_codex_worker_review_evidence(
+    project_name: str,
+    worker_run_id: str,
+    validation_status: str,
+    summary: str,
+    workspace_root: Path | None = None,
+) -> tuple[WorkerReview, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    normalized_status = validation_status.strip().lower()
+    if normalized_status not in ALLOWED_VALIDATION_EVIDENCE_STATUSES - {"not_provided"}:
+        msg = f"Invalid validation evidence status: {validation_status}"
+        raise ValueError(msg)
+    review = load_codex_worker_review(project_name, worker_run_id, workspace_root=root)
+    if not review:
+        review, _json_path, _markdown_path = create_codex_worker_review_template(project_name, worker_run_id, workspace_root=root)
+    cleaned = summary.strip()
+    if not cleaned:
+        msg = "Validation evidence summary must not be empty."
+        raise ValueError(msg)
+    evidence = review.validation_evidence.model_copy(
+        update={
+            "validation_status": normalized_status,
+            "validation_summary": cleaned,
+            "warnings": [
+                *review.validation_evidence.warnings,
+                "Evidence was recorded manually; Devo did not run validation automatically.",
+            ],
+        }
+    )
+    updated = review.model_copy(
+        update={
+            "validation_evidence": evidence,
+            "updated_at": datetime.now(UTC),
+            "next_action": _worker_review_next_action(project_name, _require_worker_run(project_name, worker_run_id, root), review.review_status),
+        }
+    )
+    return _write_worker_review(project_name, updated, workspace_root=root)
+
+
+def record_codex_worker_review(
+    project_name: str,
+    worker_run_id: str,
+    review_status: str,
+    reviewer: str,
+    note: str,
+    workspace_root: Path | None = None,
+) -> tuple[WorkerReview, WorkerRun, Path, Path, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    worker_run = _require_worker_run(project_name, worker_run_id, root)
+    normalized_status = review_status.strip().lower()
+    if normalized_status not in ALLOWED_WORKER_REVIEW_STATUSES - {"draft"}:
+        msg = f"Invalid worker review status: {review_status}"
+        raise ValueError(msg)
+    cleaned_reviewer = reviewer.strip()
+    if not cleaned_reviewer:
+        msg = "Reviewer is required."
+        raise ValueError(msg)
+    cleaned_note = note.strip()
+    if not cleaned_note:
+        msg = "Review note is required."
+        raise ValueError(msg)
+    review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root)
+    if not review:
+        review, _json_path, _markdown_path = create_codex_worker_review_template(project_name, worker_run.worker_run_id, workspace_root=root)
+    now = datetime.now(UTC)
+    updated_review = review.model_copy(
+        update={
+            "review_status": normalized_status,
+            "reviewer": cleaned_reviewer,
+            "decision_note": cleaned_note,
+            "updated_at": now,
+            "next_action": _worker_review_next_action(project_name, worker_run, normalized_status),
+        }
+    )
+    updated_review, review_json, review_markdown = _write_worker_review(project_name, updated_review, workspace_root=root)
+    worker_note = f"Worker review {updated_review.review_id} recorded as {normalized_status} by {cleaned_reviewer}."
+    updated_worker = worker_run.model_copy(
+        update={
+            "status_note": worker_note,
+            "updated_at": now,
+            "next_action": updated_review.next_action,
+        }
+    )
+    updated_worker, worker_json, worker_markdown = _write_worker_run(project_name, updated_worker, workspace_root=root)
+    return updated_review, updated_worker, review_json, review_markdown, worker_json, worker_markdown
 
 
 def run_codex_worker_preflight(project_name: str, worker_run_id: str, workspace_root: Path | None = None) -> CodexPreflightResult:
@@ -2606,6 +2850,55 @@ def render_codex_worker_report_markdown(report: CodexWorkerReport, validation: W
             "## Safety Note",
             "",
             "This imported report is worker-provided evidence only. Devo did not run Codex, execute target commands, verify validation, mark queue/task completion, commit, push, or modify the target repository during import.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_codex_worker_review_markdown(review: WorkerReview) -> str:
+    lines = [
+        f"# Codex Worker Review: {review.worker_run_id}",
+        "",
+        f"- Project: `{review.project}`",
+        f"- Review id: `{review.review_id}`",
+        f"- Review status: `{review.review_status}`",
+        f"- Reviewer: `{review.reviewer or 'none'}`",
+        f"- Source handoff: `{review.source_handoff_id or 'none'}`",
+        f"- Source queue: `{review.source_queue_id or 'none'}`",
+        f"- Source queue item: `{review.source_queue_item_id or 'none'}`",
+        f"- Source task: `{review.source_task_id or 'none'}`",
+        f"- Source report path: `{review.source_report_path or 'none'}`",
+        f"- Validation status: `{review.validation_evidence.validation_status}`",
+        f"- Created: `{review.created_at.isoformat()}`",
+        f"- Updated: `{review.updated_at.isoformat()}`",
+        "",
+        "## Decision Note",
+        "",
+        review.decision_note or "No decision recorded yet.",
+        "",
+        "## Validation Evidence",
+        "",
+        review.validation_evidence.validation_summary or "No validation summary recorded yet.",
+        "",
+    ]
+    _append_list_section(lines, "Commands Reported", review.validation_evidence.commands_reported)
+    _append_list_section(lines, "Tests Reported", review.validation_evidence.tests_reported)
+    _append_list_section(lines, "Evidence Paths", review.validation_evidence.evidence_paths)
+    _append_list_section(lines, "Validation Warnings", review.validation_evidence.warnings)
+    _append_list_section(lines, "Acceptance Criteria Review", review.acceptance_criteria_review)
+    _append_list_section(lines, "Changed Files Review", review.changed_files_review)
+    _append_list_section(lines, "Safety Review", review.safety_review)
+    _append_list_section(lines, "Follow-Up Items", review.follow_up_items)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            review.next_action or "No next action recorded.",
+            "",
+            "## Safety Note",
+            "",
+            "This review is workspace-only evidence. It does not run validation, complete queue/task state, commit, push, or modify the target repository.",
             "",
         ]
     )
@@ -3637,6 +3930,55 @@ def _write_worker_run_index(project_name: str, workspace_root: Path | None = Non
     return index
 
 
+def _write_worker_review(project_name: str, review: WorkerReview, workspace_root: Path | None = None) -> tuple[WorkerReview, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    if review.review_status not in ALLOWED_WORKER_REVIEW_STATUSES:
+        msg = f"Invalid worker review status: {review.review_status}"
+        raise ValueError(msg)
+    if review.validation_evidence.validation_status not in ALLOWED_VALIDATION_EVIDENCE_STATUSES:
+        msg = f"Invalid validation evidence status: {review.validation_evidence.validation_status}"
+        raise ValueError(msg)
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.reviews_dir.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = worker_review_artifact_paths(project_name, review.worker_run_id, workspace_root=root)
+    updated = review.model_copy(update={"worker_run_id": _normalize_worker_run_id(review.worker_run_id)})
+    _write_model(json_path, updated)
+    markdown_path.write_text(render_codex_worker_review_markdown(updated), encoding="utf-8")
+    _write_worker_review_index(project_name, workspace_root=root)
+    return updated, json_path, markdown_path
+
+
+def _write_worker_review_index(project_name: str, workspace_root: Path | None = None) -> WorkerReviewIndex:
+    root = workspace_root or get_workspace_root()
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.reviews_dir.mkdir(parents=True, exist_ok=True)
+    reviews: list[WorkerReview] = []
+    for path in sorted(paths.reviews_dir.glob("review-*.json")):
+        if path.name == WORKER_REVIEW_INDEX_JSON:
+            continue
+        try:
+            reviews.append(WorkerReview.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    reviews = sorted(reviews, key=lambda item: item.updated_at, reverse=True)
+    entries = [
+        WorkerReviewIndexEntry(
+            review_id=review.review_id,
+            worker_run_id=review.worker_run_id,
+            review_status=review.review_status,
+            validation_status=review.validation_evidence.validation_status,
+            reviewer=review.reviewer,
+            path=str(worker_review_artifact_paths(project_name, review.worker_run_id, workspace_root=root)[0]),
+            updated_at=review.updated_at,
+        )
+        for review in reviews
+    ]
+    index = WorkerReviewIndex(project=project_name, reviews=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.review_index_json, index)
+    return index
+
+
 def _write_codex_run_plan(project_name: str, plan: CodexRunPlan, workspace_root: Path | None = None) -> tuple[CodexRunPlan, Path, Path]:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -3730,6 +4072,15 @@ def _latest_run_plan_for_worker(project_name: str, worker_run_id: str | None, wo
         (plan for plan in list_codex_run_plans(project_name, workspace_root=workspace_root) if plan.worker_run_id == normalized_worker),
         None,
     )
+
+
+def _linked_queue_item(project_name: str, worker_run: WorkerRun, workspace_root: Path | None = None) -> QueueItem | None:
+    if not worker_run.source_queue_id or not worker_run.source_queue_item_id:
+        return None
+    queue = load_execution_queue(project_name, worker_run.source_queue_id, workspace_root=workspace_root)
+    if not queue:
+        return None
+    return _find_queue_item(queue.items, worker_run.source_queue_item_id)
 
 
 def _update_linked_queue_from_worker_execution(
@@ -3833,6 +4184,33 @@ def _queue_worker_next_action(
             f"Review logs and import a worker report, then complete explicitly only if safe: devo project queue-complete-item --project {project_name} --queue {queue_id} --item {item.item_id} --note \"<reviewed result>\""
         )
     return worker_run.next_action or "Review worker and queue status."
+
+
+def _worker_review_next_action(project_name: str, worker_run: WorkerRun, review_status: str) -> str:
+    if review_status == "draft":
+        return f"Fill review evidence, then record a decision with devo worker codex review-record --project {project_name} --run {worker_run.worker_run_id} --status reviewed_passed --reviewer \"<name>\" --note \"<note>\"."
+    if review_status == "reviewed_passed":
+        if worker_run.source_queue_id and worker_run.source_queue_item_id:
+            return (
+                f"Review passed. Complete explicitly only if validation/delivery evidence is sufficient: devo project queue-complete-item --project {project_name} "
+                f"--queue {worker_run.source_queue_id} --item {worker_run.source_queue_item_id} --note \"<reviewed result>\""
+            )
+        return "Review passed. No linked queue item exists; continue with the appropriate delivery workflow manually."
+    if review_status == "reviewed_needs_changes":
+        if worker_run.source_queue_id and worker_run.source_queue_item_id:
+            return (
+                f"Review needs changes. Keep the queue item incomplete; consider devo project queue-block-item --project {project_name} "
+                f"--queue {worker_run.source_queue_id} --item {worker_run.source_queue_item_id} --note \"<needed changes>\" or prepare a follow-up worker run."
+            )
+        return "Review needs changes. Prepare a follow-up handoff or worker run after clarifying scope."
+    if review_status == "rejected":
+        if worker_run.source_queue_id and worker_run.source_queue_item_id:
+            return (
+                f"Review rejected. Keep the queue item incomplete; block or replace the worker output before completion: devo project queue-block-item --project {project_name} "
+                f"--queue {worker_run.source_queue_id} --item {worker_run.source_queue_item_id} --note \"<rejection reason>\""
+            )
+        return "Review rejected. Do not deliver this worker output; create a new handoff only after scope is clear."
+    return "Review worker evidence before any queue/task completion, validation, commit, or push."
 
 
 def _with_queue_counts(queue: ExecutionQueue) -> ExecutionQueue:

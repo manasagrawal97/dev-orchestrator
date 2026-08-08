@@ -76,6 +76,7 @@ from .project_planning import (
     CodexPreflightResult,
     CodexRunPlan,
     CodexWorkerReport,
+    WorkerReview,
     WorkerReportValidationResult,
     WorkerRun,
     approve_codex_run_plan,
@@ -95,6 +96,7 @@ from .project_planning import (
     create_codex_worker_run_from_handoff,
     create_codex_worker_run_plan,
     create_codex_worker_report_template,
+    create_codex_worker_review_template,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
     execute_codex_worker_run,
@@ -104,11 +106,13 @@ from .project_planning import (
     get_codex_queue_worker_status,
     get_queue_next_item,
     import_refined_backlog,
+    attach_codex_worker_review_evidence,
     list_execution_queues,
     list_batch_approvals,
     list_codex_handoffs,
     list_codex_run_plans,
     list_codex_worker_reports,
+    list_codex_worker_reviews,
     list_codex_worker_runs,
     list_project_batches,
     load_execution_queue,
@@ -116,6 +120,7 @@ from .project_planning import (
     load_codex_handoff,
     load_codex_run_plan,
     load_codex_worker_report,
+    load_codex_worker_review,
     load_codex_worker_run,
     load_project_backlog,
     load_project_batch,
@@ -130,6 +135,7 @@ from .project_planning import (
     reject_project_batch,
     request_batch_approval,
     review_project_batch,
+    record_codex_worker_review,
     resume_execution_queue,
     suggest_project_batch,
     start_execution_queue,
@@ -139,6 +145,7 @@ from .project_planning import (
     validate_codex_worker_report_file,
     import_codex_worker_report,
     worker_report_artifact_paths,
+    worker_review_artifact_paths,
     worker_execution_log_paths,
     worker_run_plan_artifact_paths,
     worker_run_artifact_paths,
@@ -668,6 +675,32 @@ def _print_worker_report(report: CodexWorkerReport, json_path: Path | None = Non
     console.print("Safety: imported reports are worker-provided evidence only; queue/task completion remains explicit.")
 
 
+def _print_worker_review(review: WorkerReview, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Codex worker review: {review.worker_run_id}[/bold]")
+    console.print(f"Project: {review.project}")
+    console.print(f"Review id: {review.review_id}")
+    console.print(f"Review status: {review.review_status}")
+    console.print(f"Reviewer: {review.reviewer or 'none'}")
+    console.print(f"Source handoff: {review.source_handoff_id or 'none'}")
+    console.print(f"Source queue: {review.source_queue_id or 'none'}")
+    console.print(f"Source item: {review.source_queue_item_id or 'none'}")
+    console.print(f"Source task: {review.source_task_id or 'none'}")
+    console.print(f"Source report path: {review.source_report_path or 'none'}", soft_wrap=True)
+    console.print(f"Validation status: {review.validation_evidence.validation_status}")
+    console.print(f"Validation summary: {review.validation_evidence.validation_summary or 'none'}", soft_wrap=True)
+    console.print(f"Decision note: {review.decision_note or 'none'}", soft_wrap=True)
+    console.print(f"Changed files reviewed: {len(review.changed_files_review)}")
+    console.print(f"Acceptance criteria reviewed: {len(review.acceptance_criteria_review)}")
+    console.print(f"Safety review items: {len(review.safety_review)}")
+    console.print(f"Follow-up items: {len(review.follow_up_items)}")
+    console.print(f"Next action: {review.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("Safety: reviews are evidence only. Devo did not run validation, complete queue/task state, commit, push, or modify target source.")
+
+
 def _print_codex_preflight(result: CodexPreflightResult) -> None:
     console.print(f"[bold]Codex worker preflight: {result.worker_run_id}[/bold]")
     console.print(f"Project: {result.project}")
@@ -760,6 +793,9 @@ def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
     console.print(f"Latest execution status: {status.latest_worker_execution_status or 'none'}")
     console.print(f"Latest execution exit code: {status.latest_worker_execution_exit_code if status.latest_worker_execution_exit_code is not None else 'none'}")
     console.print(f"Latest execution log path: {status.latest_worker_execution_log_path or 'none'}", soft_wrap=True)
+    console.print(f"Latest review: {status.latest_worker_review_id or 'none'}")
+    console.print(f"Latest review status: {status.latest_worker_review_status or 'none'}")
+    console.print(f"Latest validation status: {status.latest_worker_validation_status or 'none'}")
     console.print(f"Next action: {status.next_action}", soft_wrap=True)
     console.print("Safety: queue worker status is read-only. Queue item completion remains explicit.")
 
@@ -2478,6 +2514,117 @@ def list_codex_worker_reports_command(
             f"validation={len(report.validation_results)} | {report.summary}",
             soft_wrap=True,
         )
+
+
+@worker_codex_app.command("review-template")
+def create_codex_worker_review_template_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Create a JSON/Markdown review template for worker evidence without completing queue state."""
+    project_name = _resolve_project(project_name)
+    try:
+        review, json_path, markdown_path = create_codex_worker_review_template(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    console.print(f"[green]Codex worker review template saved[/green] {project_name}")
+    _print_worker_review(review, json_path=json_path, markdown_path=markdown_path)
+    console.print("Next suggested commands:")
+    console.print(f"  devo worker codex review-attach-evidence --project {project_name} --run {review.worker_run_id} --status provided --summary \"<validation summary>\"", soft_wrap=True)
+    console.print(f"  devo worker codex review-record --project {project_name} --run {review.worker_run_id} --status reviewed_passed --reviewer \"<name>\" --note \"<note>\"", soft_wrap=True)
+
+
+@worker_codex_app.command("review-show")
+def show_codex_worker_review_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+) -> None:
+    """Show worker review evidence without mutating anything."""
+    project_name = _resolve_project(project_name)
+    try:
+        review = load_codex_worker_review(project_name, worker_run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    if not review:
+        console.print(f"[yellow]Codex worker review not found for run: {worker_run_id}[/yellow]")
+        console.print(f"Suggested next command: devo worker codex review-template --project {project_name} --run {worker_run_id}")
+        return
+    json_path, markdown_path = worker_review_artifact_paths(project_name, review.worker_run_id)
+    _print_worker_review(review, json_path=json_path, markdown_path=markdown_path)
+
+
+@worker_codex_app.command("review-list")
+def list_codex_worker_reviews_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List Codex worker review artifacts for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        reviews = list_codex_worker_reviews(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Codex worker reviews: {project_name}[/bold]")
+    if not reviews:
+        console.print("[yellow]No Codex worker reviews recorded.[/yellow]")
+        console.print(f"Suggested next command: devo worker codex review-template --project {project_name} --run <workerRunId>")
+        return
+    for review in reviews:
+        console.print(
+            f"{review.worker_run_id} | {review.review_status} | validation={review.validation_evidence.validation_status} "
+            f"reviewer={review.reviewer or 'none'} | {review.next_action}",
+            soft_wrap=True,
+        )
+
+
+@worker_codex_app.command("review-record")
+def record_codex_worker_review_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    status: str = typer.Option(..., "--status", help="Review decision: reviewed_passed, reviewed_needs_changes, or rejected."),
+    reviewer: str = typer.Option(..., "--reviewer", help="Reviewer name."),
+    note: str = typer.Option(..., "--note", help="Review decision note."),
+) -> None:
+    """Record a worker review decision without completing queue/task state."""
+    project_name = _resolve_project(project_name)
+    try:
+        review, worker_run, review_json, review_markdown, worker_json, worker_markdown = record_codex_worker_review(
+            project_name,
+            worker_run_id,
+            status,
+            reviewer,
+            note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--status") from exc
+    console.print(f"[green]Codex worker review recorded[/green] {project_name}")
+    _print_worker_review(review, json_path=review_json, markdown_path=review_markdown)
+    _print_worker_run(worker_run, json_path=worker_json, markdown_path=worker_markdown)
+    console.print("No queue item, backlog task, validation, Git, commit, push, or target repository state was completed automatically.")
+    if review.review_status == "reviewed_passed" and review.source_queue_id and review.source_queue_item_id:
+        console.print("Next suggested queue completion command after independent review:")
+        console.print(
+            f"  devo project queue-complete-item --project {project_name} --queue {review.source_queue_id} "
+            f"--item {review.source_queue_item_id} --note \"<reviewed result>\"",
+            soft_wrap=True,
+        )
+
+
+@worker_codex_app.command("review-attach-evidence")
+def attach_codex_worker_review_evidence_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    status: str = typer.Option(..., "--status", help="Evidence status: provided, passed, failed, or partial."),
+    summary: str = typer.Option(..., "--summary", help="Validation evidence summary."),
+) -> None:
+    """Attach manually recorded validation evidence to a worker review artifact."""
+    project_name = _resolve_project(project_name)
+    try:
+        review, json_path, markdown_path = attach_codex_worker_review_evidence(project_name, worker_run_id, status, summary)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--status") from exc
+    console.print(f"[green]Codex worker review evidence attached[/green] {project_name}")
+    _print_worker_review(review, json_path=json_path, markdown_path=markdown_path)
+    console.print("Evidence was recorded manually. Devo did not run validation automatically.")
 
 
 @worker_codex_app.command("prepare-next")

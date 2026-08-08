@@ -250,6 +250,18 @@ devo worker codex execute-log --project MyProject --run WR001
 
 Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, a Codex executable is found on `PATH`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run and linked queue item to `waiting_review`, not `completed`; failures become `failed`/`paused_failure`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval` with the queue waiting for review. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically. Queue item completion still requires `devo project queue-complete-item` after human review and validation evidence.
 
+Record review and validation evidence before queue completion:
+
+```powershell
+devo worker codex review-template --project MyProject --run WR001
+devo worker codex review-attach-evidence --project MyProject --run WR001 --status provided --summary "<validation summary>"
+devo worker codex review-record --project MyProject --run WR001 --status reviewed_passed --reviewer "<name>" --note "<note>"
+devo worker codex review-show --project MyProject --run WR001
+devo worker codex review-list --project MyProject
+```
+
+Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/`. They capture checklist evidence, validation summaries, changed-file review notes, safety review notes, reviewer decision, and next queue guidance. They are evidence only: Devo does not run validation, trust worker reports blindly, complete queue/tasks, commit, push, or modify target projects. Even a `reviewed_passed` decision only prints the explicit `queue-complete-item` command for the operator to run after review.
+
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 
 List registered projects:

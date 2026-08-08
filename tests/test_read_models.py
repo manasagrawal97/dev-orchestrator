@@ -64,6 +64,10 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.latest_worker_report_path is None
     assert overview.latest_worker_report_summary is None
     assert overview.latest_worker_report_next_action is None
+    assert overview.latest_worker_review_id is None
+    assert overview.latest_worker_review_status is None
+    assert overview.latest_worker_validation_status is None
+    assert overview.review_next_action is None
     assert overview.codex_run_plan_count == 0
     assert overview.latest_codex_run_plan_id is None
     assert overview.latest_codex_run_plan_status is None
@@ -181,6 +185,10 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "latest_worker_execution_log_path" in overview_data
     assert "latest_worker_report_status" in overview_data
     assert "latest_worker_report_summary" in overview_data
+    assert "latest_worker_review_id" in overview_data
+    assert "latest_worker_review_status" in overview_data
+    assert "latest_worker_validation_status" in overview_data
+    assert "review_next_action" in overview_data
     assert "codex_run_plan_count" in overview_data
     assert "latest_codex_preflight_status" in overview_data
 
@@ -245,6 +253,61 @@ def test_project_overview_includes_worker_report_summary(tmp_path: Path, monkeyp
     assert overview.latest_worker_report_summary == "Worker reported completion."
     assert overview.latest_worker_report_next_action is not None
     assert "queue-complete-item only after review" in overview.latest_worker_report_next_action
+
+
+def test_project_overview_includes_worker_review_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001", "--note", "Approved."])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
+    runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-attach-evidence",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "passed",
+            "--summary",
+            "Focused validation passed.",
+        ],
+    )
+    runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_passed",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Evidence reviewed.",
+        ],
+    )
+
+    overview = build_project_overview("sample")
+
+    assert overview.latest_worker_review_id == "REV-WR001"
+    assert overview.latest_worker_review_status == "reviewed_passed"
+    assert overview.latest_worker_validation_status == "passed"
+    assert overview.latest_worker_review_reviewer == "Manas"
+    assert overview.latest_worker_review_decision_note == "Evidence reviewed."
+    assert overview.review_next_action is not None
+    assert "queue-complete-item" in overview.review_next_action
 
 
 def test_project_overview_includes_codex_run_plan_summary(tmp_path: Path, monkeypatch) -> None:

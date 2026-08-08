@@ -17,6 +17,7 @@ from devo.project_planning import (
     create_codex_handoff_for_queue_next,
     create_codex_worker_run_from_handoff,
     create_codex_worker_run_plan,
+    create_codex_worker_review_template,
     import_codex_worker_report,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
@@ -368,6 +369,37 @@ def test_project_worker_report_endpoints_return_json(tmp_path: Path, monkeypatch
     assert missing.json()["detail"]["error"] == "worker_run_not_found"
 
 
+def test_project_worker_review_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    batch, _batch_json, _batch_md = create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    approved = batch.model_copy(update={"status": "approved", "approval_status": "approved"})
+    batch_json = workspace / "projects" / "sample" / "planning" / "batches" / "batch-B001.json"
+    batch_json.write_text(approved.model_dump_json(indent=2), encoding="utf-8")
+    create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+    create_codex_handoff_for_queue_next("sample", "Q001", workspace_root=workspace)
+    create_codex_worker_run_from_handoff("sample", "H001", workspace_root=workspace)
+    create_codex_worker_review_template("sample", "WR001", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    reviews = client.get("/api/projects/sample/worker-reviews")
+    review = client.get("/api/projects/sample/worker-runs/WR001/review")
+    missing = client.get("/api/projects/sample/worker-runs/WR999/review")
+
+    assert reviews.status_code == 200
+    assert reviews.json()["count"] == 1
+    assert reviews.json()["reviews"][0]["review_status"] == "draft"
+    assert review.status_code == 200
+    assert review.json()["worker_run_id"] == "WR001"
+    assert review.json()["validation_evidence"]["validation_status"] == "not_provided"
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"] == "worker_run_not_found"
+
+
 def test_project_worker_run_plan_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     brief_file = tmp_path / "brief.md"
@@ -573,6 +605,8 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/worker-runs/{worker_run_id}/execution" in result.output
     assert "GET /api/projects/{project}/worker-runs/{worker_run_id}/report" in result.output
     assert "GET /api/projects/{project}/worker-reports" in result.output
+    assert "GET /api/projects/{project}/worker-runs/{worker_run_id}/review" in result.output
+    assert "GET /api/projects/{project}/worker-reviews" in result.output
     assert "GET /api/projects/{project}/worker-run-plans" in result.output
     assert "GET /api/projects/{project}/worker-run-plans/{plan_id}" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
