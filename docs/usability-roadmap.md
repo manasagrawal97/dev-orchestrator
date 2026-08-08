@@ -53,7 +53,7 @@ Codex/Desktop/CLI is the AI worker for now. Devo manages workflow and evidence. 
 
 The long-term direction is documented in `docs/devo-company-model.md`: Devo should become a local software-development company operating system around AI workers. The next major usability layer should support project brief intake, blueprint/backlog/task generation, batch approval, execution queue, progress tracking, and pause/resume around Codex usage limits. The prioritized task order is documented in `docs/remaining-roadmap.md`.
 
-TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. TASK-DEVO-076 adds a Codex/manual backlog refinement prompt and safe refined-backlog import path. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds deterministic count-based progress summaries and a read-only dashboard Progress card. TASK-DEVO-079 adds execution queue state tracking and read-only queue summaries. TASK-DEVO-080 adds Codex-ready handoff prompts and read-only handoff summaries. TASK-DEVO-081 adds the first dedicated read-only Planning Intake page for the full planning pipeline. TASK-DEVO-082 adds detailed read-only Blueprint and Backlog pages. TASK-DEVO-083 adds detailed read-only Batch, Queue, Handoff, and Progress pages. TASK-DEVO-084 adds explicit workspace-only Batch approval/review artifacts and decisions. TASK-DEVO-085 proves the full planning pipeline through dogfood, TASK-DEVO-086 tightens the main operator guidance and input robustness issues found there, TASK-DEVO-087 documents the future Codex worker adapter safety model, TASK-DEVO-088 adds worker run tracking without implementing Codex automation, TASK-DEVO-089 adds manual worker report templates/import as review evidence, TASK-DEVO-090 adds a read-only Worker Runs page for detailed review visibility, TASK-DEVO-091 adds read-only preflight checks and run-plan previews for future supervised Codex execution, TASK-DEVO-092 adds the first guarded one-run Codex CLI execution prototype, TASK-DEVO-093 adds a queue-first worker preparation shortcut, TASK-DEVO-094 adds explicit worker review and validation-evidence records before any queue completion, TASK-DEVO-095 gates queue completion on that review evidence, and TASK-DEVO-096 dogfoods the full supervised worker flow with a fake no-op Codex command.
+TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint artifacts plus read-only planning status. TASK-DEVO-075 adds deterministic Backlog and Task artifacts plus read-only backlog counts. TASK-DEVO-076 adds a Codex/manual backlog refinement prompt and safe refined-backlog import path. TASK-DEVO-077 adds planning Batch artifacts and deterministic batch selection. TASK-DEVO-078 adds deterministic count-based progress summaries and a read-only dashboard Progress card. TASK-DEVO-079 adds execution queue state tracking and read-only queue summaries. TASK-DEVO-080 adds Codex-ready handoff prompts and read-only handoff summaries. TASK-DEVO-081 adds the first dedicated read-only Planning Intake page for the full planning pipeline. TASK-DEVO-082 adds detailed read-only Blueprint and Backlog pages. TASK-DEVO-083 adds detailed read-only Batch, Queue, Handoff, and Progress pages. TASK-DEVO-084 adds explicit workspace-only Batch approval/review artifacts and decisions. TASK-DEVO-085 proves the full planning pipeline through dogfood, TASK-DEVO-086 tightens the main operator guidance and input robustness issues found there, TASK-DEVO-087 documents the future Codex worker adapter safety model, TASK-DEVO-088 adds worker run tracking without implementing Codex automation, TASK-DEVO-089 adds manual worker report templates/import as review evidence, TASK-DEVO-090 adds a read-only Worker Runs page for detailed review visibility, TASK-DEVO-091 adds read-only preflight checks and run-plan previews for future supervised Codex execution, TASK-DEVO-092 adds the first guarded one-run Codex CLI execution prototype, TASK-DEVO-093 adds a queue-first worker preparation shortcut, TASK-DEVO-094 adds explicit worker review and validation-evidence records before any queue completion, TASK-DEVO-095 gates queue completion on that review evidence, TASK-DEVO-096 dogfoods the full supervised worker flow with a fake no-op Codex command, and TASK-DEVO-097 polishes the operator flow with explicit `--codex-path`, completed-item evidence visibility, and `flow-summary`.
 
 ### Work Packages - MVP Added
 
@@ -240,17 +240,19 @@ devo worker codex review-list --project DevOrchestrator
 
 Review records store reviewer decisions and manual validation evidence under `workspace/projects/<project>/workers/codex/reviews/`. They do not run validation, complete queue items, complete tasks, commit, push, or prove delivery by themselves. A passed review prints the explicit `queue-complete-item` command when linked queue context exists, so the final transition remains intentional. `queue-complete-item` is now review-aware: linked/waiting-review items require `reviewed_passed` evidence by default, and failed validation evidence blocks completion. The `--confirm-without-review` override is explicit, discouraged, and recorded in queue notes.
 
-The supervised worker dogfood is documented in `docs/dogfood/devo-supervised-worker-dogfood-096.md`. It proves the fake-worker path end to end and recommends TASK-DEVO-097 as worker flow operator polish before real Codex worker usage or delivery automation.
+The supervised worker dogfood is documented in `docs/dogfood/devo-supervised-worker-dogfood-096.md`. It proves the fake-worker path end to end. TASK-DEVO-097 resolves the main operator friction found there before real Codex worker usage or delivery automation.
 
 Run-plan previews are now the safe preparation layer before any future supervised Codex launch:
 
 ```powershell
 devo worker codex preflight --project DevOrchestrator --run WR001
+devo worker codex preflight --project DevOrchestrator --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan --project DevOrchestrator --run WR001
+devo worker codex run-plan --project DevOrchestrator --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan-show --project DevOrchestrator --plan RP001
 ```
 
-Preflight checks readiness and optional Codex executable presence with safe `PATH` detection only. Run plans store a safe command preview, scope, validation expectations, blocked reasons, warnings, and next action guidance. They do not execute Codex, target commands, validation, Git delivery, or queue/task transitions.
+Preflight checks readiness and optional Codex executable presence with safe `PATH` detection only. Normal use can rely on `PATH`; dogfood/testing can pass `--codex-path` to avoid fragile PATH precedence. Run plans store a safe command preview, executable path/source/resolution notes, scope, validation expectations, blocked reasons, warnings, and next action guidance. They do not execute Codex, target commands, validation, Git delivery, or queue/task transitions.
 
 The first supervised execution command is now intentionally narrow:
 
@@ -265,9 +267,11 @@ TASK-DEVO-093 adds the queue-first operator shortcut for that flow:
 ```powershell
 devo worker codex prepare-next --project DevOrchestrator --queue Q001
 devo worker codex queue-status --project DevOrchestrator --queue Q001
+devo worker codex queue-status --project DevOrchestrator --queue Q001 --item QI001
+devo worker codex flow-summary --project DevOrchestrator --queue Q001
 ```
 
-The shortcut prepares one linked handoff, worker run, and run plan, then stops for approval/execution review. A successful worker exit moves the linked queue item to `waiting_review`, not completed, so the user still performs review, validation, and explicit `queue-complete-item` afterward.
+The shortcut prepares one linked handoff, worker run, and run plan, then stops for approval/execution review. A successful worker exit moves the linked queue item to `waiting_review`, not completed, so the user still performs review, validation, and explicit `queue-complete-item` afterward. After completion, `queue-status` keeps showing the latest completed item's worker/report/review context, while `flow-summary` provides the compact next-command view.
 
 It requires an approved run plan and explicit confirmation, launches one Codex process, captures logs, and moves the worker run to review/failure/pause/block state only. It does not complete queue/tasks, run validation, commit, push, or add UI execute buttons.
 

@@ -129,6 +129,7 @@ def test_codex_queue_status_command_shows_linked_worker_and_plan(tmp_path: Path,
     runner.invoke(app, ["worker", "codex", "prepare-next", "--project", "sample", "--queue", "Q001"])
 
     result = runner.invoke(app, ["worker", "codex", "queue-status", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+    summary = runner.invoke(app, ["worker", "codex", "flow-summary", "--project", "sample", "--queue", "Q001"], terminal_width=240)
 
     assert result.exit_code == 0, result.output
     assert "Codex queue worker status: Q001" in result.output
@@ -137,6 +138,9 @@ def test_codex_queue_status_command_shows_linked_worker_and_plan(tmp_path: Path,
     assert "Completion ready: no" in result.output
     assert "no worker review artifact" in result.output
     assert "run-plan-approve --project sample --plan RP001" in result.output
+    assert summary.exit_code == 0, summary.output
+    assert "Codex worker flow summary: Q001" in summary.output
+    assert "run-plan-approve --project sample --plan RP001" in summary.output
 
 
 def test_worker_run_create_rejects_unknown_handoff(tmp_path: Path, monkeypatch) -> None:
@@ -635,6 +639,38 @@ def test_codex_preflight_passes_for_valid_worker_run(tmp_path: Path, monkeypatch
     assert list_codex_run_plans("sample", workspace_root=workspace) == []
 
 
+def test_codex_preflight_accepts_explicit_fake_codex_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    fake_codex = _create_fake_codex(tmp_path, stdout="explicit fake codex")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001", "--codex-path", str(fake_codex)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: passed" in result.output
+    assert "codex_path_override" in result.output
+    assert str(fake_codex.resolve()) in result.output
+
+
+def test_codex_preflight_blocks_missing_explicit_codex_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    missing = tmp_path / "missing-codex.cmd"
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001", "--codex-path", str(missing)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Explicit Codex executable path does not exist" in result.output
+
+
 def test_codex_preflight_blocks_missing_prompt(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     _create_worker_run(tmp_path)
@@ -685,11 +721,34 @@ def test_codex_run_plan_creates_artifacts_and_index(tmp_path: Path, monkeypatch)
     assert data["worker_run_id"] == "WR001"
     assert data["status"] == "ready"
     assert data["preflight_status"] == "passed"
-    assert "codex <" in data["proposed_command_preview"]
+    assert data["codex_executable_source"] == "path_detection"
+    assert "codex" in data["proposed_command_preview"].lower()
+    assert " < " in data["proposed_command_preview"]
     assert "safe preview only" in markdown_path.read_text(encoding="utf-8")
     index = load_codex_run_plan_index("sample", workspace_root=workspace)
     assert index.run_plans[0].plan_id == "RP001"
     assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_run_plan_stores_explicit_executable_path(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    fake_codex = _create_fake_codex(tmp_path, stdout="explicit fake codex")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-path", str(fake_codex)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert plan is not None
+    assert plan.codex_executable_path == str(fake_codex.resolve())
+    assert plan.codex_executable_source == "path_override"
+    assert "explicit Codex executable path" in plan.command_resolution_note
+    assert str(fake_codex.resolve()) in plan.proposed_command_preview
+    assert str(fake_codex.resolve()) in result.output
 
 
 def test_codex_run_plan_stores_blocked_reasons(tmp_path: Path, monkeypatch) -> None:
@@ -765,6 +824,34 @@ def test_codex_execute_preview_works_without_running_executable(tmp_path: Path, 
     assert result.exit_code == 0, result.output
     assert "Codex execution preview" in result.output
     assert "Ready: True" in result.output
+    log_path, _stderr_log_path = worker_execution_log_paths("sample", "WR001", workspace_root=workspace)
+    assert not log_path.exists()
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_execute_preview_uses_explicit_executable_without_running(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    fake_codex = _create_fake_codex(tmp_path, stdout="explicit fake codex")
+    before_target = _target_snapshot(project_path)
+    created = runner.invoke(
+        app,
+        ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-path", str(fake_codex)],
+        terminal_width=240,
+    )
+    approved = runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute-preview", "--project", "sample", "--run", "WR001", "--plan", "RP001"],
+        terminal_width=240,
+    )
+
+    assert created.exit_code == 0, created.output
+    assert approved.exit_code == 0, approved.output
+    assert result.exit_code == 0, result.output
+    assert "Ready: True" in result.output
+    assert str(fake_codex.resolve()).lower() in result.output.replace("\n", "").lower()
     log_path, _stderr_log_path = worker_execution_log_paths("sample", "WR001", workspace_root=workspace)
     assert not log_path.exists()
     assert _target_snapshot(project_path) == before_target
@@ -889,6 +976,35 @@ def test_codex_execute_success_sets_waiting_review_and_writes_logs(tmp_path: Pat
     assert queue.items[0].status == "waiting_review"
     assert queue.current_item_id == "QI001"
     assert task.status == "ready"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_execute_uses_explicit_fake_executable_path(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    fake_codex = _create_fake_codex(tmp_path, stdout="explicit fake codex completed", exit_code=0)
+    before_target = _target_snapshot(project_path)
+    created = runner.invoke(
+        app,
+        ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-path", str(fake_codex)],
+        terminal_width=240,
+    )
+    approved = runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert created.exit_code == 0, created.output
+    assert approved.exit_code == 0, approved.output
+    assert result.exit_code == 0, result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "waiting_review"
+    assert worker_run.execution_log_path is not None
+    assert "explicit fake codex completed" in Path(worker_run.execution_log_path).read_text(encoding="utf-8")
     assert _target_snapshot(project_path) == before_target
 
 
@@ -1020,6 +1136,60 @@ def test_queue_complete_item_allows_reviewed_passed_worker_review(tmp_path: Path
     assert queue.status == "completed"
     assert queue.items[0].status == "completed"
     assert task.status == "completed"
+
+
+def test_queue_status_after_completed_item_shows_worker_review_context(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+    report_file = _worker_report_file(tmp_path, "WR001", status="completed")
+    runner.invoke(app, ["worker", "codex", "report-import", "--project", "sample", "--run", "WR001", "--file", str(report_file)])
+    runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_passed",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Reviewed evidence.",
+        ],
+    )
+    completed = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed and validated."],
+        terminal_width=240,
+    )
+
+    status = runner.invoke(app, ["worker", "codex", "queue-status", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+    requested = runner.invoke(app, ["worker", "codex", "queue-status", "--project", "sample", "--queue", "Q001", "--item", "QI001"], terminal_width=240)
+    summary = runner.invoke(app, ["worker", "codex", "flow-summary", "--project", "sample", "--queue", "Q001"], terminal_width=240)
+
+    assert completed.exit_code == 0, completed.output
+    assert status.exit_code == 0, status.output
+    assert "Queue status: completed" in status.output
+    assert "Selected item source: latest_completed" in status.output
+    assert "Linked worker run: WR001" in status.output
+    assert "Linked run plan: RP001" in status.output
+    assert "Latest report status: completed" in status.output
+    assert "Latest review status: reviewed_passed" in status.output
+    assert "Queue item is already completed" in status.output
+    assert requested.exit_code == 0, requested.output
+    assert "Selected item source: requested" in requested.output
+    assert summary.exit_code == 0, summary.output
+    assert "Codex worker flow summary: Q001" in summary.output
+    assert "Worker run: WR001" in summary.output
+    assert "Report: completed" in summary.output
+    assert "Review: reviewed_passed" in summary.output
+    assert "Completion ready: no" in summary.output
+    assert "queue-show --project sample --queue Q001" in summary.output
 
 
 def test_queue_complete_item_refuses_needs_changes_rejected_and_failed_validation(tmp_path: Path, monkeypatch) -> None:
@@ -1250,6 +1420,12 @@ def _target_snapshot(project_path: Path) -> dict[str, str]:
 
 
 def _add_fake_codex_to_path(tmp_path: Path, monkeypatch, *, stdout: str = "", stderr: str = "", exit_code: int = 0) -> None:
+    fake_codex = _create_fake_codex(tmp_path, stdout=stdout, stderr=stderr, exit_code=exit_code)
+    existing_value = os.environ.get("PATH", "")
+    monkeypatch.setenv("PATH", f"{fake_codex.parent};{existing_value}")
+
+
+def _create_fake_codex(tmp_path: Path, *, stdout: str = "", stderr: str = "", exit_code: int = 0) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     fake_codex = bin_dir / "codex.cmd"
@@ -1260,8 +1436,7 @@ def _add_fake_codex_to_path(tmp_path: Path, monkeypatch, *, stdout: str = "", st
         lines.append(f"echo {stderr} 1>&2")
     lines.append(f"exit /b {exit_code}")
     fake_codex.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
-    existing_value = os.environ.get("PATH", "")
-    monkeypatch.setenv("PATH", f"{bin_dir};{existing_value}")
+    return fake_codex
 
 
 def _worker_report_file(tmp_path: Path, worker_run_id: str, status: str = "completed") -> Path:

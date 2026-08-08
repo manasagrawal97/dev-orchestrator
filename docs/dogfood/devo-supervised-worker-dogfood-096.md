@@ -16,7 +16,7 @@ A temporary fake `codex.cmd` was created outside the repository and later mirror
   - `No source files changed.`
   - `Dogfood-only supervised worker validation path.`
 
-Important finding: creating only a temp `codex.cmd` under `%TEMP%` was not enough in this Codex desktop shell because the command runner injects its own PATH segment and the installed `codex.EXE` was otherwise preferred. The dogfood avoided real Codex execution by placing the fake shim where `execute-preview` showed the fake path.
+Important finding: creating only a temp `codex.cmd` under `%TEMP%` was not enough in this Codex desktop shell because the command runner injects its own PATH segment and the installed `codex.EXE` was otherwise preferred. The dogfood avoided real Codex execution by placing the fake shim where `execute-preview` showed the fake path. TASK-DEVO-097 later added explicit `--codex-path` support so dogfood/testing can select a fake executable without relying on PATH precedence.
 
 ## Commands Run
 
@@ -157,24 +157,24 @@ The servers were not started for this dogfood because this task was operational 
 
 - Fake executable setup was awkward in the Codex desktop shell because the shell injects a temporary PATH segment and the installed `codex.EXE` was preferred over a normal `%TEMP%` fake `codex.cmd`.
 - `prepare-next` created `RP001` before the fake shim was visible, so a second run plan `RP002` was created to capture the correct fake executable path. The old run plan remains as workspace history.
-- `queue-status` after queue completion no longer shows linked worker/review context because there is no active item. `queue-show` shows completion state, but the worker linkage is less visible after completion.
+- Before TASK-DEVO-097, `queue-status` after queue completion no longer showed linked worker/review context because there was no active item. TASK-DEVO-097 changed `queue-status` to default to the most recently completed item after completion and added `--item` plus `flow-summary` for explicit evidence inspection.
 - The deterministic starter backlog generated generic task text. It was acceptable for no-op dogfood, but real work needs backlog refinement before execution.
 - The command flow is long. It is safe, but still tedious for the operator.
 
 ## Safety Gaps Or Follow-Ups
 
-- Consider a configurable or explicit Codex executable path for supervised worker dogfood/testing so fake-worker validation does not depend on PATH quirks.
-- Consider a queue item history/detail command that shows linked worker/report/review evidence even after the item is completed.
-- Consider a compact `worker codex dogfood` or `worker codex smoke` helper that prepares a fake-only supervised run without requiring the full manual sequence.
+- Resolved by TASK-DEVO-097: explicit `--codex-path` support for supervised worker dogfood/testing.
+- Resolved by TASK-DEVO-097: completed queue item evidence visibility through `queue-status --item` and default latest-completed selection.
+- Partially resolved by TASK-DEVO-097: compact `devo worker codex flow-summary` for the queue-linked worker path. A future fake-only dogfood helper may still be useful.
 - Consider clearer UI/API smoke guidance from `devo ui status` for when servers are not running.
 
 ## Recommended Next Task
 
-Recommended TASK-DEVO-097: Worker flow operator polish.
+TASK-DEVO-097 completed the recommended worker flow operator polish.
 
 Suggested scope:
 
-- Add safer fake-executable/test-mode guidance or a `--codex-executable`/configured executable path design.
-- Improve completed queue item evidence visibility.
-- Add a compact operator summary command for the post-execution review gate.
-- Keep commit/push automation and real Codex execution/delivery automation out of scope until this operator path is smoother.
+- Added safer fake-executable/test-mode guidance through `--codex-path`.
+- Improved completed queue item evidence visibility.
+- Added compact `devo worker codex flow-summary`.
+- Commit/push automation and real Codex/delivery automation remain out of scope until further safety review.

@@ -72,6 +72,7 @@ from .project_planning import (
     ProjectBrief,
     CodexExecutionPreview,
     CodexExecutionResult,
+    CodexWorkerFlowSummary,
     CodexQueueWorkerStatus,
     CodexPreflightResult,
     CodexRunPlan,
@@ -105,6 +106,7 @@ from .project_planning import (
     generate_backlog_refinement_prompt,
     get_backlog_task,
     get_codex_queue_worker_status,
+    get_codex_worker_flow_summary,
     get_queue_item_completion_readiness,
     get_queue_next_item,
     import_refined_backlog,
@@ -747,6 +749,9 @@ def _print_codex_run_plan(plan: CodexRunPlan, json_path: Path | None = None, mar
     console.print(f"Preflight status: {plan.preflight_status}")
     console.print(f"Proposed working directory: {plan.proposed_working_directory}", soft_wrap=True)
     console.print(f"Proposed command preview: {plan.proposed_command_preview}", soft_wrap=True)
+    console.print(f"Codex executable: {plan.codex_executable_path or 'none'}", soft_wrap=True)
+    console.print(f"Codex executable source: {plan.codex_executable_source}")
+    console.print(f"Command resolution: {plan.command_resolution_note or 'none'}", soft_wrap=True)
     console.print(f"Blocked reasons: {len(plan.blocked_reasons)}")
     console.print(f"Warnings: {len(plan.warnings)}")
     console.print(f"Next action: {plan.next_action}", soft_wrap=True)
@@ -801,7 +806,9 @@ def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
     console.print(f"Queue status: {status.queue_status}")
     console.print(f"Current item: {status.current_item_id or 'none'}")
     console.print(f"Current item status: {status.current_item_status or 'none'}")
+    console.print(f"Selected item source: {status.selected_item_source}")
     console.print(f"Current task: {status.current_task_id or 'none'}")
+    console.print(f"Source handoff: {status.source_handoff_id or 'none'}")
     console.print(f"Linked worker run: {status.linked_worker_run_id or 'none'}")
     console.print(f"Linked worker status: {status.linked_worker_run_status or 'none'}")
     console.print(f"Linked run plan: {status.linked_run_plan_id or 'none'}")
@@ -809,6 +816,7 @@ def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
     console.print(f"Latest execution status: {status.latest_worker_execution_status or 'none'}")
     console.print(f"Latest execution exit code: {status.latest_worker_execution_exit_code if status.latest_worker_execution_exit_code is not None else 'none'}")
     console.print(f"Latest execution log path: {status.latest_worker_execution_log_path or 'none'}", soft_wrap=True)
+    console.print(f"Latest report status: {status.latest_worker_report_status or 'none'}")
     console.print(f"Latest review: {status.latest_worker_review_id or 'none'}")
     console.print(f"Latest review status: {status.latest_worker_review_status or 'none'}")
     console.print(f"Latest validation status: {status.latest_worker_validation_status or 'none'}")
@@ -821,6 +829,31 @@ def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
             console.print(f"  - {blocker}", soft_wrap=True)
     console.print(f"Next action: {status.next_action}", soft_wrap=True)
     console.print("Safety: queue worker status is read-only. Queue item completion remains explicit.")
+
+
+def _print_codex_worker_flow_summary(summary: CodexWorkerFlowSummary) -> None:
+    console.print(f"[bold]Codex worker flow summary: {summary.queue_id}[/bold]")
+    console.print(f"Project: {summary.project}")
+    console.print(f"Queue: {summary.queue_id} | status={summary.queue_status}")
+    console.print(f"Item: {summary.selected_item_id or 'none'} | status={summary.selected_item_status or 'none'}")
+    console.print(f"Handoff: {summary.source_handoff_id or 'none'}")
+    console.print(f"Worker run: {summary.linked_worker_run_id or 'none'} | status={summary.linked_worker_run_status or 'none'}")
+    console.print(
+        f"Run plan: {summary.linked_run_plan_id or 'none'} | status={summary.linked_run_plan_status or 'none'} | "
+        f"preflight={summary.linked_run_plan_preflight_status or 'none'}",
+        soft_wrap=True,
+    )
+    console.print(f"Report: {summary.worker_report_status or 'none'}")
+    console.print(f"Review: {summary.worker_review_status or 'none'} | validation={summary.validation_evidence_status or 'none'}")
+    console.print(f"Completion ready: {'yes' if summary.completion_ready else 'no'}")
+    if summary.completion_blockers:
+        console.print("Completion blockers:")
+        for blocker in summary.completion_blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
+    console.print("Next commands:")
+    for command in summary.next_commands or ["none"]:
+        console.print(f"  {command}", soft_wrap=True)
+    console.print("Safety: flow-summary is read-only. It does not run Codex, validate, commit, push, or complete queue/task state.")
 
 
 def _print_json_model(model: object) -> None:
@@ -2686,14 +2719,30 @@ def prepare_codex_worker_for_queue_next_command(
 def codex_queue_worker_status_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    item_id: str | None = typer.Option(None, "--item", help="Optional queue item id to inspect instead of current/recent item."),
 ) -> None:
     """Show queue worker linkage and next safe command without mutating state."""
     project_name = _resolve_project(project_name)
     try:
-        status = get_codex_queue_worker_status(project_name, queue_id)
+        status = get_codex_queue_worker_status(project_name, queue_id, item_id=item_id)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--queue") from exc
     _print_codex_queue_worker_status(status)
+
+
+@worker_codex_app.command("flow-summary")
+def codex_worker_flow_summary_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    item_id: str | None = typer.Option(None, "--item", help="Optional queue item id to inspect instead of current/recent item."),
+) -> None:
+    """Show a compact read-only supervised worker flow summary for one queue."""
+    project_name = _resolve_project(project_name)
+    try:
+        summary = get_codex_worker_flow_summary(project_name, queue_id, item_id=item_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
+    _print_codex_worker_flow_summary(summary)
 
 
 @worker_codex_app.command("preflight")
@@ -2701,16 +2750,17 @@ def preflight_codex_worker_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
     write: bool = typer.Option(False, "--write", help="Create a run-plan artifact if preflight is not blocked."),
+    codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
 ) -> None:
     """Run read-only preflight checks for a future supervised Codex run."""
     project_name = _resolve_project(project_name)
-    result = run_codex_worker_preflight(project_name, worker_run_id)
+    result = run_codex_worker_preflight(project_name, worker_run_id, codex_path=str(codex_path) if codex_path else None)
     _print_codex_preflight(result)
     if write:
         if result.status == "blocked":
             console.print("[yellow]Run plan not written because preflight is blocked.[/yellow]")
             raise typer.Exit(1)
-        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id)
+        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id, codex_path=str(codex_path) if codex_path else None)
         console.print("[green]Codex run plan written from preflight[/green]")
         _print_codex_preflight(preflight)
         _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
@@ -2722,11 +2772,12 @@ def preflight_codex_worker_command(
 def create_codex_worker_run_plan_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
+    codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
 ) -> None:
     """Create a safe preview run-plan artifact for supervised Codex execution."""
     project_name = _resolve_project(project_name)
     try:
-        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id)
+        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id, codex_path=str(codex_path) if codex_path else None)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     console.print(f"[green]Codex run plan saved[/green] {project_name}")
@@ -2791,11 +2842,12 @@ def preview_codex_worker_execution_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
     plan_id: str = typer.Option(..., "--plan", help="Approved Codex run plan id."),
+    codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
 ) -> None:
     """Preview one supervised Codex execution without running anything."""
     project_name = _resolve_project(project_name)
     try:
-        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id)
+        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id, codex_path=str(codex_path) if codex_path else None)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--plan") from exc
     _print_codex_execution_preview(preview)
@@ -2808,6 +2860,7 @@ def execute_codex_worker_command(
     plan_id: str = typer.Option(..., "--plan", help="Approved Codex run plan id."),
     confirm_execute: bool = typer.Option(False, "--confirm-execute", help="Required explicit confirmation to launch Codex CLI."),
     started_by: str = typer.Option("operator", "--started-by", help="Operator label recorded in the worker run."),
+    codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
 ) -> None:
     """Launch Codex once for an approved run plan and capture logs."""
     project_name = _resolve_project(project_name)
@@ -2816,7 +2869,7 @@ def execute_codex_worker_command(
         console.print(f"Preview first: devo worker codex execute-preview --project {project_name} --run {worker_run_id} --plan {plan_id}")
         raise typer.Exit(1)
     try:
-        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id)
+        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id, codex_path=str(codex_path) if codex_path else None)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--plan") from exc
     _print_codex_execution_preview(preview)
@@ -2826,7 +2879,13 @@ def execute_codex_worker_command(
     console.print("[yellow]Launching Codex CLI once for this approved run plan.[/yellow]")
     console.print("[yellow]Devo will capture logs and move the worker run to review/failure state only; it will not validate, commit, push, or complete queue/task state.[/yellow]")
     try:
-        result, _worker_run, _log_path, _stderr_path = execute_codex_worker_run(project_name, worker_run_id, plan_id, started_by=started_by)
+        result, _worker_run, _log_path, _stderr_path = execute_codex_worker_run(
+            project_name,
+            worker_run_id,
+            plan_id,
+            started_by=started_by,
+            codex_path=str(codex_path) if codex_path else None,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--plan") from exc
     _print_codex_execution_result(result)

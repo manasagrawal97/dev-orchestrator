@@ -208,9 +208,11 @@ Prepare a supervised queue worker for exactly one current/pending queue item:
 ```powershell
 devo worker codex prepare-next --project MyProject --queue Q001
 devo worker codex queue-status --project MyProject --queue Q001
+devo worker codex queue-status --project MyProject --queue Q001 --item QI001
+devo worker codex flow-summary --project MyProject --queue Q001
 ```
 
-`prepare-next` creates or reuses the queue handoff, creates a linked worker run, creates a run plan, and runs preflight. It stops before approval and execution. `queue-status` shows the linked worker/run-plan/execution state and the next safe CLI command without mutating anything.
+`prepare-next` creates or reuses the queue handoff, creates a linked worker run, creates a run plan, and runs preflight. It stops before approval and execution. `queue-status` shows the linked worker/run-plan/execution/report/review state and the next safe CLI command without mutating anything. If the queue is already completed, it defaults to the most recently completed queue item so evidence is still visible. Use `--item` to inspect a specific item. `flow-summary` is the shorter read-only operator view for queue, handoff, worker, plan, report, review, completion readiness, and the next 1-3 commands.
 
 Track a manual Codex worker attempt from an existing handoff:
 
@@ -228,23 +230,27 @@ Before any supervised worker execution, preflight the tracked worker run or writ
 
 ```powershell
 devo worker codex preflight --project MyProject --run WR001
+devo worker codex preflight --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan --project MyProject --run WR001
+devo worker codex run-plan --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan-list --project MyProject
 devo worker codex run-plan-show --project MyProject --plan RP001
 devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
 ```
 
-Run-plan artifacts live under `workspace/projects/<project>/workers/codex/run-plans/`. Preflight checks the linked handoff/prompt, target repo path, worker run state, linked metadata, and optional Codex executable presence using safe `PATH` detection only. The generated command is a preview string until the explicit guarded execute path is used. Run-plan approval is planning approval only; execution still requires `execute --confirm-execute` and does not authorize validation, delivery, queue completion, or target repository changes.
+Run-plan artifacts live under `workspace/projects/<project>/workers/codex/run-plans/`. Preflight checks the linked handoff/prompt, target repo path, worker run state, linked metadata, and optional Codex executable presence using safe `PATH` detection only. Normal use can rely on `PATH`; dogfood and fake-executable testing can pass `--codex-path` to validate and store an explicit executable path in the run plan. The generated command is a preview string until the explicit guarded execute path is used. Run-plan approval is planning approval only; execution still requires `execute --confirm-execute` and does not authorize validation, delivery, queue completion, or target repository changes.
 
 Execute one supervised Codex CLI run only after previewing and approving the run plan:
 
 ```powershell
 devo worker codex execute-preview --project MyProject --run WR001 --plan RP001
+devo worker codex execute-preview --project MyProject --run WR001 --plan RP001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute
+devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute --codex-path E:\tools\fake-codex.cmd
 devo worker codex execute-log --project MyProject --run WR001
 ```
 
-`execute` refuses to run without `--confirm-execute`, an approved run plan, passed/warnings preflight, existing prompt and target paths, and Codex on `PATH`. It captures logs under `workspace/projects/<project>/workers/codex/logs/` and updates the worker run to `waiting_review`, `failed`, `paused_usage_limit`, or `blocked_needs_approval`. When linked to a queue item, it also moves that item/queue to review, failure, or pause state without completing anything. It does not run validation, complete queue/task state, commit, push, or treat Codex output as proof. After execution, review logs and use `report-template`/`report-import` before any queue or delivery update.
+`execute` refuses to run without `--confirm-execute`, an approved run plan, passed/warnings preflight, existing prompt and target paths, and a resolved executable from the run plan, `PATH`, or `--codex-path`. It captures logs under `workspace/projects/<project>/workers/codex/logs/` and updates the worker run to `waiting_review`, `failed`, `paused_usage_limit`, or `blocked_needs_approval`. When linked to a queue item, it also moves that item/queue to review, failure, or pause state without completing anything. It does not run validation, complete queue/task state, commit, push, or treat Codex output as proof. After execution, review logs and use `report-template`/`report-import` before any queue or delivery update.
 
 After the user runs Codex manually, create and import a structured worker report:
 

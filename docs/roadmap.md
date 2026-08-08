@@ -279,6 +279,10 @@ Made `devo project queue-complete-item` review-aware for Codex-linked or waiting
 
 Dogfooded the supervised worker flow against DevOrchestrator with a fake no-op `codex.cmd`, proving the planning -> batch -> queue -> handoff -> worker run -> run plan -> guarded fake execution -> report import -> review evidence -> review-gated completion path end to end. No real Codex CLI was executed and no source files were changed through the worker. The dogfood report is `docs/dogfood/devo-supervised-worker-dogfood-096.md`; follow-ups include fake executable ergonomics, completed queue item evidence visibility, and shorter operator summary commands.
 
+### TASK-DEVO-097 Worker Flow Operator Polish - Completed
+
+Added explicit `--codex-path` support to `devo worker codex preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` so controlled dogfood/fake executable runs no longer depend on fragile PATH injection. Run plans now store executable path/source/resolution notes. `queue-status` can inspect a specific `--item` and defaults to the most recently completed item after queue completion, preserving linked worker/report/review evidence visibility. Added read-only `devo worker codex flow-summary` plus API/UI status fields for the compact queue -> handoff -> worker -> run-plan -> report -> review -> completion-readiness view. This still does not run real Codex in tests, add UI execute buttons, auto-run validation, auto-complete queue/task state, commit, push, or modify target projects.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

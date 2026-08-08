@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-092 update, after the first guarded one-run Codex CLI execution prototype was added. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
+Source/freshness: TASK-DEVO-097 update, after supervised worker operator polish added explicit executable overrides, completed-item evidence visibility, and a compact flow summary. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
 
 ## Purpose
 
@@ -158,6 +158,8 @@ TASK-DEVO-095 gates queue completion on that evidence. `devo project queue-compl
 
 TASK-DEVO-096 dogfooded the full supervised path with a fake no-op `codex.cmd`; see `docs/dogfood/devo-supervised-worker-dogfood-096.md`. The path worked end to end, including review-gated completion. The main friction was fake executable/PATH setup and post-completion evidence visibility.
 
+TASK-DEVO-097 addresses that operator friction. `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` support `--codex-path` for explicit controlled executable selection. Run plans store executable path/source/resolution notes. `queue-status` can inspect `--item` and defaults to the most recently completed item after queue completion, so linked worker/report/review evidence remains visible. `flow-summary` provides a compact read-only status and next-command view for the whole queue-linked worker flow.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -268,7 +270,9 @@ Implemented preflight and run-plan commands:
 
 ```powershell
 devo worker codex preflight --project <project> --run <workerRunId>
+devo worker codex preflight --project <project> --run <workerRunId> --codex-path <fakeOrControlledCodexPath>
 devo worker codex run-plan --project <project> --run <workerRunId>
+devo worker codex run-plan --project <project> --run <workerRunId> --codex-path <fakeOrControlledCodexPath>
 devo worker codex run-plan-list --project <project>
 devo worker codex run-plan-show --project <project> --plan <planId>
 devo worker codex run-plan-approve --project <project> --plan <planId> --note "<note>"
@@ -281,8 +285,12 @@ Implemented supervised one-run execution commands:
 ```powershell
 devo worker codex prepare-next --project <project> --queue <queueId>
 devo worker codex queue-status --project <project> --queue <queueId>
+devo worker codex queue-status --project <project> --queue <queueId> --item <queueItemId>
+devo worker codex flow-summary --project <project> --queue <queueId>
 devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId>
+devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId> --codex-path <fakeOrControlledCodexPath>
 devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute
+devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute --codex-path <fakeOrControlledCodexPath>
 devo worker codex execute-log --project <project> --run <workerRunId>
 devo worker codex review-template --project <project> --run <workerRunId>
 devo worker codex review-attach-evidence --project <project> --run <workerRunId> --status <provided|passed|failed|partial> --summary "<summary>"
@@ -291,7 +299,7 @@ devo worker codex review-show --project <project> --run <workerRunId>
 devo worker codex review-list --project <project>
 ```
 
-`prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery.
+`prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. Normal execution can resolve Codex from `PATH`; dogfood/testing can pass `--codex-path` to avoid ambiguous PATH precedence. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery. `queue-status` and `flow-summary` are read-only and preserve useful linked evidence even after queue completion.
 
 `review-record --status reviewed_passed` still does not complete the queue item. It only records the reviewer decision and prints the explicit `devo project queue-complete-item` command for the operator to run if the evidence is sufficient. `queue-complete-item` then performs the final review gate before mutating queue/task state.
 
@@ -340,11 +348,11 @@ Recommended future sequence:
 3. TASK-DEVO-090: Worker run UI visibility and review affordance polish - completed.
 4. TASK-DEVO-091: Codex worker preflight and run-plan model - completed.
 5. TASK-DEVO-092: Supervised Codex CLI adapter prototype - completed.
-6. TASK-DEVO-093: Queue integration for one item at a time.
+6. TASK-DEVO-093: Queue integration for one item at a time - completed.
 7. TASK-DEVO-094: Validation/review integration - completed.
 8. TASK-DEVO-095: Review-gated queue completion - completed.
 9. TASK-DEVO-096: End-to-end supervised worker dogfood - completed.
-10. TASK-DEVO-097: Worker flow operator polish.
+10. TASK-DEVO-097: Worker flow operator polish - completed.
 11. TASK-DEVO-098: Pause/resume/usage-limit handling.
 12. TASK-DEVO-099: Optional commit/push delivery integration after safety review.
 

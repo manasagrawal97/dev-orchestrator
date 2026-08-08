@@ -347,6 +347,8 @@ export interface CodexQueueWorkerStatus {
   current_item_id: string | null;
   current_item_status: string | null;
   current_task_id: string | null;
+  selected_item_source: string;
+  source_handoff_id: string | null;
   linked_worker_run_id: string | null;
   linked_worker_run_status: string | null;
   linked_run_plan_id: string | null;
@@ -354,6 +356,7 @@ export interface CodexQueueWorkerStatus {
   latest_worker_execution_status: string | null;
   latest_worker_execution_exit_code: number | null;
   latest_worker_execution_log_path: string | null;
+  latest_worker_report_status: string | null;
   latest_worker_review_id: string | null;
   latest_worker_review_status: string | null;
   latest_worker_validation_status: string | null;

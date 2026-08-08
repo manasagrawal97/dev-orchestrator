@@ -212,9 +212,11 @@ Prepare one queue-linked supervised Codex worker without executing it:
 ```powershell
 devo worker codex prepare-next --project MyProject --queue Q001
 devo worker codex queue-status --project MyProject --queue Q001
+devo worker codex queue-status --project MyProject --queue Q001 --item QI001
+devo worker codex flow-summary --project MyProject --queue Q001
 ```
 
-`prepare-next` finds the current running or next pending queue item, generates or reuses its handoff, creates a linked worker run, creates a run plan, and runs safe preflight. It does not approve the run plan, launch Codex, run validation, complete queue/tasks, commit, or push. `queue-status` is read-only status visibility for the queue item, linked worker run, linked run plan, latest execution status, and next CLI command.
+`prepare-next` finds the current running or next pending queue item, generates or reuses its handoff, creates a linked worker run, creates a run plan, and runs safe preflight. It does not approve the run plan, launch Codex, run validation, complete queue/tasks, commit, or push. `queue-status` is read-only status visibility for the queue item, linked worker run, linked run plan, latest execution/report/review status, completion readiness, and next CLI command. After a queue is completed, `queue-status` defaults to the most recently completed item so review evidence remains visible; use `--item` to inspect a specific queue item. `flow-summary` gives the shorter operator view of queue -> handoff -> worker -> run plan -> report -> review -> completion readiness.
 
 Track manual Codex worker attempts without running Codex:
 
@@ -232,23 +234,27 @@ Preflight supervised Codex runs and create safe run-plan previews:
 
 ```powershell
 devo worker codex preflight --project MyProject --run WR001
+devo worker codex preflight --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan --project MyProject --run WR001
+devo worker codex run-plan --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan-list --project MyProject
 devo worker codex run-plan-show --project MyProject --plan RP001
 devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
 ```
 
-Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
+Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. Normal users can rely on `PATH`; dogfood or controlled tests can pass `--codex-path` to validate and store an explicit executable path in the run plan. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
 
 Run one supervised Codex CLI worker for an approved run plan:
 
 ```powershell
 devo worker codex execute-preview --project MyProject --run WR001 --plan RP001
+devo worker codex execute-preview --project MyProject --run WR001 --plan RP001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute
+devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute --codex-path E:\tools\fake-codex.cmd
 devo worker codex execute-log --project MyProject --run WR001
 ```
 
-Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, a Codex executable is found on `PATH`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run and linked queue item to `waiting_review`, not `completed`; failures become `failed`/`paused_failure`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval` with the queue waiting for review. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically. Queue item completion still requires `devo project queue-complete-item` after human review and validation evidence.
+Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, an executable is resolved from the run plan, `PATH`, or an explicit `--codex-path`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run and linked queue item to `waiting_review`, not `completed`; failures become `failed`/`paused_failure`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval` with the queue waiting for review. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically. Queue item completion still requires `devo project queue-complete-item` after human review and validation evidence.
 
 Record review and validation evidence before queue completion:
 

@@ -11,6 +11,7 @@ from .doctor import run_doctor_with_timing
 from .project_planning import (
     calculate_project_progress,
     get_codex_queue_worker_status,
+    get_codex_worker_flow_summary,
     get_backlog_task,
     get_queue_next_item,
     list_batch_approvals,
@@ -61,6 +62,7 @@ API_ROUTES = (
     "GET /api/projects/{project}/queues/{queue_id}",
     "GET /api/projects/{project}/queues/{queue_id}/next",
     "GET /api/projects/{project}/queues/{queue_id}/worker-status",
+    "GET /api/projects/{project}/queues/{queue_id}/flow-summary",
     "GET /api/projects/{project}/handoffs",
     "GET /api/projects/{project}/handoffs/{handoff_id}",
     "GET /api/projects/{project}/worker-runs",
@@ -240,13 +242,22 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         return {"project": project, "queue_id": queue.queue_id, "queue_status": queue.status, "item": _model_dump(item) if item else None}
 
     @api.get("/api/projects/{project}/queues/{queue_id}/worker-status")
-    def project_queue_worker_status(project: str, queue_id: str) -> dict[str, object]:
+    def project_queue_worker_status(project: str, queue_id: str, item_id: str | None = None) -> dict[str, object]:
         _require_project(project, root)
         try:
-            status = get_codex_queue_worker_status(project, queue_id, workspace_root=root)
+            status = get_codex_queue_worker_status(project, queue_id, item_id=item_id, workspace_root=root)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail={"error": "queue_not_found", "message": str(exc)}) from exc
         return _model_dump(status)
+
+    @api.get("/api/projects/{project}/queues/{queue_id}/flow-summary")
+    def project_queue_worker_flow_summary(project: str, queue_id: str, item_id: str | None = None) -> dict[str, object]:
+        _require_project(project, root)
+        try:
+            summary = get_codex_worker_flow_summary(project, queue_id, item_id=item_id, workspace_root=root)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail={"error": "queue_not_found", "message": str(exc)}) from exc
+        return _model_dump(summary)
 
     @api.get("/api/projects/{project}/handoffs")
     def project_handoffs(project: str) -> dict[str, object]:
