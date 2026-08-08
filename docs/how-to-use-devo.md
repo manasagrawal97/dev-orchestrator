@@ -255,6 +255,8 @@ devo worker codex execute-log --project MyProject --run WR001
 
 `execute` refuses to run without `--confirm-execute`, an approved run plan, passed/warnings preflight, existing prompt and target paths, and a resolved executable from the run plan, `PATH`, or `--codex-path`. It captures logs under `workspace/projects/<project>/workers/codex/logs/` and updates the worker run to `waiting_review`, `failed`, `paused_usage_limit`, or `blocked_needs_approval`. When linked to a queue item, it also moves that item/queue to review, failure, or pause state without completing anything. It does not run validation, complete queue/task state, commit, push, or treat Codex output as proof. If process creation fails before Codex produces output, Devo catches `PermissionError`, `FileNotFoundError`, and other launch-time `OSError` failures, writes a clear log, marks the worker `failed`, and pauses the linked queue as `paused_failure`. After execution, review logs and use `report-template`/`report-import` before any queue or delivery update.
 
+On this machine, TASK-DEVO-101 found no launchable Codex path outside the blocked WindowsApps package path. Do not retry real supervised execution until a safe wrapper or executable path exists and `devo worker codex doctor --codex-path <path>` reports no blockers.
+
 After the user runs Codex manually, create and import a structured worker report:
 
 ```powershell
@@ -287,7 +289,7 @@ Supervised Codex CLI worker execution is intentionally single-run and queue-link
 
 Before the first real supervised Codex launch, read `docs/runbooks/real-codex-supervised-dry-run.md`. The first real run should target DevOrchestrator, use no-op/docs-only scope, and prove the approval/preview/execution/report/review gate. It should not touch PersonalOS, run target commands, trust validation automatically, commit, push, or complete queue/task state without explicit review.
 
-The TASK-DEVO-099 first real launch attempt is documented in `docs/dogfood/devo-real-codex-dry-run-099.md`. It reached the approved guarded launch step but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. Do not retry real supervised execution until the launch path and launch-failure handling are hardened.
+The TASK-DEVO-099 first real launch attempt is documented in `docs/dogfood/devo-real-codex-dry-run-099.md`. It reached the approved guarded launch step but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. TASK-DEVO-100 hardened launch diagnostics and failure handling. TASK-DEVO-101 is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`; it stopped before execution because no safe non-WindowsApps launcher was available.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

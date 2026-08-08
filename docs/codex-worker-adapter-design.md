@@ -167,6 +167,8 @@ TASK-DEVO-099 attempted that first real dry-run and documented the result in `do
 
 TASK-DEVO-100 hardens that launch path. `devo worker codex doctor` now diagnoses the candidate executable without running Codex, reports PATH versus explicit override source, detects WindowsApps app execution aliases, and recommends `--codex-path` with a real executable or wrapper. Preflight, run-plan, and execute-preview surface launch risk, warnings, and blockers. Guarded execution blocks WindowsApps aliases and catches `PermissionError`, `FileNotFoundError`, and other launch-time `OSError` failures so the worker run becomes `failed`, logs are written, and linked queues pause as `paused_failure` instead of leaving a worker stuck as `running`.
 
+TASK-DEVO-101 attempted a real retry with an explicit path and stopped before execution because no non-WindowsApps Codex executable or wrapper was available. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`. The next adapter step should provide safe wrapper/launcher support, still without `shell=True`, before retrying real supervised execution.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:

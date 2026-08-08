@@ -295,6 +295,10 @@ Attempted the first real Codex supervised worker dry-run through Devo and docume
 
 Hardened the supervised Codex launch path after TASK-DEVO-099. Devo now has `devo worker codex doctor` for read-only executable diagnostics, blocks WindowsApps app execution aliases for guarded execution, stores launch risk/blocker/warning fields in run plans, shows launch diagnostics in preflight and execute-preview, and catches launch-time `PermissionError`, `FileNotFoundError`, and `OSError` failures into failed worker runs with logs and linked queue `paused_failure` state. Tests use fake executables only; no real Codex run was retried.
 
+### TASK-DEVO-101 Real Codex Explicit-Path Retry - Blocked
+
+Attempted to retry the first real Codex supervised dry-run using `devo worker codex doctor` and an explicit non-WindowsApps launcher path. The retry stopped safely before planning/worker execution because every discoverable Codex command still resolved to the blocked WindowsApps package path and no npm/global shim, user-local executable, or Program Files executable was found. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`. Next work should add safe wrapper/launcher support before another real retry.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

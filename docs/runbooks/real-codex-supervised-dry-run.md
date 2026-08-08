@@ -168,6 +168,8 @@ Codex resolved to WindowsApps app execution alias and may not be launchable by D
 
 The preferred workaround is to create or choose a real local executable/wrapper script and pass it explicitly with `--codex-path`. Do not use `shell=True` as a workaround; it would weaken Devo's launch boundary and make command auditing harder.
 
+TASK-DEVO-101 confirmed that this machine currently exposes only the blocked WindowsApps Codex paths through normal command discovery. Do not retry real supervised execution here until a safe non-WindowsApps wrapper or executable path exists and `devo worker codex doctor --codex-path <path>` reports no launch blockers.
+
 Use `--codex-path` only if `PATH` resolution is unreliable or ambiguous:
 
 ```powershell
