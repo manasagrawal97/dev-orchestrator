@@ -671,6 +671,50 @@ def test_codex_preflight_blocks_missing_explicit_codex_path(tmp_path: Path, monk
     assert "Explicit Codex executable path does not exist" in result.output
 
 
+def test_codex_doctor_warns_for_windowsapps_alias(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    windowsapps_codex = _create_windowsapps_codex_alias(tmp_path)
+    monkeypatch.setenv("PATH", f"{windowsapps_codex.parent};{os.environ.get('PATH', '')}")
+
+    result = runner.invoke(app, ["worker", "codex", "doctor"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "WindowsApps alias: True" in result.output
+    assert "Use --codex-path with a real executable/wrapper path" in result.output
+    assert "does not run Codex" in result.output
+
+
+def test_codex_preflight_blocks_windowsapps_alias_from_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    windowsapps_codex = _create_windowsapps_codex_alias(tmp_path)
+    monkeypatch.setenv("PATH", f"{windowsapps_codex.parent};{os.environ.get('PATH', '')}")
+
+    result = runner.invoke(app, ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Status: blocked" in result.output
+    assert "WindowsApps app execution alias" in result.output
+
+
+def test_codex_run_plan_stores_windowsapps_launch_blocker(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    windowsapps_codex = _create_windowsapps_codex_alias(tmp_path)
+    monkeypatch.setenv("PATH", f"{windowsapps_codex.parent};{os.environ.get('PATH', '')}")
+
+    result = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert plan is not None
+    assert plan.status == "blocked"
+    assert plan.launch_risk == "blocked"
+    assert plan.launch_blockers
+    assert any("WindowsApps app execution alias" in item for item in plan.launch_blockers)
+    assert "Launch risk: blocked" in result.output
+
+
 def test_codex_preflight_blocks_missing_prompt(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     _create_worker_run(tmp_path)
@@ -950,6 +994,29 @@ def test_codex_execute_refuses_missing_target_repo(tmp_path: Path, monkeypatch) 
     assert worker_run.status == "planned"
 
 
+def test_codex_execute_refuses_blocked_windowsapps_alias(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    windowsapps_codex = _create_windowsapps_codex_alias(tmp_path)
+    monkeypatch.setenv("PATH", f"{windowsapps_codex.parent};{os.environ.get('PATH', '')}")
+    created = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
+    approved = runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert created.exit_code == 0, created.output
+    assert approved.exit_code == 0, approved.output
+    assert result.exit_code != 0
+    assert "WindowsApps app execution alias" in result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "planned"
+
+
 def test_codex_execute_success_sets_waiting_review_and_writes_logs(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
@@ -1031,6 +1098,62 @@ def test_codex_execute_failure_sets_failed_and_writes_logs(tmp_path: Path, monke
     assert queue.status == "paused_failure"
     assert queue.items[0].status == "failed"
     assert task.status == "ready"
+
+
+def test_codex_execute_handles_permission_error_without_traceback(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="unused", exit_code=0)
+
+    def raise_permission_error(*_args, **_kwargs):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr("devo.project_planning.subprocess.run", raise_permission_error)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Launch error type: PermissionError" in result.output
+    assert "Traceback" not in result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "failed"
+    assert worker_run.execution_exit_code == 126
+    assert worker_run.execution_stderr_log_path is not None
+    stderr = Path(worker_run.execution_stderr_log_path).read_text(encoding="utf-8")
+    assert "Codex failed to launch before producing output" in stderr
+    assert "PermissionError" in stderr
+    assert queue is not None
+    assert queue.status == "paused_failure"
+    assert queue.items[0].status == "failed"
+
+
+def test_codex_execute_handles_filenotfound_error_without_traceback(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="unused", exit_code=0)
+
+    def raise_not_found(*_args, **_kwargs):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr("devo.project_planning.subprocess.run", raise_not_found)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Launch error type: FileNotFoundError" in result.output
+    assert "Traceback" not in result.output
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "failed"
+    assert worker_run.execution_exit_code == 127
 
 
 def test_codex_execute_usage_limit_output_sets_paused_usage_limit(tmp_path: Path, monkeypatch) -> None:
@@ -1437,6 +1560,14 @@ def _create_fake_codex(tmp_path: Path, *, stdout: str = "", stderr: str = "", ex
     lines.append(f"exit /b {exit_code}")
     fake_codex.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
     return fake_codex
+
+
+def _create_windowsapps_codex_alias(tmp_path: Path) -> Path:
+    alias_dir = tmp_path / "Microsoft" / "WindowsApps"
+    alias_dir.mkdir(parents=True, exist_ok=True)
+    fake_alias = alias_dir / "codex.exe"
+    fake_alias.write_text("WindowsApps alias placeholder\n", encoding="utf-8")
+    return fake_alias
 
 
 def _worker_report_file(tmp_path: Path, worker_run_id: str, status: str = "completed") -> Path:

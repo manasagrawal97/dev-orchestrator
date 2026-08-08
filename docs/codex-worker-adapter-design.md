@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-099 update, after the first real supervised Codex dry-run attempt found a WindowsApps `codex.exe` launch failure. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
+Source/freshness: TASK-DEVO-100 update, after launch-path diagnostics and launch-failure handling were hardened for the WindowsApps `codex.exe` failure found in TASK-DEVO-099. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
 
 ## Purpose
 
@@ -164,6 +164,8 @@ TASK-DEVO-097 addresses that operator friction. `preflight`, `run-plan`, `execut
 TASK-DEVO-098 adds the first real supervised Codex dry-run runbook: `docs/runbooks/real-codex-supervised-dry-run.md`. Read it before launching real Codex through Devo. The first real run should target DevOrchestrator, use no-op/docs-only scope, validate orchestration rather than productivity, and stop before automatic validation, completion, commit, push, or delivery automation.
 
 TASK-DEVO-099 attempted that first real dry-run and documented the result in `docs/dogfood/devo-real-codex-dry-run-099.md`. Preflight and preview passed, but Windows denied `CreateProcess` for the detected WindowsApps package `codex.exe` path before Codex produced output. WR002 was imported as failed, review was rejected, and the queue item was blocked. Before retrying real Codex, Devo should support a stable accessible launcher path and catch launch-time `OSError`/`PermissionError` so worker/queue state and logs are recorded automatically.
+
+TASK-DEVO-100 hardens that launch path. `devo worker codex doctor` now diagnoses the candidate executable without running Codex, reports PATH versus explicit override source, detects WindowsApps app execution aliases, and recommends `--codex-path` with a real executable or wrapper. Preflight, run-plan, and execute-preview surface launch risk, warnings, and blockers. Guarded execution blocks WindowsApps aliases and catches `PermissionError`, `FileNotFoundError`, and other launch-time `OSError` failures so the worker run becomes `failed`, logs are written, and linked queues pause as `paused_failure` instead of leaving a worker stuck as `running`.
 
 ## State Transitions
 

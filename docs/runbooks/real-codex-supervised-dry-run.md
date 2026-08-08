@@ -1,6 +1,6 @@
 # Real Codex Supervised Dry-Run Runbook
 
-Source/freshness: TASK-DEVO-098, after TASK-DEVO-097 added `--codex-path`, completed queue evidence visibility, and `devo worker codex flow-summary`.
+Source/freshness: TASK-DEVO-100, after TASK-DEVO-099 found the WindowsApps `codex.exe` launch failure and TASK-DEVO-100 added Codex executable diagnostics and launch-failure handling.
 
 ## Purpose
 
@@ -19,6 +19,7 @@ Before starting:
 - API/UI may be running, but they are optional and not required.
 - Real Codex CLI is installed and authenticated.
 - Codex executable path is known or `codex` is available on `PATH`.
+- `devo worker codex doctor` does not report a WindowsApps app execution alias as the selected launch path.
 - Devo tests are currently passing from recent source validation.
 - The user has enough Codex usage available for a short run.
 - Target project is DevOrchestrator first, not PersonalOS.
@@ -109,6 +110,7 @@ Inspect before execution:
 ```powershell
 devo worker codex queue-status --project <project> --queue <queueId>
 devo worker codex flow-summary --project <project> --queue <queueId>
+devo worker codex doctor --project <project>
 devo worker codex preflight --project <project> --run <workerRunId>
 devo worker codex run-plan --project <project> --run <workerRunId>
 devo worker codex run-plan-show --project <project> --plan <planId>
@@ -154,7 +156,17 @@ devo project queue-block-item --project <project> --queue <queueId> --item <item
 
 ## Real Codex Path Guidance
 
-Prefer normal `PATH` detection for the first real run.
+Run `devo worker codex doctor` before the first real run. The doctor command is read-only: it resolves the candidate executable, reports whether the path exists, identifies WindowsApps app execution aliases, and does not run `codex --version`.
+
+Prefer normal `PATH` detection only when the doctor reports a normal launchable executable.
+
+On Windows, `PATH` can resolve `codex.exe` to a Windows App Execution Alias or package path under `WindowsApps`. That path can pass existence checks and still fail when Devo calls `subprocess.run`/`CreateProcess`. Devo now blocks those paths for guarded execution and prints:
+
+```text
+Codex resolved to WindowsApps app execution alias and may not be launchable by Devo. Use --codex-path with a real executable/wrapper path.
+```
+
+The preferred workaround is to create or choose a real local executable/wrapper script and pass it explicitly with `--codex-path`. Do not use `shell=True` as a workaround; it would weaken Devo's launch boundary and make command auditing harder.
 
 Use `--codex-path` only if `PATH` resolution is unreliable or ambiguous:
 
@@ -209,6 +221,7 @@ For the first real dry-run, "no files changed" is a good result. Do not treat a 
 If execution fails:
 
 ```powershell
+devo worker codex doctor --project <project>
 devo worker codex execute-log --project <project> --run <workerRunId>
 devo worker codex run-show --project <project> --run <workerRunId>
 devo worker codex flow-summary --project <project> --queue <queueId>
@@ -262,8 +275,9 @@ The first real dry-run is successful if:
 Possible follow-up tasks:
 
 - TASK-DEVO-099: First real Codex supervised dry-run execution report.
-- TASK-DEVO-099: Delivery/commit safety design before automation.
-- TASK-DEVO-099: Worker run recovery/pause polish.
-- TASK-DEVO-099: Validation-result integration.
+- TASK-DEVO-100: Codex executable diagnostics and launch-failure hardening.
+- Future: Delivery/commit safety design before automation.
+- Future: Worker run recovery/pause polish.
+- Future: Validation-result integration.
 
 Do not proceed from the first real dry-run directly into commit/push automation. Treat the dry-run report as evidence for the next safety design decision.

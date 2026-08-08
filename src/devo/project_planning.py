@@ -638,6 +638,20 @@ class CodexPreflightResult(BaseModel):
     next_action: str = ""
 
 
+class CodexExecutableDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    executable_path: str | None = None
+    executable_source: str = "not_found"
+    exists: bool = False
+    is_windowsapps_alias: bool = False
+    command_resolution_note: str = ""
+    launch_risk: str = "unknown"
+    launch_blockers: list[str] = Field(default_factory=list)
+    launch_warnings: list[str] = Field(default_factory=list)
+    recommended_next_action: str = ""
+
+
 class CodexRunPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -659,6 +673,9 @@ class CodexRunPlan(BaseModel):
     codex_executable_path: str | None = None
     codex_executable_source: str = "path_detection"
     command_resolution_note: str = ""
+    launch_risk: str = "unknown"
+    launch_blockers: list[str] = Field(default_factory=list)
+    launch_warnings: list[str] = Field(default_factory=list)
     approval_required: bool = True
     approval_status: str = "not_requested"
     approval_note: str | None = None
@@ -706,6 +723,9 @@ class CodexExecutionPreview(BaseModel):
     plan_id: str
     ready: bool
     executable_path: str | None = None
+    executable_source: str = "not_found"
+    command_resolution_note: str = ""
+    launch_risk: str = "unknown"
     command_label: str = "Codex CLI supervised worker"
     proposed_working_directory: str
     prompt_path: str
@@ -727,6 +747,8 @@ class CodexExecutionResult(BaseModel):
     plan_id: str
     status: str
     exit_code: int
+    launch_error_type: str | None = None
+    launch_error_message: str | None = None
     log_path: str
     stderr_log_path: str
     started_at: datetime
@@ -2688,16 +2710,18 @@ def run_codex_worker_preflight(
     elif worker_run.source_task_id:
         checks.append(CodexPreflightCheck(name="linked_task", status="OK", detail=f"Linked backlog task exists: {worker_run.source_task_id}."))
 
-    executable_path, executable_source, command_resolution_note, executable_error = _resolve_codex_executable(codex_path)
-    if executable_error:
-        blocked_reasons.append(executable_error)
-        checks.append(CodexPreflightCheck(name="codex_path_override", status="FAIL", detail=executable_error))
-    elif executable_path:
-        check_name = "codex_path_override" if executable_source == "path_override" else "codex_path_detection"
-        checks.append(CodexPreflightCheck(name=check_name, status="OK", detail=command_resolution_note))
+    executable = diagnose_codex_executable(codex_path)
+    if executable.launch_blockers:
+        blocked_reasons.extend(executable.launch_blockers)
+        check_name = "codex_path_override" if executable.executable_source == "path_override" else "codex_path_detection"
+        checks.append(CodexPreflightCheck(name=check_name, status="FAIL", detail=executable.command_resolution_note))
+    elif executable.executable_path:
+        check_name = "codex_path_override" if executable.executable_source == "path_override" else "codex_path_detection"
+        checks.append(CodexPreflightCheck(name=check_name, status="OK", detail=executable.command_resolution_note))
     else:
         warnings.append("Codex executable was not found on PATH by safe detection; future supervised execution may need configuration.")
         checks.append(CodexPreflightCheck(name="codex_path_detection", status="WARN", detail="Codex executable was not found on PATH. No command was executed."))
+    warnings.extend(executable.launch_warnings)
 
     return _codex_preflight_result(project_name, worker_run.worker_run_id, checks, blocked_reasons, warnings)
 
@@ -2712,7 +2736,7 @@ def create_codex_worker_run_plan(
     root = workspace_root or get_workspace_root()
     worker_run = _require_worker_run(project_name, worker_run_id, root)
     preflight = run_codex_worker_preflight(project_name, worker_run.worker_run_id, codex_path=codex_path, workspace_root=root)
-    executable_path, executable_source, command_resolution_note, _executable_error = _resolve_codex_executable(codex_path)
+    executable = diagnose_codex_executable(codex_path)
     plan_id = _next_run_plan_id(project_name, workspace_root=root)
     now = datetime.now(UTC)
     status = "ready" if preflight.status in {"passed", "warnings"} and not preflight.blocked_reasons else "blocked"
@@ -2730,10 +2754,13 @@ def create_codex_worker_run_plan(
         prompt_path=worker_run.prompt_path,
         proposed_working_directory=worker_run.target_repo_path,
         proposed_command_label="Codex CLI supervised worker",
-        proposed_command_preview=f"{executable_path or 'codex'} < {worker_run.prompt_path}",
-        codex_executable_path=executable_path,
-        codex_executable_source=executable_source,
-        command_resolution_note=command_resolution_note,
+        proposed_command_preview=f"{executable.executable_path or 'codex'} < {worker_run.prompt_path}",
+        codex_executable_path=executable.executable_path,
+        codex_executable_source=executable.executable_source,
+        command_resolution_note=executable.command_resolution_note,
+        launch_risk=executable.launch_risk,
+        launch_blockers=executable.launch_blockers,
+        launch_warnings=executable.launch_warnings,
         approval_required=True,
         approval_status="not_requested",
         preflight_status=preflight.status,
@@ -2821,13 +2848,16 @@ def preview_codex_worker_execution(
     root = workspace_root or get_workspace_root()
     worker_run, plan = _load_worker_run_and_plan_for_execution(project_name, worker_run_id, plan_id, root)
     log_path, stderr_log_path = worker_execution_log_paths(project_name, worker_run.worker_run_id, workspace_root=root)
-    blocked_reasons, warnings, executable_path = _codex_execution_blockers(worker_run, plan, codex_path=codex_path)
+    blocked_reasons, warnings, executable = _codex_execution_blockers(worker_run, plan, codex_path=codex_path)
     return CodexExecutionPreview(
         project=project_name,
         worker_run_id=worker_run.worker_run_id,
         plan_id=plan.plan_id,
         ready=not blocked_reasons,
-        executable_path=executable_path,
+        executable_path=executable.executable_path,
+        executable_source=executable.executable_source,
+        command_resolution_note=executable.command_resolution_note,
+        launch_risk=executable.launch_risk,
         command_label=plan.proposed_command_label,
         proposed_working_directory=plan.proposed_working_directory,
         prompt_path=plan.prompt_path,
@@ -2883,6 +2913,8 @@ def execute_codex_worker_run(
     )
     _write_worker_run(project_name, running, workspace_root=root)
 
+    launch_error_type: str | None = None
+    launch_error_message: str | None = None
     try:
         completed = subprocess.run(
             [preview.executable_path],
@@ -2901,13 +2933,23 @@ def execute_codex_worker_run(
         stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
         stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
         stderr = (stderr + "\nCodex execution timed out.").strip() + "\n"
+    except (PermissionError, FileNotFoundError, OSError) as exc:
+        exit_code = _codex_launch_exception_exit_code(exc)
+        stdout = ""
+        launch_error_type = type(exc).__name__
+        launch_error_message = str(exc)
+        stderr = _render_codex_launch_failure_stderr(preview.executable_path, launch_error_type, launch_error_message)
 
     completed_at = datetime.now(UTC)
     log_path.write_text(_render_execution_log(plan, started_at, completed_at, exit_code, stdout), encoding="utf-8")
     stderr_log_path.write_text(stderr, encoding="utf-8")
-    status = _classify_codex_execution_status(exit_code, stdout, stderr)
-    next_action = _worker_run_next_action(project_name, worker_run.worker_run_id, status)
-    status_note = _execution_status_note(status, exit_code)
+    status = "failed" if launch_error_type else _classify_codex_execution_status(exit_code, stdout, stderr)
+    next_action = _codex_launch_failure_next_action() if launch_error_type else _worker_run_next_action(project_name, worker_run.worker_run_id, status)
+    status_note = (
+        f"Codex failed to launch before producing output: {launch_error_type}: {launch_error_message}"
+        if launch_error_type
+        else _execution_status_note(status, exit_code)
+    )
     updated_run = running.model_copy(
         update={
             "status": status,
@@ -2926,6 +2968,8 @@ def execute_codex_worker_run(
         plan_id=plan.plan_id,
         status=status,
         exit_code=exit_code,
+        launch_error_type=launch_error_type,
+        launch_error_message=launch_error_message,
         log_path=str(log_path),
         stderr_log_path=str(stderr_log_path),
         started_at=started_at,
@@ -2959,6 +3003,7 @@ def render_codex_run_plan_markdown(plan: CodexRunPlan) -> str:
         f"- Codex executable path: `{plan.codex_executable_path or 'none'}`",
         f"- Codex executable source: `{plan.codex_executable_source}`",
         f"- Command resolution note: `{plan.command_resolution_note or 'none'}`",
+        f"- Launch risk: `{plan.launch_risk}`",
         f"- Created: `{plan.created_at.isoformat()}`",
         f"- Updated: `{plan.updated_at.isoformat()}`",
         "",
@@ -2970,6 +3015,8 @@ def render_codex_run_plan_markdown(plan: CodexRunPlan) -> str:
     _append_preflight_section(lines, plan.preflight_checks)
     _append_list_section(lines, "Blocked Reasons", plan.blocked_reasons)
     _append_list_section(lines, "Warnings", plan.warnings)
+    _append_list_section(lines, "Launch Blockers", plan.launch_blockers)
+    _append_list_section(lines, "Launch Warnings", plan.launch_warnings)
     _append_list_section(lines, "Allowed Scope", plan.allowed_scope)
     _append_list_section(lines, "Forbidden Scope", plan.forbidden_scope)
     _append_list_section(lines, "Validation Expectations", plan.validation_expectations)
@@ -4992,22 +5039,98 @@ def _load_worker_run_and_plan_for_execution(
     return worker_run, plan
 
 
-def _resolve_codex_executable(codex_path: str | None = None) -> tuple[str | None, str, str, str | None]:
+WINDOWSAPPS_ALIAS_MESSAGE = (
+    "Codex resolved to WindowsApps app execution alias and may not be launchable by Devo. "
+    "Use --codex-path with a real executable/wrapper path."
+)
+
+
+def diagnose_codex_executable(codex_path: str | None = None) -> CodexExecutableDiagnostic:
     if codex_path and codex_path.strip():
         explicit_path = Path(codex_path.strip()).expanduser()
         if not explicit_path.exists():
-            return None, "path_override", f"Explicit Codex executable path does not exist: {explicit_path}.", f"Explicit Codex executable path does not exist: {explicit_path}."
+            detail = f"Explicit Codex executable path does not exist: {explicit_path}."
+            return CodexExecutableDiagnostic(
+                executable_source="path_override",
+                command_resolution_note=detail,
+                launch_risk="blocked",
+                launch_blockers=[detail],
+                recommended_next_action="Provide --codex-path with an existing real executable or wrapper path.",
+            )
         if not explicit_path.is_file():
-            return None, "path_override", f"Explicit Codex executable path is not a file: {explicit_path}.", f"Explicit Codex executable path is not a file: {explicit_path}."
+            detail = f"Explicit Codex executable path is not a file: {explicit_path}."
+            return CodexExecutableDiagnostic(
+                executable_source="path_override",
+                command_resolution_note=detail,
+                launch_risk="blocked",
+                launch_blockers=[detail],
+                recommended_next_action="Provide --codex-path with a real executable or wrapper file.",
+            )
         resolved = str(explicit_path.resolve())
-        return resolved, "path_override", f"Using explicit Codex executable path: {resolved}.", None
+        if _is_windowsapps_codex_alias(resolved):
+            detail = f"{WINDOWSAPPS_ALIAS_MESSAGE} Path: {resolved}."
+            return CodexExecutableDiagnostic(
+                executable_path=resolved,
+                executable_source="path_override",
+                exists=True,
+                is_windowsapps_alias=True,
+                command_resolution_note=detail,
+                launch_risk="blocked",
+                launch_blockers=[detail],
+                recommended_next_action="Create or choose a non-WindowsApps wrapper, then pass it with --codex-path.",
+            )
+        return CodexExecutableDiagnostic(
+            executable_path=resolved,
+            executable_source="path_override",
+            exists=True,
+            command_resolution_note=f"Using explicit Codex executable path: {resolved}.",
+            launch_risk="low",
+            recommended_next_action="Use execute-preview before guarded execution.",
+        )
     detected = shutil.which("codex")
     if detected:
-        return detected, "path_detection", f"Codex executable appears on PATH: {detected}.", None
-    return None, "not_found", "Codex executable was not found on PATH.", None
+        resolved = str(Path(detected).expanduser().resolve())
+        if _is_windowsapps_codex_alias(resolved):
+            detail = f"{WINDOWSAPPS_ALIAS_MESSAGE} Path: {resolved}."
+            return CodexExecutableDiagnostic(
+                executable_path=resolved,
+                executable_source="path_detection",
+                exists=True,
+                is_windowsapps_alias=True,
+                command_resolution_note=detail,
+                launch_risk="blocked",
+                launch_blockers=[detail],
+                recommended_next_action="Run devo worker codex doctor, then use --codex-path with a non-WindowsApps wrapper path.",
+            )
+        return CodexExecutableDiagnostic(
+            executable_path=resolved,
+            executable_source="path_detection",
+            exists=True,
+            command_resolution_note=f"Codex executable appears on PATH: {resolved}.",
+            launch_risk="low",
+            recommended_next_action="Use execute-preview before guarded execution.",
+        )
+    return CodexExecutableDiagnostic(
+        executable_source="not_found",
+        command_resolution_note="Codex executable was not found on PATH.",
+        launch_risk="not_found",
+        launch_warnings=["Codex executable was not found on PATH by safe detection; future supervised execution may need configuration."],
+        recommended_next_action="Install Codex CLI or pass --codex-path with a real executable/wrapper path.",
+    )
 
 
-def _codex_execution_blockers(worker_run: WorkerRun, plan: CodexRunPlan, *, codex_path: str | None = None) -> tuple[list[str], list[str], str | None]:
+def _resolve_codex_executable(codex_path: str | None = None) -> tuple[str | None, str, str, str | None]:
+    diagnostic = diagnose_codex_executable(codex_path)
+    error = diagnostic.launch_blockers[0] if diagnostic.launch_blockers else None
+    return diagnostic.executable_path, diagnostic.executable_source, diagnostic.command_resolution_note, error
+
+
+def _is_windowsapps_codex_alias(path: str) -> bool:
+    lowered = str(path).replace("/", "\\").lower()
+    return "\\windowsapps\\" in lowered and lowered.endswith("\\codex.exe")
+
+
+def _codex_execution_blockers(worker_run: WorkerRun, plan: CodexRunPlan, *, codex_path: str | None = None) -> tuple[list[str], list[str], CodexExecutableDiagnostic]:
     blocked_reasons: list[str] = []
     warnings: list[str] = list(plan.warnings)
     if plan.approval_status != "approved":
@@ -5026,16 +5149,27 @@ def _codex_execution_blockers(worker_run: WorkerRun, plan: CodexRunPlan, *, code
         blocked_reasons.append(f"Target repo path is missing: {target_repo_path}.")
     if Path(worker_run.target_repo_path) != Path(plan.proposed_working_directory):
         warnings.append("Run plan working directory differs from worker-run target repo path; review before execution.")
-    executable_path, executable_source, _resolution_note, executable_error = _resolve_codex_executable(codex_path or plan.codex_executable_path)
-    if executable_error:
-        blocked_reasons.append(executable_error)
-    elif not executable_path:
+    executable = diagnose_codex_executable(codex_path or plan.codex_executable_path)
+    if not codex_path and plan.codex_executable_path:
+        executable = executable.model_copy(
+            update={
+                "executable_source": plan.codex_executable_source,
+                "command_resolution_note": plan.command_resolution_note or executable.command_resolution_note,
+                "launch_risk": plan.launch_risk or executable.launch_risk,
+                "launch_blockers": plan.launch_blockers or executable.launch_blockers,
+                "launch_warnings": plan.launch_warnings or executable.launch_warnings,
+            }
+        )
+    if executable.launch_blockers:
+        blocked_reasons.extend(executable.launch_blockers)
+    elif not executable.executable_path:
         blocked_reasons.append("Codex executable was not found on PATH.")
     elif codex_path and plan.codex_executable_path and Path(codex_path).resolve() != Path(plan.codex_executable_path).resolve():
         warnings.append("Execution is using --codex-path override that differs from the run-plan stored executable path.")
-    elif executable_source == "path_override":
+    elif executable.executable_source == "path_override":
         warnings.append("Execution uses an explicit Codex executable path; confirm this is intended for dogfood/testing or controlled operation.")
-    return blocked_reasons, warnings, executable_path
+    warnings.extend(executable.launch_warnings)
+    return blocked_reasons, warnings, executable
 
 
 def _execution_preview_next_action(project_name: str, worker_run_id: str, plan_id: str, blocked_reasons: list[str]) -> str:
@@ -5058,6 +5192,38 @@ def _classify_codex_execution_status(exit_code: int, stdout: str, stderr: str) -
     if exit_code == 0:
         return "waiting_review"
     return "failed"
+
+
+def _codex_launch_exception_exit_code(exc: OSError) -> int:
+    if isinstance(exc, FileNotFoundError):
+        return 127
+    if isinstance(exc, PermissionError):
+        return 126
+    return 1
+
+
+def _render_codex_launch_failure_stderr(executable_path: str, error_type: str, error_message: str) -> str:
+    return "\n".join(
+        [
+            "Codex failed to launch before producing output.",
+            f"Executable: {executable_path}",
+            f"Error type: {error_type}",
+            f"Error message: {error_message}",
+            "",
+            "Next actions:",
+            "- Run devo worker codex doctor.",
+            "- Use --codex-path with a real non-WindowsApps executable or wrapper path.",
+            "- Retry only after creating or updating a safe run-plan.",
+            "",
+        ]
+    )
+
+
+def _codex_launch_failure_next_action() -> str:
+    return (
+        "Review launch failure logs, run devo worker codex doctor, and use --codex-path with a real non-WindowsApps "
+        "executable or wrapper before creating a new or updated run-plan. Do not complete queue/task state."
+    )
 
 
 def _execution_status_note(status: str, exit_code: int) -> str:

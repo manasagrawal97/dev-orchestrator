@@ -258,3 +258,9 @@ Suggested scope:
 - Update the real dry-run runbook with WindowsApps path guidance.
 
 Delivery/commit safety design should come after a successful real Codex dry-run produces a real final report and reaches `waiting_review`.
+
+## TASK-DEVO-100 Follow-Up
+
+TASK-DEVO-100 addresses the launch-path issue found here. Devo now diagnoses Codex executable resolution with `devo worker codex doctor`, blocks WindowsApps app execution aliases for guarded execution, stores launch risk/blocker fields in run plans, shows launch diagnostics in preflight and execute-preview, and records launch-time `PermissionError`/`FileNotFoundError`/`OSError` failures as failed worker runs with logs and linked queue `paused_failure` state.
+
+The next real dry-run should run `devo worker codex doctor` first and use `--codex-path` with a non-WindowsApps real executable or wrapper if PATH detection is blocked.

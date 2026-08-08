@@ -70,6 +70,7 @@ from .project_planning import (
     ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
     CodexWorkerFlowSummary,
@@ -101,6 +102,7 @@ from .project_planning import (
     create_codex_worker_review_template,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
+    diagnose_codex_executable,
     execute_codex_worker_run,
     complete_queue_item,
     generate_backlog_refinement_prompt,
@@ -736,6 +738,26 @@ def _print_codex_preflight(result: CodexPreflightResult) -> None:
     console.print("Safety: preflight is read-only. Devo did not run Codex or target repo commands.")
 
 
+def _print_codex_executable_diagnostic(diagnostic: CodexExecutableDiagnostic) -> None:
+    console.print("[bold]Codex executable doctor[/bold]")
+    console.print(f"Executable path: {diagnostic.executable_path or 'not found'}", soft_wrap=True)
+    console.print(f"Executable source: {diagnostic.executable_source}")
+    console.print(f"Exists: {diagnostic.exists}")
+    console.print(f"WindowsApps alias: {diagnostic.is_windowsapps_alias}")
+    console.print(f"Launch risk: {diagnostic.launch_risk}")
+    console.print(f"Resolution note: {diagnostic.command_resolution_note or 'none'}", soft_wrap=True)
+    console.print("Launch blockers:")
+    for item in diagnostic.launch_blockers or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Launch warnings:")
+    for item in diagnostic.launch_warnings or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"Recommended next action: {diagnostic.recommended_next_action or 'none'}", soft_wrap=True)
+    console.print("Example controlled command:")
+    console.print("  devo worker codex run-plan --project <project> --run <workerRunId> --codex-path <real-wrapper-or-executable>", soft_wrap=True)
+    console.print("Safety: doctor is read-only. It does not run Codex or call codex --version.")
+
+
 def _print_codex_run_plan(plan: CodexRunPlan, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
     console.print(f"[bold]Codex run plan: {plan.plan_id}[/bold]")
     console.print(f"Project: {plan.project}")
@@ -752,6 +774,9 @@ def _print_codex_run_plan(plan: CodexRunPlan, json_path: Path | None = None, mar
     console.print(f"Codex executable: {plan.codex_executable_path or 'none'}", soft_wrap=True)
     console.print(f"Codex executable source: {plan.codex_executable_source}")
     console.print(f"Command resolution: {plan.command_resolution_note or 'none'}", soft_wrap=True)
+    console.print(f"Launch risk: {plan.launch_risk}")
+    console.print(f"Launch blockers: {len(plan.launch_blockers)}")
+    console.print(f"Launch warnings: {len(plan.launch_warnings)}")
     console.print(f"Blocked reasons: {len(plan.blocked_reasons)}")
     console.print(f"Warnings: {len(plan.warnings)}")
     console.print(f"Next action: {plan.next_action}", soft_wrap=True)
@@ -767,6 +792,9 @@ def _print_codex_execution_preview(preview: CodexExecutionPreview) -> None:
     console.print(f"Project: {preview.project}")
     console.print(f"Ready: {preview.ready}")
     console.print(f"Executable: {preview.executable_path or 'not found'}")
+    console.print(f"Executable source: {preview.executable_source}")
+    console.print(f"Command resolution: {preview.command_resolution_note or 'none'}", soft_wrap=True)
+    console.print(f"Launch risk: {preview.launch_risk}")
     console.print(f"Command label: {preview.command_label}")
     console.print(f"Working directory: {preview.proposed_working_directory}", soft_wrap=True)
     console.print(f"Prompt path: {preview.prompt_path}", soft_wrap=True)
@@ -792,6 +820,8 @@ def _print_codex_execution_result(result: CodexExecutionResult) -> None:
     console.print(f"Project: {result.project}")
     console.print(f"Status: {result.status}")
     console.print(f"Exit code: {result.exit_code}")
+    console.print(f"Launch error type: {result.launch_error_type or 'none'}")
+    console.print(f"Launch error message: {result.launch_error_message or 'none'}", soft_wrap=True)
     console.print(f"Log path: {result.log_path}", soft_wrap=True)
     console.print(f"Stderr log path: {result.stderr_log_path}", soft_wrap=True)
     console.print(f"Started: {result.started_at.isoformat()}")
@@ -2395,6 +2425,21 @@ def create_codex_worker_run_command(
     _print_worker_run(worker_run, json_path=json_path, markdown_path=markdown_path)
     console.print(f"Manual action: paste the handoff prompt into Codex from {_named_path(Path(worker_run.prompt_path))}.", soft_wrap=True)
     console.print("Future TASK-DEVO-089 will import/review worker reports. This command does not trust or complete worker output.")
+
+
+@worker_codex_app.command("doctor")
+def codex_worker_doctor_command(
+    project_name: str | None = typer.Option(None, "--project", help="Optional registered project name for context."),
+    codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path to inspect without running it."),
+) -> None:
+    """Diagnose Codex executable resolution without running Codex."""
+    if project_name:
+        project_name = _resolve_project(project_name)
+        console.print(f"Project: {project_name}")
+    diagnostic = diagnose_codex_executable(str(codex_path) if codex_path else None)
+    _print_codex_executable_diagnostic(diagnostic)
+    if diagnostic.launch_blockers:
+        raise typer.Exit(1)
 
 
 @worker_codex_app.command("run-list")

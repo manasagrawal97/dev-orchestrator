@@ -325,6 +325,7 @@ def test_project_overview_includes_codex_run_plan_summary(tmp_path: Path, monkey
     runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
     runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
     runner.invoke(app, ["worker", "codex", "run-create", "--project", "sample", "--handoff", "H001"])
+    _add_fake_codex_to_path(tmp_path, monkeypatch, stdout="fake codex ok")
     result = runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001"], terminal_width=240)
     assert result.exit_code == 0, result.output
 

@@ -235,6 +235,7 @@ Worker run artifacts are stored under `workspace/projects/<project>/workers/code
 Preflight supervised Codex runs and create safe run-plan previews:
 
 ```powershell
+devo worker codex doctor --project MyProject
 devo worker codex preflight --project MyProject --run WR001
 devo worker codex preflight --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
 devo worker codex run-plan --project MyProject --run WR001
@@ -244,7 +245,7 @@ devo worker codex run-plan-show --project MyProject --plan RP001
 devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
 ```
 
-Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. Normal users can rely on `PATH`; dogfood or controlled tests can pass `--codex-path` to validate and store an explicit executable path in the run plan. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
+Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. `devo worker codex doctor` diagnoses the candidate executable without running Codex and blocks WindowsApps app execution aliases that may fail under `subprocess.run`. Normal users can rely on `PATH` only when doctor/preflight do not warn; dogfood or controlled tests can pass `--codex-path` to validate and store an explicit non-WindowsApps executable or wrapper path in the run plan. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
 
 Run one supervised Codex CLI worker for an approved run plan:
 
@@ -740,6 +741,7 @@ Reports are stored under `workspace/projects/<project>/workers/codex/reports/` a
 Codex run plans are safe previews for a future supervised execution path:
 
 ```powershell
+devo worker codex doctor --project MyProject
 devo worker codex preflight --project MyProject --run WR001
 devo worker codex run-plan --project MyProject --run WR001
 devo worker codex run-plan-list --project MyProject
@@ -747,7 +749,7 @@ devo worker codex run-plan-show --project MyProject --plan RP001
 devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
 ```
 
-Run plans live under `workspace/projects/<project>/workers/codex/run-plans/`. They store readiness checks, blocked reasons, warnings, a safe command preview, allowed/forbidden scope, validation expectations, and next action guidance. They do not execute Codex, call AI APIs, run target commands, trust implementation complete, validate, commit, push, or complete queue/task state. `run-plan-approve` is a planning-review marker only.
+Run plans live under `workspace/projects/<project>/workers/codex/run-plans/`. They store readiness checks, blocked reasons, warnings, launch risk, executable source/resolution notes, a safe command preview, allowed/forbidden scope, validation expectations, and next action guidance. They do not execute Codex, call AI APIs, run target commands, trust implementation complete, validate, commit, push, or complete queue/task state. `run-plan-approve` is a planning-review marker only.
 
 Supervised Codex execution is available only through an approved run plan and explicit confirmation:
 
@@ -758,6 +760,8 @@ devo worker codex execute-log --project MyProject --run WR001
 ```
 
 The command launches one Codex CLI process, passes the linked prompt through stdin, uses the run-plan working directory, captures stdout/stderr logs, and updates the worker-run record cautiously. It does not run validation, complete queue/task state, commit, push, or treat Codex output as delivery proof. Review logs, then use `report-template`/`report-import` and explicit queue/task commands only after human review.
+
+If process creation fails before Codex produces output, Devo now catches `PermissionError`, `FileNotFoundError`, and other launch-time `OSError` failures, writes failure logs, marks the worker `failed`, and pauses the linked queue as `paused_failure`. Run `devo worker codex doctor` and use `--codex-path <real-wrapper-or-executable>` before creating a new or updated run plan.
 
 ## Policy Gates
 
