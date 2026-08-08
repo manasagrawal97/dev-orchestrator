@@ -48,6 +48,9 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.linked_run_plan_id is None
     assert overview.current_queue_item_worker_status is None
     assert overview.current_queue_item_review_status is None
+    assert overview.current_queue_item_completion_ready is False
+    assert overview.current_queue_item_completion_blockers == []
+    assert overview.current_queue_item_validation_status is None
     assert overview.queue_worker_next_action is None
     assert overview.handoff_count == 0
     assert overview.latest_handoff_id is None
@@ -175,6 +178,9 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "linked_run_plan_id" in overview_data
     assert "current_queue_item_worker_status" in overview_data
     assert "current_queue_item_review_status" in overview_data
+    assert "current_queue_item_completion_ready" in overview_data
+    assert "current_queue_item_completion_blockers" in overview_data
+    assert "current_queue_item_validation_status" in overview_data
     assert "queue_worker_next_action" in overview_data
     assert "handoff_count" in overview_data
     assert "handoff_next_action" in overview_data
@@ -361,9 +367,12 @@ def test_project_overview_includes_worker_execution_summary(tmp_path: Path, monk
     assert overview.linked_worker_run_status == "waiting_review"
     assert overview.linked_run_plan_id == "RP001"
     assert overview.current_queue_item_worker_status == "waiting_review"
-    assert overview.current_queue_item_review_status == "waiting_review"
+    assert overview.current_queue_item_review_status is None
+    assert overview.current_queue_item_completion_ready is False
+    assert overview.current_queue_item_completion_blockers
+    assert overview.current_queue_item_validation_status is None
     assert overview.queue_worker_next_action is not None
-    assert "queue-complete-item" in overview.queue_worker_next_action
+    assert "review-template" in overview.queue_worker_next_action
 
 
 def test_human_output_remains_default(tmp_path: Path, monkeypatch) -> None:

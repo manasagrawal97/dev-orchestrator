@@ -191,12 +191,12 @@ Sections:
 - selected run-plan preview with preflight status, approval status, proposed working directory, safe command preview, preflight checks, blocked reasons, warnings, allowed/forbidden scope, validation expectations, safety boundaries, and next action
 - related handoff and queue context when available
 - copyable CLI commands for `worker codex prepare-next`, `queue-status`, `run-list`, `run-show`, `run-status`, `preflight`, `run-plan`, `run-plan-list`, `run-plan-show`, `execute-preview`, guarded `execute --confirm-execute`, `execute-log`, `report-template`, `report-validate`, `report-import`, `report-show`, `report-list`, `review-template`, `review-attach-evidence`, `review-record`, `review-show`, `review-list`, plus post-review `queue-next` and explicit `queue-complete-item` guidance
-- read-only queue-worker linkage fields: linked worker run, linked run plan, current item review status, latest execution status, and next CLI command
+- read-only queue-worker linkage fields: linked worker run, linked run plan, current item review status, validation evidence status, completion readiness, completion blockers, latest execution status, and next CLI command
 - read-only worker review fields: review status, validation evidence status, reviewer, decision note, and review next action
 
 Primary user question: "What did the manual Codex worker run report, is a future supervised run ready to plan, and what should I review before touching queue/task state?"
 
-This page is read-only. It does not run Codex from the UI, import/upload reports from the UI, approve execution, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, call model APIs, or complete queue/task items.
+This page is read-only. It does not run Codex from the UI, import/upload reports from the UI, approve execution, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, call model APIs, or complete queue/task items. It may show a copyable `queue-complete-item` command only when read-only evidence says the item is completion-ready; otherwise it shows review commands and blockers.
 
 ### B9. Progress Page
 

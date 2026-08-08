@@ -76,6 +76,7 @@ from .project_planning import (
     CodexPreflightResult,
     CodexRunPlan,
     CodexWorkerReport,
+    QueueItemCompletionReadiness,
     WorkerReview,
     WorkerReportValidationResult,
     WorkerRun,
@@ -104,6 +105,7 @@ from .project_planning import (
     generate_backlog_refinement_prompt,
     get_backlog_task,
     get_codex_queue_worker_status,
+    get_queue_item_completion_readiness,
     get_queue_next_item,
     import_refined_backlog,
     attach_codex_worker_review_evidence,
@@ -592,6 +594,20 @@ def _print_queue_item(item: QueueItem | None, project_name: str | None = None, q
         console.print("Suggested handoff command: devo project handoff-next --project <project> --queue <queueId>")
 
 
+def _print_queue_item_completion_readiness(readiness: QueueItemCompletionReadiness | None) -> None:
+    if not readiness:
+        return
+    console.print(f"Completion ready: {'yes' if readiness.completion_ready else 'no'}")
+    console.print(f"Linked worker run: {readiness.linked_worker_run_id or 'none'}")
+    console.print(f"Worker review status: {readiness.review_status or 'none'}")
+    console.print(f"Validation evidence status: {readiness.validation_status or 'none'}")
+    if readiness.blockers:
+        console.print("Completion blockers:")
+        for blocker in readiness.blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Completion next action: {readiness.next_action}", soft_wrap=True)
+
+
 def _print_codex_handoff(handoff: CodexHandoff, json_path: Path | None = None, prompt_path: Path | None = None) -> None:
     console.print(f"[bold]Codex handoff: {handoff.handoff_id}[/bold]")
     console.print(f"Type: {handoff.handoff_type}")
@@ -796,6 +812,13 @@ def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
     console.print(f"Latest review: {status.latest_worker_review_id or 'none'}")
     console.print(f"Latest review status: {status.latest_worker_review_status or 'none'}")
     console.print(f"Latest validation status: {status.latest_worker_validation_status or 'none'}")
+    console.print(f"Completion ready: {'yes' if status.current_queue_item_completion_ready else 'no'}")
+    console.print(f"Current item review status: {status.current_queue_item_review_status or 'none'}")
+    console.print(f"Current item validation status: {status.current_queue_item_validation_status or 'none'}")
+    if status.current_queue_item_completion_blockers:
+        console.print("Completion blockers:")
+        for blocker in status.current_queue_item_completion_blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
     console.print(f"Next action: {status.next_action}", soft_wrap=True)
     console.print("Safety: queue worker status is read-only. Queue item completion remains explicit.")
 
@@ -2106,6 +2129,9 @@ def show_queue_command(
         console.print(f"Suggested next command: devo project queue-list --project {project_name}")
         return
     _print_execution_queue(queue)
+    item = next((entry for entry in queue.items if entry.item_id == queue.current_item_id), None)
+    if item:
+        _print_queue_item_completion_readiness(get_queue_item_completion_readiness(project_name, queue.queue_id, item.item_id))
     console.print(f"Suggested handoff command: devo project handoff-next --project {project_name} --queue {queue.queue_id}")
 
 
@@ -2140,6 +2166,8 @@ def next_queue_item_command(
     console.print(f"[bold]Execution queue next: {queue.queue_id}[/bold]")
     console.print(f"Queue status: {queue.status}")
     _print_queue_item(item, project_name=project_name, queue_id=queue.queue_id)
+    if item:
+        _print_queue_item_completion_readiness(get_queue_item_completion_readiness(project_name, queue.queue_id, item.item_id))
 
 
 @project_app.command("queue-complete-item")
@@ -2148,14 +2176,17 @@ def complete_queue_item_command(
     queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
     item_id: str = typer.Option(..., "--item", help="Queue item id."),
     note: str = typer.Option(..., "--note", help="Completion note."),
+    confirm_without_review: bool = typer.Option(False, "--confirm-without-review", help="Emergency/manual override for completing without reviewed_passed worker review evidence."),
 ) -> None:
     """Mark one queue item completed and advance queue state without executing commands."""
     project_name = _resolve_project(project_name)
     try:
-        queue, json_path, markdown_path = complete_queue_item(project_name, queue_id, item_id, note)
+        queue, json_path, markdown_path = complete_queue_item(project_name, queue_id, item_id, note, confirm_without_review=confirm_without_review)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--item") from exc
     console.print(f"[green]Queue item completed[/green] {project_name}")
+    if confirm_without_review:
+        console.print("[yellow]Completed with --confirm-without-review. This bypass is discouraged and was recorded in queue item notes.[/yellow]")
     _print_execution_queue(queue, json_path=json_path, markdown_path=markdown_path)
 
 

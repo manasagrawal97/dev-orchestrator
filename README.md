@@ -260,7 +260,9 @@ devo worker codex review-show --project MyProject --run WR001
 devo worker codex review-list --project MyProject
 ```
 
-Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/`. They capture checklist evidence, validation summaries, changed-file review notes, safety review notes, reviewer decision, and next queue guidance. They are evidence only: Devo does not run validation, trust worker reports blindly, complete queue/tasks, commit, push, or modify target projects. Even a `reviewed_passed` decision only prints the explicit `queue-complete-item` command for the operator to run after review.
+Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/`. They capture checklist evidence, validation summaries, changed-file review notes, safety review notes, reviewer decision, and next queue guidance. They are evidence only: Devo does not run validation, trust worker reports blindly, complete queue/tasks, commit, push, or modify target projects.
+
+`devo project queue-complete-item` is review-aware for queue items linked to Codex worker runs or waiting in review. It refuses completion by default unless the linked worker review is `reviewed_passed` and validation evidence is not failed. If evidence is missing, needs changes, rejected, or failed, Devo prints the next review commands instead of completing the item. The emergency `--confirm-without-review` override exists for legacy/manual cases only, requires a non-empty note, and records a warning in queue item notes. No validation, commit, push, or target command is run automatically.
 
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 

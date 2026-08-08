@@ -333,6 +333,8 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
     assert queue_worker_status.status_code == 200
     assert queue_worker_status.json()["linked_worker_run_id"] == "WR001"
     assert queue_worker_status.json()["linked_run_plan_id"] == "RP001"
+    assert queue_worker_status.json()["current_queue_item_completion_ready"] is False
+    assert "no worker review artifact" in " ".join(queue_worker_status.json()["current_queue_item_completion_blockers"])
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "worker_run_not_found"
 

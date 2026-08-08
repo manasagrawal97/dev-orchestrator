@@ -750,7 +750,27 @@ class CodexQueueWorkerStatus(BaseModel):
     latest_worker_review_id: str | None = None
     latest_worker_review_status: str | None = None
     latest_worker_validation_status: str | None = None
+    current_queue_item_completion_ready: bool = False
+    current_queue_item_completion_blockers: list[str] = Field(default_factory=list)
+    current_queue_item_review_status: str | None = None
+    current_queue_item_validation_status: str | None = None
     next_action: str
+
+
+class QueueItemCompletionReadiness(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    queue_id: str
+    item_id: str
+    item_status: str
+    linked_worker_run_id: str | None = None
+    review_id: str | None = None
+    review_status: str | None = None
+    validation_status: str | None = None
+    completion_ready: bool = True
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
 
 
 class WorkerArtifactPaths(BaseModel):
@@ -1694,13 +1714,27 @@ def complete_queue_item(
     queue_id: str,
     item_id: str,
     note: str,
+    confirm_without_review: bool = False,
     workspace_root: Path | None = None,
 ) -> tuple[ExecutionQueue, Path, Path]:
     root = workspace_root or get_workspace_root()
     queue = _require_queue(project_name, queue_id, root)
     now = datetime.now(UTC)
     item = _require_queue_item(queue, item_id)
+    readiness = get_queue_item_completion_readiness(project_name, queue.queue_id, item.item_id, workspace_root=root)
+    if not readiness.completion_ready and not confirm_without_review:
+        msg = _queue_completion_blocked_message(project_name, readiness)
+        raise ValueError(msg)
+    if confirm_without_review and not note.strip():
+        msg = "--confirm-without-review requires a non-empty --note explaining the manual override."
+        raise ValueError(msg)
     notes = _append_note(item.notes, note, now)
+    if confirm_without_review and not readiness.completion_ready:
+        notes = _append_note(
+            notes,
+            "WARNING: queue item completed with --confirm-without-review before reviewed_passed worker review evidence was available.",
+            now,
+        )
     completed = item.model_copy(update={"status": "completed", "completed_at": now, "notes": notes})
     items = [entry.model_copy() for entry in queue.items]
     _replace_queue_item(items, completed)
@@ -2020,6 +2054,7 @@ def get_codex_queue_worker_status(project_name: str, queue_id: str, workspace_ro
     worker_run = _latest_worker_run_for_queue_item(project_name, queue.queue_id, item.item_id if item else None, workspace_root=root)
     run_plan = _latest_run_plan_for_worker(project_name, worker_run.worker_run_id if worker_run else None, workspace_root=root)
     review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root) if worker_run else None
+    readiness = get_queue_item_completion_readiness(project_name, queue.queue_id, item.item_id, workspace_root=root) if item else None
     return CodexQueueWorkerStatus(
         project=project_name,
         queue_id=queue.queue_id,
@@ -2037,7 +2072,58 @@ def get_codex_queue_worker_status(project_name: str, queue_id: str, workspace_ro
         latest_worker_review_id=review.review_id if review else None,
         latest_worker_review_status=review.review_status if review else None,
         latest_worker_validation_status=review.validation_evidence.validation_status if review else None,
-        next_action=_queue_worker_next_action(project_name, queue.queue_id, item, worker_run, run_plan),
+        current_queue_item_completion_ready=readiness.completion_ready if readiness else False,
+        current_queue_item_completion_blockers=readiness.blockers if readiness else ["No current or pending queue item found."],
+        current_queue_item_review_status=readiness.review_status if readiness else None,
+        current_queue_item_validation_status=readiness.validation_status if readiness else None,
+        next_action=(
+            readiness.next_action
+            if readiness and (item.status == "waiting_review" or (worker_run and worker_run.execution_exit_code is not None))
+            else _queue_worker_next_action(project_name, queue.queue_id, item, worker_run, run_plan)
+        ),
+    )
+
+
+def get_queue_item_completion_readiness(
+    project_name: str,
+    queue_id: str,
+    item_id: str,
+    workspace_root: Path | None = None,
+) -> QueueItemCompletionReadiness:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    item = _require_queue_item(queue, item_id)
+    worker_run = _latest_worker_run_for_queue_item(project_name, queue.queue_id, item.item_id, workspace_root=root)
+    review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root) if worker_run else None
+    review_status = review.review_status if review else None
+    validation_status = review.validation_evidence.validation_status if review else None
+    blockers: list[str] = []
+    review_required = bool(worker_run) or item.status == "waiting_review"
+    if item.status == "completed":
+        blockers.append("Queue item is already completed.")
+    if review_required:
+        if not worker_run:
+            blockers.append("Queue item is waiting for review but no linked Codex worker run was found.")
+        elif not review:
+            blockers.append(f"Linked worker run {worker_run.worker_run_id} has no worker review artifact.")
+        elif review.review_status != "reviewed_passed":
+            blockers.append(f"Worker review status is {review.review_status}, not reviewed_passed.")
+        if review and review.validation_evidence.validation_status == "failed":
+            blockers.append("Worker review validation evidence status is failed.")
+    ready = not blockers
+    next_action = _queue_completion_next_action(project_name, queue.queue_id, item, worker_run, review, blockers)
+    return QueueItemCompletionReadiness(
+        project=project_name,
+        queue_id=queue.queue_id,
+        item_id=item.item_id,
+        item_status=item.status,
+        linked_worker_run_id=worker_run.worker_run_id if worker_run else None,
+        review_id=review.review_id if review else None,
+        review_status=review_status,
+        validation_status=validation_status,
+        completion_ready=ready,
+        blockers=blockers,
+        next_action=next_action,
     )
 
 
@@ -4184,6 +4270,61 @@ def _queue_worker_next_action(
             f"Review logs and import a worker report, then complete explicitly only if safe: devo project queue-complete-item --project {project_name} --queue {queue_id} --item {item.item_id} --note \"<reviewed result>\""
         )
     return worker_run.next_action or "Review worker and queue status."
+
+
+def _queue_completion_next_action(
+    project_name: str,
+    queue_id: str,
+    item: QueueItem,
+    worker_run: WorkerRun | None,
+    review: WorkerReview | None,
+    blockers: list[str],
+) -> str:
+    if not blockers:
+        return (
+            f"Completion ready. Complete explicitly with devo project queue-complete-item --project {project_name} "
+            f"--queue {queue_id} --item {item.item_id} --note \"<reviewed result>\""
+        )
+    if not worker_run:
+        return f"Inspect queue worker state with devo worker codex queue-status --project {project_name} --queue {queue_id}."
+    if not review:
+        return f"Create worker review evidence with devo worker codex review-template --project {project_name} --run {worker_run.worker_run_id}."
+    if review.review_status == "reviewed_needs_changes":
+        return (
+            f"Fix or rerun worker output before completion. Consider devo project queue-block-item --project {project_name} "
+            f"--queue {queue_id} --item {item.item_id} --note \"<needed changes>\"."
+        )
+    if review.review_status == "rejected":
+        return (
+            f"Do not complete this item. Block or replace the worker output with devo project queue-block-item --project {project_name} "
+            f"--queue {queue_id} --item {item.item_id} --note \"<rejection reason>\"."
+        )
+    if review.validation_evidence.validation_status == "failed":
+        return f"Validation evidence failed. Fix/re-run worker output or attach updated evidence before queue completion."
+    return (
+        f"Record reviewed_passed only after independent review: devo worker codex review-record --project {project_name} "
+        f"--run {worker_run.worker_run_id} --status reviewed_passed --reviewer \"<name>\" --note \"<note>\"."
+    )
+
+
+def _queue_completion_blocked_message(project_name: str, readiness: QueueItemCompletionReadiness) -> str:
+    lines = [
+        f"Queue item {readiness.item_id} is not completion-ready.",
+        *[f"- {blocker}" for blocker in readiness.blockers],
+    ]
+    if readiness.linked_worker_run_id:
+        lines.extend(
+            [
+                f"Next: devo worker codex review-template --project {project_name} --run {readiness.linked_worker_run_id}",
+                (
+                    f"Then: devo worker codex review-record --project {project_name} --run {readiness.linked_worker_run_id} "
+                    '--status reviewed_passed --reviewer "<name>" --note "<note>"'
+                ),
+            ]
+        )
+    lines.append(readiness.next_action)
+    lines.append("Emergency override: rerun with --confirm-without-review and a non-empty --note. This is discouraged.")
+    return "\n".join(lines)
 
 
 def _worker_review_next_action(project_name: str, worker_run: WorkerRun, review_status: str) -> str:

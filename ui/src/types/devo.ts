@@ -107,6 +107,9 @@ export interface ProjectOverview {
   linked_run_plan_id: string | null;
   current_queue_item_worker_status: string | null;
   current_queue_item_review_status: string | null;
+  current_queue_item_completion_ready: boolean;
+  current_queue_item_completion_blockers: string[];
+  current_queue_item_validation_status: string | null;
   queue_worker_next_action: string | null;
   handoff_count: number;
   latest_handoff_id: string | null;
@@ -354,6 +357,10 @@ export interface CodexQueueWorkerStatus {
   latest_worker_review_id: string | null;
   latest_worker_review_status: string | null;
   latest_worker_validation_status: string | null;
+  current_queue_item_completion_ready: boolean;
+  current_queue_item_completion_blockers: string[];
+  current_queue_item_review_status: string | null;
+  current_queue_item_validation_status: string | null;
   next_action: string;
 }
 

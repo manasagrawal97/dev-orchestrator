@@ -271,6 +271,10 @@ Added `devo worker codex prepare-next --project <project> --queue <queueId>` and
 
 Added workspace-only review artifacts under `workspace/projects/<project>/workers/codex/reviews/` and the commands `devo worker codex review-template`, `review-attach-evidence`, `review-record`, `review-show`, and `review-list`. Reviews record validation evidence, changed-file review, safety review, acceptance criteria review, follow-up items, reviewer decision, and next queue guidance. `review-record --status reviewed_passed` does not complete queue items or backlog tasks; it only records the decision and prints the explicit `queue-complete-item` command. Read models, API endpoints, Queues UI, and Worker Runs UI expose review/validation status read-only.
 
+### TASK-DEVO-095 Review-Gated Queue Completion - Completed
+
+Made `devo project queue-complete-item` review-aware for Codex-linked or waiting-review queue items. Completion is refused by default unless the linked worker review is `reviewed_passed` and validation evidence is not failed. Missing reviews, needs-changes/rejected reviews, and failed validation evidence print review guidance instead of mutating queue/task state. The explicit `--confirm-without-review` override is discouraged, requires a note, and records a warning. Queue status/read models/API/UI now expose completion readiness and blockers read-only.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

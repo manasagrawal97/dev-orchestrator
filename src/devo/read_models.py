@@ -126,6 +126,9 @@ class ProjectOverview(BaseModel):
     linked_run_plan_id: str | None = None
     current_queue_item_worker_status: str | None = None
     current_queue_item_review_status: str | None = None
+    current_queue_item_completion_ready: bool = False
+    current_queue_item_completion_blockers: list[str] = Field(default_factory=list)
+    current_queue_item_validation_status: str | None = None
     queue_worker_next_action: str | None = None
     handoff_count: int = 0
     latest_handoff_id: str | None = None
@@ -246,6 +249,11 @@ def build_project_overview_with_timing(
             ),
             current_queue_item_review_status=(
                 str(planning["current_queue_item_review_status"]) if planning["current_queue_item_review_status"] else None
+            ),
+            current_queue_item_completion_ready=bool(planning["current_queue_item_completion_ready"]),
+            current_queue_item_completion_blockers=list(planning["current_queue_item_completion_blockers"]),
+            current_queue_item_validation_status=(
+                str(planning["current_queue_item_validation_status"]) if planning["current_queue_item_validation_status"] else None
             ),
             queue_worker_next_action=str(planning["queue_worker_next_action"]) if planning["queue_worker_next_action"] else None,
             handoff_count=int(planning["handoff_count"]),
@@ -542,6 +550,9 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "linked_run_plan_id": None,
             "current_queue_item_worker_status": None,
             "current_queue_item_review_status": None,
+            "current_queue_item_completion_ready": False,
+            "current_queue_item_completion_blockers": [f"Review queue worker artifacts: {exc}"],
+            "current_queue_item_validation_status": None,
             "queue_worker_next_action": f"Review queue worker artifacts: {exc}",
             "handoff_count": 0,
             "latest_handoff_id": None,
@@ -660,7 +671,10 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "linked_worker_run_status": queue_worker_status.linked_worker_run_status if queue_worker_status else None,
         "linked_run_plan_id": queue_worker_status.linked_run_plan_id if queue_worker_status else None,
         "current_queue_item_worker_status": queue_worker_status.latest_worker_execution_status if queue_worker_status else None,
-        "current_queue_item_review_status": queue_worker_status.current_item_status if queue_worker_status else None,
+        "current_queue_item_review_status": queue_worker_status.current_queue_item_review_status if queue_worker_status else None,
+        "current_queue_item_completion_ready": queue_worker_status.current_queue_item_completion_ready if queue_worker_status else False,
+        "current_queue_item_completion_blockers": queue_worker_status.current_queue_item_completion_blockers if queue_worker_status else [],
+        "current_queue_item_validation_status": queue_worker_status.current_queue_item_validation_status if queue_worker_status else None,
         "queue_worker_next_action": queue_worker_status.next_action if queue_worker_status else None,
         "handoff_count": len(handoffs),
         "latest_handoff_id": latest_handoff.handoff_id if latest_handoff else None,

@@ -154,6 +154,8 @@ TASK-DEVO-093 integrates that supervised path with one execution queue item at a
 
 TASK-DEVO-094 adds worker review evidence. `review-template`, `review-attach-evidence`, `review-record`, `review-show`, and `review-list` create workspace-only review artifacts under `workers/codex/reviews/`. Reviews capture validation evidence, changed-file review, safety review, acceptance criteria review, follow-up items, reviewer decision, and queue completion guidance. They do not run validation, commit, push, modify target repositories, or complete queue/tasks automatically.
 
+TASK-DEVO-095 gates queue completion on that evidence. `devo project queue-complete-item` checks linked worker review state for Codex-linked or waiting-review items and refuses completion unless the review is `reviewed_passed` and validation evidence is not failed. Missing reviews, needs-changes/rejected decisions, and failed validation evidence print the next review commands instead. `--confirm-without-review` is reserved for emergency/manual legacy cases, requires a note, and records a warning.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -289,7 +291,7 @@ devo worker codex review-list --project <project>
 
 `prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery.
 
-`review-record --status reviewed_passed` still does not complete the queue item. It only records the reviewer decision and prints the explicit `devo project queue-complete-item` command for the operator to run if the evidence is sufficient.
+`review-record --status reviewed_passed` still does not complete the queue item. It only records the reviewer decision and prints the explicit `devo project queue-complete-item` command for the operator to run if the evidence is sufficient. `queue-complete-item` then performs the final review gate before mutating queue/task state.
 
 Proposed future execution commands:
 
@@ -337,9 +339,10 @@ Recommended future sequence:
 4. TASK-DEVO-091: Codex worker preflight and run-plan model - completed.
 5. TASK-DEVO-092: Supervised Codex CLI adapter prototype - completed.
 6. TASK-DEVO-093: Queue integration for one item at a time.
-7. TASK-DEVO-094: Pause/resume/usage-limit handling.
-8. TASK-DEVO-095: Validation/review integration.
-9. TASK-DEVO-096: Optional commit/push delivery integration after safety review.
+7. TASK-DEVO-094: Validation/review integration - completed.
+8. TASK-DEVO-095: Review-gated queue completion - completed.
+9. TASK-DEVO-096: Pause/resume/usage-limit handling.
+10. TASK-DEVO-097: Optional commit/push delivery integration after safety review.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

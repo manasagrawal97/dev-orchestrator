@@ -268,7 +268,9 @@ devo worker codex review-show --project MyProject --run WR001
 devo worker codex review-list --project MyProject
 ```
 
-Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/`. They are the bridge between worker output and queue completion: checklist notes, validation evidence, changed-file review, safety review, follow-up items, reviewer decision, and next action. They do not run validation, complete queue/task state, commit, push, or modify target source. Queue completion remains a separate explicit `devo project queue-complete-item` command after review.
+Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/`. They are the bridge between worker output and queue completion: checklist notes, validation evidence, changed-file review, safety review, follow-up items, reviewer decision, and next action. They do not run validation, complete queue/task state, commit, push, or modify target source.
+
+Queue completion is now review-aware for Codex-linked or waiting-review items. `devo project queue-complete-item` refuses completion by default when the linked worker review is missing, `reviewed_needs_changes`, `rejected`, or has failed validation evidence. A `reviewed_passed` review allows the explicit completion command. `--confirm-without-review` is an emergency/manual override only; it requires a note and records a warning.
 
 Supervised Codex CLI worker execution is intentionally single-run and queue-linked only when explicitly prepared. Read `docs/codex-worker-adapter-design.md` before worker adapter work. Manual handoff remains supported, and every worker mode must preserve explicit execution approval, queue pause/resume state, validation/review evidence, and delivery safety checks.
 

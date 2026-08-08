@@ -132,6 +132,7 @@ export function WorkerRunsPage({ selectedProject }: WorkerRunsPageProps) {
   const selectedRunPlan = selected ? plansByRun.get(selected.worker_run_id) ?? null : null;
   const selectedHandoff = handoffs.data?.handoffs.find((handoff) => handoff.handoff_id === selected?.source_handoff_id) ?? null;
   const selectedQueue = queues.data?.queues.find((queue) => queue.queue_id === selected?.source_queue_id) ?? null;
+  const selectedCompletionReady = review?.review_status === 'reviewed_passed' && review.validation_evidence.validation_status !== 'failed';
 
   if (!selectedProject) {
     return <p className="muted">Select a project to view Codex worker runs.</p>;
@@ -319,11 +320,19 @@ export function WorkerRunsPage({ selectedProject }: WorkerRunsPageProps) {
                   <CommandCopyBox command={`devo worker codex queue-status --project ${selectedProject} --queue ${selected.source_queue_id}`} />
                   <CommandCopyBox command={`devo worker codex prepare-next --project ${selectedProject} --queue ${selected.source_queue_id}`} />
                   <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${selected.source_queue_id}`} />
-                  <CommandCopyBox
-                    command={`devo project queue-complete-item --project ${selectedProject} --queue ${selected.source_queue_id} --item ${
-                      selected.source_queue_item_id ?? '<itemId>'
-                    } --note "<reviewed result>"`}
-                  />
+                  {selectedCompletionReady ? (
+                    <CommandCopyBox
+                      command={`devo project queue-complete-item --project ${selectedProject} --queue ${selected.source_queue_id} --item ${
+                        selected.source_queue_item_id ?? '<itemId>'
+                      } --note "<reviewed result>"`}
+                    />
+                  ) : (
+                    <CommandCopyBox
+                      command={`devo worker codex review-record --project ${selectedProject} --run ${
+                        selected.worker_run_id
+                      } --status reviewed_passed --reviewer "<name>" --note "<note>"`}
+                    />
+                  )}
                 </>
               ) : null}
             </section>

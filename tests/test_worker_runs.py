@@ -134,6 +134,8 @@ def test_codex_queue_status_command_shows_linked_worker_and_plan(tmp_path: Path,
     assert "Codex queue worker status: Q001" in result.output
     assert "Linked worker run: WR001" in result.output
     assert "Linked run plan: RP001" in result.output
+    assert "Completion ready: no" in result.output
+    assert "no worker review artifact" in result.output
     assert "run-plan-approve --project sample --plan RP001" in result.output
 
 
@@ -955,14 +957,14 @@ def test_codex_execute_safety_output_sets_blocked_needs_approval(tmp_path: Path,
     assert queue.items[0].status == "blocked"
 
 
-def test_queue_complete_item_still_required_after_worker_waiting_review(tmp_path: Path, monkeypatch) -> None:
+def test_queue_complete_item_refuses_missing_worker_review(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
     runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
 
     before_review_queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
     before_review_task = get_backlog_task("sample", "T001", workspace_root=workspace)
-    completed = runner.invoke(
+    blocked = runner.invoke(
         app,
         ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed and validated."],
         terminal_width=240,
@@ -973,11 +975,178 @@ def test_queue_complete_item_still_required_after_worker_waiting_review(tmp_path
     assert before_review_queue is not None
     assert before_review_queue.items[0].status == "waiting_review"
     assert before_review_task.status == "ready"
-    assert completed.exit_code == 0, completed.output
+    assert blocked.exit_code != 0
+    assert "not completion-ready" in blocked.output
+    assert "review-template --project sample --run WR001" in blocked.output
     assert after_review_queue is not None
-    assert after_review_queue.status == "completed"
-    assert after_review_queue.items[0].status == "completed"
-    assert after_review_task.status == "completed"
+    assert after_review_queue.status == "waiting_review"
+    assert after_review_queue.items[0].status == "waiting_review"
+    assert after_review_task.status == "ready"
+
+
+def test_queue_complete_item_allows_reviewed_passed_worker_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+    runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_passed",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Reviewed evidence.",
+        ],
+    )
+
+    completed = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed and validated."],
+        terminal_width=240,
+    )
+
+    assert completed.exit_code == 0, completed.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    task = get_backlog_task("sample", "T001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.status == "completed"
+    assert queue.items[0].status == "completed"
+    assert task.status == "completed"
+
+
+def test_queue_complete_item_refuses_needs_changes_rejected_and_failed_validation(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+
+    needs_changes = runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_needs_changes",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Needs changes.",
+        ],
+        terminal_width=240,
+    )
+    blocked_needs_changes = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed."],
+        terminal_width=240,
+    )
+    rejected = runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "rejected",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Rejected.",
+        ],
+        terminal_width=240,
+    )
+    blocked_rejected = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed."],
+        terminal_width=240,
+    )
+    runner.invoke(
+        app,
+        ["worker", "codex", "review-attach-evidence", "--project", "sample", "--run", "WR001", "--status", "failed", "--summary", "Build failed."],
+    )
+    runner.invoke(
+        app,
+        [
+            "worker",
+            "codex",
+            "review-record",
+            "--project",
+            "sample",
+            "--run",
+            "WR001",
+            "--status",
+            "reviewed_passed",
+            "--reviewer",
+            "Manas",
+            "--note",
+            "Reviewed but validation failed.",
+        ],
+    )
+    blocked_failed_validation = runner.invoke(
+        app,
+        ["project", "queue-complete-item", "--project", "sample", "--queue", "Q001", "--item", "QI001", "--note", "Reviewed."],
+        terminal_width=240,
+    )
+
+    assert needs_changes.exit_code == 0, needs_changes.output
+    assert rejected.exit_code == 0, rejected.output
+    assert blocked_needs_changes.exit_code != 0
+    assert "reviewed_needs_changes" in blocked_needs_changes.output
+    assert blocked_rejected.exit_code != 0
+    assert "rejected" in blocked_rejected.output
+    assert blocked_failed_validation.exit_code != 0
+    assert "validation evidence status is failed" in blocked_failed_validation.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    task = get_backlog_task("sample", "T001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.items[0].status == "waiting_review"
+    assert task.status == "ready"
+
+
+def test_queue_complete_item_confirm_without_review_records_warning(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_run_plan(tmp_path, monkeypatch, stdout="fake codex completed", exit_code=0)
+    runner.invoke(app, ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"])
+
+    completed = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-complete-item",
+            "--project",
+            "sample",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI001",
+            "--note",
+            "Emergency manual override.",
+            "--confirm-without-review",
+        ],
+        terminal_width=240,
+    )
+
+    assert completed.exit_code == 0, completed.output
+    assert "Completed with --confirm-without-review" in completed.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.items[0].status == "completed"
+    assert any("--confirm-without-review" in note for note in queue.items[0].notes)
 
 
 def test_codex_execute_log_shows_log_tail(tmp_path: Path, monkeypatch) -> None:

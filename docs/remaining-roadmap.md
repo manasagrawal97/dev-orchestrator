@@ -149,9 +149,10 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 19. TASK-DEVO-092: Supervised Codex CLI adapter prototype - completed.
 20. TASK-DEVO-093: Queue integration for one item at a time - completed.
 21. TASK-DEVO-094: Validation/review evidence integration - completed.
-22. TASK-DEVO-095: Pause/resume and usage-limit recovery polish.
-23. TASK-DEVO-096: Optional commit/push delivery integration after safety review.
-24. TASK-DEVO-097+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
+22. TASK-DEVO-095: Review-gated queue completion safeguards - completed.
+23. TASK-DEVO-096: Pause/resume and usage-limit recovery polish.
+24. TASK-DEVO-097: Optional commit/push delivery integration after safety review.
+25. TASK-DEVO-098+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

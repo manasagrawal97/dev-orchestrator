@@ -168,6 +168,21 @@ export function QueuesPage({ selectedProject }: QueuesPageProps) {
             <CommandCopyBox command={`devo project queue-next --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
             <CommandCopyBox command={`devo worker codex prepare-next --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
             <CommandCopyBox command={`devo worker codex queue-status --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'}`} />
+            {workerStatus.data?.current_queue_item_completion_ready && workerStatus.data.current_item_id ? (
+              <CommandCopyBox
+                command={`devo project queue-complete-item --project ${selectedProject} --queue ${selectedQueueId ?? '<queueId>'} --item ${
+                  workerStatus.data.current_item_id
+                } --note "<reviewed result>"`}
+              />
+            ) : null}
+            {workerStatus.data?.linked_worker_run_id && !workerStatus.data.current_queue_item_completion_ready ? (
+              <>
+                <CommandCopyBox command={`devo worker codex review-template --project ${selectedProject} --run ${workerStatus.data.linked_worker_run_id}`} />
+                <CommandCopyBox
+                  command={`devo worker codex review-record --project ${selectedProject} --run ${workerStatus.data.linked_worker_run_id} --status reviewed_passed --reviewer "<name>" --note "<note>"`}
+                />
+              </>
+            ) : null}
             {workerStatus.data?.linked_worker_run_id && workerStatus.data?.linked_run_plan_id ? (
               <>
                 <CommandCopyBox
@@ -217,9 +232,22 @@ function QueueWorkerStatusPanel({ status }: { status: CodexQueueWorkerStatus }) 
           ['Latest review', status.latest_worker_review_id ?? 'none'],
           ['Review status', status.latest_worker_review_status ?? 'none'],
           ['Validation status', status.latest_worker_validation_status ?? 'none'],
+          ['Completion ready', status.current_queue_item_completion_ready ? 'yes' : 'no'],
+          ['Current item review status', status.current_queue_item_review_status ?? 'none'],
+          ['Current item validation status', status.current_queue_item_validation_status ?? 'none'],
           ['Next action', status.next_action]
         ]}
       />
+      {status.current_queue_item_completion_blockers.length ? (
+        <div className="detail-list">
+          <strong>Completion blockers</strong>
+          <ul>
+            {status.current_queue_item_completion_blockers.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <p className="muted compact">
         A worker exit can move this queue to waiting review, but completion still requires review, validation evidence, and an explicit
         queue-complete-item command.
