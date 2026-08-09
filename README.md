@@ -237,28 +237,34 @@ Preflight supervised Codex runs and create safe run-plan previews:
 
 ```powershell
 devo worker codex doctor --project MyProject
+devo worker codex doctor --project MyProject --codex-wrapper E:\tools\codex-wrapper.cmd
+devo worker codex wrapper-template --path E:\DevOrchestrator\workspace\tmp\codex-wrapper.cmd --type cmd
 devo worker codex preflight --project MyProject --run WR001
 devo worker codex preflight --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
+devo worker codex preflight --project MyProject --run WR001 --codex-wrapper E:\tools\codex-wrapper.cmd
 devo worker codex run-plan --project MyProject --run WR001
 devo worker codex run-plan --project MyProject --run WR001 --codex-path E:\tools\fake-codex.cmd
+devo worker codex run-plan --project MyProject --run WR001 --codex-wrapper E:\tools\codex-wrapper.cmd
 devo worker codex run-plan-list --project MyProject
 devo worker codex run-plan-show --project MyProject --plan RP001
 devo worker codex run-plan-approve --project MyProject --plan RP001 --note "Planning reviewed."
 ```
 
-Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and whether a Codex executable appears on `PATH` using safe detection only. `devo worker codex doctor` diagnoses the candidate executable without running Codex and blocks WindowsApps app execution aliases that may fail under `subprocess.run`. Normal users can rely on `PATH` only when doctor/preflight do not warn; dogfood or controlled tests can pass `--codex-path` to validate and store an explicit non-WindowsApps executable or wrapper path in the run plan. It does not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
+Run-plan artifacts are stored under `workspace/projects/<project>/workers/codex/run-plans/` as `run-plan-<id>.json`, `run-plan-<id>.md`, and `run-plan-index.json`. Preflight checks registration, linked handoff/prompt files, target repo path, worker status, linked metadata where available, and Codex launcher readiness using safe detection only. `devo worker codex doctor` diagnoses the selected launcher without running Codex, blocks WindowsApps app execution aliases that may fail under `subprocess.run`, shows PATH/npm/global candidates, reports WSL availability, and prints exact `--codex-path`, `--codex-wrapper`, and `--codex-wsl` examples. Normal users can rely on PATH only when doctor/preflight do not warn; controlled runs can pass `--codex-path` for a known real executable or `--codex-wrapper` for an operator-created `.cmd`/`.bat`/`.ps1`/executable wrapper. `wrapper-template` creates a local `.cmd` template, refuses committed source paths, and does not run Codex. WSL launcher support is preview/planning only until a future task implements fake-tested execution. These commands do not run Codex, invoke an AI model, execute target commands, validate, commit, push, complete queue/tasks, or modify target project source. Run-plan approval is planning approval only; guarded execution still requires explicit `execute --confirm-execute`.
 
 Run one supervised Codex CLI worker for an approved run plan:
 
 ```powershell
 devo worker codex execute-preview --project MyProject --run WR001 --plan RP001
 devo worker codex execute-preview --project MyProject --run WR001 --plan RP001 --codex-path E:\tools\fake-codex.cmd
+devo worker codex execute-preview --project MyProject --run WR001 --plan RP001 --codex-wrapper E:\tools\codex-wrapper.cmd
 devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute
 devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute --codex-path E:\tools\fake-codex.cmd
+devo worker codex execute --project MyProject --run WR001 --plan RP001 --confirm-execute --codex-wrapper E:\tools\codex-wrapper.cmd
 devo worker codex execute-log --project MyProject --run WR001
 ```
 
-Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, an executable is resolved from the run plan, `PATH`, or an explicit `--codex-path`, and `--confirm-execute` is present. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run and linked queue item to `waiting_review`, not `completed`; failures become `failed`/`paused_failure`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval` with the queue waiting for review. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically. Queue item completion still requires `devo project queue-complete-item` after human review and validation evidence.
+Execution is intentionally narrow. Devo refuses to launch Codex unless the worker run exists, the run plan exists, the run plan is approved, preflight is passed or warnings-only, the prompt path exists, the target repo path exists, a supported launcher is resolved from the run plan, PATH, `--codex-path`, or `--codex-wrapper`, and `--confirm-execute` is present. Wrapper execution is constructed with explicit subprocess argument lists and no `shell=True`; `.cmd`/`.bat` wrappers use `cmd.exe /d /c <wrapper>` explicitly. Tests use fake wrappers only. Devo captures logs under `workspace/projects/<project>/workers/codex/logs/`. Exit code `0` moves the worker run and linked queue item to `waiting_review`, not `completed`; failures become `failed`/`paused_failure`, obvious usage-limit output becomes `paused_usage_limit`, and obvious safety/approval output becomes `blocked_needs_approval` with the queue waiting for review. Devo does not trust Codex output as proof, complete queue/tasks, run validation, commit, push, or modify delivery state automatically. Queue item completion still requires `devo project queue-complete-item` after human review and validation evidence.
 
 Record review and validation evidence before queue completion:
 
@@ -278,7 +284,7 @@ The fake-worker end-to-end dogfood for this flow is documented in [docs/dogfood/
 
 Before the first real Codex supervised worker launch, read [docs/runbooks/real-codex-supervised-dry-run.md](docs/runbooks/real-codex-supervised-dry-run.md). The first real run should be no-op or docs-only, target DevOrchestrator first, and validate orchestration/review gates rather than productivity. It must not auto-validate, complete queues/tasks, commit, push, or touch PersonalOS.
 
-The first real dry-run attempt is documented in [docs/dogfood/devo-real-codex-dry-run-099.md](docs/dogfood/devo-real-codex-dry-run-099.md). It reached the guarded launch step, but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. Do not retry real supervised execution until the launch path and failure handling are hardened.
+The first real dry-run attempt is documented in [docs/dogfood/devo-real-codex-dry-run-099.md](docs/dogfood/devo-real-codex-dry-run-099.md). It reached the guarded launch step, but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. TASK-DEVO-101 confirmed this machine still had no safe non-WindowsApps launcher. Do not retry real supervised execution until `doctor` reports a safe real executable or wrapper launcher.
 
 The future Codex CLI worker adapter is documented in [docs/codex-worker-adapter-design.md](docs/codex-worker-adapter-design.md). Manual handoff remains first-class, and any future worker execution must preserve explicit approval, validation/review evidence, queue pause/resume state, delivery checks, and target repository safety boundaries.
 

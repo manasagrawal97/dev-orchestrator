@@ -1,6 +1,6 @@
 # Real Codex Supervised Dry-Run Runbook
 
-Source/freshness: TASK-DEVO-100, after TASK-DEVO-099 found the WindowsApps `codex.exe` launch failure and TASK-DEVO-100 added Codex executable diagnostics and launch-failure handling.
+Source/freshness: TASK-DEVO-102, after TASK-DEVO-099 found the WindowsApps `codex.exe` launch failure, TASK-DEVO-100 added Codex executable diagnostics and launch-failure handling, TASK-DEVO-101 found no safe non-WindowsApps launcher, and TASK-DEVO-102 added explicit wrapper diagnostics/templates.
 
 ## Purpose
 
@@ -18,8 +18,9 @@ Before starting:
 - Backup health is known and acceptable.
 - API/UI may be running, but they are optional and not required.
 - Real Codex CLI is installed and authenticated.
-- Codex executable path is known or `codex` is available on `PATH`.
+- Codex executable path is known, `codex` is available on `PATH`, or an operator-created wrapper points at the real CLI.
 - `devo worker codex doctor` does not report a WindowsApps app execution alias as the selected launch path.
+- If using a wrapper, it is a local non-committed `.cmd`, `.bat`, `.ps1`, or executable path with no secrets and a reviewed real Codex target.
 - Devo tests are currently passing from recent source validation.
 - The user has enough Codex usage available for a short run.
 - Target project is DevOrchestrator first, not PersonalOS.
@@ -111,6 +112,7 @@ Inspect before execution:
 devo worker codex queue-status --project <project> --queue <queueId>
 devo worker codex flow-summary --project <project> --queue <queueId>
 devo worker codex doctor --project <project>
+devo worker codex doctor --project <project> --codex-wrapper <wrapperPath>
 devo worker codex preflight --project <project> --run <workerRunId>
 devo worker codex run-plan --project <project> --run <workerRunId>
 devo worker codex run-plan-show --project <project> --plan <planId>
@@ -156,7 +158,7 @@ devo project queue-block-item --project <project> --queue <queueId> --item <item
 
 ## Real Codex Path Guidance
 
-Run `devo worker codex doctor` before the first real run. The doctor command is read-only: it resolves the candidate executable, reports whether the path exists, identifies WindowsApps app execution aliases, and does not run `codex --version`.
+Run `devo worker codex doctor` before the first real run. The doctor command is read-only: it resolves the candidate launcher, reports whether the path exists, identifies WindowsApps app execution aliases, shows PATH/npm/global candidates, reports WSL availability when detectable, and does not run `codex --version`.
 
 Prefer normal `PATH` detection only when the doctor reports a normal launchable executable.
 
@@ -166,9 +168,22 @@ On Windows, `PATH` can resolve `codex.exe` to a Windows App Execution Alias or p
 Codex resolved to WindowsApps app execution alias and may not be launchable by Devo. Use --codex-path with a real executable/wrapper path.
 ```
 
-The preferred workaround is to create or choose a real local executable/wrapper script and pass it explicitly with `--codex-path`. Do not use `shell=True` as a workaround; it would weaken Devo's launch boundary and make command auditing harder.
+The preferred workaround is to create or choose a real local executable/wrapper script and pass it explicitly with `--codex-path` or `--codex-wrapper`. Do not use `shell=True` as a workaround; it would weaken Devo's launch boundary and make command auditing harder.
 
-TASK-DEVO-101 confirmed that this machine currently exposes only the blocked WindowsApps Codex paths through normal command discovery. Do not retry real supervised execution here until a safe non-WindowsApps wrapper or executable path exists and `devo worker codex doctor --codex-path <path>` reports no launch blockers.
+TASK-DEVO-101 confirmed that this machine exposed only blocked WindowsApps Codex paths through normal command discovery. TASK-DEVO-102 added a wrapper strategy so the operator can create a local template without running Codex:
+
+```powershell
+devo worker codex wrapper-template --path E:\DevOrchestrator\workspace\tmp\codex-wrapper.cmd --type cmd
+```
+
+Edit the generated wrapper manually so `CODEX_REAL_COMMAND` points at a real non-WindowsApps Codex executable. Do not store secrets in the wrapper. Do not commit local wrappers unless they are intentionally reviewed. The template command refuses committed source paths and does not run Codex.
+
+Do not retry real supervised execution until a safe non-WindowsApps wrapper or executable path exists and one of these reports no launch blockers:
+
+```powershell
+devo worker codex doctor --project <project> --codex-path <realCodexPath>
+devo worker codex doctor --project <project> --codex-wrapper <wrapperPath>
+```
 
 Use `--codex-path` only if `PATH` resolution is unreliable or ambiguous:
 
@@ -178,6 +193,17 @@ devo worker codex run-plan --project <project> --run <workerRunId> --codex-path 
 devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId> --codex-path <realCodexPath>
 devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute --codex-path <realCodexPath>
 ```
+
+Use `--codex-wrapper` when the operator needs a local launcher wrapper:
+
+```powershell
+devo worker codex preflight --project <project> --run <workerRunId> --codex-wrapper <wrapperPath>
+devo worker codex run-plan --project <project> --run <workerRunId> --codex-wrapper <wrapperPath>
+devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId> --codex-wrapper <wrapperPath>
+devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute --codex-wrapper <wrapperPath>
+```
+
+`--codex-wsl <distributionName>` currently provides preview/planning diagnostics only. It is useful if the operator normally uses Codex inside WSL, but guarded WSL execution remains deferred until it has fake-launcher tests.
 
 Do not use a fake Codex path for the first real dry-run. Fake executable testing was already covered by TASK-DEVO-096 and TASK-DEVO-097 tests.
 
@@ -278,6 +304,7 @@ Possible follow-up tasks:
 
 - TASK-DEVO-099: First real Codex supervised dry-run execution report.
 - TASK-DEVO-100: Codex executable diagnostics and launch-failure hardening.
+- Future: Real dry-run retry after `doctor` reports a safe real launcher.
 - Future: Delivery/commit safety design before automation.
 - Future: Worker run recovery/pause polish.
 - Future: Validation-result integration.

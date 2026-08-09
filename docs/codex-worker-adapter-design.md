@@ -1,6 +1,6 @@
 # Codex Worker Adapter Design
 
-Source/freshness: TASK-DEVO-100 update, after launch-path diagnostics and launch-failure handling were hardened for the WindowsApps `codex.exe` failure found in TASK-DEVO-099. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
+Source/freshness: TASK-DEVO-102 update, after launcher diagnostics, wrapper support, and WindowsApps blocking were hardened for the real Codex dry-run failures found in TASK-DEVO-099 and TASK-DEVO-101. Devo still does not implement queue-wide automation, AI API usage, automatic validation, automatic delivery, or autonomous completion.
 
 ## Purpose
 
@@ -169,6 +169,8 @@ TASK-DEVO-100 hardens that launch path. `devo worker codex doctor` now diagnoses
 
 TASK-DEVO-101 attempted a real retry with an explicit path and stopped before execution because no non-WindowsApps Codex executable or wrapper was available. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`. The next adapter step should provide safe wrapper/launcher support, still without `shell=True`, before retrying real supervised execution.
 
+TASK-DEVO-102 adds that launcher strategy. Codex diagnostics now distinguish `path_detection`, `path_override`, `wrapper_cmd`, `wrapper_ps1`, `wsl_codex`, `not_found`, and `blocked_windowsapps`; preserve the older executable path/source fields for compatibility; and include command previews, launcher risk, warnings, blockers, and recommended next action. `doctor`, `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` accept `--codex-wrapper`; `doctor`, `preflight`, `run-plan`, and preview paths can also describe `--codex-wsl` while actual WSL execution remains blocked/deferred. `devo worker codex wrapper-template --path <path> --type cmd` creates a local no-secrets wrapper template, refuses committed source paths unless the location is an ignored workspace-local area, and does not run Codex. Wrapper execution uses explicit subprocess argument lists and no `shell=True`; `.cmd`/`.bat` wrappers are launched through `cmd.exe /d /c <wrapper>` as explicit arguments. Tests use fake wrappers only. Real supervised retry should wait until doctor reports a safe real executable or wrapper launcher.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -280,11 +282,14 @@ Implemented preflight and run-plan commands:
 ```powershell
 devo worker codex preflight --project <project> --run <workerRunId>
 devo worker codex preflight --project <project> --run <workerRunId> --codex-path <fakeOrControlledCodexPath>
+devo worker codex preflight --project <project> --run <workerRunId> --codex-wrapper <wrapperPath>
 devo worker codex run-plan --project <project> --run <workerRunId>
 devo worker codex run-plan --project <project> --run <workerRunId> --codex-path <fakeOrControlledCodexPath>
+devo worker codex run-plan --project <project> --run <workerRunId> --codex-wrapper <wrapperPath>
 devo worker codex run-plan-list --project <project>
 devo worker codex run-plan-show --project <project> --plan <planId>
 devo worker codex run-plan-approve --project <project> --plan <planId> --note "<note>"
+devo worker codex wrapper-template --path <localWrapperPath> --type cmd
 ```
 
 These commands are the safety foundation for a future supervised adapter. They do not invoke Codex, call AI APIs, execute target commands, validate, commit, push, or modify target repositories. The proposed command is stored as a preview only. `run-plan-approve` records that the preview was reviewed as planning metadata; it is not execution approval for a future worker launch.
@@ -298,8 +303,10 @@ devo worker codex queue-status --project <project> --queue <queueId> --item <que
 devo worker codex flow-summary --project <project> --queue <queueId>
 devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId>
 devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId> --codex-path <fakeOrControlledCodexPath>
+devo worker codex execute-preview --project <project> --run <workerRunId> --plan <planId> --codex-wrapper <wrapperPath>
 devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute
 devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute --codex-path <fakeOrControlledCodexPath>
+devo worker codex execute --project <project> --run <workerRunId> --plan <planId> --confirm-execute --codex-wrapper <wrapperPath>
 devo worker codex execute-log --project <project> --run <workerRunId>
 devo worker codex review-template --project <project> --run <workerRunId>
 devo worker codex review-attach-evidence --project <project> --run <workerRunId> --status <provided|passed|failed|partial> --summary "<summary>"
@@ -308,7 +315,7 @@ devo worker codex review-show --project <project> --run <workerRunId>
 devo worker codex review-list --project <project>
 ```
 
-`prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. Normal execution can resolve Codex from `PATH`; dogfood/testing can pass `--codex-path` to avoid ambiguous PATH precedence. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery. `queue-status` and `flow-summary` are read-only and preserve useful linked evidence even after queue completion.
+`prepare-next` is the queue bridge: it prepares one current running or next pending queue item and stops before approval or execution. Normal execution can resolve Codex from `PATH`; dogfood/testing can pass `--codex-path` to avoid ambiguous PATH precedence; operators can pass `--codex-wrapper` when a local wrapper is the safest launch path. `execute` launches one Codex CLI process through `subprocess.run` without `shell=True`, passes the approved prompt through stdin, captures stdout/stderr logs, and updates the linked worker/queue state conservatively. Exit code `0` becomes `waiting_review`; non-zero failures become `failed`/`paused_failure` unless output clearly indicates usage limit or safety/approval blocking. Review and report import remain required before queue/task completion or delivery. `queue-status` and `flow-summary` are read-only and preserve useful linked evidence even after queue completion.
 
 `review-record --status reviewed_passed` still does not complete the queue item. It only records the reviewer decision and prints the explicit `devo project queue-complete-item` command for the operator to run if the evidence is sufficient. `queue-complete-item` then performs the final review gate before mutating queue/task state.
 
@@ -364,9 +371,11 @@ Recommended future sequence:
 10. TASK-DEVO-097: Worker flow operator polish - completed.
 11. TASK-DEVO-098: Real Codex supervised dry-run checklist - completed.
 12. TASK-DEVO-099: First real Codex supervised dry-run execution report - completed.
-13. TASK-DEVO-100: Harden real Codex launch path and launch-failure handling.
-14. TASK-DEVO-101: Pause/resume/usage-limit handling.
-15. TASK-DEVO-102: Optional commit/push delivery integration after safety review.
+13. TASK-DEVO-100: Harden real Codex launch path and launch-failure handling - completed.
+14. TASK-DEVO-101: Retry real Codex with explicit path and document remaining launcher blocker - blocked.
+15. TASK-DEVO-102: Add launcher strategy and wrapper support - completed.
+16. TASK-DEVO-103: Pause/resume/usage-limit recovery polish.
+17. TASK-DEVO-104: Optional commit/push delivery integration after safety review.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

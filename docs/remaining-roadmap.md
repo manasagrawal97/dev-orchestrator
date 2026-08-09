@@ -43,6 +43,7 @@ Devo already has:
 - Read-only Worker Runs dashboard page
 - Read-only Codex worker preflight checks and run-plan preview artifacts
 - Supervised one-run Codex CLI execution prototype behind approved run plans and `--confirm-execute`
+- Codex launcher diagnostics, WindowsApps blocking, explicit path support, and local wrapper support
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -156,8 +157,8 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 26. TASK-DEVO-099: First real Codex supervised dry-run execution report - completed.
 27. TASK-DEVO-100: Harden real Codex launch path and launch-failure handling - completed.
 28. TASK-DEVO-101: Retry real Codex dry-run with explicit launcher path - blocked by missing non-WindowsApps launcher.
-29. TASK-DEVO-102: Codex wrapper/launcher support before real retry.
-30. TASK-DEVO-103: Pause/resume and usage-limit recovery polish.
+29. TASK-DEVO-102: Codex wrapper/launcher support before real retry - completed.
+30. TASK-DEVO-103: Retry real Codex dry-run only after doctor reports a safe launcher, or polish pause/resume and usage-limit recovery.
 31. TASK-DEVO-104: Optional commit/push delivery integration after safety review.
 32. TASK-DEVO-105+: optional API/model agents, notifications, packaging, advanced UI, and other polish.
 

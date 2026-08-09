@@ -297,7 +297,11 @@ Hardened the supervised Codex launch path after TASK-DEVO-099. Devo now has `dev
 
 ### TASK-DEVO-101 Real Codex Explicit-Path Retry - Blocked
 
-Attempted to retry the first real Codex supervised dry-run using `devo worker codex doctor` and an explicit non-WindowsApps launcher path. The retry stopped safely before planning/worker execution because every discoverable Codex command still resolved to the blocked WindowsApps package path and no npm/global shim, user-local executable, or Program Files executable was found. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`. Next work should add safe wrapper/launcher support before another real retry.
+Attempted to retry the first real Codex supervised dry-run using `devo worker codex doctor` and an explicit non-WindowsApps launcher path. The retry stopped safely before planning/worker execution because every discoverable Codex command still resolved to the blocked WindowsApps package path and no npm/global shim, user-local executable, or Program Files executable was found. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`. This led directly to TASK-DEVO-102 wrapper/launcher support.
+
+### TASK-DEVO-102 Codex Launcher Wrapper Support - Completed
+
+Added an explicit launcher strategy for supervised Codex worker execution. `devo worker codex doctor`, `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` now understand PATH detection, explicit executable paths, local wrapper paths, blocked WindowsApps aliases, and WSL preview/planning. `devo worker codex wrapper-template --path <path> --type cmd` writes a local no-secrets wrapper template without running Codex and refuses committed source paths unless the target is an ignored workspace-local area. Wrapper execution uses explicit subprocess argument lists without `shell=True` and is covered with fake-wrapper tests only. WSL execution remains deferred; real supervised retry should wait until doctor reports a safe real executable or wrapper launcher.
 
 ### TASK-023 Safe Validation Runner
 

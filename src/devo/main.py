@@ -100,6 +100,7 @@ from .project_planning import (
     create_codex_worker_run_plan,
     create_codex_worker_report_template,
     create_codex_worker_review_template,
+    create_codex_wrapper_template,
     create_execution_queue_from_batch,
     create_suggested_project_batch,
     diagnose_codex_executable,
@@ -742,6 +743,11 @@ def _print_codex_executable_diagnostic(diagnostic: CodexExecutableDiagnostic) ->
     console.print("[bold]Codex executable doctor[/bold]")
     console.print(f"Executable path: {diagnostic.executable_path or 'not found'}", soft_wrap=True)
     console.print(f"Executable source: {diagnostic.executable_source}")
+    console.print(f"Launcher type: {diagnostic.launcher_type}")
+    console.print(f"Wrapper path: {diagnostic.wrapper_path or 'none'}", soft_wrap=True)
+    console.print(f"WSL distribution: {diagnostic.wsl_distribution or 'none'}")
+    console.print(f"Execution supported: {diagnostic.execution_supported}")
+    console.print(f"Command preview: {diagnostic.command_preview or 'none'}", soft_wrap=True)
     console.print(f"Exists: {diagnostic.exists}")
     console.print(f"WindowsApps alias: {diagnostic.is_windowsapps_alias}")
     console.print(f"Launch risk: {diagnostic.launch_risk}")
@@ -752,9 +758,18 @@ def _print_codex_executable_diagnostic(diagnostic: CodexExecutableDiagnostic) ->
     console.print("Launch warnings:")
     for item in diagnostic.launch_warnings or ["none"]:
         console.print(f"  - {item}", soft_wrap=True)
+    console.print("PATH Codex candidates:")
+    for item in diagnostic.candidate_paths or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("NPM/global bin candidates:")
+    for item in diagnostic.npm_global_bin_candidates or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"WSL available: {diagnostic.wsl_available if diagnostic.wsl_available is not None else 'unknown'}")
     console.print(f"Recommended next action: {diagnostic.recommended_next_action or 'none'}", soft_wrap=True)
-    console.print("Example controlled command:")
+    console.print("Example controlled commands:")
     console.print("  devo worker codex run-plan --project <project> --run <workerRunId> --codex-path <real-wrapper-or-executable>", soft_wrap=True)
+    console.print("  devo worker codex run-plan --project <project> --run <workerRunId> --codex-wrapper <wrapperPath>", soft_wrap=True)
+    console.print("  devo worker codex run-plan --project <project> --run <workerRunId> --codex-wsl <distro>", soft_wrap=True)
     console.print("Safety: doctor is read-only. It does not run Codex or call codex --version.")
 
 
@@ -773,6 +788,9 @@ def _print_codex_run_plan(plan: CodexRunPlan, json_path: Path | None = None, mar
     console.print(f"Proposed command preview: {plan.proposed_command_preview}", soft_wrap=True)
     console.print(f"Codex executable: {plan.codex_executable_path or 'none'}", soft_wrap=True)
     console.print(f"Codex executable source: {plan.codex_executable_source}")
+    console.print(f"Launcher type: {plan.launcher_type}")
+    console.print(f"Codex wrapper: {plan.codex_wrapper_path or 'none'}", soft_wrap=True)
+    console.print(f"Codex WSL distribution: {plan.codex_wsl_distribution or 'none'}")
     console.print(f"Command resolution: {plan.command_resolution_note or 'none'}", soft_wrap=True)
     console.print(f"Launch risk: {plan.launch_risk}")
     console.print(f"Launch blockers: {len(plan.launch_blockers)}")
@@ -793,7 +811,12 @@ def _print_codex_execution_preview(preview: CodexExecutionPreview) -> None:
     console.print(f"Ready: {preview.ready}")
     console.print(f"Executable: {preview.executable_path or 'not found'}")
     console.print(f"Executable source: {preview.executable_source}")
+    console.print(f"Launcher type: {preview.launcher_type}")
+    console.print(f"Wrapper path: {preview.wrapper_path or 'none'}", soft_wrap=True)
+    console.print(f"WSL distribution: {preview.wsl_distribution or 'none'}")
     console.print(f"Command resolution: {preview.command_resolution_note or 'none'}", soft_wrap=True)
+    console.print(f"Command preview: {preview.command_preview or 'none'}", soft_wrap=True)
+    console.print(f"Execution supported: {preview.execution_supported}")
     console.print(f"Launch risk: {preview.launch_risk}")
     console.print(f"Command label: {preview.command_label}")
     console.print(f"Working directory: {preview.proposed_working_directory}", soft_wrap=True)
@@ -2431,15 +2454,38 @@ def create_codex_worker_run_command(
 def codex_worker_doctor_command(
     project_name: str | None = typer.Option(None, "--project", help="Optional registered project name for context."),
     codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path to inspect without running it."),
+    codex_wrapper: Path | None = typer.Option(None, "--codex-wrapper", help="Explicit Codex wrapper path to inspect without running it."),
+    codex_wsl: str | None = typer.Option(None, "--codex-wsl", help="WSL distribution name to preview without running it."),
 ) -> None:
     """Diagnose Codex executable resolution without running Codex."""
     if project_name:
         project_name = _resolve_project(project_name)
         console.print(f"Project: {project_name}")
-    diagnostic = diagnose_codex_executable(str(codex_path) if codex_path else None)
+    diagnostic = diagnose_codex_executable(
+        str(codex_path) if codex_path else None,
+        codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+        codex_wsl=codex_wsl,
+    )
     _print_codex_executable_diagnostic(diagnostic)
     if diagnostic.launch_blockers:
         raise typer.Exit(1)
+
+
+@worker_codex_app.command("wrapper-template")
+def create_codex_wrapper_template_command(
+    output_path: Path = typer.Option(..., "--path", help="Output path for the local wrapper template."),
+    wrapper_type: str = typer.Option("cmd", "--type", help="Wrapper template type. Currently supported: cmd."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing template."),
+) -> None:
+    """Create a local Codex wrapper template without running Codex."""
+    try:
+        path = create_codex_wrapper_template(output_path, wrapper_type=wrapper_type, force=force)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--path") from exc
+    console.print("[green]Codex wrapper template written[/green]")
+    console.print(f"Path: {_named_path(path)}")
+    console.print("Edit CODEX_REAL_COMMAND to point at a real non-WindowsApps Codex executable.")
+    console.print("Safety: this command did not run Codex. Do not store secrets in the wrapper or commit local wrappers accidentally.")
 
 
 @worker_codex_app.command("run-list")
@@ -2796,16 +2842,30 @@ def preflight_codex_worker_command(
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
     write: bool = typer.Option(False, "--write", help="Create a run-plan artifact if preflight is not blocked."),
     codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
+    codex_wrapper: Path | None = typer.Option(None, "--codex-wrapper", help="Explicit Codex wrapper path for controlled execution."),
+    codex_wsl: str | None = typer.Option(None, "--codex-wsl", help="Preview a WSL Codex launcher for the named distribution."),
 ) -> None:
     """Run read-only preflight checks for a future supervised Codex run."""
     project_name = _resolve_project(project_name)
-    result = run_codex_worker_preflight(project_name, worker_run_id, codex_path=str(codex_path) if codex_path else None)
+    result = run_codex_worker_preflight(
+        project_name,
+        worker_run_id,
+        codex_path=str(codex_path) if codex_path else None,
+        codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+        codex_wsl=codex_wsl,
+    )
     _print_codex_preflight(result)
     if write:
         if result.status == "blocked":
             console.print("[yellow]Run plan not written because preflight is blocked.[/yellow]")
             raise typer.Exit(1)
-        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id, codex_path=str(codex_path) if codex_path else None)
+        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(
+            project_name,
+            worker_run_id,
+            codex_path=str(codex_path) if codex_path else None,
+            codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+            codex_wsl=codex_wsl,
+        )
         console.print("[green]Codex run plan written from preflight[/green]")
         _print_codex_preflight(preflight)
         _print_codex_run_plan(plan, json_path=json_path, markdown_path=markdown_path)
@@ -2818,11 +2878,19 @@ def create_codex_worker_run_plan_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
     codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
+    codex_wrapper: Path | None = typer.Option(None, "--codex-wrapper", help="Explicit Codex wrapper path for controlled execution."),
+    codex_wsl: str | None = typer.Option(None, "--codex-wsl", help="Preview a WSL Codex launcher for the named distribution."),
 ) -> None:
     """Create a safe preview run-plan artifact for supervised Codex execution."""
     project_name = _resolve_project(project_name)
     try:
-        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(project_name, worker_run_id, codex_path=str(codex_path) if codex_path else None)
+        plan, preflight, json_path, markdown_path = create_codex_worker_run_plan(
+            project_name,
+            worker_run_id,
+            codex_path=str(codex_path) if codex_path else None,
+            codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+            codex_wsl=codex_wsl,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     console.print(f"[green]Codex run plan saved[/green] {project_name}")
@@ -2888,11 +2956,20 @@ def preview_codex_worker_execution_command(
     worker_run_id: str = typer.Option(..., "--run", help="Codex worker run id."),
     plan_id: str = typer.Option(..., "--plan", help="Approved Codex run plan id."),
     codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
+    codex_wrapper: Path | None = typer.Option(None, "--codex-wrapper", help="Explicit Codex wrapper path for controlled execution."),
+    codex_wsl: str | None = typer.Option(None, "--codex-wsl", help="Preview a WSL Codex launcher for the named distribution."),
 ) -> None:
     """Preview one supervised Codex execution without running anything."""
     project_name = _resolve_project(project_name)
     try:
-        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id, codex_path=str(codex_path) if codex_path else None)
+        preview = preview_codex_worker_execution(
+            project_name,
+            worker_run_id,
+            plan_id,
+            codex_path=str(codex_path) if codex_path else None,
+            codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+            codex_wsl=codex_wsl,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--plan") from exc
     _print_codex_execution_preview(preview)
@@ -2906,6 +2983,8 @@ def execute_codex_worker_command(
     confirm_execute: bool = typer.Option(False, "--confirm-execute", help="Required explicit confirmation to launch Codex CLI."),
     started_by: str = typer.Option("operator", "--started-by", help="Operator label recorded in the worker run."),
     codex_path: Path | None = typer.Option(None, "--codex-path", help="Explicit Codex executable path for dogfood/testing or controlled execution."),
+    codex_wrapper: Path | None = typer.Option(None, "--codex-wrapper", help="Explicit Codex wrapper path for controlled execution."),
+    codex_wsl: str | None = typer.Option(None, "--codex-wsl", help="Preview a WSL Codex launcher for the named distribution."),
 ) -> None:
     """Launch Codex once for an approved run plan and capture logs."""
     project_name = _resolve_project(project_name)
@@ -2914,7 +2993,14 @@ def execute_codex_worker_command(
         console.print(f"Preview first: devo worker codex execute-preview --project {project_name} --run {worker_run_id} --plan {plan_id}")
         raise typer.Exit(1)
     try:
-        preview = preview_codex_worker_execution(project_name, worker_run_id, plan_id, codex_path=str(codex_path) if codex_path else None)
+        preview = preview_codex_worker_execution(
+            project_name,
+            worker_run_id,
+            plan_id,
+            codex_path=str(codex_path) if codex_path else None,
+            codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+            codex_wsl=codex_wsl,
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--plan") from exc
     _print_codex_execution_preview(preview)
@@ -2930,6 +3016,8 @@ def execute_codex_worker_command(
             plan_id,
             started_by=started_by,
             codex_path=str(codex_path) if codex_path else None,
+            codex_wrapper=str(codex_wrapper) if codex_wrapper else None,
+            codex_wsl=codex_wsl,
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--plan") from exc

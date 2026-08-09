@@ -163,15 +163,15 @@ The main remaining safety gap is not a source-execution issue; it is launcher er
 
 ## Recommendation
 
-Recommended TASK-DEVO-102: add explicit Codex wrapper/launcher support before retrying real supervised execution again.
+TASK-DEVO-102 follow-up: add explicit Codex wrapper/launcher support before retrying real supervised execution again.
 
 Suggested scope:
 
-- Add a safe `devo worker codex wrapper-template --path <outputPath>` command, or equivalent documented helper.
+- Added a safe `devo worker codex wrapper-template --path <outputPath> --type cmd` helper.
 - Keep generated wrappers outside committed source, for example under an ignored local workspace temp/operator path.
 - Ensure the wrapper contains no secrets.
 - Document how the operator should edit/test the wrapper manually.
-- Allow `devo worker codex doctor --codex-path <wrapper>` to confirm the wrapper path is non-WindowsApps and launchable by path shape only, without running Codex.
-- Retry the real dry-run only after a safe explicit wrapper exists.
+- Use `devo worker codex doctor --codex-wrapper <wrapper>` or `--codex-path <realExecutable>` to confirm the launcher path shape without running Codex.
+- Retry the real dry-run only after a safe explicit wrapper or executable exists and doctor reports no blockers.
 
 Delivery/commit automation should remain deferred until a real Codex dry-run actually launches, produces a final report, and reaches `waiting_review` with human-reviewed evidence.

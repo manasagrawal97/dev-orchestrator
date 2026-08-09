@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -681,7 +682,163 @@ def test_codex_doctor_warns_for_windowsapps_alias(tmp_path: Path, monkeypatch) -
     assert result.exit_code != 0
     assert "WindowsApps alias: True" in result.output
     assert "Use --codex-path with a real executable/wrapper path" in result.output
+    assert "--codex-wrapper <wrapperPath>" in result.output
     assert "does not run Codex" in result.output
+
+
+def test_codex_wrapper_template_creates_safe_cmd_template(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    wrapper = workspace / "tmp" / "local-codex-wrapper.cmd"
+
+    result = runner.invoke(app, ["worker", "codex", "wrapper-template", "--path", str(wrapper), "--type", "cmd"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert wrapper.exists()
+    text = wrapper.read_text(encoding="utf-8")
+    assert "CODEX_REAL_COMMAND" in text
+    assert "Do not store secrets" in text
+    assert "did not run Codex" in result.output
+
+
+def test_codex_wrapper_template_refuses_committed_source_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    wrapper = Path.cwd() / "task-102-codex-wrapper.cmd"
+    if wrapper.exists():
+        wrapper.unlink()
+
+    result = runner.invoke(app, ["worker", "codex", "wrapper-template", "--path", str(wrapper)], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "committed source path" in result.output
+    assert "workspace/tmp" in result.output
+    assert not wrapper.exists()
+
+
+def test_codex_preflight_accepts_explicit_fake_wrapper_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    wrapper = _create_fake_codex_wrapper(tmp_path, stdout="wrapper ok")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001", "--codex-wrapper", str(wrapper)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: warnings" in result.output
+    assert "codex_wrapper" in result.output
+    assert str(wrapper.resolve()) in result.output
+
+
+def test_codex_preflight_blocks_missing_wrapper_path(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    missing = tmp_path / "missing-wrapper.cmd"
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "preflight", "--project", "sample", "--run", "WR001", "--codex-wrapper", str(missing)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Codex wrapper path does not exist" in result.output
+
+
+def test_codex_run_plan_stores_wrapper_launcher_metadata(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    wrapper = _create_fake_codex_wrapper(tmp_path, stdout="wrapper plan")
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-wrapper", str(wrapper)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert plan is not None
+    assert plan.status == "ready"
+    assert plan.launcher_type == "wrapper_cmd"
+    assert plan.codex_wrapper_path == str(wrapper.resolve())
+    assert plan.codex_executable_source == "wrapper_cmd"
+    assert str(wrapper.resolve()) in plan.proposed_command_preview
+    assert "Launcher type: wrapper_cmd" in result.output
+
+
+def test_codex_execute_preview_shows_wrapper_command_preview(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    wrapper = _create_fake_codex_wrapper(tmp_path, stdout="wrapper preview")
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-wrapper", str(wrapper)])
+    runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute-preview", "--project", "sample", "--run", "WR001", "--plan", "RP001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ready: True" in result.output
+    assert "Launcher type: wrapper_cmd" in result.output
+    assert str(wrapper.resolve()) in result.output
+    assert "Execution supported: True" in result.output
+
+
+def test_codex_execute_uses_fake_wrapper_without_shell(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+    wrapper = _create_fake_codex_wrapper(tmp_path, stdout="wrapper completed")
+    before_target = _target_snapshot(project_path)
+    runner.invoke(app, ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-wrapper", str(wrapper)])
+    runner.invoke(app, ["worker", "codex", "run-plan-approve", "--project", "sample", "--plan", "RP001"])
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="wrapper completed\n", stderr="")
+
+    monkeypatch.setattr("devo.project_planning.subprocess.run", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "execute", "--project", "sample", "--run", "WR001", "--plan", "RP001", "--confirm-execute"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls
+    assert calls[0][0][-1] == str(wrapper.resolve())
+    assert calls[0][0][1:3] == ["/d", "/c"]
+    assert calls[0][1].get("shell") is None
+    worker_run = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.status == "waiting_review"
+    assert worker_run.execution_log_path is not None
+    assert "wrapper completed" in Path(worker_run.execution_log_path).read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_run_plan_records_wsl_preview_as_blocked_for_execute(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["worker", "codex", "run-plan", "--project", "sample", "--run", "WR001", "--codex-wsl", "Ubuntu"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    plan = load_codex_run_plan("sample", "RP001", workspace_root=workspace)
+    assert plan is not None
+    assert plan.status == "blocked"
+    assert plan.launcher_type == "wsl_codex"
+    assert plan.codex_wsl_distribution == "Ubuntu"
+    assert any("WSL Codex execution is not implemented yet" in item for item in plan.launch_blockers)
 
 
 def test_codex_preflight_blocks_windowsapps_alias_from_path(tmp_path: Path, monkeypatch) -> None:
@@ -1560,6 +1717,20 @@ def _create_fake_codex(tmp_path: Path, *, stdout: str = "", stderr: str = "", ex
     lines.append(f"exit /b {exit_code}")
     fake_codex.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
     return fake_codex
+
+
+def _create_fake_codex_wrapper(tmp_path: Path, *, stdout: str = "", stderr: str = "", exit_code: int = 0) -> Path:
+    wrapper_dir = tmp_path / "wrappers"
+    wrapper_dir.mkdir(exist_ok=True)
+    wrapper = wrapper_dir / "codex-wrapper.cmd"
+    lines = ["@echo off"]
+    if stdout:
+        lines.append(f"echo {stdout}")
+    if stderr:
+        lines.append(f"echo {stderr} 1>&2")
+    lines.append(f"exit /b {exit_code}")
+    wrapper.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    return wrapper
 
 
 def _create_windowsapps_codex_alias(tmp_path: Path) -> Path:
