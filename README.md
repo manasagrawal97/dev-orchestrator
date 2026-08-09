@@ -26,6 +26,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
 - [Codex worker adapter design](docs/codex-worker-adapter-design.md)
+- [Codex launcher setup runbook](docs/runbooks/codex-launcher-setup.md)
 - [Real Codex supervised dry-run runbook](docs/runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](docs/remaining-roadmap.md)
 - [Current capabilities](docs/current-capabilities.md)
@@ -282,7 +283,7 @@ Review artifacts live under `workspace/projects/<project>/workers/codex/reviews/
 
 The fake-worker end-to-end dogfood for this flow is documented in [docs/dogfood/devo-supervised-worker-dogfood-096.md](docs/dogfood/devo-supervised-worker-dogfood-096.md).
 
-Before the first real Codex supervised worker launch, read [docs/runbooks/real-codex-supervised-dry-run.md](docs/runbooks/real-codex-supervised-dry-run.md). The first real run should be no-op or docs-only, target DevOrchestrator first, and validate orchestration/review gates rather than productivity. It must not auto-validate, complete queues/tasks, commit, push, or touch PersonalOS.
+Before the first real Codex supervised worker launch, read [docs/runbooks/codex-launcher-setup.md](docs/runbooks/codex-launcher-setup.md) and [docs/runbooks/real-codex-supervised-dry-run.md](docs/runbooks/real-codex-supervised-dry-run.md). The first real run should be no-op or docs-only, target DevOrchestrator first, and validate orchestration/review gates rather than productivity. It must not auto-validate, complete queues/tasks, commit, push, or touch PersonalOS.
 
 The first real dry-run attempt is documented in [docs/dogfood/devo-real-codex-dry-run-099.md](docs/dogfood/devo-real-codex-dry-run-099.md). It reached the guarded launch step, but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. TASK-DEVO-101 confirmed this machine still had no safe non-WindowsApps launcher. Do not retry real supervised execution until `doctor` reports a safe real executable or wrapper launcher.
 

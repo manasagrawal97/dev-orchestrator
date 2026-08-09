@@ -169,7 +169,9 @@ TASK-DEVO-100 hardens that launch path. `devo worker codex doctor` now diagnoses
 
 TASK-DEVO-101 attempted a real retry with an explicit path and stopped before execution because no non-WindowsApps Codex executable or wrapper was available. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`. The next adapter step should provide safe wrapper/launcher support, still without `shell=True`, before retrying real supervised execution.
 
-TASK-DEVO-102 adds that launcher strategy. Codex diagnostics now distinguish `path_detection`, `path_override`, `wrapper_cmd`, `wrapper_ps1`, `wsl_codex`, `not_found`, and `blocked_windowsapps`; preserve the older executable path/source fields for compatibility; and include command previews, launcher risk, warnings, blockers, and recommended next action. `doctor`, `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` accept `--codex-wrapper`; `doctor`, `preflight`, `run-plan`, and preview paths can also describe `--codex-wsl` while actual WSL execution remains blocked/deferred. `devo worker codex wrapper-template --path <path> --type cmd` creates a local no-secrets wrapper template, refuses committed source paths unless the location is an ignored workspace-local area, and does not run Codex. Wrapper execution uses explicit subprocess argument lists and no `shell=True`; `.cmd`/`.bat` wrappers are launched through `cmd.exe /d /c <wrapper>` as explicit arguments. Tests use fake wrappers only. Real supervised retry should wait until doctor reports a safe real executable or wrapper launcher.
+TASK-DEVO-102 adds that launcher strategy. Codex diagnostics now distinguish `path_detection`, `path_override`, `wrapper_cmd`, `wrapper_ps1`, `wsl_codex`, `not_found`, and `blocked_windowsapps`; preserve the older executable path/source fields for compatibility; and include command previews, launcher risk, warnings, blockers, and recommended next action. `doctor`, `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` accept `--codex-wrapper`; `doctor`, `preflight`, `run-plan`, and preview paths can also describe `--codex-wsl` while actual WSL execution remains blocked/deferred. `devo worker codex wrapper-template --path <path> --type cmd` creates a local no-secrets wrapper template, refuses committed source paths unless the location is an ignored workspace-local area, and does not run Codex. Wrapper execution uses explicit subprocess argument lists and no `shell=True`; `.cmd`/`.bat` wrappers are launched through `cmd.exe /d /c <wrapper>` as explicit arguments. Tests use fake wrappers only.
+
+TASK-DEVO-103 documents the operator readiness path in `docs/runbooks/codex-launcher-setup.md`. Real supervised retry should wait until that checklist is complete and doctor reports a safe real executable or wrapper launcher.
 
 ## State Transitions
 
@@ -374,8 +376,9 @@ Recommended future sequence:
 13. TASK-DEVO-100: Harden real Codex launch path and launch-failure handling - completed.
 14. TASK-DEVO-101: Retry real Codex with explicit path and document remaining launcher blocker - blocked.
 15. TASK-DEVO-102: Add launcher strategy and wrapper support - completed.
-16. TASK-DEVO-103: Pause/resume/usage-limit recovery polish.
-17. TASK-DEVO-104: Optional commit/push delivery integration after safety review.
+16. TASK-DEVO-103: Codex launcher setup runbook and readiness check - completed.
+17. TASK-DEVO-104: Retry real Codex dry-run only after doctor reports a safe launcher, or polish pause/resume and usage-limit recovery.
+18. TASK-DEVO-105: Optional commit/push delivery integration after safety review.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

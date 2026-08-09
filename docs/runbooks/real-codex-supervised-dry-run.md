@@ -4,7 +4,7 @@ Source/freshness: TASK-DEVO-102, after TASK-DEVO-099 found the WindowsApps `code
 
 ## Purpose
 
-This runbook is for the first real Codex supervised worker dry-run through Devo.
+This runbook is for the first real Codex supervised worker dry-run through Devo. Complete `docs/runbooks/codex-launcher-setup.md` first so the launcher is known-safe before any guarded execution attempt.
 
 The goal is to validate controlled orchestration, not productivity. The first real run should be a no-op or docs-only inspection task that proves Devo can launch real Codex through an approved run plan, capture evidence, preserve review gates, and stop before delivery automation.
 
@@ -26,6 +26,7 @@ Before starting:
 - Target project is DevOrchestrator first, not PersonalOS.
 - The selected queue item is intentionally low risk.
 - Workspace artifacts are not staged.
+- `docs/runbooks/codex-launcher-setup.md` readiness criteria are satisfied.
 
 Do not start with PersonalOS. PersonalOS remains a real-world test project for later controlled batches, not the first real supervised Codex launch.
 
@@ -157,6 +158,8 @@ devo project queue-block-item --project <project> --queue <queueId> --item <item
 ```
 
 ## Real Codex Path Guidance
+
+For detailed setup steps, use `docs/runbooks/codex-launcher-setup.md`. This section is the shorter launch-path reminder for the dry-run itself.
 
 Run `devo worker codex doctor` before the first real run. The doctor command is read-only: it resolves the candidate launcher, reports whether the path exists, identifies WindowsApps app execution aliases, shows PATH/npm/global candidates, reports WSL availability when detectable, and does not run `codex --version`.
 

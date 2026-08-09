@@ -303,6 +303,10 @@ Attempted to retry the first real Codex supervised dry-run using `devo worker co
 
 Added an explicit launcher strategy for supervised Codex worker execution. `devo worker codex doctor`, `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` now understand PATH detection, explicit executable paths, local wrapper paths, blocked WindowsApps aliases, and WSL preview/planning. `devo worker codex wrapper-template --path <path> --type cmd` writes a local no-secrets wrapper template without running Codex and refuses committed source paths unless the target is an ignored workspace-local area. Wrapper execution uses explicit subprocess argument lists without `shell=True` and is covered with fake-wrapper tests only. WSL execution remains deferred; real supervised retry should wait until doctor reports a safe real executable or wrapper launcher.
 
+### TASK-DEVO-103 Codex Launcher Setup Runbook - Completed
+
+Added `docs/runbooks/codex-launcher-setup.md`, an operator checklist for obtaining a safe non-WindowsApps Codex launcher before retrying real supervised execution. The runbook documents supported launcher options, WindowsApps blocking, npm/global CLI setup, WSL preview/planning, wrapper template setup, readiness criteria, the next real retry sequence, and troubleshooting for missing shims, wrapper paths, `PermissionError`, `FileNotFoundError`, and WSL path mapping confusion. This task did not run real Codex, install packages, modify PersonalOS, or create execution artifacts.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.
