@@ -7,6 +7,7 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import list_backup_inventory
+from .delivery import list_delivery_checks
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
@@ -91,6 +92,12 @@ class ProjectOverview(BaseModel):
     git_summary: dict[str, object] = Field(default_factory=dict)
     validation_registry_summary: dict[str, object] = Field(default_factory=dict)
     backup_summary: dict[str, object] = Field(default_factory=dict)
+    delivery_check_count: int = 0
+    latest_delivery_id: str | None = None
+    latest_delivery_readiness_status: str | None = None
+    latest_delivery_blocker_count: int = 0
+    latest_delivery_warning_count: int = 0
+    delivery_next_action: str | None = None
     brief_status: str = "missing"
     blueprint_status: str = "missing"
     blueprint_milestone_count: int = 0
@@ -195,6 +202,7 @@ def build_project_overview_with_timing(
     git = _timed("git_ms", timing, lambda: _git_summary(project_name, root))
     validation = _timed("validation_registry_ms", timing, lambda: _validation_registry_summary(project_name, root))
     planning = _timed("planning_ms", timing, lambda: _planning_summary(project_name, root))
+    delivery = _timed("delivery_ms", timing, lambda: _delivery_summary(project_name, root))
     backup = _timed("backup_ms", timing, _backup_summary)
     timing["total_ms"] = _elapsed_ms(started)
     planning_next_action = str(planning["planning_next_action"])
@@ -211,6 +219,14 @@ def build_project_overview_with_timing(
             git_summary=git,
             validation_registry_summary=validation,
             backup_summary=backup,
+            delivery_check_count=int(delivery["delivery_check_count"]),
+            latest_delivery_id=str(delivery["latest_delivery_id"]) if delivery["latest_delivery_id"] else None,
+            latest_delivery_readiness_status=(
+                str(delivery["latest_delivery_readiness_status"]) if delivery["latest_delivery_readiness_status"] else None
+            ),
+            latest_delivery_blocker_count=int(delivery["latest_delivery_blocker_count"]),
+            latest_delivery_warning_count=int(delivery["latest_delivery_warning_count"]),
+            delivery_next_action=str(delivery["delivery_next_action"]) if delivery["delivery_next_action"] else None,
             brief_status=str(planning["brief_status"]),
             blueprint_status=str(planning["blueprint_status"]),
             blueprint_milestone_count=int(planning["blueprint_milestone_count"]),
@@ -711,6 +727,29 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "batch_completion_percent": progress.batch_completion_percent,
         "progress_next_action": progress.next_action,
         "planning_next_action": next_action,
+    }
+
+
+def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, object]:
+    try:
+        checks = list_delivery_checks(project_name, workspace_root=workspace_root)
+    except Exception as exc:
+        return {
+            "delivery_check_count": 0,
+            "latest_delivery_id": None,
+            "latest_delivery_readiness_status": None,
+            "latest_delivery_blocker_count": 0,
+            "latest_delivery_warning_count": 0,
+            "delivery_next_action": f"Review delivery artifacts: {exc}",
+        }
+    latest = checks[0] if checks else None
+    return {
+        "delivery_check_count": len(checks),
+        "latest_delivery_id": latest.delivery_id if latest else None,
+        "latest_delivery_readiness_status": latest.readiness_status if latest else None,
+        "latest_delivery_blocker_count": len(latest.blockers) if latest else 0,
+        "latest_delivery_warning_count": len(latest.warnings) if latest else 0,
+        "delivery_next_action": latest.next_action if latest else "Run a delivery readiness check when a reviewed queue item is ready.",
     }
 
 

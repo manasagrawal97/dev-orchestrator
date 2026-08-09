@@ -198,7 +198,7 @@ Primary user question: "What did the manual Codex worker run report, is a future
 
 This page is read-only. It does not run Codex from the UI, import/upload reports from the UI, approve execution, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, call model APIs, or complete queue/task items. It may show a copyable `queue-complete-item` command only when read-only evidence says the item is completion-ready; otherwise it shows review commands and blockers.
 
-Future delivery visibility is documented in `docs/delivery-safety-design.md`. A Delivery page may show readiness, changed-file scope, validation/review evidence, blockers, warnings, and copyable CLI commands, but UI commit/push buttons remain deferred until the delivery safety model is mature.
+Delivery visibility is documented in `docs/delivery-safety-design.md`. TASK-DEVO-105 adds read-only delivery readiness artifacts and API endpoints; a future Delivery page may show readiness, changed-file scope, validation/review evidence, blockers, warnings, and copyable CLI commands. UI commit/push buttons remain deferred until the delivery plan/approval safety model is mature.
 
 ### B9. Progress Page
 
@@ -409,6 +409,11 @@ Project Overview:
 - `GET /api/projects/{project}/doctor`
 
 Project Overview should render the selected project shell immediately and fill in slower sections independently. Doctor, backup, Git, and activity-backed summaries may take longer on large workspaces, so section-level loading states should explain that some health checks can take longer.
+
+Delivery readiness:
+
+- `GET /api/projects/{project}/delivery-checks`
+- `GET /api/projects/{project}/delivery-checks/{delivery_id}`
 
 Work Detail:
 

@@ -299,7 +299,7 @@ Before the first real supervised Codex launch, read `docs/runbooks/codex-launche
 
 The TASK-DEVO-099 first real launch attempt is documented in `docs/dogfood/devo-real-codex-dry-run-099.md`. It reached the approved guarded launch step but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. TASK-DEVO-100 hardened launch diagnostics and failure handling. TASK-DEVO-101 is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`; it stopped before execution because no safe non-WindowsApps launcher was available. TASK-DEVO-102 adds the wrapper/template path for that missing launcher setup, and TASK-DEVO-103 documents the operator setup checklist; neither task retries real Codex.
 
-Delivery after worker review is a separate safety layer. Read `docs/delivery-safety-design.md` before adding any commit/push workflow. Queue completion is not delivery; future delivery commands should check scope, validation evidence, review evidence, branch/remote state, staged files, forbidden paths, secrets, and explicit delivery approval before any commit or push.
+Delivery after worker review is a separate safety layer. Read `docs/delivery-safety-design.md` before adding any commit/push workflow. Queue completion is not delivery. Current delivery readiness checks inspect scope, validation evidence, review evidence, branch/remote state, staged files, forbidden paths, and secret-risk signals before any future delivery plan, approval, commit, or push.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 
@@ -607,9 +607,17 @@ Registered validation commands are safer than ad hoc commands because Devo recor
 devo git status --project <name>
 devo git delivery-check --project <name>
 devo git delivery-report --project <name> --run <runId> --message "<message>"
+devo delivery check --project <name>
+devo delivery check --project <name> --queue <queueId> --item <itemId> --write
+devo delivery list --project <name>
+devo delivery show --project <name> --delivery <deliveryId>
 ```
 
-Delivery commands inspect Git state and write evidence. They do not stage, commit, push, or bypass GitHub policy.
+Git delivery commands inspect Git state and write Git-focused evidence. Delivery readiness commands inspect the post-worker delivery gate and can write JSON/Markdown artifacts under `workspace/projects/<project>/delivery/`.
+
+`devo delivery check` reports target repo path, branch, remote/upstream, Git status summary, changed/staged/unstaged/untracked files, forbidden changed/staged paths, workspace artifacts staged, secret-risk files/signals, linked queue item status, linked worker review status, linked validation evidence status, blockers, warnings, and next action. Linked queue checks block when the queue item is not completed, when the linked worker review is missing/not `reviewed_passed`, or when validation evidence failed.
+
+Delivery commands do not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, modify target repositories, or bypass GitHub policy. Commit and push remain future delivery-plan/approval work.
 
 ## Context And Recovery
 

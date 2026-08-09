@@ -46,6 +46,7 @@ Devo already has:
 - Codex launcher diagnostics, WindowsApps blocking, explicit path support, and local wrapper support
 - Codex launcher setup and real supervised dry-run runbooks
 - Delivery safety design before commit/push automation
+- Delivery readiness checks before delivery plan/approval automation
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -162,7 +163,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 29. TASK-DEVO-102: Codex wrapper/launcher support before real retry - completed.
 30. TASK-DEVO-103: Codex launcher setup runbook and readiness checklist - completed.
 31. TASK-DEVO-104: Delivery and commit safety design - completed.
-32. TASK-DEVO-105: Delivery readiness data model and check command.
+32. TASK-DEVO-105: Delivery readiness data model and check command - completed.
 33. TASK-DEVO-106: Delivery plan and approval workflow.
 34. TASK-DEVO-107: Delivery report and commit message preparation.
 35. TASK-DEVO-108+: controlled commit/push, delivery UI visibility, dogfood, optional API/model agents, notifications, packaging, advanced UI, and other polish.

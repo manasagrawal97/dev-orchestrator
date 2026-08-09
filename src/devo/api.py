@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
+from .delivery import list_delivery_checks, load_delivery_check
 from .doctor import run_doctor_with_timing
 from .project_planning import (
     calculate_project_progress,
@@ -58,6 +59,8 @@ API_ROUTES = (
     "GET /api/projects/{project}/batches/{batch_id}",
     "GET /api/projects/{project}/batches/{batch_id}/approval",
     "GET /api/projects/{project}/progress",
+    "GET /api/projects/{project}/delivery-checks",
+    "GET /api/projects/{project}/delivery-checks/{delivery_id}",
     "GET /api/projects/{project}/queues",
     "GET /api/projects/{project}/queues/{queue_id}",
     "GET /api/projects/{project}/queues/{queue_id}/next",
@@ -217,6 +220,23 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
     def project_progress(project: str) -> dict[str, object]:
         _require_project(project, root)
         return _model_dump(calculate_project_progress(project, workspace_root=root))
+
+    @api.get("/api/projects/{project}/delivery-checks")
+    def project_delivery_checks(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        checks = list_delivery_checks(project, workspace_root=root)
+        return {"project": project, "count": len(checks), "delivery_checks": [_model_dump(check) for check in checks]}
+
+    @api.get("/api/projects/{project}/delivery-checks/{delivery_id}")
+    def project_delivery_check(project: str, delivery_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        check = load_delivery_check(project, delivery_id, workspace_root=root)
+        if not check:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "delivery_check_not_found", "message": f"Delivery check not found: {delivery_id}"},
+            )
+        return _model_dump(check)
 
     @api.get("/api/projects/{project}/queues")
     def project_queues(project: str) -> dict[str, object]:

@@ -852,6 +852,26 @@ devo git delivery-report --project MyProject --run <runId> --task <taskId> --mes
 
 DevOrchestrator does not auto-push and does not bypass external approval policies. If push is blocked by Codex approval policy, the user must run `git push` manually after reviewing the delivery report.
 
+Delivery readiness artifacts provide the next safety layer after queue/review evidence:
+
+```powershell
+devo delivery check --project MyProject
+devo delivery check --project MyProject --queue Q001 --item QI001 --write
+devo delivery list --project MyProject
+devo delivery show --project MyProject --delivery DEL-0001
+```
+
+`devo delivery check` is read-only. It summarizes target repository branch/remote/status, changed/staged/unstaged/untracked files, forbidden path changes, workspace artifacts staged for commit, secret-risk files/signals, linked queue item status, linked worker review status, linked validation evidence, blockers, warnings, and the next safe action. With `--write`, it stores JSON/Markdown under `workspace/projects/<project>/delivery/` plus `delivery-index.json`. It does not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, or modify target repositories. Commit/push automation remains deferred to later delivery-plan and approval tasks.
+
+The local API exposes the same read-only delivery artifacts through:
+
+```text
+GET /api/projects/{project}/delivery-checks
+GET /api/projects/{project}/delivery-checks/{delivery_id}
+```
+
+Project overview read models now include the latest delivery readiness id/status, blocker count, warning count, and next action so the future dashboard can show delivery state without scraping workspace folders directly.
+
 ## Reports And Handoff
 
 Deterministic reports collect the current Devo workspace state into compact summaries. They are useful when context is lost, after a long interruption, or before handing work from ChatGPT to Codex or a human.

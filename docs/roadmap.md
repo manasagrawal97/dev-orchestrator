@@ -311,6 +311,10 @@ Added `docs/runbooks/codex-launcher-setup.md`, an operator checklist for obtaini
 
 Added `docs/delivery-safety-design.md`, the design for delivery after worker execution, report import, review evidence, and queue completion. The design separates queue completion from commit/push delivery, defines readiness criteria and stop conditions, proposes delivery artifacts under `workspace/projects/<project>/delivery/`, sketches future `devo delivery ...` commands, separates planning/batch/execution/run-plan/review/delivery/safety-override approvals, and defers auto commit/push plus UI commit/push buttons. No source code, UI code, delivery automation, real Codex execution, or target repo commands were added.
 
+### TASK-DEVO-105 Delivery Readiness Checks - Completed
+
+Added the first implemented delivery safety layer with read-only `devo delivery check`, `devo delivery list`, and `devo delivery show`. Delivery checks store JSON/Markdown under `workspace/projects/<project>/delivery/` only when `--write` is supplied, summarize target repository status, forbidden changed/staged paths, workspace artifacts staged, secret-risk files/signals, linked queue item status, linked worker review status, validation evidence status, blockers, warnings, and next action. Project overview read models and local API endpoints expose the latest delivery readiness state. This still does not stage, unstage, validate, commit, push, complete queues, run Codex, run target commands, or modify target repositories.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

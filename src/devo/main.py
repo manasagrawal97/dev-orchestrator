@@ -48,6 +48,12 @@ from .context_updates import (
     render_context_update_markdown,
 )
 from .doctor import DoctorReport, run_doctor
+from .delivery import (
+    DeliveryCheck,
+    list_delivery_checks,
+    load_delivery_check,
+    run_delivery_readiness_check,
+)
 from .reports import (
     build_handoff_report,
     build_project_report,
@@ -248,6 +254,7 @@ backup_app = typer.Typer(help="Backup, verify, list, and restore workspace state
 env_app = typer.Typer(help="Capture and verify environment snapshots.")
 workflow_app = typer.Typer(help="Inspect run workflow status and next actions.")
 git_app = typer.Typer(help="Inspect Git delivery readiness without mutating repositories.")
+delivery_app = typer.Typer(help="Inspect read-only delivery readiness artifacts.")
 report_app = typer.Typer(help="Generate deterministic project, run, and handoff reports.")
 visual_app = typer.Typer(help="Generate Mermaid visual report artifacts.")
 api_app = typer.Typer(help="Serve the local read-only Devo API.")
@@ -269,6 +276,7 @@ app.add_typer(backup_app, name="backup")
 app.add_typer(env_app, name="env")
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(git_app, name="git")
+app.add_typer(delivery_app, name="delivery")
 app.add_typer(report_app, name="report")
 app.add_typer(visual_app, name="visual")
 app.add_typer(api_app, name="api")
@@ -1466,6 +1474,98 @@ def write_git_delivery_report(
     console.print(f"Markdown: {_named_path(report.markdown_path)}")
     console.print(f"JSON: {_named_path(report.json_path)}")
     console.print(f"Next human action: {report.delivery_check.next_human_action}", soft_wrap=True)
+
+
+def _print_delivery_check(check: DeliveryCheck) -> None:
+    console.print(f"Project: {check.project}")
+    console.print(f"Delivery ID: {check.delivery_id}")
+    console.print(f"Readiness: {check.readiness_status}")
+    console.print(f"Target repo: {check.target_repo_path}", soft_wrap=True)
+    console.print(f"Branch: {check.branch or 'unknown'}")
+    console.print(f"Remote/upstream: {check.remote or 'unknown'}")
+    console.print(f"Git status: {check.git_status_summary}")
+    console.print(f"Queue item: {check.source_queue_id or 'not linked'} / {check.source_queue_item_id or 'not linked'}")
+    console.print(f"Queue item status: {check.queue_item_status}")
+    console.print(f"Worker review status: {check.review_status}")
+    console.print(f"Validation evidence status: {check.validation_evidence_status}")
+    console.print("Files:")
+    console.print(f"  Changed: {len(check.changed_files)}")
+    console.print(f"  Staged: {len(check.staged_files)}")
+    console.print(f"  Unstaged: {len(check.unstaged_files)}")
+    console.print(f"  Untracked: {len(check.untracked_files)}")
+    console.print(f"  Forbidden changed: {len(check.forbidden_changed_files)}")
+    console.print(f"  Forbidden staged: {len(check.forbidden_staged_files)}")
+    console.print(f"  Workspace artifacts staged: {len(check.workspace_artifacts_staged)}")
+    console.print(f"  Secret-risk files/signals: {len(check.secrets_risk_files)}")
+    console.print("Blockers:")
+    if check.blockers:
+        for blocker in check.blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Warnings:")
+    if check.warnings:
+        for warning in check.warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {check.next_action}", soft_wrap=True)
+
+
+@delivery_app.command("check")
+def check_delivery_readiness(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str | None = typer.Option(None, "--queue", help="Optional execution queue ID."),
+    item_id: str | None = typer.Option(None, "--item", help="Optional queue item ID."),
+    write: bool = typer.Option(False, "--write", help="Write delivery check artifacts."),
+) -> None:
+    """Run a read-only delivery readiness check without committing or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        check, json_path, markdown_path = run_delivery_readiness_check(
+            resolved_project,
+            queue_id=queue_id,
+            item_id=item_id,
+            write=write,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_delivery_check(check)
+    if write:
+        console.print(f"JSON: {_named_path(json_path)}")
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("list")
+def list_delivery_readiness_checks(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List recent read-only delivery readiness artifacts."""
+    resolved_project = _resolve_project(project_name)
+    checks = list_delivery_checks(resolved_project)
+    console.print(f"Delivery checks for {resolved_project}: {len(checks)}")
+    if not checks:
+        console.print("  none")
+        return
+    for check in checks:
+        console.print(
+            f"  {check.delivery_id} | {check.readiness_status} | blockers {len(check.blockers)} | "
+            f"warnings {len(check.warnings)} | {check.updated_at.isoformat()}",
+            soft_wrap=True,
+        )
+
+
+@delivery_app.command("show")
+def show_delivery_readiness_check(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--delivery", help="Delivery check ID."),
+) -> None:
+    """Show one read-only delivery readiness artifact."""
+    resolved_project = _resolve_project(project_name)
+    check = load_delivery_check(resolved_project, delivery_id)
+    if not check:
+        raise typer.BadParameter(f"Delivery check not found: {delivery_id}", param_hint="--delivery")
+    _print_delivery_check(check)
 
 
 def _print_report(report: dict[str, object], output_format: str, write: bool, project_name: str, run_id: str | None = None) -> None:
