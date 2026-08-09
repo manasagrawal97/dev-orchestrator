@@ -21,6 +21,7 @@ Relevant Devo capabilities already exist:
 - `devo delivery check` now creates read-only delivery readiness summaries and optional JSON/Markdown artifacts under `workspace/projects/<project>/delivery/`.
 - `devo delivery plan` and delivery approval commands now create read-only plan/approval artifacts from readiness checks without committing or pushing.
 - `devo delivery report-prepare` now creates a pre-commit delivery report from an approved plan, re-checks current readiness, and proposes the commit message without staging, committing, or pushing.
+- `devo delivery commit-preview` and guarded `devo delivery commit --confirm-commit` now provide the first CLI-only commit path. The command re-checks readiness, stages only eligible safe files, writes commit result artifacts, and still does not push.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -110,6 +111,8 @@ Suggested files:
 - `delivery-check-<id>.json`
 - `delivery-report-<id>.json`
 - `delivery-report-<id>.md`
+- `delivery-commit-<id>.json`
+- `delivery-commit-<id>.md`
 
 ### DeliveryPlan Fields
 
@@ -213,6 +216,22 @@ The check command is still read-only. It does not stage, unstage, validate, comm
 
 TASK-DEVO-107 implements draft report preparation. Reports are stored as `delivery-report-<id>.json` and `.md`, are indexed in `delivery-index.json`, and intentionally stop before staging, committing, pushing, validation execution, target command execution, or Codex execution.
 
+### DeliveryCommit Fields
+
+TASK-DEVO-108 implements commit result artifacts with:
+
+- `project`
+- `delivery_id`
+- `status`: `committed`, `blocked`, or `failed`
+- `commit_hash` optional
+- `commit_message`
+- `eligible_files`
+- Git stdout/stderr and return code
+- timestamps
+- `next_action`
+
+The commit result records what the guarded CLI commit did. It is not push evidence.
+
 ## Command Roadmap
 
 Commands are added in layers:
@@ -233,11 +252,13 @@ devo delivery report-prepare --project <project> --plan <deliveryId>
 devo delivery report-list --project <project>
 devo delivery report-show --project <project> --report <deliveryId>
 devo delivery commit-message --project <project> --plan <deliveryId>
-devo delivery commit --project <project> --delivery <deliveryId> --confirm-commit
+devo delivery commit-preview --project <project> --report <deliveryId>
+devo delivery commit --project <project> --report <deliveryId> --confirm-commit
+devo delivery commit-show --project <project> --delivery <deliveryId>
 devo delivery push --project <project> --delivery <deliveryId> --confirm-push
 ```
 
-The readiness, plan, approval, report-preparation, and commit-message commands exist now and are workspace-artifact/read-only only. Commit and push remain future commands and must require explicit confirmation flags. UI commit/push buttons remain deferred.
+The readiness, plan, approval, report-preparation, commit-message, commit-preview, and guarded commit commands exist now. `commit-preview` is read-only. `commit` is CLI-only, requires `--confirm-commit`, and does not push. Push remains a future command and must require an explicit confirmation flag. UI commit/push buttons remain deferred.
 
 ## Approval Separation
 
@@ -258,7 +279,7 @@ These approvals are separate because each one answers a different question. A ba
 Initial policy:
 
 - No automatic commit/push.
-- Commit only after delivery readiness passes.
+- Commit only after delivery readiness passes, delivery plan/report approval is present, a report is ready, and `--confirm-commit` is supplied.
 - Push only after branch and remote are verified.
 - Commit messages should reference the task, batch, queue item, worker run, or review when possible.
 - Existing user preference for approved commit/push can be supported later only under strict delivery checks and standing rules.
@@ -277,7 +298,7 @@ Future UI can show delivery visibility before actions:
 - validation and review evidence summary
 - copyable CLI commands first
 
-Do not add commit/push buttons until the delivery safety model is mature. A read-only Delivery page should come before controlled delivery actions.
+Do not add commit/push buttons until the delivery safety model is mature. A read-only Delivery page should come before controlled delivery actions. TASK-DEVO-108 adds only CLI commit; the UI may show copyable commands and commit result metadata, but not execute commit or push.
 
 ## Rollout Plan
 
@@ -286,7 +307,7 @@ Recommended next tasks:
 1. TASK-DEVO-105: Delivery readiness data model and check command - completed
 2. TASK-DEVO-106: Delivery plan and approval workflow - completed
 3. TASK-DEVO-107: Delivery report and commit message preparation - completed
-4. TASK-DEVO-108: Controlled commit command with `--confirm-commit`
+4. TASK-DEVO-108: Controlled commit command with `--confirm-commit` - completed
 5. TASK-DEVO-109: Controlled push command with `--confirm-push`
 6. TASK-DEVO-110: Delivery UI visibility
 7. TASK-DEVO-111: Delivery dogfood on docs-only change

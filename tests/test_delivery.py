@@ -9,7 +9,14 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from devo.api import create_app
-from devo.delivery import create_delivery_plan, list_delivery_checks, prepare_delivery_report, run_delivery_readiness_check
+from devo.delivery import (
+    commit_delivery_report,
+    create_delivery_plan,
+    list_delivery_checks,
+    prepare_delivery_report,
+    preview_delivery_commit,
+    run_delivery_readiness_check,
+)
 from devo.main import app
 from devo.project_planning import (
     ExecutionQueue,
@@ -221,7 +228,7 @@ def test_delivery_approve_succeeds_for_ready_plan(tmp_path: Path, monkeypatch) -
 
     assert result.exit_code == 0, result.output
     assert "Approval status: approved" in result.output
-    assert "Future commit/push commands are not implemented" in result.output
+    assert "Next: prepare a delivery report" in result.output
     plan = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-plan-del-0001.json").read_text(encoding="utf-8"))
     assert plan["approval_status"] == "approved"
     assert plan["delivery_status"] == "approved"
@@ -457,6 +464,196 @@ def test_delivery_report_commands_do_not_mutate_target_repo(tmp_path: Path, monk
     assert after == before
 
 
+def test_delivery_commit_preview_shows_eligible_files_without_staging(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    before = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+
+    result = runner.invoke(app, ["delivery", "commit-preview", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+    after = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+
+    assert result.exit_code == 0, result.output
+    assert "Commit ready: True" in result.output
+    assert "changed.txt" in result.output
+    assert after == before
+
+
+def test_delivery_commit_refuses_without_confirm_commit(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    result = runner.invoke(app, ["delivery", "commit", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "--confirm-commit is required" in result.output
+
+
+def test_delivery_commit_refuses_unapproved_delivery_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    plan_path = workspace / "projects" / "sample" / "delivery" / "delivery-plan-del-0001.json"
+    payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    payload["approval_status"] = "not_requested"
+    plan_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["delivery", "commit", "--project", "sample", "--report", "DEL-0001", "--confirm-commit"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "not approved" in result.output
+
+
+def test_delivery_commit_refuses_blocked_delivery_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_approved_plan(workspace)
+    (repo / ".env").write_text("SAFE_PLACEHOLDER=true\n", encoding="utf-8")
+    prepare_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "commit", "--project", "sample", "--report", "DEL-0001", "--confirm-commit"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "not ready" in result.output or "not commit-ready" in result.output
+
+
+def test_delivery_commit_refuses_forbidden_changed_files(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    (repo / ".env").write_text("SAFE_PLACEHOLDER=true\n", encoding="utf-8")
+
+    preview = preview_delivery_commit("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.commit_ready is False
+    assert ".env" in preview.blocked_files
+    assert any("Forbidden delivery paths are changed" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_commit_refuses_staged_workspace_artifact(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    (repo / "workspace").mkdir()
+    (repo / "workspace" / "artifact.txt").write_text("artifact\n", encoding="utf-8")
+    _git(repo, "add", "workspace/artifact.txt")
+
+    preview = preview_delivery_commit("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.commit_ready is False
+    assert "workspace/artifact.txt" in preview.blocked_files
+    assert any("Workspace artifacts are staged" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_commit_refuses_staged_secret_risk_file(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    (repo / ".env").write_text("SAFE_PLACEHOLDER=true\n", encoding="utf-8")
+    _git(repo, "add", ".env")
+
+    preview = preview_delivery_commit("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.commit_ready is False
+    assert ".env" in preview.blocked_files
+    assert any("Secret-risk files or signals" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_commit_refuses_when_no_eligible_changes(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_ready_report(workspace)
+
+    preview = preview_delivery_commit("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.commit_ready is False
+    assert "No commit-eligible changed files were found." in preview.blockers
+
+
+def test_delivery_commit_stages_only_eligible_files_and_creates_commit(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "commit", "--project", "sample", "--report", "DEL-0001", "--confirm-commit"],
+        terminal_width=240,
+    )
+    status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    report_payload = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-report-del-0001.json").read_text(encoding="utf-8"))
+    commit_payload = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-commit-del-0001.json").read_text(encoding="utf-8"))
+    overview = build_project_overview("sample", workspace_root=workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "Commit status: committed" in result.output
+    assert status == ""
+    assert report_payload["final_status"] == "committed"
+    assert report_payload["commit_ready"] is False
+    assert report_payload["pushed"] is False
+    assert report_payload["commit_hash"]
+    assert commit_payload["status"] == "committed"
+    assert commit_payload["eligible_files"] == ["changed.txt"]
+    assert overview.latest_delivery_commit_hash == report_payload["commit_hash"]
+    assert overview.latest_delivery_commit_status == "committed"
+    assert overview.latest_delivery_pushed is False
+    assert _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout.strip() == "2"
+
+
+def test_delivery_commit_does_not_push(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    ahead = _git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", capture=True).stdout.strip()
+
+    assert result.status == "committed"
+    assert ahead.startswith("1")
+
+
+def test_delivery_commit_failure_is_captured_safely(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["add"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:1] == ["commit"]:
+            return subprocess.CompletedProcess(args, 1, "", "commit failed")
+        return subprocess.CompletedProcess(args, 0, "HEAD", "")
+
+    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
+
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+
+    assert result.status == "failed"
+    assert result.returncode == 1
+    assert "commit failed" in result.stderr
+
+
+def test_api_exposes_delivery_commit_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/delivery-reports/DEL-0001/commit")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "committed"
+    assert response.json()["commit_hash"]
+
+
 def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
@@ -492,6 +689,13 @@ def _create_approved_plan(workspace: Path) -> None:
         terminal_width=240,
     )
     assert result.exit_code == 0, result.output
+
+
+def _create_ready_report(workspace: Path) -> None:
+    _create_approved_plan(workspace)
+    report, _json_path, _markdown_path = prepare_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+    assert report.final_status == "ready"
+    assert report.commit_ready is True
 
 
 def _write_queue(workspace: Path, status: str) -> None:

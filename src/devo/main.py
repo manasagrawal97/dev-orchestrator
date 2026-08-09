@@ -51,19 +51,24 @@ from .doctor import DoctorReport, run_doctor
 from .delivery import (
     DeliveryApproval,
     DeliveryCheck,
+    DeliveryCommitPreview,
+    DeliveryCommitResult,
     DeliveryPlan,
     DeliveryReport,
     approve_delivery_plan,
+    commit_delivery_report,
     create_delivery_plan,
     list_delivery_checks,
     list_delivery_approvals,
     list_delivery_plans,
     list_delivery_reports,
+    load_delivery_commit_result,
     load_delivery_approval,
     load_delivery_check,
     load_delivery_plan,
     load_delivery_report,
     prepare_delivery_report,
+    preview_delivery_commit,
     propose_delivery_commit_message,
     reject_delivery_plan,
     request_delivery_approval,
@@ -1603,6 +1608,52 @@ def _print_delivery_report(report: DeliveryReport) -> None:
     console.print(f"Next action: {report.next_action}", soft_wrap=True)
 
 
+def _print_delivery_commit_preview(preview: DeliveryCommitPreview) -> None:
+    console.print(f"Project: {preview.project}")
+    console.print(f"Delivery report: {preview.delivery_id}")
+    console.print(f"Commit ready: {preview.commit_ready}")
+    console.print(f"Delivery readiness: {preview.delivery_readiness_status}")
+    console.print(f"Proposed commit message: {preview.proposed_commit_message}", soft_wrap=True)
+    console.print(f"Effective commit message: {preview.effective_commit_message}", soft_wrap=True)
+    console.print(f"Target repo: {preview.target_repo_path}", soft_wrap=True)
+    console.print(f"Branch: {preview.branch or 'unknown'}")
+    console.print(f"Remote/upstream: {preview.remote or 'unknown'}")
+    console.print("Eligible files:")
+    if preview.eligible_files:
+        for path in preview.eligible_files:
+            console.print(f"  {path}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Blocked files:")
+    if preview.blocked_files:
+        for path in preview.blocked_files:
+            console.print(f"  {path}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Blockers:")
+    if preview.blockers:
+        for blocker in preview.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {preview.next_action}", soft_wrap=True)
+
+
+def _print_delivery_commit_result(result: DeliveryCommitResult) -> None:
+    console.print(f"Project: {result.project}")
+    console.print(f"Delivery report: {result.delivery_id}")
+    console.print(f"Commit status: {result.status}")
+    console.print(f"Commit hash: {result.commit_hash or 'none'}")
+    console.print(f"Commit message: {result.commit_message}", soft_wrap=True)
+    console.print(f"Files committed: {len(result.eligible_files)}")
+    console.print(f"Return code: {result.returncode if result.returncode is not None else 'not available'}")
+    if result.stdout:
+        console.print(f"stdout: {result.stdout}", soft_wrap=True)
+    if result.stderr:
+        console.print(f"stderr: {result.stderr}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+
+
 @delivery_app.command("check")
 def check_delivery_readiness(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -1742,7 +1793,7 @@ def approve_delivery_plan_command(
     _print_delivery_approval(approval)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
-    console.print("Future commit/push commands are not implemented.")
+    console.print("Next: prepare a delivery report, then preview guarded CLI commit. Push is not implemented.")
 
 
 @delivery_app.command("reject")
@@ -1823,6 +1874,60 @@ def show_delivery_commit_message(
     if not plan:
         raise typer.BadParameter(f"Delivery plan not found: {delivery_id}", param_hint="--plan")
     console.print(propose_delivery_commit_message(plan), soft_wrap=True)
+
+
+@delivery_app.command("commit-preview")
+def preview_delivery_commit_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+    message: str | None = typer.Option(None, "--message", help="Optional safe commit message override for preview."),
+) -> None:
+    """Preview a guarded delivery commit without staging or committing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        preview = preview_delivery_commit(resolved_project, delivery_id, message_override=message)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--report") from exc
+    _print_delivery_commit_preview(preview)
+
+
+@delivery_app.command("commit")
+def commit_delivery_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+    confirm_commit: bool = typer.Option(False, "--confirm-commit", help="Required explicit confirmation to create a git commit."),
+    message: str | None = typer.Option(None, "--message", help="Optional safe commit message override recorded in commit result."),
+    author_note: str | None = typer.Option(None, "--author-note", help="Optional operator note recorded in report metadata."),
+) -> None:
+    """Create a guarded local git commit from a ready delivery report. Does not push."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        result, json_path, markdown_path = commit_delivery_report(
+            resolved_project,
+            delivery_id,
+            confirm_commit=confirm_commit,
+            message_override=message,
+            author_note=author_note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--report") from exc
+    _print_delivery_commit_result(result)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("Push was not run. Push remains future TASK-DEVO-109.")
+
+
+@delivery_app.command("commit-show")
+def show_delivery_commit_result_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--delivery", help="Delivery ID."),
+) -> None:
+    """Show one delivery commit result artifact."""
+    resolved_project = _resolve_project(project_name)
+    result = load_delivery_commit_result(resolved_project, delivery_id)
+    if not result:
+        raise typer.BadParameter(f"Delivery commit result not found: {delivery_id}", param_hint="--delivery")
+    _print_delivery_commit_result(result)
 
 
 @delivery_app.command("list")

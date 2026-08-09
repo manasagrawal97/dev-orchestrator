@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -221,6 +222,45 @@ class DeliveryReport(BaseModel):
     next_action: str
 
 
+class DeliveryCommitPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    target_repo_path: str
+    branch: str | None = None
+    remote: str | None = None
+    proposed_commit_message: str
+    effective_commit_message: str
+    eligible_files: list[str] = Field(default_factory=list)
+    blocked_files: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    delivery_readiness_status: str
+    commit_ready: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    next_action: str
+
+
+class DeliveryCommitResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    status: str
+    commit_hash: str | None = None
+    commit_message: str
+    eligible_files: list[str] = Field(default_factory=list)
+    stdout: str = ""
+    stderr: str = ""
+    returncode: int | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    next_action: str
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -248,6 +288,12 @@ def delivery_report_artifact_paths(project_name: str, delivery_id: str, workspac
     directory = delivery_directory(project_name, workspace_root=workspace_root)
     stem = delivery_id.lower()
     return directory / f"delivery-report-{stem}.json", directory / f"delivery-report-{stem}.md"
+
+
+def delivery_commit_artifact_paths(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    directory = delivery_directory(project_name, workspace_root=workspace_root)
+    stem = delivery_id.lower()
+    return directory / f"delivery-commit-{stem}.json", directory / f"delivery-commit-{stem}.md"
 
 
 def run_delivery_readiness_check(
@@ -545,7 +591,7 @@ def approve_delivery_plan(
             "approver": approver.strip() or None,
             "decision_note": note.strip(),
             "approval_notes": [*_existing_notes(existing), note.strip() or "Delivery plan approved."],
-            "next_action": "Controlled commit command is future scope; do not commit or push from Devo yet.",
+            "next_action": "Prepare a delivery report, then preview any guarded CLI commit before committing.",
             "updated_at": now,
         }
     )
@@ -554,7 +600,7 @@ def approve_delivery_plan(
             "approval_status": "approved",
             "delivery_status": "approved",
             "updated_at": now,
-            "next_action": "Delivery approved for a future controlled commit step; Devo still does not commit or push.",
+            "next_action": "Prepare a delivery report with devo delivery report-prepare before guarded commit.",
         }
     )
     write_delivery_plan(plan, workspace_root=root)
@@ -723,6 +769,162 @@ def list_delivery_reports(project_name: str, workspace_root: Path | None = None)
         except (ValueError, ValidationError):
             continue
     return sorted(reports, key=lambda item: item.updated_at, reverse=True)
+
+
+def preview_delivery_commit(
+    project_name: str,
+    delivery_id: str,
+    *,
+    message_override: str | None = None,
+    workspace_root: Path | None = None,
+) -> DeliveryCommitPreview:
+    root = workspace_root or get_workspace_root()
+    report = _require_delivery_report(project_name, delivery_id, root)
+    plan = _require_delivery_plan(project_name, report.source_delivery_plan_id, root)
+    approval = load_delivery_approval(project_name, report.source_delivery_plan_id, workspace_root=root)
+    current_check, _json_path, _markdown_path = run_delivery_readiness_check(
+        project_name,
+        queue_id=report.source_queue_id,
+        item_id=report.source_queue_item_id,
+        write=False,
+        workspace_root=root,
+    )
+    proposed_message = report.proposed_commit_message.strip()
+    effective_message = (message_override.strip() if message_override else proposed_message).strip()
+    blocked_files = _dedupe(
+        [
+            *current_check.forbidden_changed_files,
+            *current_check.forbidden_staged_files,
+            *current_check.workspace_artifacts_staged,
+            *current_check.secrets_risk_files,
+        ]
+    )
+    eligible_files = [
+        path
+        for path in current_check.changed_files
+        if path not in blocked_files
+        and not _is_forbidden_path(path)
+        and not _is_workspace_artifact_path(path)
+        and not _is_secret_risk_path(path)
+    ]
+    blockers = list(current_check.blockers)
+    if plan.approval_status != "approved":
+        blockers.append(f"Delivery plan {plan.delivery_id} is not approved.")
+    if not approval or approval.approval_status != "approved":
+        blockers.append(f"Delivery approval for {plan.delivery_id} is not approved.")
+    if report.final_status != "ready":
+        blockers.append(f"Delivery report {delivery_id} is {report.final_status}, not ready.")
+    if not report.commit_ready:
+        blockers.append(f"Delivery report {delivery_id} is not commit-ready.")
+    if current_check.readiness_status == BLOCKED:
+        blockers.append("Current delivery readiness is blocked.")
+    if blocked_files:
+        blockers.append("Blocked files are present: " + ", ".join(blocked_files))
+    if not eligible_files:
+        blockers.append("No commit-eligible changed files were found.")
+    if not effective_message:
+        blockers.append("Commit message is required.")
+    blockers = _dedupe(blockers)
+    commit_ready = not blockers
+    return DeliveryCommitPreview(
+        project=project_name,
+        delivery_id=report.delivery_id,
+        target_repo_path=current_check.target_repo_path,
+        branch=current_check.branch,
+        remote=current_check.remote,
+        proposed_commit_message=proposed_message,
+        effective_commit_message=effective_message,
+        eligible_files=eligible_files,
+        blocked_files=blocked_files,
+        blockers=blockers,
+        warnings=_dedupe(current_check.warnings),
+        delivery_readiness_status=current_check.readiness_status,
+        commit_ready=commit_ready,
+        next_action=_commit_preview_next_action(commit_ready, blockers),
+    )
+
+
+def commit_delivery_report(
+    project_name: str,
+    delivery_id: str,
+    *,
+    confirm_commit: bool = False,
+    message_override: str | None = None,
+    author_note: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryCommitResult, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    if not confirm_commit:
+        msg = "--confirm-commit is required."
+        raise ValueError(msg)
+    preview = preview_delivery_commit(project_name, delivery_id, message_override=message_override, workspace_root=root)
+    if not preview.commit_ready:
+        result = DeliveryCommitResult(
+            project=project_name,
+            delivery_id=delivery_id,
+            status="blocked",
+            commit_message=preview.effective_commit_message,
+            eligible_files=preview.eligible_files,
+            stderr=_summary_text(preview.blockers),
+            next_action="Resolve commit blockers before retrying delivery commit.",
+        )
+        write_delivery_commit_result(result, workspace_root=root)
+        _mark_delivery_report_blocked(project_name, delivery_id, result.stderr, workspace_root=root)
+        raise ValueError("Delivery commit blocked: " + result.stderr)
+    repo_path = Path(preview.target_repo_path)
+    try:
+        add_result = _run_git(repo_path, ["add", "--", *preview.eligible_files])
+        if add_result.returncode != 0:
+            return _write_failed_commit_result(project_name, delivery_id, preview, "git add failed", add_result, root)
+        commit_result = _run_git(repo_path, ["commit", "-m", preview.effective_commit_message])
+        if commit_result.returncode != 0:
+            return _write_failed_commit_result(project_name, delivery_id, preview, "git commit failed", commit_result, root)
+        hash_result = _run_git(repo_path, ["rev-parse", "HEAD"])
+        commit_hash = hash_result.stdout.strip() if hash_result.returncode == 0 else None
+        result = DeliveryCommitResult(
+            project=project_name,
+            delivery_id=delivery_id,
+            status="committed",
+            commit_hash=commit_hash,
+            commit_message=preview.effective_commit_message,
+            eligible_files=preview.eligible_files,
+            stdout=commit_result.stdout.strip(),
+            stderr=commit_result.stderr.strip(),
+            returncode=commit_result.returncode,
+            next_action="Commit created. Push remains future TASK-DEVO-109; do not push from Devo yet.",
+        )
+        _mark_delivery_report_committed(project_name, delivery_id, commit_hash, author_note, workspace_root=root)
+        return write_delivery_commit_result(result, workspace_root=root)
+    except OSError as exc:
+        result = DeliveryCommitResult(
+            project=project_name,
+            delivery_id=delivery_id,
+            status="failed",
+            commit_message=preview.effective_commit_message,
+            eligible_files=preview.eligible_files,
+            stderr=str(exc),
+            next_action="Review the git execution failure before retrying delivery commit.",
+        )
+        _mark_delivery_report_blocked(project_name, delivery_id, str(exc), workspace_root=root)
+        return write_delivery_commit_result(result, workspace_root=root)
+
+
+def write_delivery_commit_result(result: DeliveryCommitResult, workspace_root: Path | None = None) -> tuple[DeliveryCommitResult, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_directory(result.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = delivery_commit_artifact_paths(result.project, result.delivery_id, workspace_root=root)
+    json_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text(render_delivery_commit_markdown(result), encoding="utf-8")
+    return result, json_path, markdown_path
+
+
+def load_delivery_commit_result(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryCommitResult | None:
+    root = workspace_root or get_workspace_root()
+    json_path, _markdown_path = delivery_commit_artifact_paths(project_name, delivery_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return DeliveryCommitResult.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
 def load_delivery_check(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryCheck | None:
@@ -918,6 +1120,35 @@ def render_delivery_report_markdown(report: DeliveryReport) -> str:
     )
 
 
+def render_delivery_commit_markdown(result: DeliveryCommitResult) -> str:
+    return "\n".join(
+        [
+            f"# Delivery Commit Result: {result.delivery_id}",
+            "",
+            f"- Project: `{result.project}`",
+            f"- Status: `{result.status}`",
+            f"- Commit hash: `{result.commit_hash or 'none'}`",
+            f"- Commit message: `{result.commit_message}`",
+            f"- Files: {len(result.eligible_files)}",
+            f"- Return code: `{result.returncode if result.returncode is not None else 'not available'}`",
+            "",
+            "## Eligible Files",
+            "",
+            *_markdown_list(result.eligible_files),
+            "",
+            "## Git Output",
+            "",
+            f"- stdout: {result.stdout or 'none'}",
+            f"- stderr: {result.stderr or 'none'}",
+            "",
+            "## Next Action",
+            "",
+            result.next_action,
+            "",
+        ]
+    )
+
+
 def _write_delivery_index(project_name: str, workspace_root: Path | None = None) -> DeliveryIndex:
     root = workspace_root or get_workspace_root()
     directory = delivery_directory(project_name, workspace_root=root)
@@ -1008,6 +1239,14 @@ def _require_delivery_plan(project_name: str, delivery_id: str, workspace_root: 
         msg = f"Delivery plan not found: {delivery_id}"
         raise ValueError(msg)
     return plan
+
+
+def _require_delivery_report(project_name: str, delivery_id: str, workspace_root: Path) -> DeliveryReport:
+    report = load_delivery_report(project_name, delivery_id, workspace_root=workspace_root)
+    if not report:
+        msg = f"Delivery report not found: {delivery_id}"
+        raise ValueError(msg)
+    return report
 
 
 def _approval_from_plan(plan: DeliveryPlan, existing: DeliveryApproval | None = None) -> DeliveryApproval:
@@ -1143,7 +1382,7 @@ def _plan_next_action(delivery_status: str, approval_status: str) -> str:
     if approval_status == "requested":
         return "Review the delivery approval request; approve or reject the plan."
     if approval_status == "approved":
-        return "Delivery approved for a future controlled commit step; Devo still does not commit or push."
+        return "Prepare a delivery report with devo delivery report-prepare before guarded commit."
     if approval_status == "rejected":
         return "Delivery rejected; revise the plan before any future delivery step."
     return "Review delivery plan state."
@@ -1157,10 +1396,84 @@ def _approval_next_action(approval_status: str, plan: DeliveryPlan) -> str:
     if approval_status == "requested":
         return "Approve or reject the delivery plan after review."
     if approval_status == "approved":
-        return "Controlled commit command is future scope; do not commit or push from Devo yet."
+        return "Prepare a delivery report, then preview any guarded CLI commit before committing."
     if approval_status == "rejected":
         return "Revise the delivery plan or resolve blockers before requesting approval again."
     return "Review delivery approval state."
+
+
+def _commit_preview_next_action(commit_ready: bool, blockers: list[str]) -> str:
+    if commit_ready:
+        return "Ready for guarded CLI commit with --confirm-commit. Push remains future scope."
+    if blockers:
+        return "Resolve commit blockers before running guarded delivery commit."
+    return "Review delivery commit preview."
+
+
+def _run_git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _write_failed_commit_result(
+    project_name: str,
+    delivery_id: str,
+    preview: DeliveryCommitPreview,
+    label: str,
+    completed: subprocess.CompletedProcess[str],
+    workspace_root: Path,
+) -> tuple[DeliveryCommitResult, Path, Path]:
+    detail = _single_line(label, completed.stdout, completed.stderr)
+    result = DeliveryCommitResult(
+        project=project_name,
+        delivery_id=delivery_id,
+        status="failed",
+        commit_message=preview.effective_commit_message,
+        eligible_files=preview.eligible_files,
+        stdout=completed.stdout.strip(),
+        stderr=completed.stderr.strip(),
+        returncode=completed.returncode,
+        next_action="Review the git failure before retrying delivery commit.",
+    )
+    _mark_delivery_report_blocked(project_name, delivery_id, detail, workspace_root=workspace_root)
+    return write_delivery_commit_result(result, workspace_root=workspace_root)
+
+
+def _mark_delivery_report_committed(
+    project_name: str,
+    delivery_id: str,
+    commit_hash: str | None,
+    author_note: str | None,
+    workspace_root: Path,
+) -> None:
+    report = _require_delivery_report(project_name, delivery_id, workspace_root)
+    note = f" Author note: {author_note.strip()}" if author_note and author_note.strip() else ""
+    report.commit_hash = commit_hash
+    report.final_status = "committed"
+    report.commit_ready = False
+    report.push_ready = False
+    report.pushed = False
+    report.updated_at = datetime.now(UTC)
+    report.next_action = f"Commit created. Push remains future TASK-DEVO-109; do not push from Devo yet.{note}"
+    write_delivery_report(report, workspace_root=workspace_root)
+
+
+def _mark_delivery_report_blocked(project_name: str, delivery_id: str, detail: str, workspace_root: Path) -> None:
+    report = load_delivery_report(project_name, delivery_id, workspace_root=workspace_root)
+    if not report:
+        return
+    report.final_status = "blocked"
+    report.commit_ready = False
+    report.push_ready = False
+    report.updated_at = datetime.now(UTC)
+    report.blocker_summary = detail or report.blocker_summary
+    report.next_action = "Resolve delivery commit blockers before retrying."
+    write_delivery_report(report, workspace_root=workspace_root)
 
 
 def _safety_scan_summary(check: DeliveryCheck) -> str:
@@ -1178,11 +1491,17 @@ def _summary_text(items: list[str]) -> str:
     return "; ".join(items)
 
 
+def _single_line(label: str, stdout: str, stderr: str) -> str:
+    details = " ".join(part.strip() for part in (stdout, stderr) if part and part.strip())
+    details = " ".join(details.split())
+    return f"{label}: {details}" if details else label
+
+
 def _report_next_action(final_status: str, commit_ready: bool) -> str:
     if final_status == "blocked":
         return "Resolve report blockers before any future commit preparation."
     if commit_ready:
-        return "Commit message is prepared; controlled commit command remains future scope."
+        return "Preview guarded commit with devo delivery commit-preview before running --confirm-commit."
     return "Review delivery report before any future commit preparation."
 
 

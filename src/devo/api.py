@@ -12,6 +12,7 @@ from .delivery import (
     list_delivery_checks,
     list_delivery_plans,
     list_delivery_reports,
+    load_delivery_commit_result,
     load_delivery_approval,
     load_delivery_check,
     load_delivery_plan,
@@ -76,6 +77,7 @@ API_ROUTES = (
     "GET /api/projects/{project}/delivery-plans/{delivery_id}/approval",
     "GET /api/projects/{project}/delivery-reports",
     "GET /api/projects/{project}/delivery-reports/{delivery_id}",
+    "GET /api/projects/{project}/delivery-reports/{delivery_id}/commit",
     "GET /api/projects/{project}/queues",
     "GET /api/projects/{project}/queues/{queue_id}",
     "GET /api/projects/{project}/queues/{queue_id}/next",
@@ -303,6 +305,17 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
                 detail={"error": "delivery_report_not_found", "message": f"Delivery report not found: {delivery_id}"},
             )
         return _model_dump(report)
+
+    @api.get("/api/projects/{project}/delivery-reports/{delivery_id}/commit")
+    def project_delivery_commit_result(project: str, delivery_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        result = load_delivery_commit_result(project, delivery_id, workspace_root=root)
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "delivery_commit_not_found", "message": f"Delivery commit result not found: {delivery_id}"},
+            )
+        return _model_dump(result)
 
     @api.get("/api/projects/{project}/queues")
     def project_queues(project: str) -> dict[str, object]:

@@ -623,6 +623,9 @@ devo delivery report-prepare --project <name> --plan <deliveryId>
 devo delivery report-list --project <name>
 devo delivery report-show --project <name> --report <deliveryId>
 devo delivery commit-message --project <name> --plan <deliveryId>
+devo delivery commit-preview --project <name> --report <deliveryId>
+devo delivery commit --project <name> --report <deliveryId> --confirm-commit
+devo delivery commit-show --project <name> --delivery <deliveryId>
 ```
 
 Git delivery commands inspect Git state and write Git-focused evidence. Delivery readiness commands inspect the post-worker delivery gate and can write JSON/Markdown artifacts under `workspace/projects/<project>/delivery/`.
@@ -631,9 +634,9 @@ Git delivery commands inspect Git state and write Git-focused evidence. Delivery
 
 `devo delivery plan` creates a plan from a written readiness check and records the intended future commit message. `approval-request` records that the plan needs delivery review. `approve` approves only non-blocked plans; warnings can be approved but remain visible in the artifact. `reject` records rejection without deleting artifacts.
 
-After a plan is approved, `devo delivery report-prepare` writes `delivery-report-<id>.json` and `.md`, re-checks current readiness, summarizes blockers/warnings/validation/review/safety state, and marks whether the report is commit-ready. `devo delivery commit-message` prints only the proposed commit message so the operator can copy it into a manual commit or a future controlled commit command.
+After a plan is approved, `devo delivery report-prepare` writes `delivery-report-<id>.json` and `.md`, re-checks current readiness, summarizes blockers/warnings/validation/review/safety state, and marks whether the report is commit-ready. `devo delivery commit-message` prints only the proposed commit message. `devo delivery commit-preview` shows exactly which files a guarded commit would stage and commit without changing anything.
 
-Delivery commands do not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, modify target repositories, or bypass GitHub policy. Delivery approval and report preparation are not commit/push execution. Commit and push remain future work.
+`devo delivery commit --confirm-commit` is the only delivery command that may create a Git commit. It is CLI-only, requires a ready approved delivery report, re-runs safety checks, stages only eligible files, writes a commit result artifact, and updates the delivery report with the commit hash. It does not push, run validation, complete queue items, run Codex, run target commands, modify workspace artifacts for commit, or bypass GitHub policy. Push remains future work.
 
 ## Context And Recovery
 
