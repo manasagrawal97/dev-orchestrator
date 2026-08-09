@@ -198,7 +198,7 @@ Primary user question: "What did the manual Codex worker run report, is a future
 
 This page is read-only. It does not run Codex from the UI, import/upload reports from the UI, approve execution, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, call model APIs, or complete queue/task items. It may show a copyable `queue-complete-item` command only when read-only evidence says the item is completion-ready; otherwise it shows review commands and blockers.
 
-Delivery visibility is documented in `docs/delivery-safety-design.md`. TASK-DEVO-105 adds read-only delivery readiness artifacts and API endpoints; a future Delivery page may show readiness, changed-file scope, validation/review evidence, blockers, warnings, and copyable CLI commands. UI commit/push buttons remain deferred until the delivery plan/approval safety model is mature.
+Delivery visibility is documented in `docs/delivery-safety-design.md`. TASK-DEVO-105 adds read-only delivery readiness artifacts and API endpoints, and TASK-DEVO-106 adds delivery plan/approval artifacts and endpoints. A future Delivery page may show readiness, changed-file scope, validation/review evidence, plan status, approval status, blockers, warnings, and copyable CLI commands. UI commit/push buttons remain deferred until controlled commit/push safety is mature.
 
 ### B9. Progress Page
 
@@ -414,6 +414,10 @@ Delivery readiness:
 
 - `GET /api/projects/{project}/delivery-checks`
 - `GET /api/projects/{project}/delivery-checks/{delivery_id}`
+- `GET /api/projects/{project}/delivery-plans`
+- `GET /api/projects/{project}/delivery-plans/{delivery_id}`
+- `GET /api/projects/{project}/delivery-approvals`
+- `GET /api/projects/{project}/delivery-plans/{delivery_id}/approval`
 
 Work Detail:
 

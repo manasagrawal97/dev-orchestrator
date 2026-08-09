@@ -19,6 +19,7 @@ Relevant Devo capabilities already exist:
 - `devo project queue-complete-item` is review-aware for Codex-linked queue items.
 - Git delivery concepts already exist through delivery checks and delivery reports for target repositories.
 - `devo delivery check` now creates read-only delivery readiness summaries and optional JSON/Markdown artifacts under `workspace/projects/<project>/delivery/`.
+- `devo delivery plan` and delivery approval commands now create read-only plan/approval artifacts from readiness checks without committing or pushing.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -102,6 +103,8 @@ Suggested files:
 - `del-<id>.md`
 - `delivery-plan-<id>.json`
 - `delivery-plan-<id>.md`
+- `delivery-approval-<id>.json`
+- `delivery-approval-<id>.md`
 - `delivery-check-<id>.json`
 - `delivery-report-<id>.json`
 - `delivery-report-<id>.md`
@@ -131,6 +134,27 @@ Suggested files:
 - `created_at`
 - `updated_at`
 - `next_action`
+
+TASK-DEVO-106 implements plan artifacts from written readiness checks. A blocked readiness check creates a blocked plan. A warnings-only check can create a planned plan that preserves warnings for approval review.
+
+### DeliveryApproval Fields
+
+TASK-DEVO-106 implements approval artifacts with:
+
+- `project`
+- `delivery_id`
+- approval status: `not_requested`, `requested`, `approved`, or `rejected`
+- request/review/approval/rejection timestamps
+- reviewer and approver names
+- decision note and approval notes
+- readiness status
+- blocker and warning counts
+- changed and staged file counts
+- validation evidence status
+- review status
+- next action
+
+Delivery approval is separate from readiness. Blocked plans cannot be approved by default. Approval still does not commit or push.
 
 ### DeliveryCheck Fields
 
@@ -172,22 +196,26 @@ The check command is still read-only. It does not stage, unstage, validate, comm
 
 ## Command Roadmap
 
-Future commands should be added in layers:
+Commands are added in layers:
 
 ```powershell
 devo delivery check --project <project>
-devo delivery plan --project <project> --queue <queueId> --item <itemId>
+devo delivery check --project <project> --queue <queueId> --item <itemId> --write
+devo delivery plan --project <project> --delivery <deliveryCheckId> --message "<commit message>"
+devo delivery plan-list --project <project>
 devo delivery show --project <project> --delivery <deliveryId>
-devo delivery request-approval --project <project> --delivery <deliveryId>
-devo delivery approve --project <project> --delivery <deliveryId>
+devo delivery plan-show --project <project> --plan <deliveryId>
+devo delivery approval-request --project <project> --plan <deliveryId> --note "<note>"
+devo delivery approval-show --project <project> --plan <deliveryId>
+devo delivery approval-list --project <project>
+devo delivery approve --project <project> --plan <deliveryId> --approver "<name>" --note "<note>"
+devo delivery reject --project <project> --plan <deliveryId> --reviewer "<name>" --note "<note>"
 devo delivery commit --project <project> --delivery <deliveryId> --confirm-commit
 devo delivery push --project <project> --delivery <deliveryId> --confirm-push
 devo delivery report --project <project> --delivery <deliveryId>
 ```
 
-Commit and push require explicit confirmation flags. UI commit/push buttons remain deferred.
-
-The first implementation should only check and plan. It should not commit.
+The readiness, plan, and approval commands exist now and are workspace-artifact only. Commit and push remain future commands and must require explicit confirmation flags. UI commit/push buttons remain deferred.
 
 ## Approval Separation
 
@@ -234,7 +262,7 @@ Do not add commit/push buttons until the delivery safety model is mature. A read
 Recommended next tasks:
 
 1. TASK-DEVO-105: Delivery readiness data model and check command - completed
-2. TASK-DEVO-106: Delivery plan and approval workflow
+2. TASK-DEVO-106: Delivery plan and approval workflow - completed
 3. TASK-DEVO-107: Delivery report and commit message preparation
 4. TASK-DEVO-108: Controlled commit command with `--confirm-commit`
 5. TASK-DEVO-109: Controlled push command with `--confirm-push`

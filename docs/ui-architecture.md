@@ -163,6 +163,10 @@ GET /api/projects/{project}/runs/{run_id}/overview
 GET /api/projects/{project}/runs/{run_id}/work-package
 GET /api/projects/{project}/delivery-checks
 GET /api/projects/{project}/delivery-checks/{delivery_id}
+GET /api/projects/{project}/delivery-plans
+GET /api/projects/{project}/delivery-plans/{delivery_id}
+GET /api/projects/{project}/delivery-approvals
+GET /api/projects/{project}/delivery-plans/{delivery_id}/approval
 GET /api/actions
 GET /api/actions/allowed
 GET /api/actions/{action_id}

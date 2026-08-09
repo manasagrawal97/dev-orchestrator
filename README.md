@@ -859,18 +859,32 @@ devo delivery check --project MyProject
 devo delivery check --project MyProject --queue Q001 --item QI001 --write
 devo delivery list --project MyProject
 devo delivery show --project MyProject --delivery DEL-0001
+devo delivery plan --project MyProject --delivery DEL-0001 --message "feat: deliver safely"
+devo delivery plan-list --project MyProject
+devo delivery plan-show --project MyProject --plan DEL-0001
+devo delivery approval-request --project MyProject --plan DEL-0001 --note "Ready for delivery review."
+devo delivery approval-show --project MyProject --plan DEL-0001
+devo delivery approval-list --project MyProject
+devo delivery approve --project MyProject --plan DEL-0001 --approver "<name>" --note "<note>"
+devo delivery reject --project MyProject --plan DEL-0001 --reviewer "<name>" --note "<note>"
 ```
 
-`devo delivery check` is read-only. It summarizes target repository branch/remote/status, changed/staged/unstaged/untracked files, forbidden path changes, workspace artifacts staged for commit, secret-risk files/signals, linked queue item status, linked worker review status, linked validation evidence, blockers, warnings, and the next safe action. With `--write`, it stores JSON/Markdown under `workspace/projects/<project>/delivery/` plus `delivery-index.json`. It does not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, or modify target repositories. Commit/push automation remains deferred to later delivery-plan and approval tasks.
+`devo delivery check` is read-only. It summarizes target repository branch/remote/status, changed/staged/unstaged/untracked files, forbidden path changes, workspace artifacts staged for commit, secret-risk files/signals, linked queue item status, linked worker review status, linked validation evidence, blockers, warnings, and the next safe action. With `--write`, it stores JSON/Markdown under `workspace/projects/<project>/delivery/` plus `delivery-index.json`. It does not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, or modify target repositories. Commit/push automation remains deferred to later tasks.
+
+`devo delivery plan` creates a delivery plan from a written readiness check and records the intended future commit message, copied readiness evidence, changed-file summary, blockers, warnings, and approval status. `devo delivery approval-request` records that a plan needs delivery review. `devo delivery approve` approves only non-blocked delivery plans; warnings may be approved but remain recorded. `devo delivery reject` preserves the plan and records rejection. Delivery approval is not commit or push approval in this version: controlled commit/push commands remain future tasks.
 
 The local API exposes the same read-only delivery artifacts through:
 
 ```text
 GET /api/projects/{project}/delivery-checks
 GET /api/projects/{project}/delivery-checks/{delivery_id}
+GET /api/projects/{project}/delivery-plans
+GET /api/projects/{project}/delivery-plans/{delivery_id}
+GET /api/projects/{project}/delivery-approvals
+GET /api/projects/{project}/delivery-plans/{delivery_id}/approval
 ```
 
-Project overview read models now include the latest delivery readiness id/status, blocker count, warning count, and next action so the future dashboard can show delivery state without scraping workspace folders directly.
+Project overview read models now include the latest delivery readiness id/status, blocker count, warning count, latest delivery plan id/status, latest approval status, and next action so the future dashboard can show delivery state without scraping workspace folders directly.
 
 ## Reports And Handoff
 

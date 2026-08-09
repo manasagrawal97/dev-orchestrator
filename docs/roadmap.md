@@ -315,6 +315,10 @@ Added `docs/delivery-safety-design.md`, the design for delivery after worker exe
 
 Added the first implemented delivery safety layer with read-only `devo delivery check`, `devo delivery list`, and `devo delivery show`. Delivery checks store JSON/Markdown under `workspace/projects/<project>/delivery/` only when `--write` is supplied, summarize target repository status, forbidden changed/staged paths, workspace artifacts staged, secret-risk files/signals, linked queue item status, linked worker review status, validation evidence status, blockers, warnings, and next action. Project overview read models and local API endpoints expose the latest delivery readiness state. This still does not stage, unstage, validate, commit, push, complete queues, run Codex, run target commands, or modify target repositories.
 
+### TASK-DEVO-106 Delivery Plan Approvals - Completed
+
+Added delivery plan and delivery approval artifacts under `workspace/projects/<project>/delivery/`, plus `devo delivery plan`, `plan-list`, `plan-show`, `approval-request`, `approval-show`, `approval-list`, `approve`, and `reject`. Plans copy readiness evidence from written delivery checks and record the intended future commit message. Approval requests are separate from readiness; blocked plans cannot be approved by default, warning plans can be approved while preserving warnings, and rejection preserves artifacts. Read models and API endpoints expose plan/approval state read-only. No staging, unstaging, validation execution, commit, push, queue completion, Codex execution, target commands, or target repo mutation was added.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

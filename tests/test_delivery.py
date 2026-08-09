@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from devo.api import create_app
-from devo.delivery import list_delivery_checks, run_delivery_readiness_check
+from devo.delivery import create_delivery_plan, list_delivery_checks, run_delivery_readiness_check
 from devo.main import app
 from devo.project_planning import (
     ExecutionQueue,
@@ -136,9 +136,136 @@ def test_delivery_list_and_show_commands_read_written_artifact(tmp_path: Path, m
     assert "Delivery ID: DEL-0001" in shown.output
 
 
+def test_delivery_plan_creates_json_markdown_from_readiness_check(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "plan", "--project", "sample", "--delivery", "DEL-0001", "--message", "feat: deliver safely"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Delivery plan: DEL-0001" in result.output
+    delivery_dir = workspace / "projects" / "sample" / "delivery"
+    payload = json.loads((delivery_dir / "delivery-plan-del-0001.json").read_text(encoding="utf-8"))
+    assert payload["source_delivery_check_id"] == "DEL-0001"
+    assert payload["intended_commit_message"] == "feat: deliver safely"
+    assert payload["delivery_status"] == "planned"
+    assert payload["approval_status"] == "not_requested"
+    assert (delivery_dir / "delivery-plan-del-0001.md").exists()
+
+
+def test_delivery_plan_from_blocked_check_has_blocked_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _write_queue(workspace, status="running")
+    run_delivery_readiness_check("sample", queue_id="QUEUE-001", item_id="ITEM-001", write=True, workspace_root=workspace)
+
+    plan, _json_path, _markdown_path = create_delivery_plan("sample", "DEL-0001", "fix: blocked plan", workspace_root=workspace)
+
+    assert plan.readiness_status == "blocked"
+    assert plan.delivery_status == "blocked"
+    assert plan.blockers
+
+
+def test_delivery_plan_list_and_show_commands_work(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
+
+    listed = runner.invoke(app, ["delivery", "plan-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["delivery", "plan-show", "--project", "sample", "--plan", "DEL-0001"], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert "DEL-0001" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Intended commit message: feat: deliver safely" in shown.output
+
+
+def test_delivery_approval_request_show_and_list_work(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
+
+    requested = runner.invoke(
+        app,
+        ["delivery", "approval-request", "--project", "sample", "--plan", "DEL-0001", "--note", "Please review"],
+        terminal_width=240,
+    )
+    shown = runner.invoke(app, ["delivery", "approval-show", "--project", "sample", "--plan", "DEL-0001"], terminal_width=240)
+    listed = runner.invoke(app, ["delivery", "approval-list", "--project", "sample"], terminal_width=240)
+
+    assert requested.exit_code == 0, requested.output
+    assert "Approval status: requested" in requested.output
+    approval = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-approval-del-0001.json").read_text(encoding="utf-8"))
+    assert approval["approval_status"] == "requested"
+    assert approval["decision_note"] == "Please review"
+    assert shown.exit_code == 0, shown.output
+    assert "Approval status: requested" in shown.output
+    assert listed.exit_code == 0, listed.output
+    assert "DEL-0001" in listed.output
+
+
+def test_delivery_approve_succeeds_for_ready_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
+    runner.invoke(app, ["delivery", "approval-request", "--project", "sample", "--plan", "DEL-0001", "--note", "review"], terminal_width=240)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "approve", "--project", "sample", "--plan", "DEL-0001", "--approver", "Manas", "--note", "Approved"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Approval status: approved" in result.output
+    assert "Future commit/push commands are not implemented" in result.output
+    plan = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-plan-del-0001.json").read_text(encoding="utf-8"))
+    assert plan["approval_status"] == "approved"
+    assert plan["delivery_status"] == "approved"
+
+
+def test_delivery_approve_refuses_blocked_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _write_queue(workspace, status="running")
+    run_delivery_readiness_check("sample", queue_id="QUEUE-001", item_id="ITEM-001", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "fix: blocked plan", workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "approve", "--project", "sample", "--plan", "DEL-0001", "--approver", "Manas", "--note", "Approved"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Blocked delivery plans cannot be approved" in result.output
+
+
+def test_delivery_reject_marks_plan_and_approval_rejected(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "reject", "--project", "sample", "--plan", "DEL-0001", "--reviewer", "Manas", "--note", "Not ready"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Approval status: rejected" in result.output
+    plan = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-plan-del-0001.json").read_text(encoding="utf-8"))
+    approval = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-approval-del-0001.json").read_text(encoding="utf-8"))
+    assert plan["delivery_status"] == "rejected"
+    assert approval["approval_status"] == "rejected"
+
+
 def test_project_overview_includes_delivery_summary(tmp_path: Path, monkeypatch) -> None:
     workspace, _repo = _workspace(tmp_path, monkeypatch)
     run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
 
     overview = build_project_overview("sample", workspace_root=workspace)
 
@@ -146,22 +273,40 @@ def test_project_overview_includes_delivery_summary(tmp_path: Path, monkeypatch)
     assert overview.latest_delivery_id == "DEL-0001"
     assert overview.latest_delivery_readiness_status == "ready"
     assert overview.latest_delivery_blocker_count == 0
+    assert overview.delivery_plan_count == 1
+    assert overview.latest_delivery_plan_id == "DEL-0001"
+    assert overview.latest_delivery_plan_status == "planned"
+    assert overview.latest_delivery_approval_status == "not_requested"
 
 
-def test_api_exposes_delivery_checks(tmp_path: Path, monkeypatch) -> None:
+def test_api_exposes_delivery_checks_plans_and_approvals(tmp_path: Path, monkeypatch) -> None:
     workspace, _repo = _workspace(tmp_path, monkeypatch)
     run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
+    runner.invoke(app, ["delivery", "approval-request", "--project", "sample", "--plan", "DEL-0001", "--note", "review"], terminal_width=240)
     client = TestClient(create_app(workspace_root=workspace))
 
-    listed = client.get("/api/projects/sample/delivery-checks")
-    shown = client.get("/api/projects/sample/delivery-checks/DEL-0001")
-    missing = client.get("/api/projects/sample/delivery-checks/DEL-9999")
+    checks = client.get("/api/projects/sample/delivery-checks")
+    check = client.get("/api/projects/sample/delivery-checks/DEL-0001")
+    missing_check = client.get("/api/projects/sample/delivery-checks/DEL-9999")
+    plans = client.get("/api/projects/sample/delivery-plans")
+    plan = client.get("/api/projects/sample/delivery-plans/DEL-0001")
+    approvals = client.get("/api/projects/sample/delivery-approvals")
+    approval = client.get("/api/projects/sample/delivery-plans/DEL-0001/approval")
 
-    assert listed.status_code == 200
-    assert listed.json()["count"] == 1
-    assert shown.status_code == 200
-    assert shown.json()["delivery_id"] == "DEL-0001"
-    assert missing.status_code == 404
+    assert checks.status_code == 200
+    assert checks.json()["count"] == 1
+    assert check.status_code == 200
+    assert check.json()["delivery_id"] == "DEL-0001"
+    assert missing_check.status_code == 404
+    assert plans.status_code == 200
+    assert plans.json()["count"] == 1
+    assert plan.status_code == 200
+    assert plan.json()["intended_commit_message"] == "feat: deliver safely"
+    assert approvals.status_code == 200
+    assert approvals.json()["count"] == 1
+    assert approval.status_code == 200
+    assert approval.json()["approval_status"] == "requested"
 
 
 def test_delivery_check_does_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
@@ -174,6 +319,36 @@ def test_delivery_check_does_not_mutate_target_repo(tmp_path: Path, monkeypatch)
     after = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
 
     assert result.exit_code == 0, result.output
+    assert after == before
+
+
+def test_delivery_plan_and_approval_commands_do_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo_path = _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    before = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+
+    plan = runner.invoke(
+        app,
+        ["delivery", "plan", "--project", "sample", "--delivery", "DEL-0001", "--message", "feat: deliver safely"],
+        terminal_width=240,
+    )
+    request = runner.invoke(
+        app,
+        ["delivery", "approval-request", "--project", "sample", "--plan", "DEL-0001", "--note", "review"],
+        terminal_width=240,
+    )
+    approve = runner.invoke(
+        app,
+        ["delivery", "approve", "--project", "sample", "--plan", "DEL-0001", "--approver", "Manas", "--note", "approved"],
+        terminal_width=240,
+    )
+    after = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+
+    assert plan.exit_code == 0, plan.output
+    assert request.exit_code == 0, request.output
+    assert approve.exit_code == 0, approve.output
     assert after == before
 
 

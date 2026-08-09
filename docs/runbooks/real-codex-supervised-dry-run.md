@@ -309,7 +309,8 @@ Possible follow-up tasks:
 - TASK-DEVO-100: Codex executable diagnostics and launch-failure hardening.
 - Future: Real dry-run retry after `doctor` reports a safe real launcher.
 - Current: Delivery readiness can be checked with `devo delivery check --project <project> --queue <queueId> --item <itemId> --write` after review/queue evidence exists.
-- Future: Delivery plan/approval and commit/push safety before automation.
+- Current: Delivery plan/approval artifacts can be created with `devo delivery plan` and `devo delivery approval-request` after readiness is written.
+- Future: Delivery reports and commit/push safety before automation.
 - Future: Worker run recovery/pause polish.
 - Future: Validation-result integration.
 

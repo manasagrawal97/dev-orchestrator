@@ -7,7 +7,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
-from .delivery import list_delivery_checks, load_delivery_check
+from .delivery import (
+    list_delivery_approvals,
+    list_delivery_checks,
+    list_delivery_plans,
+    load_delivery_approval,
+    load_delivery_check,
+    load_delivery_plan,
+)
 from .doctor import run_doctor_with_timing
 from .project_planning import (
     calculate_project_progress,
@@ -61,6 +68,10 @@ API_ROUTES = (
     "GET /api/projects/{project}/progress",
     "GET /api/projects/{project}/delivery-checks",
     "GET /api/projects/{project}/delivery-checks/{delivery_id}",
+    "GET /api/projects/{project}/delivery-plans",
+    "GET /api/projects/{project}/delivery-plans/{delivery_id}",
+    "GET /api/projects/{project}/delivery-approvals",
+    "GET /api/projects/{project}/delivery-plans/{delivery_id}/approval",
     "GET /api/projects/{project}/queues",
     "GET /api/projects/{project}/queues/{queue_id}",
     "GET /api/projects/{project}/queues/{queue_id}/next",
@@ -237,6 +248,40 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
                 detail={"error": "delivery_check_not_found", "message": f"Delivery check not found: {delivery_id}"},
             )
         return _model_dump(check)
+
+    @api.get("/api/projects/{project}/delivery-plans")
+    def project_delivery_plans(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        plans = list_delivery_plans(project, workspace_root=root)
+        return {"project": project, "count": len(plans), "delivery_plans": [_model_dump(plan) for plan in plans]}
+
+    @api.get("/api/projects/{project}/delivery-plans/{delivery_id}")
+    def project_delivery_plan(project: str, delivery_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        plan = load_delivery_plan(project, delivery_id, workspace_root=root)
+        if not plan:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "delivery_plan_not_found", "message": f"Delivery plan not found: {delivery_id}"},
+            )
+        return _model_dump(plan)
+
+    @api.get("/api/projects/{project}/delivery-approvals")
+    def project_delivery_approvals(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        approvals = list_delivery_approvals(project, workspace_root=root)
+        return {"project": project, "count": len(approvals), "delivery_approvals": [_model_dump(approval) for approval in approvals]}
+
+    @api.get("/api/projects/{project}/delivery-plans/{delivery_id}/approval")
+    def project_delivery_approval(project: str, delivery_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        approval = load_delivery_approval(project, delivery_id, workspace_root=root)
+        if not approval:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "delivery_approval_not_found", "message": f"Delivery approval not found: {delivery_id}"},
+            )
+        return _model_dump(approval)
 
     @api.get("/api/projects/{project}/queues")
     def project_queues(project: str) -> dict[str, object]:

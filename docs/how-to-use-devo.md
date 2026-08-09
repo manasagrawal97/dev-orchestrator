@@ -611,13 +611,23 @@ devo delivery check --project <name>
 devo delivery check --project <name> --queue <queueId> --item <itemId> --write
 devo delivery list --project <name>
 devo delivery show --project <name> --delivery <deliveryId>
+devo delivery plan --project <name> --delivery <deliveryId> --message "<commit message>"
+devo delivery plan-list --project <name>
+devo delivery plan-show --project <name> --plan <deliveryId>
+devo delivery approval-request --project <name> --plan <deliveryId> --note "<note>"
+devo delivery approval-show --project <name> --plan <deliveryId>
+devo delivery approval-list --project <name>
+devo delivery approve --project <name> --plan <deliveryId> --approver "<name>" --note "<note>"
+devo delivery reject --project <name> --plan <deliveryId> --reviewer "<name>" --note "<note>"
 ```
 
 Git delivery commands inspect Git state and write Git-focused evidence. Delivery readiness commands inspect the post-worker delivery gate and can write JSON/Markdown artifacts under `workspace/projects/<project>/delivery/`.
 
 `devo delivery check` reports target repo path, branch, remote/upstream, Git status summary, changed/staged/unstaged/untracked files, forbidden changed/staged paths, workspace artifacts staged, secret-risk files/signals, linked queue item status, linked worker review status, linked validation evidence status, blockers, warnings, and next action. Linked queue checks block when the queue item is not completed, when the linked worker review is missing/not `reviewed_passed`, or when validation evidence failed.
 
-Delivery commands do not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, modify target repositories, or bypass GitHub policy. Commit and push remain future delivery-plan/approval work.
+`devo delivery plan` creates a plan from a written readiness check and records the intended future commit message. `approval-request` records that the plan needs delivery review. `approve` approves only non-blocked plans; warnings can be approved but remain visible in the artifact. `reject` records rejection without deleting artifacts.
+
+Delivery commands do not stage, unstage, validate, commit, push, complete queue items, run Codex, run target commands, modify target repositories, or bypass GitHub policy. Delivery approval is not commit/push execution. Commit and push remain future work.
 
 ## Context And Recovery
 

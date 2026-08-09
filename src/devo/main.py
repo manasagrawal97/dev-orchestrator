@@ -49,9 +49,19 @@ from .context_updates import (
 )
 from .doctor import DoctorReport, run_doctor
 from .delivery import (
+    DeliveryApproval,
     DeliveryCheck,
+    DeliveryPlan,
+    approve_delivery_plan,
+    create_delivery_plan,
     list_delivery_checks,
+    list_delivery_approvals,
+    list_delivery_plans,
+    load_delivery_approval,
     load_delivery_check,
+    load_delivery_plan,
+    reject_delivery_plan,
+    request_delivery_approval,
     run_delivery_readiness_check,
 )
 from .reports import (
@@ -1512,6 +1522,57 @@ def _print_delivery_check(check: DeliveryCheck) -> None:
     console.print(f"Next action: {check.next_action}", soft_wrap=True)
 
 
+def _print_delivery_plan(plan: DeliveryPlan) -> None:
+    console.print(f"Project: {plan.project}")
+    console.print(f"Delivery plan: {plan.delivery_id}")
+    console.print(f"Delivery status: {plan.delivery_status}")
+    console.print(f"Approval status: {plan.approval_status}")
+    console.print(f"Readiness: {plan.readiness_status}")
+    console.print(f"Source check: {plan.source_delivery_check_id}")
+    console.print(f"Intended commit message: {plan.intended_commit_message}", soft_wrap=True)
+    console.print(f"Target repo: {plan.target_repo_path}", soft_wrap=True)
+    console.print(f"Branch: {plan.branch or 'unknown'}")
+    console.print(f"Remote/upstream: {plan.remote or 'unknown'}")
+    console.print(f"Queue item: {plan.source_queue_id or 'not linked'} / {plan.source_queue_item_id or 'not linked'}")
+    console.print(f"Worker review status: {plan.review_status}")
+    console.print(f"Validation evidence status: {plan.validation_evidence_status}")
+    console.print("Files:")
+    console.print(f"  Changed: {len(plan.changed_files)}")
+    console.print(f"  Staged: {len(plan.staged_files)}")
+    console.print(f"  Unstaged: {len(plan.unstaged_files)}")
+    console.print(f"  Untracked: {len(plan.untracked_files)}")
+    console.print("Blockers:")
+    if plan.blockers:
+        for blocker in plan.blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Warnings:")
+    if plan.warnings:
+        for warning in plan.warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {plan.next_action}", soft_wrap=True)
+
+
+def _print_delivery_approval(approval: DeliveryApproval) -> None:
+    console.print(f"Project: {approval.project}")
+    console.print(f"Delivery plan: {approval.delivery_id}")
+    console.print(f"Approval status: {approval.approval_status}")
+    console.print(f"Readiness: {approval.readiness_status}")
+    console.print(f"Blockers: {approval.blocker_count}")
+    console.print(f"Warnings: {approval.warning_count}")
+    console.print(f"Changed files: {approval.changed_file_count}")
+    console.print(f"Staged files: {approval.staged_file_count}")
+    console.print(f"Worker review status: {approval.review_status}")
+    console.print(f"Validation evidence status: {approval.validation_evidence_status}")
+    console.print(f"Reviewer: {approval.reviewer or 'not set'}")
+    console.print(f"Approver: {approval.approver or 'not set'}")
+    console.print(f"Decision note: {approval.decision_note or 'none'}", soft_wrap=True)
+    console.print(f"Next action: {approval.next_action}", soft_wrap=True)
+
+
 @delivery_app.command("check")
 def check_delivery_readiness(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -1534,6 +1595,143 @@ def check_delivery_readiness(
     if write:
         console.print(f"JSON: {_named_path(json_path)}")
         console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("plan")
+def create_delivery_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--delivery", help="Delivery check ID."),
+    message: str = typer.Option(..., "--message", help="Intended commit message for future delivery."),
+) -> None:
+    """Create a delivery plan from an existing readiness check without committing or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        plan, json_path, markdown_path = create_delivery_plan(resolved_project, delivery_id, message)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--delivery") from exc
+    _print_delivery_plan(plan)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("plan-list")
+def list_delivery_plans_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List delivery plans."""
+    resolved_project = _resolve_project(project_name)
+    plans = list_delivery_plans(resolved_project)
+    console.print(f"Delivery plans for {resolved_project}: {len(plans)}")
+    if not plans:
+        console.print("  none")
+        return
+    for plan in plans:
+        console.print(
+            f"  {plan.delivery_id} | {plan.delivery_status} | approval {plan.approval_status} | "
+            f"readiness {plan.readiness_status} | {plan.updated_at.isoformat()}",
+            soft_wrap=True,
+        )
+
+
+@delivery_app.command("plan-show")
+def show_delivery_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+) -> None:
+    """Show one delivery plan."""
+    resolved_project = _resolve_project(project_name)
+    plan = load_delivery_plan(resolved_project, delivery_id)
+    if not plan:
+        raise typer.BadParameter(f"Delivery plan not found: {delivery_id}", param_hint="--plan")
+    _print_delivery_plan(plan)
+
+
+@delivery_app.command("approval-request")
+def request_delivery_approval_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+    note: str = typer.Option(..., "--note", help="Approval request note."),
+) -> None:
+    """Request delivery approval for a plan without approving delivery."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        approval, json_path, markdown_path = request_delivery_approval(resolved_project, delivery_id, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_delivery_approval(approval)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("approval-show")
+def show_delivery_approval_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+) -> None:
+    """Show delivery approval status."""
+    resolved_project = _resolve_project(project_name)
+    approval = load_delivery_approval(resolved_project, delivery_id)
+    if not approval:
+        raise typer.BadParameter(f"Delivery approval not found: {delivery_id}", param_hint="--plan")
+    _print_delivery_approval(approval)
+
+
+@delivery_app.command("approval-list")
+def list_delivery_approvals_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List delivery approvals."""
+    resolved_project = _resolve_project(project_name)
+    approvals = list_delivery_approvals(resolved_project)
+    console.print(f"Delivery approvals for {resolved_project}: {len(approvals)}")
+    if not approvals:
+        console.print("  none")
+        return
+    for approval in approvals:
+        console.print(
+            f"  {approval.delivery_id} | {approval.approval_status} | readiness {approval.readiness_status} | "
+            f"{approval.updated_at.isoformat()}",
+            soft_wrap=True,
+        )
+
+
+@delivery_app.command("approve")
+def approve_delivery_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+    approver: str = typer.Option(..., "--approver", help="Approver name."),
+    note: str = typer.Option(..., "--note", help="Approval note."),
+) -> None:
+    """Approve a non-blocked delivery plan without committing or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        plan, approval, json_path, markdown_path = approve_delivery_plan(resolved_project, delivery_id, approver, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_delivery_plan(plan)
+    _print_delivery_approval(approval)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("Future commit/push commands are not implemented.")
+
+
+@delivery_app.command("reject")
+def reject_delivery_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+    reviewer: str = typer.Option(..., "--reviewer", help="Reviewer name."),
+    note: str = typer.Option(..., "--note", help="Rejection note."),
+) -> None:
+    """Reject a delivery plan without deleting artifacts or touching the target repo."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        plan, approval, json_path, markdown_path = reject_delivery_plan(resolved_project, delivery_id, reviewer, note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_delivery_plan(plan)
+    _print_delivery_approval(approval)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
 
 
 @delivery_app.command("list")
