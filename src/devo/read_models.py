@@ -113,6 +113,11 @@ class ProjectOverview(BaseModel):
     latest_delivery_commit_status: str | None = None
     latest_delivery_pushed: bool = False
     latest_delivery_commit_next_action: str | None = None
+    latest_delivery_push_status: str | None = None
+    latest_delivery_push_remote: str | None = None
+    latest_delivery_push_branch: str | None = None
+    latest_delivery_pushed_at: str | None = None
+    latest_delivery_push_next_action: str | None = None
     brief_status: str = "missing"
     blueprint_status: str = "missing"
     blueprint_milestone_count: int = 0
@@ -268,6 +273,13 @@ def build_project_overview_with_timing(
             latest_delivery_pushed=bool(delivery["latest_delivery_pushed"]),
             latest_delivery_commit_next_action=(
                 str(delivery["latest_delivery_commit_next_action"]) if delivery["latest_delivery_commit_next_action"] else None
+            ),
+            latest_delivery_push_status=str(delivery["latest_delivery_push_status"]) if delivery["latest_delivery_push_status"] else None,
+            latest_delivery_push_remote=str(delivery["latest_delivery_push_remote"]) if delivery["latest_delivery_push_remote"] else None,
+            latest_delivery_push_branch=str(delivery["latest_delivery_push_branch"]) if delivery["latest_delivery_push_branch"] else None,
+            latest_delivery_pushed_at=str(delivery["latest_delivery_pushed_at"]) if delivery["latest_delivery_pushed_at"] else None,
+            latest_delivery_push_next_action=(
+                str(delivery["latest_delivery_push_next_action"]) if delivery["latest_delivery_push_next_action"] else None
             ),
             brief_status=str(planning["brief_status"]),
             blueprint_status=str(planning["blueprint_status"]),
@@ -800,6 +812,11 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_delivery_commit_status": None,
             "latest_delivery_pushed": False,
             "latest_delivery_commit_next_action": f"Review delivery artifacts: {exc}",
+            "latest_delivery_push_status": None,
+            "latest_delivery_push_remote": None,
+            "latest_delivery_push_branch": None,
+            "latest_delivery_pushed_at": None,
+            "latest_delivery_push_next_action": f"Review delivery artifacts: {exc}",
         }
     latest = checks[0] if checks else None
     latest_plan = plans[0] if plans else None
@@ -826,6 +843,11 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_delivery_commit_status": latest_report.final_status if latest_report and latest_report.commit_hash else None,
         "latest_delivery_pushed": latest_report.pushed if latest_report else False,
         "latest_delivery_commit_next_action": latest_report.next_action if latest_report and latest_report.commit_hash else None,
+        "latest_delivery_push_status": latest_report.push_status if latest_report else None,
+        "latest_delivery_push_remote": latest_report.push_remote if latest_report else None,
+        "latest_delivery_push_branch": latest_report.push_branch if latest_report else None,
+        "latest_delivery_pushed_at": latest_report.pushed_at.isoformat() if latest_report and latest_report.pushed_at else None,
+        "latest_delivery_push_next_action": latest_report.next_action if latest_report and latest_report.push_status else None,
     }
 
 

@@ -54,6 +54,8 @@ from .delivery import (
     DeliveryCommitPreview,
     DeliveryCommitResult,
     DeliveryPlan,
+    DeliveryPush,
+    DeliveryPushPreview,
     DeliveryReport,
     approve_delivery_plan,
     commit_delivery_report,
@@ -63,13 +65,16 @@ from .delivery import (
     list_delivery_plans,
     list_delivery_reports,
     load_delivery_commit_result,
+    load_delivery_push_result,
     load_delivery_approval,
     load_delivery_check,
     load_delivery_plan,
     load_delivery_report,
     prepare_delivery_report,
     preview_delivery_commit,
+    preview_delivery_push,
     propose_delivery_commit_message,
+    push_delivery_report,
     reject_delivery_plan,
     request_delivery_approval,
     run_delivery_readiness_check,
@@ -1589,12 +1594,15 @@ def _print_delivery_report(report: DeliveryReport) -> None:
     console.print(f"Final status: {report.final_status}")
     console.print(f"Commit ready: {report.commit_ready}")
     console.print(f"Push ready: {report.push_ready}")
+    console.print(f"Push status: {report.push_status or 'none'}")
+    console.print(f"Pushed: {report.pushed}")
     console.print(f"Approval status: {report.approval_status}")
     console.print(f"Delivery readiness: {report.delivery_readiness_status}")
     console.print(f"Proposed commit message: {report.proposed_commit_message}", soft_wrap=True)
     console.print(f"Target repo: {report.target_repo_path}", soft_wrap=True)
     console.print(f"Branch: {report.branch or 'unknown'}")
     console.print(f"Remote/upstream: {report.remote or 'unknown'}")
+    console.print(f"Push target: {report.push_remote or 'unknown'} {report.push_branch or 'unknown'}")
     console.print("Files:")
     console.print(f"  Changed: {len(report.changed_files)}")
     console.print(f"  Staged: {len(report.staged_files)}")
@@ -1651,6 +1659,52 @@ def _print_delivery_commit_result(result: DeliveryCommitResult) -> None:
         console.print(f"stdout: {result.stdout}", soft_wrap=True)
     if result.stderr:
         console.print(f"stderr: {result.stderr}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+
+
+def _print_delivery_push_preview(preview: DeliveryPushPreview) -> None:
+    console.print(f"Project: {preview.project}")
+    console.print(f"Delivery report: {preview.delivery_id}")
+    console.print(f"Push allowed: {preview.push_allowed}")
+    console.print(f"Commit hash: {preview.source_commit_hash or 'none'}")
+    console.print(f"Target repo: {preview.target_repo_path}", soft_wrap=True)
+    console.print(f"Branch: {preview.branch or 'unknown'}")
+    console.print(f"Remote/upstream: {preview.remote or 'unknown'}")
+    console.print(f"Push target: {preview.push_remote or 'unknown'} {preview.push_branch or 'unknown'}")
+    console.print("Blockers:")
+    if preview.blockers:
+        for blocker in preview.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Warnings:")
+    if preview.warnings:
+        for warning in preview.warnings:
+            console.print(f"  {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {preview.next_action}", soft_wrap=True)
+
+
+def _print_delivery_push_result(result: DeliveryPush) -> None:
+    console.print(f"Project: {result.project}")
+    console.print(f"Delivery report: {result.delivery_id}")
+    console.print(f"Push status: {result.push_status}")
+    console.print(f"Pushed: {result.pushed}")
+    console.print(f"Commit hash: {result.source_commit_hash or 'none'}")
+    console.print(f"Push remote: {result.push_remote or 'unknown'}")
+    console.print(f"Push branch: {result.push_branch or 'unknown'}")
+    console.print(f"Exit code: {result.push_exit_code if result.push_exit_code is not None else 'not available'}")
+    if result.push_stdout:
+        console.print(f"stdout: {result.push_stdout}", soft_wrap=True)
+    if result.push_stderr:
+        console.print(f"stderr: {result.push_stderr}", soft_wrap=True)
+    console.print("Blockers:")
+    if result.blockers:
+        for blocker in result.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
 
 
@@ -1928,6 +1982,61 @@ def show_delivery_commit_result_command(
     if not result:
         raise typer.BadParameter(f"Delivery commit result not found: {delivery_id}", param_hint="--delivery")
     _print_delivery_commit_result(result)
+
+
+@delivery_app.command("push-preview")
+def preview_delivery_push_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+    remote: str | None = typer.Option(None, "--remote", help="Optional push remote override."),
+    branch: str | None = typer.Option(None, "--branch", help="Optional push branch override."),
+) -> None:
+    """Preview a guarded delivery push without running git push."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        preview = preview_delivery_push(resolved_project, delivery_id, remote_override=remote, branch_override=branch)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--report") from exc
+    _print_delivery_push_preview(preview)
+
+
+@delivery_app.command("push")
+def push_delivery_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+    confirm_push: bool = typer.Option(False, "--confirm-push", help="Required explicit confirmation to run git push."),
+    remote: str | None = typer.Option(None, "--remote", help="Optional push remote override."),
+    branch: str | None = typer.Option(None, "--branch", help="Optional push branch override."),
+) -> None:
+    """Run a guarded delivery push for an already committed delivery. Does not commit."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        result, json_path, markdown_path = push_delivery_report(
+            resolved_project,
+            delivery_id,
+            confirm_push=confirm_push,
+            remote_override=remote,
+            branch_override=branch,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--report") from exc
+    _print_delivery_push_result(result)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print("No commit was created. UI push buttons remain unavailable.")
+
+
+@delivery_app.command("push-show")
+def show_delivery_push_result_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--delivery", help="Delivery ID."),
+) -> None:
+    """Show one delivery push result artifact."""
+    resolved_project = _resolve_project(project_name)
+    result = load_delivery_push_result(resolved_project, delivery_id)
+    if not result:
+        raise typer.BadParameter(f"Delivery push result not found: {delivery_id}", param_hint="--delivery")
+    _print_delivery_push_result(result)
 
 
 @delivery_app.command("list")

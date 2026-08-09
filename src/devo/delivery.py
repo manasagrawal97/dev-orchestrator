@@ -216,6 +216,10 @@ class DeliveryReport(BaseModel):
     push_ready: bool = False
     commit_hash: str | None = None
     pushed: bool = False
+    push_remote: str | None = None
+    push_branch: str | None = None
+    push_status: str | None = None
+    pushed_at: datetime | None = None
     final_status: str = "draft"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -261,6 +265,51 @@ class DeliveryCommitResult(BaseModel):
     next_action: str
 
 
+class DeliveryPushPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    source_commit_hash: str | None = None
+    target_repo_path: str
+    branch: str | None = None
+    remote: str | None = None
+    push_remote: str | None = None
+    push_branch: str | None = None
+    push_allowed: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    next_action: str
+
+
+class DeliveryPush(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    source_delivery_report_id: str
+    source_commit_hash: str | None = None
+    target_repo_path: str
+    branch: str | None = None
+    remote: str | None = None
+    push_remote: str | None = None
+    push_branch: str | None = None
+    push_status: str = "preview"
+    pushed: bool = False
+    pushed_at: datetime | None = None
+    push_exit_code: int | None = None
+    push_stdout: str = ""
+    push_stderr: str = ""
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -294,6 +343,12 @@ def delivery_commit_artifact_paths(project_name: str, delivery_id: str, workspac
     directory = delivery_directory(project_name, workspace_root=workspace_root)
     stem = delivery_id.lower()
     return directory / f"delivery-commit-{stem}.json", directory / f"delivery-commit-{stem}.md"
+
+
+def delivery_push_artifact_paths(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    directory = delivery_directory(project_name, workspace_root=workspace_root)
+    stem = delivery_id.lower()
+    return directory / f"delivery-push-{stem}.json", directory / f"delivery-push-{stem}.md"
 
 
 def run_delivery_readiness_check(
@@ -927,6 +982,197 @@ def load_delivery_commit_result(project_name: str, delivery_id: str, workspace_r
     return DeliveryCommitResult.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def preview_delivery_push(
+    project_name: str,
+    delivery_id: str,
+    *,
+    remote_override: str | None = None,
+    branch_override: str | None = None,
+    workspace_root: Path | None = None,
+) -> DeliveryPushPreview:
+    root = workspace_root or get_workspace_root()
+    report = _require_delivery_report(project_name, delivery_id, root)
+    repo_path = Path(report.target_repo_path)
+    branch = (branch_override.strip() if branch_override else report.branch) or None
+    push_remote = (remote_override.strip() if remote_override else _default_push_remote(report.remote)) or None
+    blockers: list[str] = []
+    warnings: list[str] = []
+    current_check, _json_path, _markdown_path = run_delivery_readiness_check(
+        project_name,
+        queue_id=report.source_queue_id,
+        item_id=report.source_queue_item_id,
+        write=False,
+        workspace_root=root,
+    )
+    if current_check.readiness_status == BLOCKED:
+        blockers.extend(current_check.blockers)
+    else:
+        warnings.extend(current_check.warnings)
+    if not report.commit_hash:
+        blockers.append(f"Delivery report {delivery_id} has no commit hash.")
+    if report.pushed:
+        blockers.append(f"Delivery report {delivery_id} is already pushed.")
+    if report.final_status not in {"committed", "pushed"}:
+        blockers.append(f"Delivery report {delivery_id} is {report.final_status}, not committed.")
+    if not repo_path.exists():
+        blockers.append(f"Target repository path does not exist: {repo_path}")
+    if not branch:
+        blockers.append("Push branch could not be determined.")
+    if not push_remote:
+        blockers.append("Push remote could not be determined.")
+    if push_remote and repo_path.exists():
+        remote_check = _run_git(repo_path, ["remote", "get-url", push_remote])
+        if remote_check.returncode != 0:
+            blockers.append(f"Git remote was not found: {push_remote}")
+    if branch and repo_path.exists():
+        branch_check = _run_git(repo_path, ["rev-parse", "--verify", branch])
+        if branch_check.returncode != 0:
+            blockers.append(f"Git branch was not found: {branch}")
+    if report.commit_hash and repo_path.exists():
+        contains_check = _run_git(repo_path, ["merge-base", "--is-ancestor", report.commit_hash, "HEAD"])
+        if contains_check.returncode != 0:
+            blockers.append(f"Commit hash is not contained in the current branch: {report.commit_hash}")
+    blockers = _dedupe(blockers)
+    return DeliveryPushPreview(
+        project=project_name,
+        delivery_id=delivery_id,
+        source_commit_hash=report.commit_hash,
+        target_repo_path=report.target_repo_path,
+        branch=report.branch,
+        remote=report.remote,
+        push_remote=push_remote,
+        push_branch=branch,
+        push_allowed=not blockers,
+        blockers=blockers,
+        warnings=_dedupe(warnings),
+        next_action=_push_preview_next_action(not blockers, blockers),
+    )
+
+
+def push_delivery_report(
+    project_name: str,
+    delivery_id: str,
+    *,
+    confirm_push: bool = False,
+    remote_override: str | None = None,
+    branch_override: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryPush, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    if not confirm_push:
+        msg = "--confirm-push is required."
+        raise ValueError(msg)
+    preview = preview_delivery_push(
+        project_name,
+        delivery_id,
+        remote_override=remote_override,
+        branch_override=branch_override,
+        workspace_root=root,
+    )
+    if not preview.push_allowed:
+        result = DeliveryPush(
+            project=project_name,
+            delivery_id=delivery_id,
+            source_delivery_report_id=delivery_id,
+            source_commit_hash=preview.source_commit_hash,
+            target_repo_path=preview.target_repo_path,
+            branch=preview.branch,
+            remote=preview.remote,
+            push_remote=preview.push_remote,
+            push_branch=preview.push_branch,
+            push_status="blocked",
+            blockers=preview.blockers,
+            warnings=preview.warnings,
+            next_action="Resolve push blockers before retrying delivery push.",
+        )
+        write_delivery_push_result(result, workspace_root=root)
+        _mark_delivery_report_push_blocked(project_name, delivery_id, _summary_text(preview.blockers), workspace_root=root)
+        raise ValueError("Delivery push blocked: " + _summary_text(preview.blockers))
+    repo_path = Path(preview.target_repo_path)
+    try:
+        completed = _run_git(repo_path, ["push", preview.push_remote or "", preview.push_branch or ""])
+        if completed.returncode != 0:
+            result = DeliveryPush(
+                project=project_name,
+                delivery_id=delivery_id,
+                source_delivery_report_id=delivery_id,
+                source_commit_hash=preview.source_commit_hash,
+                target_repo_path=preview.target_repo_path,
+                branch=preview.branch,
+                remote=preview.remote,
+                push_remote=preview.push_remote,
+                push_branch=preview.push_branch,
+                push_status="failed",
+                pushed=False,
+                push_exit_code=completed.returncode,
+                push_stdout=completed.stdout.strip(),
+                push_stderr=completed.stderr.strip(),
+                warnings=preview.warnings,
+                next_action="Review the git push failure before retrying delivery push.",
+            )
+            _mark_delivery_report_push_failed(project_name, delivery_id, _single_line("git push failed", completed.stdout, completed.stderr), workspace_root=root)
+            return write_delivery_push_result(result, workspace_root=root)
+        now = datetime.now(UTC)
+        result = DeliveryPush(
+            project=project_name,
+            delivery_id=delivery_id,
+            source_delivery_report_id=delivery_id,
+            source_commit_hash=preview.source_commit_hash,
+            target_repo_path=preview.target_repo_path,
+            branch=preview.branch,
+            remote=preview.remote,
+            push_remote=preview.push_remote,
+            push_branch=preview.push_branch,
+            push_status="pushed",
+            pushed=True,
+            pushed_at=now,
+            push_exit_code=completed.returncode,
+            push_stdout=completed.stdout.strip(),
+            push_stderr=completed.stderr.strip(),
+            warnings=preview.warnings,
+            next_action="Delivery pushed. Review remote state and close any external delivery checklist manually.",
+        )
+        _mark_delivery_report_pushed(project_name, delivery_id, result, workspace_root=root)
+        return write_delivery_push_result(result, workspace_root=root)
+    except OSError as exc:
+        result = DeliveryPush(
+            project=project_name,
+            delivery_id=delivery_id,
+            source_delivery_report_id=delivery_id,
+            source_commit_hash=preview.source_commit_hash,
+            target_repo_path=preview.target_repo_path,
+            branch=preview.branch,
+            remote=preview.remote,
+            push_remote=preview.push_remote,
+            push_branch=preview.push_branch,
+            push_status="failed",
+            pushed=False,
+            push_stderr=str(exc),
+            warnings=preview.warnings,
+            next_action="Review the git execution failure before retrying delivery push.",
+        )
+        _mark_delivery_report_push_failed(project_name, delivery_id, str(exc), workspace_root=root)
+        return write_delivery_push_result(result, workspace_root=root)
+
+
+def write_delivery_push_result(result: DeliveryPush, workspace_root: Path | None = None) -> tuple[DeliveryPush, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_directory(result.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = delivery_push_artifact_paths(result.project, result.delivery_id, workspace_root=root)
+    json_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text(render_delivery_push_markdown(result), encoding="utf-8")
+    return result, json_path, markdown_path
+
+
+def load_delivery_push_result(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryPush | None:
+    root = workspace_root or get_workspace_root()
+    json_path, _markdown_path = delivery_push_artifact_paths(project_name, delivery_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return DeliveryPush.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
 def load_delivery_check(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryCheck | None:
     root = workspace_root or get_workspace_root()
     json_path, _markdown_path = delivery_artifact_paths(project_name, delivery_id, workspace_root=root)
@@ -1088,6 +1334,8 @@ def render_delivery_report_markdown(report: DeliveryReport) -> str:
             f"- Final status: `{report.final_status}`",
             f"- Commit ready: `{report.commit_ready}`",
             f"- Push ready: `{report.push_ready}`",
+            f"- Push status: `{report.push_status or 'none'}`",
+            f"- Pushed: `{report.pushed}`",
             f"- Approval status: `{report.approval_status}`",
             f"- Delivery readiness: `{report.delivery_readiness_status}`",
             f"- Source plan: `{report.source_delivery_plan_id}`",
@@ -1096,6 +1344,7 @@ def render_delivery_report_markdown(report: DeliveryReport) -> str:
             f"- Target repo: `{report.target_repo_path}`",
             f"- Branch: `{report.branch or 'unknown'}`",
             f"- Remote/upstream: `{report.remote or 'unknown'}`",
+            f"- Push target: `{report.push_remote or 'unknown'} {report.push_branch or 'unknown'}`",
             "",
             "## Files",
             "",
@@ -1140,6 +1389,41 @@ def render_delivery_commit_markdown(result: DeliveryCommitResult) -> str:
             "",
             f"- stdout: {result.stdout or 'none'}",
             f"- stderr: {result.stderr or 'none'}",
+            "",
+            "## Next Action",
+            "",
+            result.next_action,
+            "",
+        ]
+    )
+
+
+def render_delivery_push_markdown(result: DeliveryPush) -> str:
+    return "\n".join(
+        [
+            f"# Delivery Push Result: {result.delivery_id}",
+            "",
+            f"- Project: `{result.project}`",
+            f"- Status: `{result.push_status}`",
+            f"- Pushed: `{result.pushed}`",
+            f"- Commit hash: `{result.source_commit_hash or 'none'}`",
+            f"- Remote: `{result.push_remote or 'unknown'}`",
+            f"- Branch: `{result.push_branch or 'unknown'}`",
+            f"- Return code: `{result.push_exit_code if result.push_exit_code is not None else 'not available'}`",
+            f"- Pushed at: `{result.pushed_at.isoformat() if result.pushed_at else 'not pushed'}`",
+            "",
+            "## Blockers",
+            "",
+            *_markdown_list(result.blockers),
+            "",
+            "## Warnings",
+            "",
+            *_markdown_list(result.warnings),
+            "",
+            "## Git Output",
+            "",
+            f"- stdout: {result.push_stdout or 'none'}",
+            f"- stderr: {result.push_stderr or 'none'}",
             "",
             "## Next Action",
             "",
@@ -1456,10 +1740,11 @@ def _mark_delivery_report_committed(
     report.commit_hash = commit_hash
     report.final_status = "committed"
     report.commit_ready = False
-    report.push_ready = False
+    report.push_ready = bool(commit_hash)
     report.pushed = False
+    report.push_status = "not_pushed"
     report.updated_at = datetime.now(UTC)
-    report.next_action = f"Commit created. Push remains future TASK-DEVO-109; do not push from Devo yet.{note}"
+    report.next_action = f"Commit created. Preview guarded push with devo delivery push-preview before running --confirm-push.{note}"
     write_delivery_report(report, workspace_root=workspace_root)
 
 
@@ -1474,6 +1759,63 @@ def _mark_delivery_report_blocked(project_name: str, delivery_id: str, detail: s
     report.blocker_summary = detail or report.blocker_summary
     report.next_action = "Resolve delivery commit blockers before retrying."
     write_delivery_report(report, workspace_root=workspace_root)
+
+
+def _mark_delivery_report_push_blocked(project_name: str, delivery_id: str, detail: str, workspace_root: Path) -> None:
+    report = load_delivery_report(project_name, delivery_id, workspace_root=workspace_root)
+    if not report:
+        return
+    report.push_status = "blocked"
+    report.push_ready = False
+    report.updated_at = datetime.now(UTC)
+    report.blocker_summary = detail or report.blocker_summary
+    report.next_action = "Resolve delivery push blockers before retrying."
+    write_delivery_report(report, workspace_root=workspace_root)
+
+
+def _mark_delivery_report_push_failed(project_name: str, delivery_id: str, detail: str, workspace_root: Path) -> None:
+    report = load_delivery_report(project_name, delivery_id, workspace_root=workspace_root)
+    if not report:
+        return
+    report.push_status = "failed"
+    report.push_ready = True
+    report.final_status = "failed"
+    report.updated_at = datetime.now(UTC)
+    report.warning_summary = detail or report.warning_summary
+    report.next_action = "Review delivery push failure before retrying."
+    write_delivery_report(report, workspace_root=workspace_root)
+
+
+def _mark_delivery_report_pushed(project_name: str, delivery_id: str, result: DeliveryPush, workspace_root: Path) -> None:
+    report = _require_delivery_report(project_name, delivery_id, workspace_root)
+    report.pushed = True
+    report.push_ready = False
+    report.push_remote = result.push_remote
+    report.push_branch = result.push_branch
+    report.push_status = result.push_status
+    report.pushed_at = result.pushed_at
+    report.final_status = "pushed"
+    report.updated_at = datetime.now(UTC)
+    report.next_action = "Delivery pushed. Review remote state and close any external delivery checklist manually."
+    write_delivery_report(report, workspace_root=workspace_root)
+
+
+def _default_push_remote(remote: str | None) -> str | None:
+    if not remote:
+        return None
+    if "/" in remote:
+        return remote.split("/", 1)[0]
+    if remote == "configured":
+        return "origin"
+    return remote
+
+
+def _push_preview_next_action(push_allowed: bool, blockers: list[str]) -> str:
+    if push_allowed:
+        return "Ready for guarded CLI push with --confirm-push."
+    if blockers:
+        return "Resolve push blockers before running guarded delivery push."
+    return "Review delivery push preview."
 
 
 def _safety_scan_summary(check: DeliveryCheck) -> str:

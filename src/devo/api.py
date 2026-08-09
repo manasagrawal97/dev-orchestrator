@@ -13,6 +13,7 @@ from .delivery import (
     list_delivery_plans,
     list_delivery_reports,
     load_delivery_commit_result,
+    load_delivery_push_result,
     load_delivery_approval,
     load_delivery_check,
     load_delivery_plan,
@@ -78,6 +79,7 @@ API_ROUTES = (
     "GET /api/projects/{project}/delivery-reports",
     "GET /api/projects/{project}/delivery-reports/{delivery_id}",
     "GET /api/projects/{project}/delivery-reports/{delivery_id}/commit",
+    "GET /api/projects/{project}/delivery-reports/{delivery_id}/push",
     "GET /api/projects/{project}/queues",
     "GET /api/projects/{project}/queues/{queue_id}",
     "GET /api/projects/{project}/queues/{queue_id}/next",
@@ -314,6 +316,17 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=404,
                 detail={"error": "delivery_commit_not_found", "message": f"Delivery commit result not found: {delivery_id}"},
+            )
+        return _model_dump(result)
+
+    @api.get("/api/projects/{project}/delivery-reports/{delivery_id}/push")
+    def project_delivery_push_result(project: str, delivery_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        result = load_delivery_push_result(project, delivery_id, workspace_root=root)
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "delivery_push_not_found", "message": f"Delivery push result not found: {delivery_id}"},
             )
         return _model_dump(result)
 

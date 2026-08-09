@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-109 Controlled push command with `--confirm-push`
+- TASK-DEVO-110 Delivery UI visibility
 
 ## Updated Roadmap Phases
 
@@ -194,6 +194,10 @@ Added pre-commit delivery report preparation after delivery plan approval. `devo
 ### TASK-DEVO-108 Guarded Delivery Commit - Completed
 
 Added the first controlled delivery commit command. `devo delivery commit-preview` shows eligible and blocked files without staging. `devo delivery commit --confirm-commit` requires an approved delivery plan, ready delivery report, fresh blocker-free readiness check, eligible safe files, and explicit confirmation before staging only those files and running `git commit -m`. It writes `delivery-commit-<id>.json` and `.md`, updates the delivery report with the commit hash, and exposes commit metadata through read models/API. It does not push, run validation, run Codex, complete queue/task/worker state, add UI commit buttons, or modify PersonalOS.
+
+### TASK-DEVO-109 Guarded Delivery Push - Completed
+
+Added the first controlled delivery push command. `devo delivery push-preview` shows commit hash, branch, remote, push target, blockers, and warnings without running `git push`. `devo delivery push --confirm-push` requires prior guarded commit metadata, verified remote/branch, commit containment in the current branch, no push blockers, and explicit confirmation before running `git push <remote> <branch>`. It writes `delivery-push-<id>.json` and `.md`, updates the delivery report with push metadata, and exposes push metadata through read models/API. It does not commit, run validation, run Codex, complete queue/task/worker state, add UI push buttons, or modify PersonalOS.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

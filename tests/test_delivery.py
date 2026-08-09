@@ -15,6 +15,8 @@ from devo.delivery import (
     list_delivery_checks,
     prepare_delivery_report,
     preview_delivery_commit,
+    preview_delivery_push,
+    push_delivery_report,
     run_delivery_readiness_check,
 )
 from devo.main import app
@@ -654,6 +656,164 @@ def test_api_exposes_delivery_commit_result(tmp_path: Path, monkeypatch) -> None
     assert response.json()["commit_hash"]
 
 
+def test_delivery_push_preview_shows_target_without_pushing(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    before = _git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", capture=True).stdout.strip()
+
+    result = runner.invoke(app, ["delivery", "push-preview", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+    after = _git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", capture=True).stdout.strip()
+
+    assert result.exit_code == 0, result.output
+    assert "Push allowed: True" in result.output
+    assert "Push target: origin main" in result.output
+    assert before.startswith("1")
+    assert after == before
+
+
+def test_delivery_push_refuses_without_confirm_push(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+
+    result = runner.invoke(app, ["delivery", "push", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "--confirm-push is required" in result.output
+
+
+def test_delivery_push_refuses_missing_commit_hash(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_ready_report(workspace)
+
+    preview = preview_delivery_push("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.push_allowed is False
+    assert any("has no commit hash" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_push_refuses_already_pushed_delivery(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    push_delivery_report("sample", "DEL-0001", confirm_push=True, workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "push", "--project", "sample", "--report", "DEL-0001", "--confirm-push"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "already pushed" in result.output
+
+
+def test_delivery_push_refuses_missing_remote(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    _git(repo, "remote", "remove", "origin")
+
+    preview = preview_delivery_push("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.push_allowed is False
+    assert any("Git remote was not found" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_push_refuses_unknown_branch(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+
+    preview = preview_delivery_push("sample", "DEL-0001", branch_override="missing-branch", workspace_root=workspace)
+
+    assert preview.push_allowed is False
+    assert any("Git branch was not found" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_push_refuses_commit_hash_not_contained_in_branch(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    report_path = workspace / "projects" / "sample" / "delivery" / "delivery-report-del-0001.json"
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    payload["commit_hash"] = "0" * 40
+    report_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    preview = preview_delivery_push("sample", "DEL-0001", workspace_root=workspace)
+
+    assert preview.push_allowed is False
+    assert any("not contained" in blocker for blocker in preview.blockers)
+
+
+def test_delivery_push_succeeds_to_local_bare_remote_and_updates_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    before_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout.strip()
+
+    result = runner.invoke(
+        app,
+        ["delivery", "push", "--project", "sample", "--report", "DEL-0001", "--confirm-push"],
+        terminal_width=240,
+    )
+    after_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout.strip()
+    ahead = _git(repo, "rev-list", "--left-right", "--count", "HEAD...@{u}", capture=True).stdout.strip()
+    report_payload = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-report-del-0001.json").read_text(encoding="utf-8"))
+    push_payload = json.loads((workspace / "projects" / "sample" / "delivery" / "delivery-push-del-0001.json").read_text(encoding="utf-8"))
+    overview = build_project_overview("sample", workspace_root=workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "Push status: pushed" in result.output
+    assert before_count == after_count
+    assert ahead.startswith("0")
+    assert report_payload["pushed"] is True
+    assert report_payload["push_remote"] == "origin"
+    assert report_payload["push_branch"] == "main"
+    assert report_payload["push_status"] == "pushed"
+    assert report_payload["final_status"] == "pushed"
+    assert push_payload["push_status"] == "pushed"
+    assert push_payload["pushed"] is True
+    assert overview.latest_delivery_push_status == "pushed"
+    assert overview.latest_delivery_push_remote == "origin"
+    assert overview.latest_delivery_push_branch == "main"
+    assert overview.latest_delivery_pushed_at
+
+
+def test_delivery_push_show_command_works(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    push_delivery_report("sample", "DEL-0001", confirm_push=True, workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "push-show", "--project", "sample", "--delivery", "DEL-0001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Push status: pushed" in result.output
+
+
+def test_delivery_push_does_not_stage_unstage_or_create_commits(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    (repo / "leftover.txt").write_text("leftover\n", encoding="utf-8")
+    before_status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    before_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout
+
+    push_delivery_report("sample", "DEL-0001", confirm_push=True, workspace_root=workspace)
+    after_status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    after_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout
+
+    assert before_status == "?? leftover.txt\n"
+    assert after_status == before_status
+    assert after_count == before_count
+
+
+def test_api_exposes_delivery_push_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    push_delivery_report("sample", "DEL-0001", confirm_push=True, workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/delivery-reports/DEL-0001/push")
+
+    assert response.status_code == 200
+    assert response.json()["push_status"] == "pushed"
+    assert response.json()["pushed"] is True
+
+
 def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     workspace = tmp_path / "workspace"
     monkeypatch.setenv("DEVO_WORKSPACE", str(workspace))
@@ -696,6 +856,15 @@ def _create_ready_report(workspace: Path) -> None:
     report, _json_path, _markdown_path = prepare_delivery_report("sample", "DEL-0001", workspace_root=workspace)
     assert report.final_status == "ready"
     assert report.commit_ready is True
+
+
+def _create_committed_report(workspace: Path) -> None:
+    repo = _repo(workspace.parent)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    assert result.status == "committed"
+    assert result.commit_hash
 
 
 def _write_queue(workspace: Path, status: str) -> None:

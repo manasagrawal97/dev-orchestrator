@@ -173,7 +173,7 @@ TASK-DEVO-102 adds that launcher strategy. Codex diagnostics now distinguish `pa
 
 TASK-DEVO-103 documents the operator readiness path in `docs/runbooks/codex-launcher-setup.md`. Real supervised retry should wait until that checklist is complete and doctor reports a safe real executable or wrapper launcher.
 
-TASK-DEVO-104 documents the delivery safety layer in `docs/delivery-safety-design.md`, TASK-DEVO-105 implements read-only delivery readiness checks, TASK-DEVO-106 implements delivery plan/approval artifacts, TASK-DEVO-107 implements delivery report plus commit-message preparation, and TASK-DEVO-108 implements guarded CLI-only commit with `--confirm-commit`. Worker success, report import, review pass, queue completion, delivery approval, and report preparation still do not execute commit or push. Guarded commit is separate from worker execution and still does not push. Future push commands still need explicit confirmation and safety gates.
+TASK-DEVO-104 documents the delivery safety layer in `docs/delivery-safety-design.md`, TASK-DEVO-105 implements read-only delivery readiness checks, TASK-DEVO-106 implements delivery plan/approval artifacts, TASK-DEVO-107 implements delivery report plus commit-message preparation, TASK-DEVO-108 implements guarded CLI-only commit with `--confirm-commit`, and TASK-DEVO-109 implements guarded CLI-only push with `--confirm-push`. Worker success, report import, review pass, queue completion, delivery approval, and report preparation still do not execute commit or push. Guarded commit/push remain separate from worker execution and require explicit confirmation.
 
 ## State Transitions
 
@@ -384,7 +384,7 @@ Recommended future sequence:
 19. TASK-DEVO-106: Delivery plan and approval workflow - completed.
 20. TASK-DEVO-107: Delivery report and commit message preparation - completed.
 21. TASK-DEVO-108: Controlled commit command with `--confirm-commit` - completed.
-22. TASK-DEVO-109: Controlled push command with `--confirm-push`.
+22. TASK-DEVO-109: Controlled push command with `--confirm-push` - completed.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 
