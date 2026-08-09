@@ -167,6 +167,8 @@ The summary includes Project Brief/Blueprint/Backlog status, task counts, active
 
 For a real end-to-end example of this planning pipeline on DevOrchestrator itself, see `docs/dogfood/devo-pipeline-dogfood-085.md`. That report shows the exact brief -> blueprint -> backlog -> batch -> approval -> queue -> handoff -> progress command sequence, plus the operator-friction issues found during dogfood.
 
+For the guarded delivery path, see `docs/dogfood/devo-delivery-dogfood-110.md`. That report dogfoods delivery check -> plan -> approval -> report -> commit-preview -> guarded commit -> push-preview -> guarded push against an isolated temporary repository and local bare remote. It proves the CLI-only commit/push path without running delivery commit or push against the live DevOrchestrator repository.
+
 ## Execution Queue State
 
 Execution queues are deterministic state tracking artifacts created from approved planning batches. They do not run Codex, run validation, run Git commands, commit, push, or modify target project source.

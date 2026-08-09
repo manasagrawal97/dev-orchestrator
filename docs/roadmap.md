@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-110 Delivery UI visibility
+- TASK-DEVO-111 Delivery operator polish and UI visibility
 
 ## Updated Roadmap Phases
 
@@ -198,6 +198,10 @@ Added the first controlled delivery commit command. `devo delivery commit-previe
 ### TASK-DEVO-109 Guarded Delivery Push - Completed
 
 Added the first controlled delivery push command. `devo delivery push-preview` shows commit hash, branch, remote, push target, blockers, and warnings without running `git push`. `devo delivery push --confirm-push` requires prior guarded commit metadata, verified remote/branch, commit containment in the current branch, no push blockers, and explicit confirmation before running `git push <remote> <branch>`. It writes `delivery-push-<id>.json` and `.md`, updates the delivery report with push metadata, and exposes push metadata through read models/API. It does not commit, run validation, run Codex, complete queue/task/worker state, add UI push buttons, or modify PersonalOS.
+
+### TASK-DEVO-110 Guarded Delivery Dogfood - Completed
+
+Dogfooded the full delivery flow against `DeliveryDogfood110`, an isolated temporary Git repository with a local bare `origin` remote. The run completed delivery check -> plan -> approval -> report -> commit-preview -> guarded commit -> push-preview -> guarded push. The guarded commit created temp-repo commit `8aff2e40b75881bc147d71641659c028e05a8148`, and the guarded push delivered it to the local bare remote. No delivery commit or delivery push command was run against the live DevOrchestrator repo. The result is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; follow-up polish should remove stale "push remains future scope" messaging and improve delivery report labels for historical readiness snapshots.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

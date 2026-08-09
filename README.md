@@ -37,6 +37,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [UI/API architecture](docs/ui-architecture.md)
 - [UI MVP specification](docs/ui-mvp-spec.md)
 - [TASK-DEVO-085 planning pipeline dogfood report](docs/dogfood/devo-pipeline-dogfood-085.md)
+- [TASK-DEVO-110 guarded delivery dogfood report](docs/dogfood/devo-delivery-dogfood-110.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)

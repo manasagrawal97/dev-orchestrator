@@ -23,6 +23,7 @@ Relevant Devo capabilities already exist:
 - `devo delivery report-prepare` now creates a pre-commit delivery report from an approved plan, re-checks current readiness, and proposes the commit message without staging, committing, or pushing.
 - `devo delivery commit-preview` and guarded `devo delivery commit --confirm-commit` now provide the first CLI-only commit path. The command re-checks readiness, stages only eligible safe files, writes commit result artifacts, and still does not push.
 - `devo delivery push-preview` and guarded `devo delivery push --confirm-push` now provide the first CLI-only push path after commit metadata exists. The command verifies remote/branch/commit containment, writes push result artifacts, and does not create commits.
+- TASK-DEVO-110 dogfooded the full delivery lifecycle against an isolated temp repository and local bare remote. The flow is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; no live DevOrchestrator delivery commit/push was run.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -335,8 +336,8 @@ Recommended next tasks:
 3. TASK-DEVO-107: Delivery report and commit message preparation - completed
 4. TASK-DEVO-108: Controlled commit command with `--confirm-commit` - completed
 5. TASK-DEVO-109: Controlled push command with `--confirm-push` - completed
-6. TASK-DEVO-110: Delivery UI visibility
-7. TASK-DEVO-111: Delivery dogfood on docs-only change
+6. TASK-DEVO-110: End-to-end guarded delivery dogfood on isolated temp repo - completed
+7. TASK-DEVO-111: Delivery operator polish and UI visibility
 
 ## Deferred Scope
 
