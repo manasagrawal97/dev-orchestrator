@@ -25,6 +25,7 @@ Relevant Devo capabilities already exist:
 - `devo delivery push-preview` and guarded `devo delivery push --confirm-push` now provide the first CLI-only push path after commit metadata exists. The command verifies remote/branch/commit containment, writes push result artifacts, and does not create commits.
 - TASK-DEVO-110 dogfooded the full delivery lifecycle against an isolated temp repository and local bare remote. The flow is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; no live DevOrchestrator delivery commit/push was run.
 - TASK-DEVO-111 adds delivery operator polish and read-only Delivery dashboard visibility. Delivery reports label readiness as a report snapshot and mark it historical after commit or push. The UI shows delivery artifacts and copyable CLI commands only; commit/push execution remains CLI-only.
+- TASK-DEVO-113 adds `devo delivery report-refresh` as the supported recovery path for retryable guarded commit failures. It refreshes the current readiness snapshot and can reopen a blocked report only when the previous commit failure is retryable, the linked plan and approval remain approved, no commit/push has already happened, and current readiness has no blockers.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -213,11 +214,14 @@ The check command is still read-only. It does not stage, unstage, validate, comm
 - `commit_hash` optional
 - `pushed`: true or false
 - `final_status`: `draft`, `ready`, `blocked`, or `superseded`
+- recovery metadata: status, reason, operator note, history, refreshed timestamp, last commit failure category, last commit failure message, and retryable flag
 - `created_at`
 - `updated_at`
 - `next_action`
 
 TASK-DEVO-107 implements draft report preparation. Reports are stored as `delivery-report-<id>.json` and `.md`, are indexed in `delivery-index.json`, and intentionally stop before staging, committing, pushing, validation execution, target command execution, or Codex execution.
+
+TASK-DEVO-113 adds report refresh/recovery metadata. A refresh without `--reopen` updates only the report's current readiness snapshot and recovery history, then reports whether reopening would be allowed. A refresh with `--reopen` can restore `final_status: ready` and `commit_ready: true` only for retryable guarded commit failures where current readiness passes and the linked delivery plan/approval remain approved. Reports that already have a commit hash or are already pushed are never reopened for commit.
 
 ### DeliveryCommit Fields
 
@@ -230,10 +234,13 @@ TASK-DEVO-108 implements commit result artifacts with:
 - `commit_message`
 - `eligible_files`
 - Git stdout/stderr and return code
+- failure category and retryable flag for failed/blocked commits
 - timestamps
 - `next_action`
 
 The commit result records what the guarded CLI commit did. It is not push evidence.
+
+Known commit failure categories include `index_lock_permission_denied`, `index_lock_exists`, `git_commit_failed`, `no_eligible_files`, and `unknown`. Index lock failures are considered retryable after the operator checks that no Git process is active, no stale `.git/index.lock` remains, and permissions are understood. Devo keeps raw Git stderr in the commit artifact; it does not hide or rewrite the failure.
 
 ### DeliveryPush Fields
 
@@ -277,6 +284,8 @@ devo delivery reject --project <project> --plan <deliveryId> --reviewer "<name>"
 devo delivery report-prepare --project <project> --plan <deliveryId>
 devo delivery report-list --project <project>
 devo delivery report-show --project <project> --report <deliveryId>
+devo delivery report-refresh --project <project> --report <deliveryId> --note "<reason>"
+devo delivery report-refresh --project <project> --report <deliveryId> --reopen --note "<reason>"
 devo delivery commit-message --project <project> --plan <deliveryId>
 devo delivery commit-preview --project <project> --report <deliveryId>
 devo delivery commit --project <project> --report <deliveryId> --confirm-commit
@@ -286,7 +295,23 @@ devo delivery push --project <project> --report <deliveryId> --confirm-push
 devo delivery push-show --project <project> --delivery <deliveryId>
 ```
 
-The readiness, plan, approval, report-preparation, commit-message, commit-preview, guarded commit, push-preview, and guarded push commands exist now. Preview commands are read-only. `commit` is CLI-only and requires `--confirm-commit`. `push` is CLI-only and requires `--confirm-push`. UI commit/push buttons remain deferred.
+The readiness, plan, approval, report-preparation, report-refresh, commit-message, commit-preview, guarded commit, push-preview, and guarded push commands exist now. Preview commands are read-only. `report-refresh` does not stage, unstage, commit, push, validate, run Codex, or modify target repo files; with `--reopen` it only changes Devo's delivery report state when reopening is safe. `commit` is CLI-only and requires `--confirm-commit`. `push` is CLI-only and requires `--confirm-push`. UI commit/push buttons remain deferred.
+
+## Recovery After Guarded Commit Failure
+
+If `devo delivery commit --confirm-commit` fails, Devo writes `delivery-commit-<id>.json` and marks the delivery report blocked. Retryable failures such as `.git/index.lock` permission denial or stale lock errors include a recovery next action.
+
+The safe recovery sequence is:
+
+```powershell
+devo delivery report-show --project <project> --report <deliveryId>
+devo delivery commit-preview --project <project> --report <deliveryId>
+devo delivery report-refresh --project <project> --report <deliveryId> --note "<diagnosis>"
+devo delivery report-refresh --project <project> --report <deliveryId> --reopen --note "<diagnosis>"
+devo delivery commit-preview --project <project> --report <deliveryId>
+```
+
+Only after the refreshed preview is clean should an operator run the guarded commit again. Do not manually bypass Devo delivery after a guarded failure unless the user explicitly approves that exceptional path.
 
 ## Approval Separation
 
@@ -341,7 +366,8 @@ Recommended next tasks:
 5. TASK-DEVO-109: Controlled push command with `--confirm-push` - completed
 6. TASK-DEVO-110: End-to-end guarded delivery dogfood on isolated temp repo - completed
 7. TASK-DEVO-111: Delivery operator polish and read-only Delivery UI - completed
-8. TASK-DEVO-112+: Delivery read-model/UI polish or controlled delivery follow-up after more dogfood
+8. TASK-DEVO-113: Delivery report recovery and refresh after retryable commit failures - completed
+9. TASK-DEVO-112 resume: Retry the live docs-only delivery only after report-refresh reopens the blocked report
 
 ## Deferred Scope
 

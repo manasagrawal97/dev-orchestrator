@@ -57,6 +57,7 @@ from .delivery import (
     DeliveryPush,
     DeliveryPushPreview,
     DeliveryReport,
+    DeliveryReportRefresh,
     approve_delivery_plan,
     commit_delivery_report,
     create_delivery_plan,
@@ -75,6 +76,7 @@ from .delivery import (
     preview_delivery_push,
     propose_delivery_commit_message,
     push_delivery_report,
+    refresh_delivery_report,
     reject_delivery_plan,
     request_delivery_approval,
     run_delivery_readiness_check,
@@ -1600,6 +1602,10 @@ def _print_delivery_report(report: DeliveryReport) -> None:
     console.print(f"Readiness snapshot status: {report.readiness_snapshot_status or report.delivery_readiness_status}")
     console.print(f"Readiness currentness: {report.readiness_currentness}")
     console.print(f"Readiness note: {report.readiness_snapshot_note}", soft_wrap=True)
+    console.print(f"Recovery status: {report.recovery_status}")
+    console.print(f"Recovery reason: {report.recovery_reason or 'none'}", soft_wrap=True)
+    console.print(f"Last commit failure category: {report.last_commit_failure_category or 'none'}")
+    console.print(f"Last commit failure retryable: {report.last_commit_failure_retryable}")
     console.print(f"Proposed commit message: {report.proposed_commit_message}", soft_wrap=True)
     console.print(f"Target repo: {report.target_repo_path}", soft_wrap=True)
     console.print(f"Branch: {report.branch or 'unknown'}")
@@ -1616,6 +1622,32 @@ def _print_delivery_report(report: DeliveryReport) -> None:
     console.print(f"Blockers: {report.blocker_summary}", soft_wrap=True)
     console.print(f"Warnings: {report.warning_summary}", soft_wrap=True)
     console.print(f"Next action: {report.next_action}", soft_wrap=True)
+
+
+def _print_delivery_report_refresh(result: DeliveryReportRefresh) -> None:
+    console.print(f"Project: {result.project}")
+    console.print(f"Delivery report: {result.delivery_id}")
+    console.print(f"Recovery status: {result.recovery_status}")
+    console.print(f"Recovery reason: {result.recovery_reason}", soft_wrap=True)
+    console.print(f"Reopen allowed: {result.reopen_allowed}")
+    console.print(f"Reopened: {result.reopened}")
+    console.print(f"Approval status: {result.approval_status}")
+    console.print(f"Current readiness: {result.current_readiness_status}")
+    console.print(f"Final status: {result.final_status}")
+    console.print(f"Commit ready: {result.commit_ready}")
+    console.print("Blockers:")
+    if result.blockers:
+        for blocker in result.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Warnings:")
+    if result.warnings:
+        for warning in result.warnings:
+            console.print(f"  {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
 
 
 def _print_delivery_commit_preview(preview: DeliveryCommitPreview) -> None:
@@ -1657,6 +1689,8 @@ def _print_delivery_commit_result(result: DeliveryCommitResult) -> None:
     console.print(f"Commit message: {result.commit_message}", soft_wrap=True)
     console.print(f"Files committed: {len(result.eligible_files)}")
     console.print(f"Return code: {result.returncode if result.returncode is not None else 'not available'}")
+    console.print(f"Failure category: {result.failure_category or 'none'}")
+    console.print(f"Failure retryable: {result.failure_retryable}")
     if result.stdout:
         console.print(f"stdout: {result.stdout}", soft_wrap=True)
     if result.stderr:
@@ -1917,6 +1951,29 @@ def show_delivery_report_command(
     if not report:
         raise typer.BadParameter(f"Delivery report not found: {delivery_id}", param_hint="--report")
     _print_delivery_report(report)
+
+
+@delivery_app.command("report-refresh")
+def refresh_delivery_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+    note: str = typer.Option("", "--note", help="Operator recovery note."),
+    reopen: bool = typer.Option(False, "--reopen", help="Reopen a safe retryable blocked report for commit preview."),
+) -> None:
+    """Refresh a delivery report readiness snapshot and optionally reopen safe retryable commit failures."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        result, _report, json_path, markdown_path = refresh_delivery_report(
+            resolved_project,
+            delivery_id,
+            note=note,
+            reopen=reopen,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--report") from exc
+    _print_delivery_report_refresh(result)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
 
 
 @delivery_app.command("commit-message")

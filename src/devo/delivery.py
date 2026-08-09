@@ -225,9 +225,37 @@ class DeliveryReport(BaseModel):
     push_status: str | None = None
     pushed_at: datetime | None = None
     final_status: str = "draft"
+    recovery_status: str = "none"
+    recovery_reason: str = ""
+    recovery_note: str = ""
+    recovery_history: list[str] = Field(default_factory=list)
+    last_commit_failure_category: str | None = None
+    last_commit_failure_message: str | None = None
+    last_commit_failure_retryable: bool = False
+    refreshed_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     next_action: str
+
+
+class DeliveryReportRefresh(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    recovery_status: str
+    recovery_reason: str
+    reopened: bool = False
+    reopen_allowed: bool = False
+    approval_status: str
+    current_readiness_status: str
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    final_status: str
+    commit_ready: bool = False
+    next_action: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class DeliveryCommitPreview(BaseModel):
@@ -264,6 +292,8 @@ class DeliveryCommitResult(BaseModel):
     stdout: str = ""
     stderr: str = ""
     returncode: int | None = None
+    failure_category: str | None = None
+    failure_retryable: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     next_action: str
@@ -797,6 +827,129 @@ def prepare_delivery_report(
     return write_delivery_report(report, workspace_root=root)
 
 
+def refresh_delivery_report(
+    project_name: str,
+    delivery_id: str,
+    *,
+    note: str = "",
+    reopen: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryReportRefresh, DeliveryReport, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    report = _require_delivery_report(project_name, delivery_id, root)
+    _hydrate_commit_failure_metadata(report, workspace_root=root)
+    plan = _require_delivery_plan(project_name, report.source_delivery_plan_id, root)
+    approval = load_delivery_approval(project_name, plan.delivery_id, workspace_root=root)
+    current_check, _json_path, _markdown_path = run_delivery_readiness_check(
+        project_name,
+        queue_id=report.source_queue_id,
+        item_id=report.source_queue_item_id,
+        write=False,
+        workspace_root=root,
+    )
+    _hydrate_commit_failure_metadata(report, workspace_root=root)
+
+    blockers = list(current_check.blockers)
+    warnings = _dedupe([*current_check.warnings])
+    approval_status = plan.approval_status
+    approval_is_approved = approval_status == "approved" and bool(approval and approval.approval_status == "approved")
+    current_blocked = current_check.readiness_status == BLOCKED or bool(blockers)
+    retryable_blocked_report = (
+        report.final_status == "blocked"
+        and report.last_commit_failure_retryable
+        and bool(report.last_commit_failure_category)
+    )
+    already_committed = bool(report.commit_hash)
+    already_pushed = report.pushed or report.final_status == "pushed"
+
+    reopened = False
+    reopen_allowed = False
+    recovery_status = "refresh_only"
+    recovery_reason = "Current delivery readiness snapshot refreshed."
+
+    if already_pushed:
+        recovery_status = "refused" if reopen else "refresh_only"
+        recovery_reason = "Delivery report is already pushed; reopening for commit is not allowed."
+    elif already_committed:
+        recovery_status = "refused" if reopen else "refresh_only"
+        recovery_reason = "Delivery report already has a commit hash; refresh is snapshot-only."
+    elif not approval_is_approved:
+        recovery_status = "refused" if reopen else "refresh_only"
+        recovery_reason = "Delivery plan and approval must both be approved before reopening."
+    elif current_blocked:
+        recovery_status = "refused" if reopen else "refresh_only"
+        recovery_reason = "Current delivery readiness is blocked; fix blockers before reopening."
+        report.final_status = "blocked"
+        report.commit_ready = False
+        report.push_ready = False
+        report.blocker_summary = _summary_text(blockers)
+    elif retryable_blocked_report:
+        reopen_allowed = True
+        recovery_status = "reopened" if reopen else "reopen_allowed"
+        recovery_reason = "Previous guarded commit failure appears retryable and current readiness has no blockers."
+        if reopen:
+            reopened = True
+            report.final_status = "ready"
+            report.commit_ready = True
+            report.push_ready = False
+            report.blocker_summary = "none"
+    elif report.final_status == "ready":
+        recovery_status = "refresh_only"
+        recovery_reason = "Delivery report is already ready."
+        report.commit_ready = approval_is_approved and not current_blocked
+    else:
+        recovery_status = "refused" if reopen else "refresh_only"
+        recovery_reason = "Delivery report is not a retryable blocked commit report."
+
+    _refresh_report_snapshot(report, current_check, plan)
+    report.approval_status = approval_status
+    report.warning_summary = _summary_text(warnings)
+    if report.final_status == "ready" and report.commit_ready:
+        report.next_action = _report_next_action(report.final_status, report.commit_ready)
+    elif already_committed and not already_pushed:
+        report.next_action = (
+            f"Report refreshed. Commit exists; run devo delivery push-preview --project {project_name} "
+            f"--report {delivery_id} before guarded push."
+        )
+    elif reopen_allowed and not reopen:
+        report.next_action = (
+            f"Reopen allowed. Run devo delivery report-refresh --project {project_name} --report {delivery_id} "
+            '--reopen --note "<reason>", then run commit-preview.'
+        )
+    elif recovery_status == "refused":
+        report.next_action = recovery_reason
+    elif report.final_status == "blocked":
+        report.next_action = "Resolve delivery report blockers before retrying."
+    else:
+        report.next_action = _report_next_action(report.final_status, report.commit_ready)
+
+    report.recovery_status = recovery_status
+    report.recovery_reason = recovery_reason
+    report.recovery_note = note.strip()
+    report.refreshed_at = datetime.now(UTC)
+    history_note = _recovery_history_note(report.refreshed_at, recovery_status, recovery_reason, note)
+    report.recovery_history = [*report.recovery_history, history_note]
+    report.updated_at = report.refreshed_at
+    report, report_json, report_markdown = write_delivery_report(report, workspace_root=root)
+
+    result = DeliveryReportRefresh(
+        project=project_name,
+        delivery_id=delivery_id,
+        recovery_status=recovery_status,
+        recovery_reason=recovery_reason,
+        reopened=reopened,
+        reopen_allowed=reopen_allowed,
+        approval_status=approval_status,
+        current_readiness_status=current_check.readiness_status,
+        blockers=blockers,
+        warnings=warnings,
+        final_status=report.final_status,
+        commit_ready=report.commit_ready,
+        next_action=report.next_action,
+    )
+    return result, report, report_json, report_markdown
+
+
 def propose_delivery_commit_message(plan: DeliveryPlan) -> str:
     return plan.intended_commit_message.strip()
 
@@ -877,6 +1030,11 @@ def preview_delivery_commit(
         blockers.append(f"Delivery approval for {plan.delivery_id} is not approved.")
     if report.final_status != "ready":
         blockers.append(f"Delivery report {delivery_id} is {report.final_status}, not ready.")
+        if report.last_commit_failure_retryable:
+            blockers.append(
+                f"Delivery report {delivery_id} has retryable guarded commit failure "
+                f"{report.last_commit_failure_category}; run delivery report-refresh --reopen after diagnostics."
+            )
     if not report.commit_ready:
         blockers.append(f"Delivery report {delivery_id} is not commit-ready.")
     if current_check.readiness_status == BLOCKED:
@@ -922,6 +1080,7 @@ def commit_delivery_report(
         raise ValueError(msg)
     preview = preview_delivery_commit(project_name, delivery_id, message_override=message_override, workspace_root=root)
     if not preview.commit_ready:
+        failure_category = "no_eligible_files" if any("No commit-eligible changed files" in blocker for blocker in preview.blockers) else "unknown"
         result = DeliveryCommitResult(
             project=project_name,
             delivery_id=delivery_id,
@@ -929,10 +1088,20 @@ def commit_delivery_report(
             commit_message=preview.effective_commit_message,
             eligible_files=preview.eligible_files,
             stderr=_summary_text(preview.blockers),
+            failure_category=failure_category,
+            failure_retryable=False,
             next_action="Resolve commit blockers before retrying delivery commit.",
         )
         write_delivery_commit_result(result, workspace_root=root)
-        _mark_delivery_report_blocked(project_name, delivery_id, result.stderr, workspace_root=root)
+        _mark_delivery_report_blocked(
+            project_name,
+            delivery_id,
+            result.stderr,
+            workspace_root=root,
+            failure_category=failure_category,
+            failure_message=result.stderr,
+            failure_retryable=False,
+        )
         raise ValueError("Delivery commit blocked: " + result.stderr)
     repo_path = Path(preview.target_repo_path)
     try:
@@ -963,6 +1132,7 @@ def commit_delivery_report(
         _mark_delivery_report_committed(project_name, delivery_id, commit_hash, author_note, workspace_root=root)
         return write_delivery_commit_result(result, workspace_root=root)
     except OSError as exc:
+        category, retryable, next_action = _classify_commit_failure("git execution failed", "", str(exc))
         result = DeliveryCommitResult(
             project=project_name,
             delivery_id=delivery_id,
@@ -970,9 +1140,19 @@ def commit_delivery_report(
             commit_message=preview.effective_commit_message,
             eligible_files=preview.eligible_files,
             stderr=str(exc),
-            next_action="Review the git execution failure before retrying delivery commit.",
+            failure_category=category,
+            failure_retryable=retryable,
+            next_action=next_action,
         )
-        _mark_delivery_report_blocked(project_name, delivery_id, str(exc), workspace_root=root)
+        _mark_delivery_report_blocked(
+            project_name,
+            delivery_id,
+            str(exc),
+            workspace_root=root,
+            failure_category=category,
+            failure_message=str(exc),
+            failure_retryable=retryable,
+        )
         return write_delivery_commit_result(result, workspace_root=root)
 
 
@@ -1353,6 +1533,9 @@ def render_delivery_report_markdown(report: DeliveryReport) -> str:
             f"- Readiness snapshot at: `{report.readiness_snapshot_at.isoformat() if report.readiness_snapshot_at else 'unknown'}`",
             f"- Readiness currentness: `{report.readiness_currentness}`",
             f"- Readiness note: {report.readiness_snapshot_note}",
+            f"- Recovery status: `{report.recovery_status}`",
+            f"- Last commit failure category: `{report.last_commit_failure_category or 'none'}`",
+            f"- Last commit failure retryable: `{report.last_commit_failure_retryable}`",
             f"- Source plan: `{report.source_delivery_plan_id}`",
             f"- Source check: `{report.source_delivery_check_id or 'unknown'}`",
             f"- Proposed commit message: `{report.proposed_commit_message}`",
@@ -1376,6 +1559,10 @@ def render_delivery_report_markdown(report: DeliveryReport) -> str:
             f"- Blockers: {report.blocker_summary}",
             f"- Warnings: {report.warning_summary}",
             "",
+            "## Recovery History",
+            "",
+            *_markdown_list(report.recovery_history),
+            "",
             "## Next Action",
             "",
             report.next_action,
@@ -1395,6 +1582,8 @@ def render_delivery_commit_markdown(result: DeliveryCommitResult) -> str:
             f"- Commit message: `{result.commit_message}`",
             f"- Files: {len(result.eligible_files)}",
             f"- Return code: `{result.returncode if result.returncode is not None else 'not available'}`",
+            f"- Failure category: `{result.failure_category or 'none'}`",
+            f"- Failure retryable: `{result.failure_retryable}`",
             "",
             "## Eligible Files",
             "",
@@ -1708,6 +1897,12 @@ def _approval_next_action(approval_status: str, plan: DeliveryPlan) -> str:
 def _commit_preview_next_action(commit_ready: bool, blockers: list[str]) -> str:
     if commit_ready:
         return "Ready for guarded CLI commit with --confirm-commit. After commit, run delivery push-preview before --confirm-push."
+    if any(_is_retryable_report_blocker(blocker) for blocker in blockers):
+        return (
+            "Delivery report is blocked by a retryable guarded commit failure. Run "
+            'devo delivery report-refresh --project <project> --report <deliveryId> --reopen --note "<reason>", '
+            "then run commit-preview again."
+        )
     if blockers:
         return "Resolve commit blockers before running guarded delivery commit."
     return "Review delivery commit preview."
@@ -1732,6 +1927,7 @@ def _write_failed_commit_result(
     workspace_root: Path,
 ) -> tuple[DeliveryCommitResult, Path, Path]:
     detail = _single_line(label, completed.stdout, completed.stderr)
+    category, retryable, next_action = _classify_commit_failure(label, completed.stdout, completed.stderr)
     result = DeliveryCommitResult(
         project=project_name,
         delivery_id=delivery_id,
@@ -1741,9 +1937,19 @@ def _write_failed_commit_result(
         stdout=completed.stdout.strip(),
         stderr=completed.stderr.strip(),
         returncode=completed.returncode,
-        next_action="Review the git failure before retrying delivery commit.",
+        failure_category=category,
+        failure_retryable=retryable,
+        next_action=next_action,
     )
-    _mark_delivery_report_blocked(project_name, delivery_id, detail, workspace_root=workspace_root)
+    _mark_delivery_report_blocked(
+        project_name,
+        delivery_id,
+        detail,
+        workspace_root=workspace_root,
+        failure_category=category,
+        failure_message=detail,
+        failure_retryable=retryable,
+    )
     return write_delivery_commit_result(result, workspace_root=workspace_root)
 
 
@@ -1771,7 +1977,16 @@ def _mark_delivery_report_committed(
     write_delivery_report(report, workspace_root=workspace_root)
 
 
-def _mark_delivery_report_blocked(project_name: str, delivery_id: str, detail: str, workspace_root: Path) -> None:
+def _mark_delivery_report_blocked(
+    project_name: str,
+    delivery_id: str,
+    detail: str,
+    workspace_root: Path,
+    *,
+    failure_category: str | None = None,
+    failure_message: str | None = None,
+    failure_retryable: bool = False,
+) -> None:
     report = load_delivery_report(project_name, delivery_id, workspace_root=workspace_root)
     if not report:
         return
@@ -1780,7 +1995,23 @@ def _mark_delivery_report_blocked(project_name: str, delivery_id: str, detail: s
     report.push_ready = False
     report.updated_at = datetime.now(UTC)
     report.blocker_summary = detail or report.blocker_summary
-    report.next_action = "Resolve delivery commit blockers before retrying."
+    if failure_category:
+        report.last_commit_failure_category = failure_category
+        report.last_commit_failure_message = failure_message or detail
+        report.last_commit_failure_retryable = failure_retryable
+        report.recovery_status = "none"
+        report.recovery_reason = "Guarded delivery commit failed."
+        report.recovery_history = [
+            *report.recovery_history,
+            _recovery_history_note(report.updated_at, "commit_failed", report.last_commit_failure_message or detail, ""),
+        ]
+    if failure_retryable:
+        report.next_action = (
+            f"Diagnose .git/index.lock / permissions, then run devo delivery report-refresh --project {project_name} "
+            f"--report {delivery_id} --reopen --note \"transient commit failure resolved\"."
+        )
+    else:
+        report.next_action = "Resolve delivery commit blockers before retrying."
     write_delivery_report(report, workspace_root=workspace_root)
 
 
@@ -1836,6 +2067,74 @@ def _mark_readiness_snapshot_historical(report: DeliveryReport) -> None:
     if not report.readiness_snapshot_at:
         report.readiness_snapshot_at = report.created_at
     report.readiness_snapshot_note = "Historical readiness snapshot; run delivery check for current repo state."
+
+
+def _refresh_report_snapshot(report: DeliveryReport, current_check: DeliveryCheck, plan: DeliveryPlan) -> None:
+    report.target_repo_path = current_check.target_repo_path
+    report.branch = current_check.branch
+    report.remote = current_check.remote
+    report.changed_files = current_check.changed_files
+    report.staged_files = current_check.staged_files
+    report.unstaged_files = current_check.unstaged_files
+    report.untracked_files = current_check.untracked_files
+    report.validation_summary = f"Validation evidence status: {current_check.validation_evidence_status}"
+    report.review_summary = f"Worker review status: {current_check.review_status}"
+    report.safety_scan_summary = _safety_scan_summary(current_check)
+    report.delivery_readiness_status = current_check.readiness_status
+    report.readiness_snapshot_status = current_check.readiness_status
+    report.readiness_snapshot_at = current_check.updated_at
+    report.readiness_currentness = "current"
+    report.readiness_snapshot_note = "Readiness snapshot refreshed by delivery report-refresh."
+    report.source_delivery_check_id = plan.source_delivery_check_id
+
+
+def _hydrate_commit_failure_metadata(report: DeliveryReport, *, workspace_root: Path) -> None:
+    if report.last_commit_failure_category:
+        return
+    commit_result = load_delivery_commit_result(report.project, report.delivery_id, workspace_root=workspace_root)
+    if not commit_result or commit_result.status not in {"blocked", "failed"}:
+        return
+    label = "git commit failed" if commit_result.status == "failed" else "delivery commit blocked"
+    category = commit_result.failure_category
+    retryable = commit_result.failure_retryable
+    if not category:
+        category, retryable, _next_action = _classify_commit_failure(label, commit_result.stdout, commit_result.stderr)
+    report.last_commit_failure_category = category
+    report.last_commit_failure_message = _single_line(label, commit_result.stdout, commit_result.stderr)
+    report.last_commit_failure_retryable = retryable
+
+
+def _classify_commit_failure(label: str, stdout: str, stderr: str) -> tuple[str, bool, str]:
+    text = " ".join(part.strip() for part in (label, stdout, stderr) if part and part.strip()).lower()
+    if "index.lock" in text and "permission denied" in text:
+        return (
+            "index_lock_permission_denied",
+            True,
+            "Diagnose .git/index.lock / permissions, then run delivery report-refresh --reopen before retrying commit.",
+        )
+    if "index.lock" in text and ("file exists" in text or "exists" in text or "another git process" in text):
+        return (
+            "index_lock_exists",
+            True,
+            "Ensure no git process is running and .git/index.lock is stale/absent, then run delivery report-refresh --reopen.",
+        )
+    if "no commit-eligible changed files" in text:
+        return ("no_eligible_files", False, "Create or select commit-eligible changes before retrying delivery commit.")
+    if "git commit failed" in text:
+        return ("git_commit_failed", False, "Review the git commit failure before retrying delivery commit.")
+    return ("unknown", False, "Review the git failure before retrying delivery commit.")
+
+
+def _is_retryable_report_blocker(blocker: str) -> bool:
+    text = blocker.lower()
+    return "retryable guarded commit failure" in text or "index_lock_" in text or "index.lock" in text
+
+
+def _recovery_history_note(when: datetime | None, status: str, reason: str, note: str) -> str:
+    timestamp = (when or datetime.now(UTC)).isoformat()
+    clean_note = note.strip()
+    suffix = f" Note: {clean_note}" if clean_note else ""
+    return f"{timestamp} | {status}: {reason}{suffix}"
 
 
 def _default_push_remote(remote: str | None) -> str | None:

@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-112 Delivery read-model/UI polish or real Codex launcher retry after readiness
+- TASK-DEVO-112 resume after TASK-DEVO-113 report recovery, or real Codex launcher retry after readiness
 
 ## Updated Roadmap Phases
 
@@ -206,6 +206,10 @@ Dogfooded the full delivery flow against `DeliveryDogfood110`, an isolated tempo
 ### TASK-DEVO-111 Delivery Operator Polish And UI Visibility - Completed
 
 Fixed the dogfood friction from TASK-DEVO-110. Delivery next-action text now points from guarded commit to `push-preview` and guarded `push`, and from pushed delivery to `push-show`. Delivery reports now expose readiness snapshot status/time/currentness/note, and committed or pushed reports label the readiness data as historical. The known unreadable global Git ignore warning is kept visible but does not downgrade readiness when Git status and diff checks pass. Added a read-only dashboard Delivery page and Project Overview delivery card showing checks, plans, approvals, reports, commit and push result metadata, blockers, warnings, next actions, and copyable CLI commands only. No UI commit, push, stage, unstage, validation, restore, scheduler, Codex, or target command buttons were added.
+
+### TASK-DEVO-113 Delivery Report Recovery - Completed
+
+Added `devo delivery report-refresh` to recover safely from retryable guarded commit failures. Guarded commit failures now classify common Git errors such as `.git/index.lock` permission denial or stale lock, preserve raw stderr, record retryability on the commit artifact and report, and show recovery guidance in `commit-preview`. `report-refresh` updates the current readiness snapshot without staging or committing; with `--reopen`, it can restore a blocked report to commit-ready only when the linked plan and approval remain approved, current readiness has no blockers, and the report has not already committed or pushed.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

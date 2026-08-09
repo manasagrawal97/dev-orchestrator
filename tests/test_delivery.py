@@ -12,11 +12,13 @@ from devo.api import create_app
 from devo.delivery import (
     commit_delivery_report,
     create_delivery_plan,
+    load_delivery_report,
     list_delivery_checks,
     prepare_delivery_report,
     preview_delivery_commit,
     preview_delivery_push,
     push_delivery_report,
+    refresh_delivery_report,
     run_delivery_readiness_check,
 )
 from devo.main import app
@@ -657,6 +659,210 @@ def test_delivery_commit_failure_is_captured_safely(tmp_path: Path, monkeypatch)
     assert "commit failed" in result.stderr
 
 
+def test_delivery_commit_failure_classifies_index_lock_permission_denied(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["add"]:
+            return subprocess.CompletedProcess(
+                args,
+                128,
+                "",
+                "fatal: Unable to create 'E:/DevOrchestrator/.git/index.lock': Permission denied",
+            )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
+
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    report = load_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+
+    assert result.status == "failed"
+    assert result.failure_category == "index_lock_permission_denied"
+    assert result.failure_retryable is True
+    assert report is not None
+    assert report.final_status == "blocked"
+    assert report.last_commit_failure_category == "index_lock_permission_denied"
+    assert report.last_commit_failure_retryable is True
+    assert "report-refresh" in report.next_action
+
+
+def test_delivery_report_refresh_without_reopen_keeps_retryable_report_blocked(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+    before = _git(repo, "status", "--short", capture=True).stdout
+
+    result, report, _json_path, _markdown_path = refresh_delivery_report(
+        "sample",
+        "DEL-0001",
+        note="lock gone",
+        workspace_root=workspace,
+    )
+    after = _git(repo, "status", "--short", capture=True).stdout
+
+    assert result.recovery_status == "reopen_allowed"
+    assert result.reopen_allowed is True
+    assert result.reopened is False
+    assert report.final_status == "blocked"
+    assert report.commit_ready is False
+    assert report.readiness_currentness == "current"
+    assert "lock gone" in report.recovery_history[-1]
+    assert after == before
+
+
+def test_delivery_report_refresh_reopen_restores_commit_ready_for_retryable_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+    before = _git(repo, "status", "--short", capture=True).stdout
+
+    result, report, _json_path, _markdown_path = refresh_delivery_report(
+        "sample",
+        "DEL-0001",
+        note="permission issue cleared",
+        reopen=True,
+        workspace_root=workspace,
+    )
+    after = _git(repo, "status", "--short", capture=True).stdout
+
+    assert result.recovery_status == "reopened"
+    assert result.reopened is True
+    assert report.final_status == "ready"
+    assert report.commit_ready is True
+    assert report.blocker_summary == "none"
+    assert "commit-preview" in report.next_action
+    assert after == before
+
+
+def test_delivery_report_refresh_command_reopens_retryable_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "report-refresh",
+            "--project",
+            "sample",
+            "--report",
+            "DEL-0001",
+            "--reopen",
+            "--note",
+            "diagnostics clear",
+        ],
+        terminal_width=240,
+    )
+    report = load_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "Recovery status: reopened" in result.output
+    assert "Commit ready: True" in result.output
+    assert report is not None
+    assert report.final_status == "ready"
+    assert report.commit_ready is True
+
+
+def test_delivery_report_refresh_reopen_refuses_when_current_readiness_blocked(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+    (repo / ".env").write_text("SAFE_PLACEHOLDER=true\n", encoding="utf-8")
+
+    result, report, _json_path, _markdown_path = refresh_delivery_report(
+        "sample",
+        "DEL-0001",
+        note="try reopen",
+        reopen=True,
+        workspace_root=workspace,
+    )
+
+    assert result.recovery_status == "refused"
+    assert result.reopened is False
+    assert result.current_readiness_status == "blocked"
+    assert report.final_status == "blocked"
+    assert report.commit_ready is False
+    assert "Forbidden delivery paths are changed" in report.blocker_summary
+
+
+def test_delivery_report_refresh_reopen_refuses_without_approved_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+    plan_path = workspace / "projects" / "sample" / "delivery" / "delivery-plan-del-0001.json"
+    plan_payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan_payload["approval_status"] = "requested"
+    plan_path.write_text(json.dumps(plan_payload), encoding="utf-8")
+
+    result, report, _json_path, _markdown_path = refresh_delivery_report(
+        "sample",
+        "DEL-0001",
+        note="approval regressed",
+        reopen=True,
+        workspace_root=workspace,
+    )
+
+    assert result.recovery_status == "refused"
+    assert result.reopened is False
+    assert "approved" in result.recovery_reason
+    assert report.final_status == "blocked"
+    assert report.commit_ready is False
+
+
+def test_delivery_report_refresh_does_not_reopen_already_committed_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+
+    result, report, _json_path, _markdown_path = refresh_delivery_report(
+        "sample",
+        "DEL-0001",
+        note="snapshot only",
+        reopen=True,
+        workspace_root=workspace,
+    )
+
+    assert result.recovery_status == "refused"
+    assert result.reopened is False
+    assert report.final_status == "committed"
+    assert report.commit_hash
+    assert report.commit_ready is False
+
+
+def test_delivery_report_refresh_does_not_reopen_already_pushed_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    push_delivery_report("sample", "DEL-0001", confirm_push=True, workspace_root=workspace)
+
+    result, report, _json_path, _markdown_path = refresh_delivery_report(
+        "sample",
+        "DEL-0001",
+        note="snapshot only",
+        reopen=True,
+        workspace_root=workspace,
+    )
+
+    assert result.recovery_status == "refused"
+    assert result.reopened is False
+    assert report.final_status == "pushed"
+    assert report.pushed is True
+
+
+def test_delivery_commit_preview_shows_recovery_guidance_for_retryable_blocked_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+
+    result = runner.invoke(app, ["delivery", "commit-preview", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "retryable guarded commit failure" in result.output
+    assert "delivery report-refresh" in result.output
+
+
 def test_api_exposes_delivery_commit_result(tmp_path: Path, monkeypatch) -> None:
     workspace, repo = _workspace(tmp_path, monkeypatch)
     (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
@@ -908,6 +1114,25 @@ def _create_ready_report(workspace: Path) -> None:
     report, _json_path, _markdown_path = prepare_delivery_report("sample", "DEL-0001", workspace_root=workspace)
     assert report.final_status == "ready"
     assert report.commit_ready is True
+
+
+def _create_index_lock_failed_report(workspace: Path, monkeypatch) -> None:
+    _create_ready_report(workspace)
+
+    def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["add"]:
+            return subprocess.CompletedProcess(
+                args,
+                128,
+                "",
+                "fatal: Unable to create 'E:/DevOrchestrator/.git/index.lock': Permission denied",
+            )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    assert result.status == "failed"
+    assert result.failure_retryable is True
 
 
 def _create_committed_report(workspace: Path) -> None:
