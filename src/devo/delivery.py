@@ -99,6 +99,18 @@ class DeliveryApprovalIndexEntry(BaseModel):
     updated_at: datetime
 
 
+class DeliveryReportIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delivery_id: str
+    final_status: str
+    commit_ready: bool = False
+    push_ready: bool = False
+    proposed_commit_message: str
+    path: str
+    updated_at: datetime
+
+
 class DeliveryIndex(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -107,6 +119,7 @@ class DeliveryIndex(BaseModel):
     checks: list[DeliveryIndexEntry] = Field(default_factory=list)
     plans: list[DeliveryPlanIndexEntry] = Field(default_factory=list)
     approvals: list[DeliveryApprovalIndexEntry] = Field(default_factory=list)
+    reports: list[DeliveryReportIndexEntry] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -170,6 +183,44 @@ class DeliveryApproval(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class DeliveryReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    source_delivery_plan_id: str
+    source_delivery_check_id: str | None = None
+    source_queue_id: str | None = None
+    source_queue_item_id: str | None = None
+    source_worker_run_id: str | None = None
+    source_review_id: str | None = None
+    target_repo_path: str
+    branch: str | None = None
+    remote: str | None = None
+    intended_commit_message: str
+    proposed_commit_message: str
+    changed_files: list[str] = Field(default_factory=list)
+    staged_files: list[str] = Field(default_factory=list)
+    unstaged_files: list[str] = Field(default_factory=list)
+    untracked_files: list[str] = Field(default_factory=list)
+    validation_summary: str
+    review_summary: str
+    safety_scan_summary: str
+    blocker_summary: str
+    warning_summary: str
+    approval_status: str
+    delivery_readiness_status: str
+    commit_ready: bool = False
+    push_ready: bool = False
+    commit_hash: str | None = None
+    pushed: bool = False
+    final_status: str = "draft"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    next_action: str
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -191,6 +242,12 @@ def delivery_approval_artifact_paths(project_name: str, delivery_id: str, worksp
     directory = delivery_directory(project_name, workspace_root=workspace_root)
     stem = delivery_id.lower()
     return directory / f"delivery-approval-{stem}.json", directory / f"delivery-approval-{stem}.md"
+
+
+def delivery_report_artifact_paths(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    directory = delivery_directory(project_name, workspace_root=workspace_root)
+    stem = delivery_id.lower()
+    return directory / f"delivery-report-{stem}.json", directory / f"delivery-report-{stem}.md"
 
 
 def run_delivery_readiness_check(
@@ -575,6 +632,99 @@ def list_delivery_approvals(project_name: str, workspace_root: Path | None = Non
     return sorted(approvals, key=lambda item: item.updated_at, reverse=True)
 
 
+def prepare_delivery_report(
+    project_name: str,
+    delivery_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryReport, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    plan = _require_delivery_plan(project_name, delivery_id, root)
+    if plan.approval_status != "approved":
+        msg = f"Delivery plan {delivery_id} is not approved."
+        raise ValueError(msg)
+    current_check, _json_path, _markdown_path = run_delivery_readiness_check(
+        project_name,
+        queue_id=plan.source_queue_id,
+        item_id=plan.source_queue_item_id,
+        write=False,
+        workspace_root=root,
+    )
+    blockers = _dedupe([*plan.blockers, *current_check.blockers])
+    warnings = _dedupe([*plan.warnings, *current_check.warnings])
+    final_status = "blocked" if blockers or current_check.readiness_status == BLOCKED else "ready"
+    commit_ready = plan.approval_status == "approved" and final_status == "ready"
+    report = DeliveryReport(
+        project=project_name,
+        delivery_id=plan.delivery_id,
+        source_delivery_plan_id=plan.delivery_id,
+        source_delivery_check_id=plan.source_delivery_check_id,
+        source_queue_id=plan.source_queue_id,
+        source_queue_item_id=plan.source_queue_item_id,
+        source_worker_run_id=plan.source_worker_run_id,
+        source_review_id=plan.source_review_id,
+        target_repo_path=current_check.target_repo_path,
+        branch=current_check.branch,
+        remote=current_check.remote,
+        intended_commit_message=plan.intended_commit_message,
+        proposed_commit_message=propose_delivery_commit_message(plan),
+        changed_files=current_check.changed_files,
+        staged_files=current_check.staged_files,
+        unstaged_files=current_check.unstaged_files,
+        untracked_files=current_check.untracked_files,
+        validation_summary=f"Validation evidence status: {current_check.validation_evidence_status}",
+        review_summary=f"Worker review status: {current_check.review_status}",
+        safety_scan_summary=_safety_scan_summary(current_check),
+        blocker_summary=_summary_text(blockers),
+        warning_summary=_summary_text(warnings),
+        approval_status=plan.approval_status,
+        delivery_readiness_status=current_check.readiness_status,
+        commit_ready=commit_ready,
+        push_ready=False,
+        commit_hash=None,
+        pushed=False,
+        final_status=final_status,
+        next_action=_report_next_action(final_status, commit_ready),
+    )
+    return write_delivery_report(report, workspace_root=root)
+
+
+def propose_delivery_commit_message(plan: DeliveryPlan) -> str:
+    return plan.intended_commit_message.strip()
+
+
+def write_delivery_report(report: DeliveryReport, workspace_root: Path | None = None) -> tuple[DeliveryReport, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_directory(report.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = delivery_report_artifact_paths(report.project, report.delivery_id, workspace_root=root)
+    json_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text(render_delivery_report_markdown(report), encoding="utf-8")
+    _write_delivery_index(report.project, workspace_root=root)
+    return report, json_path, markdown_path
+
+
+def load_delivery_report(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryReport | None:
+    root = workspace_root or get_workspace_root()
+    json_path, _markdown_path = delivery_report_artifact_paths(project_name, delivery_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return DeliveryReport.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_delivery_reports(project_name: str, workspace_root: Path | None = None) -> list[DeliveryReport]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    reports: list[DeliveryReport] = []
+    for path in sorted(directory.glob("delivery-report-*.json")):
+        try:
+            reports.append(DeliveryReport.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(reports, key=lambda item: item.updated_at, reverse=True)
+
+
 def load_delivery_check(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryCheck | None:
     root = workspace_root or get_workspace_root()
     json_path, _markdown_path = delivery_artifact_paths(project_name, delivery_id, workspace_root=root)
@@ -727,6 +877,47 @@ def render_delivery_approval_markdown(approval: DeliveryApproval) -> str:
     )
 
 
+def render_delivery_report_markdown(report: DeliveryReport) -> str:
+    return "\n".join(
+        [
+            f"# Delivery Report Draft: {report.delivery_id}",
+            "",
+            f"- Project: `{report.project}`",
+            f"- Final status: `{report.final_status}`",
+            f"- Commit ready: `{report.commit_ready}`",
+            f"- Push ready: `{report.push_ready}`",
+            f"- Approval status: `{report.approval_status}`",
+            f"- Delivery readiness: `{report.delivery_readiness_status}`",
+            f"- Source plan: `{report.source_delivery_plan_id}`",
+            f"- Source check: `{report.source_delivery_check_id or 'unknown'}`",
+            f"- Proposed commit message: `{report.proposed_commit_message}`",
+            f"- Target repo: `{report.target_repo_path}`",
+            f"- Branch: `{report.branch or 'unknown'}`",
+            f"- Remote/upstream: `{report.remote or 'unknown'}`",
+            "",
+            "## Files",
+            "",
+            f"- Changed: {len(report.changed_files)}",
+            f"- Staged: {len(report.staged_files)}",
+            f"- Unstaged: {len(report.unstaged_files)}",
+            f"- Untracked: {len(report.untracked_files)}",
+            "",
+            "## Evidence Summary",
+            "",
+            f"- Validation: {report.validation_summary}",
+            f"- Review: {report.review_summary}",
+            f"- Safety scan: {report.safety_scan_summary}",
+            f"- Blockers: {report.blocker_summary}",
+            f"- Warnings: {report.warning_summary}",
+            "",
+            "## Next Action",
+            "",
+            report.next_action,
+            "",
+        ]
+    )
+
+
 def _write_delivery_index(project_name: str, workspace_root: Path | None = None) -> DeliveryIndex:
     root = workspace_root or get_workspace_root()
     directory = delivery_directory(project_name, workspace_root=root)
@@ -734,6 +925,7 @@ def _write_delivery_index(project_name: str, workspace_root: Path | None = None)
     checks = list_delivery_checks(project_name, workspace_root=root)
     plans = list_delivery_plans(project_name, workspace_root=root)
     approvals = list_delivery_approvals(project_name, workspace_root=root)
+    reports = list_delivery_reports(project_name, workspace_root=root)
     check_entries = [
         DeliveryIndexEntry(
             delivery_id=check.delivery_id,
@@ -775,7 +967,26 @@ def _write_delivery_index(project_name: str, workspace_root: Path | None = None)
         )
         for approval in approvals
     ]
-    index = DeliveryIndex(project=project_name, checks=check_entries, plans=plan_entries, approvals=approval_entries, updated_at=datetime.now(UTC))
+    report_entries = [
+        DeliveryReportIndexEntry(
+            delivery_id=report.delivery_id,
+            final_status=report.final_status,
+            commit_ready=report.commit_ready,
+            push_ready=report.push_ready,
+            proposed_commit_message=report.proposed_commit_message,
+            path=str(delivery_report_artifact_paths(project_name, report.delivery_id, workspace_root=root)[0]),
+            updated_at=report.updated_at,
+        )
+        for report in reports
+    ]
+    index = DeliveryIndex(
+        project=project_name,
+        checks=check_entries,
+        plans=plan_entries,
+        approvals=approval_entries,
+        reports=report_entries,
+        updated_at=datetime.now(UTC),
+    )
     (directory / DELIVERY_INDEX_JSON).write_text(index.model_dump_json(indent=2), encoding="utf-8")
     return index
 
@@ -950,6 +1161,29 @@ def _approval_next_action(approval_status: str, plan: DeliveryPlan) -> str:
     if approval_status == "rejected":
         return "Revise the delivery plan or resolve blockers before requesting approval again."
     return "Review delivery approval state."
+
+
+def _safety_scan_summary(check: DeliveryCheck) -> str:
+    return (
+        f"forbidden changed {len(check.forbidden_changed_files)}, "
+        f"forbidden staged {len(check.forbidden_staged_files)}, "
+        f"workspace staged {len(check.workspace_artifacts_staged)}, "
+        f"secret-risk {len(check.secrets_risk_files)}"
+    )
+
+
+def _summary_text(items: list[str]) -> str:
+    if not items:
+        return "none"
+    return "; ".join(items)
+
+
+def _report_next_action(final_status: str, commit_ready: bool) -> str:
+    if final_status == "blocked":
+        return "Resolve report blockers before any future commit preparation."
+    if commit_ready:
+        return "Commit message is prepared; controlled commit command remains future scope."
+    return "Review delivery report before any future commit preparation."
 
 
 def _markdown_list(items: list[str]) -> list[str]:

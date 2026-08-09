@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-088 Worker run/report data model
+- TASK-DEVO-108 Controlled commit command with `--confirm-commit`
 
 ## Updated Roadmap Phases
 
@@ -186,6 +186,10 @@ Added `docs/devo-company-model.md` to define Devo as a local software-developmen
 ### TASK-DEVO-073B Remaining Roadmap Reprioritization - Completed
 
 Added `docs/remaining-roadmap.md` as the durable source of truth for the remaining product sequence. The roadmap centers Devo on project brief intake, blueprint/backlog/task models, batch selection, execution queue state, Codex handoff prompts, progress tracking, planning/progress UI pages, and later worker adapters. It intentionally deprioritizes PersonalOS feature work, general AI chat, direct API agents, autonomous unapproved execution, risky UI action buttons, scheduler/backup mutation UI, public SaaS, and persistent DB caching unless performance demands it.
+
+### TASK-DEVO-107 Delivery Report Preparation - Completed
+
+Added pre-commit delivery report preparation after delivery plan approval. `devo delivery report-prepare` creates JSON/Markdown report drafts from an approved plan, re-checks current readiness, records blocker/warning/safety/validation/review summaries, and proposes the commit message. `devo delivery commit-message` prints only that proposed message for manual use. Read models and read-only API endpoints expose delivery report status, but Devo still does not stage, validate, commit, push, run Codex, run target commands, or modify target repositories through this flow.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

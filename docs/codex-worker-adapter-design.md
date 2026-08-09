@@ -173,7 +173,7 @@ TASK-DEVO-102 adds that launcher strategy. Codex diagnostics now distinguish `pa
 
 TASK-DEVO-103 documents the operator readiness path in `docs/runbooks/codex-launcher-setup.md`. Real supervised retry should wait until that checklist is complete and doctor reports a safe real executable or wrapper launcher.
 
-TASK-DEVO-104 documents the delivery safety layer in `docs/delivery-safety-design.md`, TASK-DEVO-105 implements read-only delivery readiness checks, and TASK-DEVO-106 implements delivery plan/approval artifacts. Worker success, report import, review pass, queue completion, and delivery approval still do not execute commit or push. Future commit/push commands still need explicit confirmation and safety gates.
+TASK-DEVO-104 documents the delivery safety layer in `docs/delivery-safety-design.md`, TASK-DEVO-105 implements read-only delivery readiness checks, TASK-DEVO-106 implements delivery plan/approval artifacts, and TASK-DEVO-107 implements delivery report plus commit-message preparation. Worker success, report import, review pass, queue completion, delivery approval, and report preparation still do not execute commit or push. Future commit/push commands still need explicit confirmation and safety gates.
 
 ## State Transitions
 
@@ -382,7 +382,7 @@ Recommended future sequence:
 17. TASK-DEVO-104: Delivery and commit safety design - completed.
 18. TASK-DEVO-105: Delivery readiness data model and check command - completed.
 19. TASK-DEVO-106: Delivery plan and approval workflow - completed.
-20. TASK-DEVO-107: Delivery report and commit message preparation.
+20. TASK-DEVO-107: Delivery report and commit message preparation - completed.
 21. TASK-DEVO-108: Controlled commit command with `--confirm-commit`.
 22. TASK-DEVO-109: Controlled push command with `--confirm-push`.
 

@@ -52,14 +52,19 @@ from .delivery import (
     DeliveryApproval,
     DeliveryCheck,
     DeliveryPlan,
+    DeliveryReport,
     approve_delivery_plan,
     create_delivery_plan,
     list_delivery_checks,
     list_delivery_approvals,
     list_delivery_plans,
+    list_delivery_reports,
     load_delivery_approval,
     load_delivery_check,
     load_delivery_plan,
+    load_delivery_report,
+    prepare_delivery_report,
+    propose_delivery_commit_message,
     reject_delivery_plan,
     request_delivery_approval,
     run_delivery_readiness_check,
@@ -1573,6 +1578,31 @@ def _print_delivery_approval(approval: DeliveryApproval) -> None:
     console.print(f"Next action: {approval.next_action}", soft_wrap=True)
 
 
+def _print_delivery_report(report: DeliveryReport) -> None:
+    console.print(f"Project: {report.project}")
+    console.print(f"Delivery report: {report.delivery_id}")
+    console.print(f"Final status: {report.final_status}")
+    console.print(f"Commit ready: {report.commit_ready}")
+    console.print(f"Push ready: {report.push_ready}")
+    console.print(f"Approval status: {report.approval_status}")
+    console.print(f"Delivery readiness: {report.delivery_readiness_status}")
+    console.print(f"Proposed commit message: {report.proposed_commit_message}", soft_wrap=True)
+    console.print(f"Target repo: {report.target_repo_path}", soft_wrap=True)
+    console.print(f"Branch: {report.branch or 'unknown'}")
+    console.print(f"Remote/upstream: {report.remote or 'unknown'}")
+    console.print("Files:")
+    console.print(f"  Changed: {len(report.changed_files)}")
+    console.print(f"  Staged: {len(report.staged_files)}")
+    console.print(f"  Unstaged: {len(report.unstaged_files)}")
+    console.print(f"  Untracked: {len(report.untracked_files)}")
+    console.print(f"Validation: {report.validation_summary}", soft_wrap=True)
+    console.print(f"Review: {report.review_summary}", soft_wrap=True)
+    console.print(f"Safety scan: {report.safety_scan_summary}", soft_wrap=True)
+    console.print(f"Blockers: {report.blocker_summary}", soft_wrap=True)
+    console.print(f"Warnings: {report.warning_summary}", soft_wrap=True)
+    console.print(f"Next action: {report.next_action}", soft_wrap=True)
+
+
 @delivery_app.command("check")
 def check_delivery_readiness(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -1732,6 +1762,67 @@ def reject_delivery_plan_command(
     _print_delivery_approval(approval)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("report-prepare")
+def prepare_delivery_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+) -> None:
+    """Prepare a delivery report draft from an approved plan without committing or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        report, json_path, markdown_path = prepare_delivery_report(resolved_project, delivery_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--plan") from exc
+    _print_delivery_report(report)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("report-list")
+def list_delivery_reports_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List prepared delivery reports."""
+    resolved_project = _resolve_project(project_name)
+    reports = list_delivery_reports(resolved_project)
+    console.print(f"Delivery reports for {resolved_project}: {len(reports)}")
+    if not reports:
+        console.print("  none")
+        return
+    for report in reports:
+        console.print(
+            f"  {report.delivery_id} | {report.final_status} | commit ready {report.commit_ready} | "
+            f"push ready {report.push_ready} | {report.updated_at.isoformat()}",
+            soft_wrap=True,
+        )
+
+
+@delivery_app.command("report-show")
+def show_delivery_report_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+) -> None:
+    """Show one prepared delivery report."""
+    resolved_project = _resolve_project(project_name)
+    report = load_delivery_report(resolved_project, delivery_id)
+    if not report:
+        raise typer.BadParameter(f"Delivery report not found: {delivery_id}", param_hint="--report")
+    _print_delivery_report(report)
+
+
+@delivery_app.command("commit-message")
+def show_delivery_commit_message(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--plan", help="Delivery plan ID."),
+) -> None:
+    """Print the proposed commit message for a delivery plan without writing or committing."""
+    resolved_project = _resolve_project(project_name)
+    plan = load_delivery_plan(resolved_project, delivery_id)
+    if not plan:
+        raise typer.BadParameter(f"Delivery plan not found: {delivery_id}", param_hint="--plan")
+    console.print(propose_delivery_commit_message(plan), soft_wrap=True)
 
 
 @delivery_app.command("list")

@@ -7,7 +7,7 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import list_backup_inventory
-from .delivery import list_delivery_checks, list_delivery_plans
+from .delivery import list_delivery_checks, list_delivery_plans, list_delivery_reports
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
@@ -103,6 +103,12 @@ class ProjectOverview(BaseModel):
     latest_delivery_plan_status: str | None = None
     latest_delivery_approval_status: str | None = None
     latest_delivery_plan_next_action: str | None = None
+    delivery_report_count: int = 0
+    latest_delivery_report_id: str | None = None
+    latest_delivery_report_status: str | None = None
+    latest_delivery_commit_ready: bool = False
+    latest_delivery_push_ready: bool = False
+    latest_delivery_report_next_action: str | None = None
     brief_status: str = "missing"
     blueprint_status: str = "missing"
     blueprint_milestone_count: int = 0
@@ -240,6 +246,16 @@ def build_project_overview_with_timing(
             ),
             latest_delivery_plan_next_action=(
                 str(delivery["latest_delivery_plan_next_action"]) if delivery["latest_delivery_plan_next_action"] else None
+            ),
+            delivery_report_count=int(delivery["delivery_report_count"]),
+            latest_delivery_report_id=str(delivery["latest_delivery_report_id"]) if delivery["latest_delivery_report_id"] else None,
+            latest_delivery_report_status=(
+                str(delivery["latest_delivery_report_status"]) if delivery["latest_delivery_report_status"] else None
+            ),
+            latest_delivery_commit_ready=bool(delivery["latest_delivery_commit_ready"]),
+            latest_delivery_push_ready=bool(delivery["latest_delivery_push_ready"]),
+            latest_delivery_report_next_action=(
+                str(delivery["latest_delivery_report_next_action"]) if delivery["latest_delivery_report_next_action"] else None
             ),
             brief_status=str(planning["brief_status"]),
             blueprint_status=str(planning["blueprint_status"]),
@@ -748,6 +764,7 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     try:
         checks = list_delivery_checks(project_name, workspace_root=workspace_root)
         plans = list_delivery_plans(project_name, workspace_root=workspace_root)
+        reports = list_delivery_reports(project_name, workspace_root=workspace_root)
     except Exception as exc:
         return {
             "delivery_check_count": 0,
@@ -761,9 +778,16 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_delivery_plan_status": None,
             "latest_delivery_approval_status": None,
             "latest_delivery_plan_next_action": f"Review delivery artifacts: {exc}",
+            "delivery_report_count": 0,
+            "latest_delivery_report_id": None,
+            "latest_delivery_report_status": None,
+            "latest_delivery_commit_ready": False,
+            "latest_delivery_push_ready": False,
+            "latest_delivery_report_next_action": f"Review delivery artifacts: {exc}",
         }
     latest = checks[0] if checks else None
     latest_plan = plans[0] if plans else None
+    latest_report = reports[0] if reports else None
     return {
         "delivery_check_count": len(checks),
         "latest_delivery_id": latest.delivery_id if latest else None,
@@ -776,6 +800,12 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_delivery_plan_status": latest_plan.delivery_status if latest_plan else None,
         "latest_delivery_approval_status": latest_plan.approval_status if latest_plan else None,
         "latest_delivery_plan_next_action": latest_plan.next_action if latest_plan else "Create a delivery plan from a written readiness check when ready.",
+        "delivery_report_count": len(reports),
+        "latest_delivery_report_id": latest_report.delivery_id if latest_report else None,
+        "latest_delivery_report_status": latest_report.final_status if latest_report else None,
+        "latest_delivery_commit_ready": latest_report.commit_ready if latest_report else False,
+        "latest_delivery_push_ready": latest_report.push_ready if latest_report else False,
+        "latest_delivery_report_next_action": latest_report.next_action if latest_report else "Prepare a delivery report after delivery approval.",
     }
 
 

@@ -20,6 +20,7 @@ Relevant Devo capabilities already exist:
 - Git delivery concepts already exist through delivery checks and delivery reports for target repositories.
 - `devo delivery check` now creates read-only delivery readiness summaries and optional JSON/Markdown artifacts under `workspace/projects/<project>/delivery/`.
 - `devo delivery plan` and delivery approval commands now create read-only plan/approval artifacts from readiness checks without committing or pushing.
+- `devo delivery report-prepare` now creates a pre-commit delivery report from an approved plan, re-checks current readiness, and proposes the commit message without staging, committing, or pushing.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -38,9 +39,10 @@ worker execution
 -> delivery readiness check
 -> delivery plan
 -> delivery approval
+-> delivery report preparation
 -> commit
 -> push
--> delivery report
+-> delivery completion record
 ```
 
 Queue completion is not the same as delivery. Queue completion says the queue item is accepted as done from a Devo workflow perspective. Delivery says the target repository diff is safe to commit and optionally push.
@@ -184,15 +186,32 @@ The check command is still read-only. It does not stage, unstage, validate, comm
 
 ### DeliveryReport Fields
 
+- `project`
 - `delivery_id`
+- `source_delivery_plan_id`
+- source delivery, queue, queue item, worker run, and review ids when available
+- `target_repo_path`
+- `branch`
+- `remote`
+- `intended_commit_message`
+- `proposed_commit_message`
+- changed, staged, unstaged, and untracked file summaries
+- `validation_summary`
+- `review_summary`
+- `safety_scan_summary`
+- blocker and warning summaries
+- `approval_status`
+- `delivery_readiness_status`
+- `commit_ready`
+- `push_ready`
 - `commit_hash` optional
 - `pushed`: true or false
-- `push_remote` optional
-- `push_branch` optional
-- `validation_summary`
-- `safety_scan_summary`
-- `final_status`
+- `final_status`: `draft`, `ready`, `blocked`, or `superseded`
 - `created_at`
+- `updated_at`
+- `next_action`
+
+TASK-DEVO-107 implements draft report preparation. Reports are stored as `delivery-report-<id>.json` and `.md`, are indexed in `delivery-index.json`, and intentionally stop before staging, committing, pushing, validation execution, target command execution, or Codex execution.
 
 ## Command Roadmap
 
@@ -210,12 +229,15 @@ devo delivery approval-show --project <project> --plan <deliveryId>
 devo delivery approval-list --project <project>
 devo delivery approve --project <project> --plan <deliveryId> --approver "<name>" --note "<note>"
 devo delivery reject --project <project> --plan <deliveryId> --reviewer "<name>" --note "<note>"
+devo delivery report-prepare --project <project> --plan <deliveryId>
+devo delivery report-list --project <project>
+devo delivery report-show --project <project> --report <deliveryId>
+devo delivery commit-message --project <project> --plan <deliveryId>
 devo delivery commit --project <project> --delivery <deliveryId> --confirm-commit
 devo delivery push --project <project> --delivery <deliveryId> --confirm-push
-devo delivery report --project <project> --delivery <deliveryId>
 ```
 
-The readiness, plan, and approval commands exist now and are workspace-artifact only. Commit and push remain future commands and must require explicit confirmation flags. UI commit/push buttons remain deferred.
+The readiness, plan, approval, report-preparation, and commit-message commands exist now and are workspace-artifact/read-only only. Commit and push remain future commands and must require explicit confirmation flags. UI commit/push buttons remain deferred.
 
 ## Approval Separation
 
@@ -263,7 +285,7 @@ Recommended next tasks:
 
 1. TASK-DEVO-105: Delivery readiness data model and check command - completed
 2. TASK-DEVO-106: Delivery plan and approval workflow - completed
-3. TASK-DEVO-107: Delivery report and commit message preparation
+3. TASK-DEVO-107: Delivery report and commit message preparation - completed
 4. TASK-DEVO-108: Controlled commit command with `--confirm-commit`
 5. TASK-DEVO-109: Controlled push command with `--confirm-push`
 6. TASK-DEVO-110: Delivery UI visibility
