@@ -20,6 +20,7 @@ For the plain-language product model, read:
 - [Devo vision](devo-vision.md)
 - [Company-model vision](devo-company-model.md)
 - [Codex worker adapter design](codex-worker-adapter-design.md)
+- [Delivery safety design](delivery-safety-design.md)
 - [Codex launcher setup runbook](runbooks/codex-launcher-setup.md)
 - [Real Codex supervised dry-run runbook](runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](remaining-roadmap.md)
@@ -297,6 +298,8 @@ Supervised Codex CLI worker execution is intentionally single-run and queue-link
 Before the first real supervised Codex launch, read `docs/runbooks/codex-launcher-setup.md` and `docs/runbooks/real-codex-supervised-dry-run.md`. The first real run should target DevOrchestrator, use no-op/docs-only scope, and prove the approval/preview/execution/report/review gate. It should not touch PersonalOS, run target commands, trust validation automatically, commit, push, or complete queue/task state without explicit review.
 
 The TASK-DEVO-099 first real launch attempt is documented in `docs/dogfood/devo-real-codex-dry-run-099.md`. It reached the approved guarded launch step but Windows denied `CreateProcess` for the detected WindowsApps Codex executable path before Codex produced output. TASK-DEVO-100 hardened launch diagnostics and failure handling. TASK-DEVO-101 is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`; it stopped before execution because no safe non-WindowsApps launcher was available. TASK-DEVO-102 adds the wrapper/template path for that missing launcher setup, and TASK-DEVO-103 documents the operator setup checklist; neither task retries real Codex.
+
+Delivery after worker review is a separate safety layer. Read `docs/delivery-safety-design.md` before adding any commit/push workflow. Queue completion is not delivery; future delivery commands should check scope, validation evidence, review evidence, branch/remote state, staged files, forbidden paths, secrets, and explicit delivery approval before any commit or push.
 
 Source/freshness: this diagram reflects the current low-risk work-package flow as of TASK-DEVO-053A. Update it when work packages add new required phases or when bundle semantics change.
 

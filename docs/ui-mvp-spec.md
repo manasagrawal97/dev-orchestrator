@@ -198,6 +198,8 @@ Primary user question: "What did the manual Codex worker run report, is a future
 
 This page is read-only. It does not run Codex from the UI, import/upload reports from the UI, approve execution, execute target commands, run validation/build/test, commit, push, restore backups, modify schedulers, edit target files, call model APIs, or complete queue/task items. It may show a copyable `queue-complete-item` command only when read-only evidence says the item is completion-ready; otherwise it shows review commands and blockers.
 
+Future delivery visibility is documented in `docs/delivery-safety-design.md`. A Delivery page may show readiness, changed-file scope, validation/review evidence, blockers, warnings, and copyable CLI commands, but UI commit/push buttons remain deferred until the delivery safety model is mature.
+
 ### B9. Progress Page
 
 Shows planning and workflow progress in one dashboard.

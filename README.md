@@ -26,6 +26,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
 - [Codex worker adapter design](docs/codex-worker-adapter-design.md)
+- [Delivery safety design](docs/delivery-safety-design.md)
 - [Codex launcher setup runbook](docs/runbooks/codex-launcher-setup.md)
 - [Real Codex supervised dry-run runbook](docs/runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](docs/remaining-roadmap.md)

@@ -307,6 +307,10 @@ Added an explicit launcher strategy for supervised Codex worker execution. `devo
 
 Added `docs/runbooks/codex-launcher-setup.md`, an operator checklist for obtaining a safe non-WindowsApps Codex launcher before retrying real supervised execution. The runbook documents supported launcher options, WindowsApps blocking, npm/global CLI setup, WSL preview/planning, wrapper template setup, readiness criteria, the next real retry sequence, and troubleshooting for missing shims, wrapper paths, `PermissionError`, `FileNotFoundError`, and WSL path mapping confusion. This task did not run real Codex, install packages, modify PersonalOS, or create execution artifacts.
 
+### TASK-DEVO-104 Delivery Safety Design - Completed
+
+Added `docs/delivery-safety-design.md`, the design for delivery after worker execution, report import, review evidence, and queue completion. The design separates queue completion from commit/push delivery, defines readiness criteria and stop conditions, proposes delivery artifacts under `workspace/projects/<project>/delivery/`, sketches future `devo delivery ...` commands, separates planning/batch/execution/run-plan/review/delivery/safety-override approvals, and defers auto commit/push plus UI commit/push buttons. No source code, UI code, delivery automation, real Codex execution, or target repo commands were added.
+
 ### TASK-023 Safe Validation Runner
 
 Add controlled execution for registered validation commands. It should require policy checks, approval where required, disabled-command handling, output capture, timeout limits, and clear evidence recording. This is the first step that can execute commands, so safety and approval behavior matter more than convenience.

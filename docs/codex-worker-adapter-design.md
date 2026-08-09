@@ -173,6 +173,8 @@ TASK-DEVO-102 adds that launcher strategy. Codex diagnostics now distinguish `pa
 
 TASK-DEVO-103 documents the operator readiness path in `docs/runbooks/codex-launcher-setup.md`. Real supervised retry should wait until that checklist is complete and doctor reports a safe real executable or wrapper launcher.
 
+TASK-DEVO-104 documents the future delivery safety layer in `docs/delivery-safety-design.md`. Worker success, report import, review pass, and queue completion still do not authorize commit or push. Delivery needs its own readiness checks, plan, approval, explicit confirmation, and report.
+
 ## State Transitions
 
 Worker state must map conservatively to queue state:
@@ -377,8 +379,12 @@ Recommended future sequence:
 14. TASK-DEVO-101: Retry real Codex with explicit path and document remaining launcher blocker - blocked.
 15. TASK-DEVO-102: Add launcher strategy and wrapper support - completed.
 16. TASK-DEVO-103: Codex launcher setup runbook and readiness check - completed.
-17. TASK-DEVO-104: Retry real Codex dry-run only after doctor reports a safe launcher, or polish pause/resume and usage-limit recovery.
-18. TASK-DEVO-105: Optional commit/push delivery integration after safety review.
+17. TASK-DEVO-104: Delivery and commit safety design - completed.
+18. TASK-DEVO-105: Delivery readiness data model and check command.
+19. TASK-DEVO-106: Delivery plan and approval workflow.
+20. TASK-DEVO-107: Delivery report and commit message preparation.
+21. TASK-DEVO-108: Controlled commit command with `--confirm-commit`.
+22. TASK-DEVO-109: Controlled push command with `--confirm-push`.
 
 This rollout keeps the current manual handoff path stable while adding evidence and automation in layers.
 

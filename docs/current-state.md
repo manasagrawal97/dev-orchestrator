@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/runbooks/codex-launcher-setup.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/delivery-safety-design.md`, `docs/runbooks/codex-launcher-setup.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -122,6 +122,7 @@ The working loop is:
 - TASK-DEVO-101 attempted to retry the real Codex supervised dry-run using TASK-DEVO-100 diagnostics and an explicit non-WindowsApps launcher. The retry stopped before planning/worker execution because `devo worker codex doctor`, `Get-Command`, `where.exe`, npm/global shim checks, and common local executable searches found only the WindowsApps Codex paths and no safe non-WindowsApps executable or wrapper. No real Codex process was launched, no worker/queue artifacts were created for the retry, and no PersonalOS commands were run. The result is documented in `docs/dogfood/devo-real-codex-dry-run-retry-101.md`.
 - TASK-DEVO-102 adds the safe Codex launcher strategy needed before another real retry. `doctor`, `preflight`, `run-plan`, `execute-preview`, and guarded `execute --confirm-execute` now support explicit `--codex-wrapper` paths in addition to `--codex-path`; diagnostics distinguish PATH detection, path overrides, `.cmd`/`.bat`/`.ps1` wrappers, WSL preview, missing launchers, and blocked WindowsApps aliases. `devo worker codex wrapper-template --path <path> --type cmd` creates a local no-secrets wrapper template, refuses committed source paths, and does not run Codex. Wrapper execution uses explicit subprocess arguments without `shell=True` and tests use fake wrappers only. WSL execution remains deferred.
 - TASK-DEVO-103 adds `docs/runbooks/codex-launcher-setup.md`, the operator checklist for obtaining a safe non-WindowsApps launcher before retrying real supervised execution. It documents npm/global CLI setup, WSL preview/planning, wrapper setup, readiness criteria, and troubleshooting. It is docs-only and does not run real Codex, install packages, create worker artifacts, or modify PersonalOS.
+- TASK-DEVO-104 adds `docs/delivery-safety-design.md`, the design for the post-worker delivery layer. It separates queue completion from delivery, defines delivery readiness criteria, safety stop conditions, delivery artifacts, future CLI commands, approval separation, commit/push policy, UI visibility, and rollout tasks. It is docs-only and does not implement commit/push automation.
 
 ## Readiness Estimate
 
@@ -130,9 +131,9 @@ The working loop is:
 
 The latest personal-use completion target was brief intake, blueprint/backlog, batch approval, Codex handoff, progress tracking, UI progress visibility, and one dogfood end-to-end run. That target is now dogfooded; Devo is around 80-85% complete for personal use, with the next gap being a carefully documented first real Codex supervised dry-run rather than new planning primitives.
 
-DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Codex-ready handoff prompts from planning queue/batch/task artifacts, track manual Codex worker runs and imported worker reports as review evidence, preflight future Codex worker runs, store run-plan previews with optional explicit executable paths or wrapper paths for controlled dogfood/testing, diagnose Codex launcher paths without running Codex, create local wrapper templates, block WindowsApps aliases for guarded execution, handle launch-time subprocess failures with failed worker/log/queue state, attempt one supervised Codex CLI launch only from an approved plan with explicit confirmation, summarize queue-linked worker flow evidence after completion/failure, provide Codex launcher setup and real-Codex dry-run safety runbooks, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP with read-only Planning Intake, Blueprint, Backlog, Batch, Queue, Handoff, Worker Runs, and Progress pages, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete manual-assisted dogfood runs.
+DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Codex-ready handoff prompts from planning queue/batch/task artifacts, track manual Codex worker runs and imported worker reports as review evidence, preflight future Codex worker runs, store run-plan previews with optional explicit executable paths or wrapper paths for controlled dogfood/testing, diagnose Codex launcher paths without running Codex, create local wrapper templates, block WindowsApps aliases for guarded execution, handle launch-time subprocess failures with failed worker/log/queue state, attempt one supervised Codex CLI launch only from an approved plan with explicit confirmation, summarize queue-linked worker flow evidence after completion/failure, provide Codex launcher setup and real-Codex dry-run safety runbooks, document the future delivery safety model before commit/push automation, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP with read-only Planning Intake, Blueprint, Backlog, Batch, Queue, Handoff, Worker Runs, and Progress pages, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete manual-assisted dogfood runs.
 
-The next real supervised Codex retry should wait until `docs/runbooks/codex-launcher-setup.md` is complete and `devo worker codex doctor` reports a safe real executable or wrapper launcher. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
+The next implementation step should start the delivery readiness data model/check command from `docs/delivery-safety-design.md`, or retry real supervised Codex only after `docs/runbooks/codex-launcher-setup.md` is complete and `devo worker codex doctor` reports a safe real executable or wrapper launcher. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
 ## Completed Work
 
@@ -219,7 +220,7 @@ The next real supervised Codex retry should wait until `docs/runbooks/codex-laun
 - TASK-DEVO-085 end-to-end planning pipeline dogfood run
 - TASK-DEVO-086 planning pipeline guidance and input robustness
 - TASK-DEVO-087 Codex CLI worker adapter design
-- TASK-DEVO-088 through TASK-DEVO-103 Codex worker tracking, reports, run plans, guarded execution prototype, queue/review gates, dogfood evidence, launch diagnostics, wrapper launcher support, and launcher setup runbooks
+- TASK-DEVO-088 through TASK-DEVO-104 Codex worker tracking, reports, run plans, guarded execution prototype, queue/review gates, dogfood evidence, launch diagnostics, wrapper launcher support, launcher setup runbooks, and delivery safety design
 
 ## Recovery Pointers
 
@@ -230,14 +231,15 @@ If chat context is lost, start here:
 3. Read `docs/devo-company-model.md`.
 4. Read `docs/remaining-roadmap.md`.
 5. Read `docs/codex-worker-adapter-design.md` before worker adapter work.
-6. Read `docs/runbooks/codex-launcher-setup.md` and `docs/runbooks/real-codex-supervised-dry-run.md` before any real supervised Codex launch.
-7. Read `docs/current-capabilities.md`.
-8. Read `docs/agent-workflow.md`.
-9. Read `docs/ui-architecture.md` when continuing UI/API planning.
-10. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
-11. Read `docs/roadmap.md`.
-12. Read `docs/operating-model.md`.
-13. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
-14. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
-15. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
-16. Continue from the latest planned next task.
+6. Read `docs/delivery-safety-design.md` before delivery automation work.
+7. Read `docs/runbooks/codex-launcher-setup.md` and `docs/runbooks/real-codex-supervised-dry-run.md` before any real supervised Codex launch.
+8. Read `docs/current-capabilities.md`.
+9. Read `docs/agent-workflow.md`.
+10. Read `docs/ui-architecture.md` when continuing UI/API planning.
+11. Read `docs/ui-mvp-spec.md` when continuing dashboard MVP planning.
+12. Read `docs/roadmap.md`.
+13. Read `docs/operating-model.md`.
+14. Run `scripts/recovery/check-devo-recovery-status.ps1` from `E:\DevOrchestrator`.
+15. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for a compact state summary.
+16. For active work, run `devo report run --project DevOrchestrator --run <runId>` when a run id is known.
+17. Continue from the latest planned next task.
