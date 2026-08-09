@@ -437,6 +437,10 @@ tr:last-child td {
   cursor: pointer;
 }
 
+.work-row.static-row {
+  cursor: default;
+}
+
 .work-row span,
 .activity-item strong {
   color: #172033;

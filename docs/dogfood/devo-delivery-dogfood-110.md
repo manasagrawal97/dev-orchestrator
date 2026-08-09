@@ -126,7 +126,7 @@ Generated workspace artifacts were intentionally left under `workspace/` and wer
 
 ## Issues Found
 
-1. Some post-approval and post-commit CLI next-action text still says push is future scope even though guarded push now exists.
+1. Some post-approval and post-commit CLI next-action text still described guarded push as unavailable even though guarded push now exists.
 2. After commit and push, `delivery report-show` correctly reported final status `pushed`, but still displayed the original readiness snapshot with `Changed: 1` and the pre-commit warning about uncommitted changes. This is understandable as historical readiness evidence, but the output could label it more clearly as a snapshot to avoid confusion.
 3. Git repeatedly warned that `C:\Users\manas/.config/git/ignore` was not accessible. This did not block the temp delivery flow, but it adds noise to stdout/stderr summaries.
 
@@ -136,7 +136,11 @@ Recommended next task: TASK-DEVO-111 delivery operator polish and UI visibility.
 
 Suggested scope:
 
-- Replace stale "push remains future scope" next-action text with guarded push guidance.
+- Replace stale unavailable-push next-action text with guarded push guidance.
 - Label delivery report readiness fields as source/readiness snapshots after commit or push.
 - Add a read-only Delivery dashboard page or Project Overview section that shows readiness, plan, approval, report, commit, and push artifacts plus copyable CLI commands.
 - Keep commit/push execution CLI-only.
+
+## TASK-DEVO-111 Follow-Up
+
+TASK-DEVO-111 addresses these findings by replacing stale push guidance, labeling post-commit/post-push readiness data as historical report snapshots, treating the unreadable global Git ignore warning as visible but non-blocking when Git status/diff pass, and adding a read-only Delivery dashboard page. Commit and push execution remain CLI-only.

@@ -4,6 +4,12 @@ import type {
   BatchApprovalsResponse,
   CurrentContext,
   DoctorReport,
+  DeliveryApprovalsResponse,
+  DeliveryChecksResponse,
+  DeliveryCommitResult,
+  DeliveryPlansResponse,
+  DeliveryPushResult,
+  DeliveryReportsResponse,
   CodexWorkerReport,
   CodexQueueWorkerStatus,
   CodexRunPlan,
@@ -115,6 +121,16 @@ export const devoApi = {
   getProjectProgress: (project: string) => getJson<ProjectProgress>(`/api/projects/${encodeURIComponent(project)}/progress`),
   getProjectActivity: (project: string) => getJson<ProjectActivity>(`/api/projects/${encodeURIComponent(project)}/activity`),
   getProjectDoctor: (project: string) => getJson<DoctorReport>(`/api/projects/${encodeURIComponent(project)}/doctor`),
+  getProjectDeliveryChecks: (project: string) => getJson<DeliveryChecksResponse>(`/api/projects/${encodeURIComponent(project)}/delivery-checks`),
+  getProjectDeliveryPlans: (project: string) => getJson<DeliveryPlansResponse>(`/api/projects/${encodeURIComponent(project)}/delivery-plans`),
+  getProjectDeliveryApprovals: (project: string) =>
+    getJson<DeliveryApprovalsResponse>(`/api/projects/${encodeURIComponent(project)}/delivery-approvals`),
+  getProjectDeliveryReports: (project: string) =>
+    getJson<DeliveryReportsResponse>(`/api/projects/${encodeURIComponent(project)}/delivery-reports`),
+  getProjectDeliveryCommit: (project: string, deliveryId: string) =>
+    getJson<DeliveryCommitResult>(`/api/projects/${encodeURIComponent(project)}/delivery-reports/${encodeURIComponent(deliveryId)}/commit`),
+  getProjectDeliveryPush: (project: string, deliveryId: string) =>
+    getJson<DeliveryPushResult>(`/api/projects/${encodeURIComponent(project)}/delivery-reports/${encodeURIComponent(deliveryId)}/push`),
   getRunOverview: (project: string, runId: string) =>
     getJson<RunOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/overview`),
   getWorkPackageOverview: (project: string, runId: string) =>

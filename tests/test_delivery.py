@@ -596,17 +596,32 @@ def test_delivery_commit_stages_only_eligible_files_and_creates_commit(tmp_path:
 
     assert result.exit_code == 0, result.output
     assert "Commit status: committed" in result.output
+    assert "push-preview" in result.output
+    assert "future TASK-DEVO-109" not in result.output
     assert status == ""
     assert report_payload["final_status"] == "committed"
     assert report_payload["commit_ready"] is False
     assert report_payload["pushed"] is False
     assert report_payload["commit_hash"]
+    assert report_payload["readiness_currentness"] == "historical_snapshot"
+    assert "Historical readiness snapshot" in report_payload["readiness_snapshot_note"]
     assert commit_payload["status"] == "committed"
+    assert "push-preview" in commit_payload["next_action"]
+    assert "future" not in commit_payload["next_action"].lower()
     assert commit_payload["eligible_files"] == ["changed.txt"]
     assert overview.latest_delivery_commit_hash == report_payload["commit_hash"]
     assert overview.latest_delivery_commit_status == "committed"
     assert overview.latest_delivery_pushed is False
     assert _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout.strip() == "2"
+
+
+def test_delivery_report_markdown_labels_historical_snapshot_after_commit(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    markdown = (workspace / "projects" / "sample" / "delivery" / "delivery-report-del-0001.md").read_text(encoding="utf-8")
+
+    assert "Readiness currentness: `historical_snapshot`" in markdown
+    assert "Historical readiness snapshot; run delivery check for current repo state." in markdown
 
 
 def test_delivery_commit_does_not_push(tmp_path: Path, monkeypatch) -> None:
@@ -766,8 +781,11 @@ def test_delivery_push_succeeds_to_local_bare_remote_and_updates_report(tmp_path
     assert report_payload["push_branch"] == "main"
     assert report_payload["push_status"] == "pushed"
     assert report_payload["final_status"] == "pushed"
+    assert report_payload["readiness_currentness"] == "historical_snapshot"
+    assert "delivery push-show" in report_payload["next_action"]
     assert push_payload["push_status"] == "pushed"
     assert push_payload["pushed"] is True
+    assert "Delivery pushed" in push_payload["next_action"]
     assert overview.latest_delivery_push_status == "pushed"
     assert overview.latest_delivery_push_remote == "origin"
     assert overview.latest_delivery_push_branch == "main"
@@ -812,6 +830,40 @@ def test_api_exposes_delivery_push_result(tmp_path: Path, monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["push_status"] == "pushed"
     assert response.json()["pushed"] is True
+
+
+def test_delivery_check_classifies_global_ignore_warning_as_non_blocking(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    warning = "warning: unable to access 'C:\\Users\\manas/.config/git/ignore': Permission denied"
+
+    def fake_git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args == ["rev-parse", "--is-inside-work-tree"]:
+            return subprocess.CompletedProcess(args, 0, "true\n", "")
+        if args == ["rev-parse", "--show-toplevel"]:
+            return subprocess.CompletedProcess(args, 0, f"{repo}\n", "")
+        if args == ["branch", "--show-current"]:
+            return subprocess.CompletedProcess(args, 0, "main\n", "")
+        if args == ["rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(args, 0, "1" * 40 + "\n", "")
+        if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]:
+            return subprocess.CompletedProcess(args, 0, "origin/main\n", "")
+        if args == ["remote"]:
+            return subprocess.CompletedProcess(args, 0, "origin\n", warning)
+        if args == ["rev-list", "--left-right", "--count", "HEAD...@{u}"]:
+            return subprocess.CompletedProcess(args, 0, "0\t0\n", "")
+        if args == ["status", "--porcelain=v1", "-uall"]:
+            return subprocess.CompletedProcess(args, 0, "", warning)
+        if args == ["diff", "--check"]:
+            return subprocess.CompletedProcess(args, 0, "", warning)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("devo.git_delivery._git", fake_git)
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", workspace_root=workspace)
+
+    assert check.blockers == []
+    assert check.readiness_status == "ready"
+    assert any("Git global ignore file is unreadable" in warning for warning in check.warnings)
 
 
 def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:

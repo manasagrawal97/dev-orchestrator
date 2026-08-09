@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-111 Delivery operator polish and UI visibility
+- TASK-DEVO-112 Delivery read-model/UI polish or real Codex launcher retry after readiness
 
 ## Updated Roadmap Phases
 
@@ -201,7 +201,11 @@ Added the first controlled delivery push command. `devo delivery push-preview` s
 
 ### TASK-DEVO-110 Guarded Delivery Dogfood - Completed
 
-Dogfooded the full delivery flow against `DeliveryDogfood110`, an isolated temporary Git repository with a local bare `origin` remote. The run completed delivery check -> plan -> approval -> report -> commit-preview -> guarded commit -> push-preview -> guarded push. The guarded commit created temp-repo commit `8aff2e40b75881bc147d71641659c028e05a8148`, and the guarded push delivered it to the local bare remote. No delivery commit or delivery push command was run against the live DevOrchestrator repo. The result is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; follow-up polish should remove stale "push remains future scope" messaging and improve delivery report labels for historical readiness snapshots.
+Dogfooded the full delivery flow against `DeliveryDogfood110`, an isolated temporary Git repository with a local bare `origin` remote. The run completed delivery check -> plan -> approval -> report -> commit-preview -> guarded commit -> push-preview -> guarded push. The guarded commit created temp-repo commit `8aff2e40b75881bc147d71641659c028e05a8148`, and the guarded push delivered it to the local bare remote. No delivery commit or delivery push command was run against the live DevOrchestrator repo. The result is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; TASK-DEVO-111 resolves the operator-guidance and readiness-snapshot labeling issues found there.
+
+### TASK-DEVO-111 Delivery Operator Polish And UI Visibility - Completed
+
+Fixed the dogfood friction from TASK-DEVO-110. Delivery next-action text now points from guarded commit to `push-preview` and guarded `push`, and from pushed delivery to `push-show`. Delivery reports now expose readiness snapshot status/time/currentness/note, and committed or pushed reports label the readiness data as historical. The known unreadable global Git ignore warning is kept visible but does not downgrade readiness when Git status and diff checks pass. Added a read-only dashboard Delivery page and Project Overview delivery card showing checks, plans, approvals, reports, commit and push result metadata, blockers, warnings, next actions, and copyable CLI commands only. No UI commit, push, stage, unstage, validation, restore, scheduler, Codex, or target command buttons were added.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

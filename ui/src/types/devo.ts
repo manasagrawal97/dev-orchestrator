@@ -72,6 +72,32 @@ export interface ProjectOverview {
   git_summary: Record<string, unknown>;
   validation_registry_summary: Record<string, unknown>;
   backup_summary: Record<string, unknown>;
+  delivery_check_count: number;
+  latest_delivery_id: string | null;
+  latest_delivery_readiness_status: string | null;
+  latest_delivery_blocker_count: number;
+  latest_delivery_warning_count: number;
+  delivery_next_action: string | null;
+  delivery_plan_count: number;
+  latest_delivery_plan_id: string | null;
+  latest_delivery_plan_status: string | null;
+  latest_delivery_approval_status: string | null;
+  latest_delivery_plan_next_action: string | null;
+  delivery_report_count: number;
+  latest_delivery_report_id: string | null;
+  latest_delivery_report_status: string | null;
+  latest_delivery_commit_ready: boolean;
+  latest_delivery_push_ready: boolean;
+  latest_delivery_report_next_action: string | null;
+  latest_delivery_commit_hash: string | null;
+  latest_delivery_commit_status: string | null;
+  latest_delivery_pushed: boolean;
+  latest_delivery_commit_next_action: string | null;
+  latest_delivery_push_status: string | null;
+  latest_delivery_push_remote: string | null;
+  latest_delivery_push_branch: string | null;
+  latest_delivery_pushed_at: string | null;
+  latest_delivery_push_next_action: string | null;
   brief_status: string;
   blueprint_status: string;
   blueprint_milestone_count: number;
@@ -689,4 +715,121 @@ export interface UiActionExecutionResult {
   lane: string | null;
   artifact_path: string | null;
   suggested_next_command: string | null;
+}
+
+export interface DeliveryCheck {
+  project: string;
+  delivery_id: string;
+  readiness_status: string;
+  branch: string | null;
+  remote: string | null;
+  changed_files: string[];
+  staged_files: string[];
+  unstaged_files: string[];
+  untracked_files: string[];
+  blockers: string[];
+  warnings: string[];
+  next_action: string;
+  updated_at?: string;
+}
+
+export interface DeliveryPlan {
+  project: string;
+  delivery_id: string;
+  delivery_status: string;
+  approval_status: string;
+  readiness_status: string;
+  intended_commit_message: string;
+  blockers: string[];
+  warnings: string[];
+  next_action: string;
+  updated_at?: string;
+}
+
+export interface DeliveryApproval {
+  project: string;
+  delivery_id: string;
+  approval_status: string;
+  readiness_status: string;
+  blocker_count: number;
+  warning_count: number;
+  decision_note: string;
+  next_action: string;
+  updated_at?: string;
+}
+
+export interface DeliveryReport {
+  project: string;
+  delivery_id: string;
+  final_status: string;
+  commit_ready: boolean;
+  push_ready: boolean;
+  push_status: string | null;
+  pushed: boolean;
+  proposed_commit_message: string;
+  changed_files: string[];
+  staged_files: string[];
+  unstaged_files: string[];
+  untracked_files: string[];
+  blocker_summary: string;
+  warning_summary: string;
+  readiness_snapshot_status: string | null;
+  readiness_snapshot_at: string | null;
+  readiness_currentness: string;
+  readiness_snapshot_note: string;
+  commit_hash: string | null;
+  push_remote: string | null;
+  push_branch: string | null;
+  pushed_at: string | null;
+  next_action: string;
+  updated_at?: string;
+}
+
+export interface DeliveryCommitResult {
+  project: string;
+  delivery_id: string;
+  status: string;
+  commit_hash: string | null;
+  commit_message: string;
+  eligible_files: string[];
+  next_action: string;
+  updated_at?: string;
+}
+
+export interface DeliveryPushResult {
+  project: string;
+  delivery_id: string;
+  push_status: string;
+  pushed: boolean;
+  source_commit_hash: string | null;
+  push_remote: string | null;
+  push_branch: string | null;
+  blockers: string[];
+  warnings: string[];
+  next_action: string;
+  updated_at?: string;
+}
+
+export interface DeliveryChecksResponse {
+  project: string;
+  count: number;
+  delivery_checks: DeliveryCheck[];
+}
+
+export interface DeliveryPlansResponse {
+  project: string;
+  count: number;
+  delivery_plans: DeliveryPlan[];
+}
+
+export interface DeliveryApprovalsResponse {
+  project: string;
+  count: number;
+  delivery_approvals: DeliveryApproval[];
+}
+
+export interface DeliveryReportsResponse {
+  project: string;
+  count: number;
+  delivery_reports: DeliveryReport[];
 }

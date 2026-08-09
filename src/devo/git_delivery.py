@@ -29,6 +29,9 @@ from .validation_runner import list_validation_history
 MAX_SECRET_SCAN_BYTES = 512_000
 GIT_DELIVERY_DIR = "git-delivery"
 GIT_READ_TIMEOUT_SECONDS = 8
+GLOBAL_IGNORE_WARNING_DETAIL = (
+    "Git global ignore file is unreadable; this is non-blocking for delivery checks unless Git status or diff fails."
+)
 
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("OPENAI_API_KEY", re.compile(r"OPENAI_API_KEY", re.IGNORECASE)),
@@ -85,6 +88,7 @@ def get_git_repository_status(project_name: str, workspace_root: Path | None = N
     upstream = _git_value(repo_path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
     remotes = _git(repo_path, ["remote"])
     remote_detected = bool(remotes.stdout.strip()) if remotes.returncode == 0 else False
+    warnings.extend(_known_non_blocking_git_warnings(remotes))
     ahead: int | None = None
     behind: int | None = None
     if upstream:
@@ -105,6 +109,7 @@ def get_git_repository_status(project_name: str, workspace_root: Path | None = N
     if status_lines.returncode != 0:
         msg = f"Could not read git status: {status_lines.stderr.strip() or status_lines.stdout.strip()}"
         raise ValueError(msg)
+    warnings.extend(_known_non_blocking_git_warnings(status_lines))
     staged, unstaged, untracked = _parse_porcelain_status(status_lines.stdout)
 
     return GitRepositoryStatus(
@@ -167,6 +172,7 @@ def run_delivery_check(
     checks.append("git diff --check")
     if diff_check.returncode == 0:
         checks.append("git diff --check: passed")
+        warnings.extend(_known_non_blocking_git_warnings(diff_check))
     else:
         blockers.append(_single_line("git diff --check failed", diff_check.stdout, diff_check.stderr))
 
@@ -258,6 +264,18 @@ def _git_value(repo_path: Path, args: list[str]) -> str | None:
         return None
     value = completed.stdout.strip()
     return value or None
+
+
+def _known_non_blocking_git_warnings(completed: subprocess.CompletedProcess[str]) -> list[str]:
+    if not completed.stderr:
+        return []
+    warnings: list[str] = []
+    for line in completed.stderr.splitlines():
+        normalized = line.strip()
+        lower = normalized.lower().replace("\\", "/")
+        if "unable to access" in lower and ".config/git/ignore" in lower:
+            warnings.append(GLOBAL_IGNORE_WARNING_DETAIL)
+    return _dedupe(warnings)
 
 
 def _parse_porcelain_status(output: str) -> tuple[list[GitFileState], list[GitFileState], list[GitFileState]]:
@@ -387,9 +405,13 @@ def _approval_evidence(project_name: str, run_id: str | None, task_id: str | Non
 def _readiness(blockers: list[str], warnings: list[str], status: GitRepositoryStatus) -> GitDeliveryReadiness:
     if blockers:
         return GitDeliveryReadiness.BLOCKED
-    if warnings or not status.working_tree_clean:
+    if any(_warning_affects_readiness(warning) for warning in warnings) or not status.working_tree_clean:
         return GitDeliveryReadiness.WARNING
     return GitDeliveryReadiness.READY
+
+
+def _warning_affects_readiness(warning: str) -> bool:
+    return warning != GLOBAL_IGNORE_WARNING_DETAIL
 
 
 def _suggest_commit_command(status: GitRepositoryStatus, commit_message: str | None) -> str | None:

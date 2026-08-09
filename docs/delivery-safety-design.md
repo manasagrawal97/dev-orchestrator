@@ -24,6 +24,7 @@ Relevant Devo capabilities already exist:
 - `devo delivery commit-preview` and guarded `devo delivery commit --confirm-commit` now provide the first CLI-only commit path. The command re-checks readiness, stages only eligible safe files, writes commit result artifacts, and still does not push.
 - `devo delivery push-preview` and guarded `devo delivery push --confirm-push` now provide the first CLI-only push path after commit metadata exists. The command verifies remote/branch/commit containment, writes push result artifacts, and does not create commits.
 - TASK-DEVO-110 dogfooded the full delivery lifecycle against an isolated temp repository and local bare remote. The flow is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; no live DevOrchestrator delivery commit/push was run.
+- TASK-DEVO-111 adds delivery operator polish and read-only Delivery dashboard visibility. Delivery reports label readiness as a report snapshot and mark it historical after commit or push. The UI shows delivery artifacts and copyable CLI commands only; commit/push execution remains CLI-only.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -327,6 +328,8 @@ Future UI can show delivery visibility before actions:
 
 Do not add commit/push buttons until the delivery safety model is mature. A read-only Delivery page should come before controlled delivery actions. TASK-DEVO-108 and TASK-DEVO-109 add only CLI commit/push; the UI may show copyable commands plus commit/push result metadata, but not execute commit or push.
 
+TASK-DEVO-111 adds that read-only Delivery page. It does not add commit, push, stage, unstage, validation, restore, scheduler, Codex, or target command execution controls.
+
 ## Rollout Plan
 
 Recommended next tasks:
@@ -337,7 +340,8 @@ Recommended next tasks:
 4. TASK-DEVO-108: Controlled commit command with `--confirm-commit` - completed
 5. TASK-DEVO-109: Controlled push command with `--confirm-push` - completed
 6. TASK-DEVO-110: End-to-end guarded delivery dogfood on isolated temp repo - completed
-7. TASK-DEVO-111: Delivery operator polish and UI visibility
+7. TASK-DEVO-111: Delivery operator polish and read-only Delivery UI - completed
+8. TASK-DEVO-112+: Delivery read-model/UI polish or controlled delivery follow-up after more dogfood
 
 ## Deferred Scope
 

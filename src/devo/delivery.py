@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .git_delivery import get_git_repository_status, run_delivery_check
+from .git_delivery import GLOBAL_IGNORE_WARNING_DETAIL, get_git_repository_status, run_delivery_check
 from .project_planning import (
     QueueItem,
     WorkerReview,
@@ -212,6 +212,10 @@ class DeliveryReport(BaseModel):
     warning_summary: str
     approval_status: str
     delivery_readiness_status: str
+    readiness_snapshot_status: str | None = None
+    readiness_snapshot_at: datetime | None = None
+    readiness_currentness: str = "current"
+    readiness_snapshot_note: str = "Readiness snapshot captured at report preparation time."
     commit_ready: bool = False
     push_ready: bool = False
     commit_hash: str | None = None
@@ -458,7 +462,7 @@ def run_delivery_readiness_check(
             elif review.validation_evidence.validation_status != "passed":
                 warnings.append(f"Linked worker validation evidence status is {review.validation_evidence.validation_status}, not passed.")
 
-    readiness_status = BLOCKED if blockers else WARNINGS if warnings else READY
+    readiness_status = BLOCKED if blockers else WARNINGS if any(_warning_affects_readiness(warning) for warning in warnings) else READY
     check = DeliveryCheck(
         project=project_name,
         delivery_id=delivery_id,
@@ -779,6 +783,10 @@ def prepare_delivery_report(
         warning_summary=_summary_text(warnings),
         approval_status=plan.approval_status,
         delivery_readiness_status=current_check.readiness_status,
+        readiness_snapshot_status=current_check.readiness_status,
+        readiness_snapshot_at=current_check.updated_at,
+        readiness_currentness="current",
+        readiness_snapshot_note="Readiness snapshot captured at report preparation time.",
         commit_ready=commit_ready,
         push_ready=False,
         commit_hash=None,
@@ -946,7 +954,11 @@ def commit_delivery_report(
             stdout=commit_result.stdout.strip(),
             stderr=commit_result.stderr.strip(),
             returncode=commit_result.returncode,
-            next_action="Commit created. Push remains future TASK-DEVO-109; do not push from Devo yet.",
+            next_action=(
+                f"Commit created. Preview guarded push with "
+                f"devo delivery push-preview --project {project_name} --report {delivery_id}; then run "
+                f"devo delivery push --project {project_name} --report {delivery_id} --confirm-push if the preview is safe."
+            ),
         )
         _mark_delivery_report_committed(project_name, delivery_id, commit_hash, author_note, workspace_root=root)
         return write_delivery_commit_result(result, workspace_root=root)
@@ -1337,7 +1349,10 @@ def render_delivery_report_markdown(report: DeliveryReport) -> str:
             f"- Push status: `{report.push_status or 'none'}`",
             f"- Pushed: `{report.pushed}`",
             f"- Approval status: `{report.approval_status}`",
-            f"- Delivery readiness: `{report.delivery_readiness_status}`",
+            f"- Readiness snapshot status: `{report.readiness_snapshot_status or report.delivery_readiness_status}`",
+            f"- Readiness snapshot at: `{report.readiness_snapshot_at.isoformat() if report.readiness_snapshot_at else 'unknown'}`",
+            f"- Readiness currentness: `{report.readiness_currentness}`",
+            f"- Readiness note: {report.readiness_snapshot_note}",
             f"- Source plan: `{report.source_delivery_plan_id}`",
             f"- Source check: `{report.source_delivery_check_id or 'unknown'}`",
             f"- Proposed commit message: `{report.proposed_commit_message}`",
@@ -1650,6 +1665,10 @@ def _dedupe(items: list[str]) -> list[str]:
     return result
 
 
+def _warning_affects_readiness(warning: str) -> bool:
+    return warning != GLOBAL_IGNORE_WARNING_DETAIL
+
+
 def _next_action(readiness_status: str) -> str:
     if readiness_status == BLOCKED:
         return "Resolve delivery blockers before requesting delivery approval."
@@ -1688,7 +1707,7 @@ def _approval_next_action(approval_status: str, plan: DeliveryPlan) -> str:
 
 def _commit_preview_next_action(commit_ready: bool, blockers: list[str]) -> str:
     if commit_ready:
-        return "Ready for guarded CLI commit with --confirm-commit. Push remains future scope."
+        return "Ready for guarded CLI commit with --confirm-commit. After commit, run delivery push-preview before --confirm-push."
     if blockers:
         return "Resolve commit blockers before running guarded delivery commit."
     return "Review delivery commit preview."
@@ -1743,8 +1762,12 @@ def _mark_delivery_report_committed(
     report.push_ready = bool(commit_hash)
     report.pushed = False
     report.push_status = "not_pushed"
+    _mark_readiness_snapshot_historical(report)
     report.updated_at = datetime.now(UTC)
-    report.next_action = f"Commit created. Preview guarded push with devo delivery push-preview before running --confirm-push.{note}"
+    report.next_action = (
+        f"Commit created. Preview guarded push with devo delivery push-preview --project {project_name} "
+        f"--report {delivery_id}; if safe, run devo delivery push --project {project_name} --report {delivery_id} --confirm-push.{note}"
+    )
     write_delivery_report(report, workspace_root=workspace_root)
 
 
@@ -1767,6 +1790,7 @@ def _mark_delivery_report_push_blocked(project_name: str, delivery_id: str, deta
         return
     report.push_status = "blocked"
     report.push_ready = False
+    _mark_readiness_snapshot_historical(report)
     report.updated_at = datetime.now(UTC)
     report.blocker_summary = detail or report.blocker_summary
     report.next_action = "Resolve delivery push blockers before retrying."
@@ -1780,6 +1804,7 @@ def _mark_delivery_report_push_failed(project_name: str, delivery_id: str, detai
     report.push_status = "failed"
     report.push_ready = True
     report.final_status = "failed"
+    _mark_readiness_snapshot_historical(report)
     report.updated_at = datetime.now(UTC)
     report.warning_summary = detail or report.warning_summary
     report.next_action = "Review delivery push failure before retrying."
@@ -1795,9 +1820,22 @@ def _mark_delivery_report_pushed(project_name: str, delivery_id: str, result: De
     report.push_status = result.push_status
     report.pushed_at = result.pushed_at
     report.final_status = "pushed"
+    _mark_readiness_snapshot_historical(report)
     report.updated_at = datetime.now(UTC)
-    report.next_action = "Delivery pushed. Review remote state and close any external delivery checklist manually."
+    report.next_action = (
+        f"Delivery pushed. Review push result with devo delivery push-show --project {project_name} --delivery {delivery_id}; "
+        "run delivery check again if current repository state matters."
+    )
     write_delivery_report(report, workspace_root=workspace_root)
+
+
+def _mark_readiness_snapshot_historical(report: DeliveryReport) -> None:
+    report.readiness_currentness = "historical_snapshot"
+    if not report.readiness_snapshot_status:
+        report.readiness_snapshot_status = report.delivery_readiness_status
+    if not report.readiness_snapshot_at:
+        report.readiness_snapshot_at = report.created_at
+    report.readiness_snapshot_note = "Historical readiness snapshot; run delivery check for current repo state."
 
 
 def _default_push_remote(remote: str | None) -> str | None:

@@ -1597,7 +1597,9 @@ def _print_delivery_report(report: DeliveryReport) -> None:
     console.print(f"Push status: {report.push_status or 'none'}")
     console.print(f"Pushed: {report.pushed}")
     console.print(f"Approval status: {report.approval_status}")
-    console.print(f"Delivery readiness: {report.delivery_readiness_status}")
+    console.print(f"Readiness snapshot status: {report.readiness_snapshot_status or report.delivery_readiness_status}")
+    console.print(f"Readiness currentness: {report.readiness_currentness}")
+    console.print(f"Readiness note: {report.readiness_snapshot_note}", soft_wrap=True)
     console.print(f"Proposed commit message: {report.proposed_commit_message}", soft_wrap=True)
     console.print(f"Target repo: {report.target_repo_path}", soft_wrap=True)
     console.print(f"Branch: {report.branch or 'unknown'}")
@@ -1847,7 +1849,7 @@ def approve_delivery_plan_command(
     _print_delivery_approval(approval)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
-    console.print("Next: prepare a delivery report, then preview guarded CLI commit. Push is not implemented.")
+    console.print("Next: prepare a delivery report, preview guarded CLI commit, then use push-preview after a guarded commit.")
 
 
 @delivery_app.command("reject")
@@ -1968,7 +1970,7 @@ def commit_delivery_report_command(
     _print_delivery_commit_result(result)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
-    console.print("Push was not run. Push remains future TASK-DEVO-109.")
+    console.print(f"Push was not run. Preview guarded push with: devo delivery push-preview --project {resolved_project} --report {delivery_id}")
 
 
 @delivery_app.command("commit-show")

@@ -48,7 +48,7 @@ Devo already has:
 - Delivery safety design before commit/push automation
 - Delivery readiness checks before delivery plan/approval automation
 - Delivery plan and approval artifacts before commit/push automation
-- Delivery report, commit-message preparation, guarded CLI commit, guarded CLI push, and isolated delivery dogfood before delivery UI
+- Delivery report, commit-message preparation, guarded CLI commit, guarded CLI push, isolated delivery dogfood, and read-only Delivery UI visibility
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -171,7 +171,8 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 35. TASK-DEVO-108: Controlled commit command with `--confirm-commit` - completed.
 36. TASK-DEVO-109: Controlled push command with `--confirm-push` - completed.
 37. TASK-DEVO-110: End-to-end guarded delivery dogfood on isolated temp repo - completed.
-38. TASK-DEVO-111+: delivery operator polish, delivery UI visibility, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+38. TASK-DEVO-111: Delivery operator polish and read-only Delivery UI - completed.
+39. TASK-DEVO-112+: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

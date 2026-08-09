@@ -41,7 +41,7 @@ def test_git_status_fails_safely_on_non_git_path(tmp_path: Path, monkeypatch) ->
     result = runner.invoke(app, ["git", "status", "--project", "sample"], terminal_width=240)
 
     assert result.exit_code != 0
-    with pytest.raises(ValueError, match="Project path is inside a git work tree but is not the repository root"):
+    with pytest.raises(ValueError, match="Project path is not a git repository|Project path is inside a git work tree but is not the repository root"):
         get_git_repository_status("sample", workspace_root=tmp_path / "workspace")
 
 

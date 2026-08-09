@@ -5,6 +5,7 @@ import { ActivityPage } from './pages/ActivityPage';
 import { BacklogPage } from './pages/BacklogPage';
 import { BatchesPage } from './pages/BatchesPage';
 import { BlueprintPage } from './pages/BlueprintPage';
+import { DeliveryPage } from './pages/DeliveryPage';
 import { HandoffsPage } from './pages/HandoffsPage';
 import { HealthPage } from './pages/HealthPage';
 import { PlanningIntakePage } from './pages/PlanningIntakePage';
@@ -27,6 +28,7 @@ type PageId =
   | 'handoffs'
   | 'worker-runs'
   | 'progress'
+  | 'delivery'
   | 'work'
   | 'activity'
   | 'health'
@@ -43,6 +45,7 @@ const pages: Array<{ id: PageId; label: string }> = [
   { id: 'handoffs', label: 'Handoffs' },
   { id: 'worker-runs', label: 'Worker Runs' },
   { id: 'progress', label: 'Progress' },
+  { id: 'delivery', label: 'Delivery' },
   { id: 'work', label: 'Work Package' },
   { id: 'activity', label: 'Activity' },
   { id: 'health', label: 'Health' },
@@ -156,6 +159,7 @@ export default function App() {
           {activePage === 'handoffs' ? <HandoffsPage selectedProject={selectedProject} onOpenPage={setActivePage} /> : null}
           {activePage === 'worker-runs' ? <WorkerRunsPage selectedProject={selectedProject} /> : null}
           {activePage === 'progress' ? <ProgressPage selectedProject={selectedProject} /> : null}
+          {activePage === 'delivery' ? <DeliveryPage selectedProject={selectedProject} /> : null}
           {activePage === 'work' ? (
             <WorkPackagePage
               selectedProject={selectedProject}

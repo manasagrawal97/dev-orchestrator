@@ -11,7 +11,7 @@ import type { DoctorReport, ProjectActivity, ProjectOverview } from '../types/de
 interface ProjectOverviewPageProps {
   selectedProject: string | null;
   onSelectRun: (runId: string) => void;
-  onOpenPage?: (page: 'batches' | 'queues' | 'handoffs' | 'worker-runs' | 'progress') => void;
+  onOpenPage?: (page: 'batches' | 'queues' | 'handoffs' | 'worker-runs' | 'progress' | 'delivery') => void;
 }
 
 export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }: ProjectOverviewPageProps) {
@@ -306,6 +306,48 @@ export function ProjectOverviewPage({ selectedProject, onSelectRun, onOpenPage }
             </>
           ) : (
             overviewLoading ? <LoadingState message="Loading progress summary..." /> : <ErrorState message="Progress summary is unavailable." />
+          )}
+        </SummaryCard>
+        <SummaryCard title="Delivery">
+          {overview ? (
+            <>
+              <KeyValueList
+                items={[
+                  ['Checks', overview.delivery_check_count],
+                  ['Latest check', overview.latest_delivery_id ?? 'none'],
+                  ['Readiness', overview.latest_delivery_readiness_status ?? 'none'],
+                  ['Blockers', overview.latest_delivery_blocker_count],
+                  ['Warnings', overview.latest_delivery_warning_count],
+                  ['Plans', overview.delivery_plan_count],
+                  ['Latest plan', overview.latest_delivery_plan_id ?? 'none'],
+                  ['Plan status', overview.latest_delivery_plan_status ?? 'none'],
+                  ['Approval', overview.latest_delivery_approval_status ?? 'none'],
+                  ['Reports', overview.delivery_report_count],
+                  ['Latest report', overview.latest_delivery_report_id ?? 'none'],
+                  ['Report status', overview.latest_delivery_report_status ?? 'none'],
+                  ['Commit ready', overview.latest_delivery_commit_ready],
+                  ['Push ready', overview.latest_delivery_push_ready],
+                  ['Commit', overview.latest_delivery_commit_hash ?? 'none'],
+                  ['Push status', overview.latest_delivery_push_status ?? 'none'],
+                  ['Push target', `${overview.latest_delivery_push_remote ?? 'unknown'} ${overview.latest_delivery_push_branch ?? 'unknown'}`]
+                ]}
+              />
+              <p className="muted compact">
+                {overview.latest_delivery_push_next_action ??
+                  overview.latest_delivery_report_next_action ??
+                  overview.latest_delivery_plan_next_action ??
+                  overview.delivery_next_action ??
+                  'Run a delivery check when a reviewed change is ready.'}
+              </p>
+              <CommandCopyBox command={`devo delivery check --project ${selectedProject} --write`} />
+              {onOpenPage ? (
+                <button className="link-button detail-link" type="button" onClick={() => onOpenPage('delivery')}>
+                  Open Delivery
+                </button>
+              ) : null}
+            </>
+          ) : (
+            overviewLoading ? <LoadingState message="Loading delivery summary..." /> : <ErrorState message="Delivery summary is unavailable." />
           )}
         </SummaryCard>
       </div>
