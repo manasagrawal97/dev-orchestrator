@@ -51,6 +51,7 @@ from .doctor import DoctorReport, run_doctor
 from .delivery import (
     DeliveryApproval,
     DeliveryCheck,
+    DeliveryCommitDiagnostics,
     DeliveryCommitPreview,
     DeliveryCommitResult,
     DeliveryPlan,
@@ -77,6 +78,7 @@ from .delivery import (
     propose_delivery_commit_message,
     push_delivery_report,
     refresh_delivery_report,
+    run_delivery_commit_diagnostics,
     reject_delivery_plan,
     request_delivery_approval,
     run_delivery_readiness_check,
@@ -1698,6 +1700,58 @@ def _print_delivery_commit_result(result: DeliveryCommitResult) -> None:
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
 
 
+def _print_delivery_commit_diagnostics(result: DeliveryCommitDiagnostics) -> None:
+    console.print(f"Project: {result.project}")
+    console.print(f"Delivery report: {result.delivery_id}")
+    console.print(f"Target repo: {result.target_repo_path}", soft_wrap=True)
+    console.print(f"Branch: {result.branch or 'unknown'}")
+    console.print(f"Upstream: {result.upstream or 'unknown'}")
+    console.print(f"Git executable: {result.git_executable_path or 'unknown'}", soft_wrap=True)
+    console.print(f"Git version: {result.git_version or 'unknown'}")
+    console.print(f".git path: {result.git_dir_path or 'unknown'}", soft_wrap=True)
+    console.print(f".git exists: {result.git_dir_exists}")
+    console.print(f".git attributes: {', '.join(result.git_dir_attributes) if result.git_dir_attributes else 'none'}", soft_wrap=True)
+    console.print(f".git/index path: {result.git_index_path or 'unknown'}", soft_wrap=True)
+    console.print(f".git/index exists: {result.git_index_exists}")
+    console.print(f".git/index size: {result.git_index_size if result.git_index_size is not None else 'unknown'}")
+    console.print(f".git/index attributes: {', '.join(result.git_index_attributes) if result.git_index_attributes else 'none'}", soft_wrap=True)
+    console.print(f".git/index.lock path: {result.git_index_lock_path or 'unknown'}", soft_wrap=True)
+    console.print(f".git/index.lock exists: {result.git_index_lock_exists}")
+    console.print(f"Staged files: {len(result.staged_files)}")
+    console.print(f"Unstaged files: {len(result.unstaged_files)}")
+    console.print(f"Untracked files: {len(result.untracked_files)}")
+    console.print(f"Delivery report status: {result.report_final_status}")
+    console.print(f"Commit ready: {result.report_commit_ready}")
+    console.print(f"Plan approval status: {result.plan_approval_status}")
+    console.print(f"Approval status: {result.approval_status}")
+    console.print(f"Last failure category: {result.last_commit_failure_category or 'none'}")
+    console.print(f"Last failure retryable: {result.last_commit_failure_retryable}")
+    console.print(f"Last failure message: {result.last_commit_failure_message or 'none'}", soft_wrap=True)
+    console.print(f"Failure looks retryable: {result.failure_looks_retryable}")
+    console.print("Possible causes:")
+    for cause in result.possible_causes or ["none"]:
+        console.print(f"  {cause}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  {warning}", soft_wrap=True)
+    if result.git_dir_acl_summary:
+        console.print(".git ACL summary:")
+        for line in result.git_dir_acl_summary:
+            console.print(f"  {line}", soft_wrap=True)
+    if result.git_index_acl_summary:
+        console.print(".git/index ACL summary:")
+        for line in result.git_index_acl_summary:
+            console.print(f"  {line}", soft_wrap=True)
+    console.print("Index-lock probe:")
+    console.print(f"  Requested: {result.probe_requested}")
+    console.print(f"  Ran: {result.probe_ran}")
+    console.print(f"  Can create index.lock: {result.can_create_index_lock if result.can_create_index_lock is not None else 'not tested'}")
+    console.print(f"  Probe error: {result.probe_error or 'none'}", soft_wrap=True)
+    console.print("Next actions:")
+    for action in result.next_actions or ["none"]:
+        console.print(f"  {action}", soft_wrap=True)
+
+
 def _print_delivery_push_preview(preview: DeliveryPushPreview) -> None:
     console.print(f"Project: {preview.project}")
     console.print(f"Delivery report: {preview.delivery_id}")
@@ -1987,6 +2041,27 @@ def show_delivery_commit_message(
     if not plan:
         raise typer.BadParameter(f"Delivery plan not found: {delivery_id}", param_hint="--plan")
     console.print(propose_delivery_commit_message(plan), soft_wrap=True)
+
+
+@delivery_app.command("commit-diagnostics")
+def delivery_commit_diagnostics_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    delivery_id: str = typer.Option(..., "--report", help="Delivery report ID."),
+    index_lock_probe: bool = typer.Option(False, "--index-lock-probe", help="Optionally probe exclusive .git/index.lock creation."),
+    confirm_probe: bool = typer.Option(False, "--confirm-probe", help="Required confirmation for --index-lock-probe."),
+) -> None:
+    """Diagnose guarded delivery commit failures without staging, committing, or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        result = run_delivery_commit_diagnostics(
+            resolved_project,
+            delivery_id,
+            index_lock_probe=index_lock_probe,
+            confirm_probe=confirm_probe,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--report") from exc
+    _print_delivery_commit_diagnostics(result)
 
 
 @delivery_app.command("commit-preview")

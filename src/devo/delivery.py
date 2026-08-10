@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import fnmatch
+import os
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -297,6 +299,49 @@ class DeliveryCommitResult(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     next_action: str
+
+
+class DeliveryCommitDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    delivery_id: str
+    target_repo_path: str
+    branch: str | None = None
+    upstream: str | None = None
+    git_executable_path: str | None = None
+    git_version: str | None = None
+    git_dir_path: str | None = None
+    git_dir_exists: bool = False
+    git_dir_attributes: list[str] = Field(default_factory=list)
+    git_dir_acl_summary: list[str] = Field(default_factory=list)
+    git_index_path: str | None = None
+    git_index_exists: bool = False
+    git_index_size: int | None = None
+    git_index_attributes: list[str] = Field(default_factory=list)
+    git_index_acl_summary: list[str] = Field(default_factory=list)
+    git_index_lock_path: str | None = None
+    git_index_lock_exists: bool = False
+    staged_files: list[str] = Field(default_factory=list)
+    unstaged_files: list[str] = Field(default_factory=list)
+    untracked_files: list[str] = Field(default_factory=list)
+    report_final_status: str
+    report_commit_ready: bool
+    plan_approval_status: str
+    approval_status: str
+    last_commit_failure_category: str | None = None
+    last_commit_failure_message: str | None = None
+    last_commit_failure_retryable: bool = False
+    failure_looks_retryable: bool = False
+    possible_causes: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    probe_requested: bool = False
+    probe_ran: bool = False
+    can_create_index_lock: bool | None = None
+    probe_error: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class DeliveryPushPreview(BaseModel):
@@ -950,6 +995,113 @@ def refresh_delivery_report(
     return result, report, report_json, report_markdown
 
 
+def run_delivery_commit_diagnostics(
+    project_name: str,
+    delivery_id: str,
+    *,
+    index_lock_probe: bool = False,
+    confirm_probe: bool = False,
+    workspace_root: Path | None = None,
+) -> DeliveryCommitDiagnostics:
+    root = workspace_root or get_workspace_root()
+    report = _require_delivery_report(project_name, delivery_id, root)
+    _hydrate_commit_failure_metadata(report, workspace_root=root)
+    plan = _require_delivery_plan(project_name, report.source_delivery_plan_id, root)
+    approval = load_delivery_approval(project_name, plan.delivery_id, workspace_root=root)
+    if index_lock_probe and not confirm_probe:
+        msg = "--confirm-probe is required with --index-lock-probe."
+        raise ValueError(msg)
+
+    current_check, _json_path, _markdown_path = run_delivery_readiness_check(
+        project_name,
+        queue_id=report.source_queue_id,
+        item_id=report.source_queue_item_id,
+        write=False,
+        workspace_root=root,
+    )
+    repo_path = Path(current_check.target_repo_path)
+    git_dir = _resolve_git_dir(repo_path)
+    git_index = git_dir / "index" if git_dir else None
+    git_index_lock = git_dir / "index.lock" if git_dir else None
+    git_version = _git_version()
+    git_executable = shutil.which("git")
+    git_index_exists = bool(git_index and git_index.exists())
+    git_index_size = git_index.stat().st_size if git_index_exists and git_index else None
+    warnings = list(current_check.warnings)
+    if index_lock_probe:
+        warnings.append(
+            "Index-lock probe was explicitly requested. Operator must ensure no other Git process is active."
+        )
+    possible_causes = _commit_failure_possible_causes(report.last_commit_failure_category)
+    next_actions = _commit_diagnostics_next_actions(project_name, delivery_id, report)
+    probe_ran = False
+    can_create_index_lock: bool | None = None
+    probe_error = ""
+
+    if index_lock_probe and git_index_lock:
+        probe_ran = True
+        if git_index_lock.exists():
+            can_create_index_lock = False
+            probe_error = ".git/index.lock already exists; probe refused."
+        else:
+            try:
+                with git_index_lock.open("x", encoding="utf-8") as handle:
+                    handle.write("devo index lock probe\n")
+                can_create_index_lock = True
+            except OSError as exc:
+                can_create_index_lock = False
+                probe_error = str(exc)
+            finally:
+                if git_index_lock.exists():
+                    try:
+                        git_index_lock.unlink()
+                    except OSError as exc:
+                        can_create_index_lock = False
+                        probe_error = (
+                            f"{probe_error}; failed to remove probe lock: {exc}" if probe_error else f"failed to remove probe lock: {exc}"
+                        )
+                        warnings.append("WARNING: .git/index.lock still exists after probe cleanup failure.")
+
+    return DeliveryCommitDiagnostics(
+        project=project_name,
+        delivery_id=delivery_id,
+        target_repo_path=str(repo_path),
+        branch=current_check.branch,
+        upstream=current_check.remote,
+        git_executable_path=git_executable,
+        git_version=git_version,
+        git_dir_path=str(git_dir) if git_dir else None,
+        git_dir_exists=bool(git_dir and git_dir.exists()),
+        git_dir_attributes=_path_attribute_summary(git_dir) if git_dir else ["git dir unavailable"],
+        git_dir_acl_summary=_windows_acl_summary(git_dir) if git_dir else [],
+        git_index_path=str(git_index) if git_index else None,
+        git_index_exists=git_index_exists,
+        git_index_size=git_index_size,
+        git_index_attributes=_path_attribute_summary(git_index) if git_index else ["index path unavailable"],
+        git_index_acl_summary=_windows_acl_summary(git_index) if git_index else [],
+        git_index_lock_path=str(git_index_lock) if git_index_lock else None,
+        git_index_lock_exists=bool(git_index_lock and git_index_lock.exists()),
+        staged_files=current_check.staged_files,
+        unstaged_files=current_check.unstaged_files,
+        untracked_files=current_check.untracked_files,
+        report_final_status=report.final_status,
+        report_commit_ready=report.commit_ready,
+        plan_approval_status=plan.approval_status,
+        approval_status=approval.approval_status if approval else "missing",
+        last_commit_failure_category=report.last_commit_failure_category,
+        last_commit_failure_message=report.last_commit_failure_message,
+        last_commit_failure_retryable=report.last_commit_failure_retryable,
+        failure_looks_retryable=report.last_commit_failure_retryable,
+        possible_causes=possible_causes,
+        next_actions=next_actions,
+        warnings=_dedupe(warnings),
+        probe_requested=index_lock_probe,
+        probe_ran=probe_ran,
+        can_create_index_lock=can_create_index_lock,
+        probe_error=probe_error,
+    )
+
+
 def propose_delivery_commit_message(plan: DeliveryPlan) -> str:
     return plan.intended_commit_message.strip()
 
@@ -1033,7 +1185,15 @@ def preview_delivery_commit(
         if report.last_commit_failure_retryable:
             blockers.append(
                 f"Delivery report {delivery_id} has retryable guarded commit failure "
-                f"{report.last_commit_failure_category}; run delivery report-refresh --reopen after diagnostics."
+                f"{report.last_commit_failure_category}. Last failure: "
+                f"{report.last_commit_failure_message or 'not recorded'}"
+            )
+            blockers.append(
+                f"Run diagnostics: devo delivery commit-diagnostics --project {project_name} --report {delivery_id}"
+            )
+            blockers.append(
+                f"After fixing the issue, run recovery: devo delivery report-refresh --project {project_name} "
+                f"--report {delivery_id} --reopen --note \"<reason>\""
             )
     if not report.commit_ready:
         blockers.append(f"Delivery report {delivery_id} is not commit-ready.")
@@ -1899,9 +2059,8 @@ def _commit_preview_next_action(commit_ready: bool, blockers: list[str]) -> str:
         return "Ready for guarded CLI commit with --confirm-commit. After commit, run delivery push-preview before --confirm-push."
     if any(_is_retryable_report_blocker(blocker) for blocker in blockers):
         return (
-            "Delivery report is blocked by a retryable guarded commit failure. Run "
-            'devo delivery report-refresh --project <project> --report <deliveryId> --reopen --note "<reason>", '
-            "then run commit-preview again."
+            "Delivery report is blocked by a retryable guarded commit failure. Run delivery commit-diagnostics first; "
+            'after fixing the OS/Git issue, run delivery report-refresh --reopen --note "<reason>" and commit-preview again.'
         )
     if blockers:
         return "Resolve commit blockers before running guarded delivery commit."
@@ -2110,19 +2269,117 @@ def _classify_commit_failure(label: str, stdout: str, stderr: str) -> tuple[str,
         return (
             "index_lock_permission_denied",
             True,
-            "Diagnose .git/index.lock / permissions, then run delivery report-refresh --reopen before retrying commit.",
+            "Run delivery commit-diagnostics, fix the .git/index.lock permission issue, then run delivery report-refresh --reopen before retrying commit.",
         )
     if "index.lock" in text and ("file exists" in text or "exists" in text or "another git process" in text):
         return (
             "index_lock_exists",
             True,
-            "Ensure no git process is running and .git/index.lock is stale/absent, then run delivery report-refresh --reopen.",
+            "Run delivery commit-diagnostics, ensure no Git process is running, remove a stale lock only after manual verification, then run delivery report-refresh --reopen.",
         )
     if "no commit-eligible changed files" in text:
         return ("no_eligible_files", False, "Create or select commit-eligible changes before retrying delivery commit.")
     if "git commit failed" in text:
         return ("git_commit_failed", False, "Review the git commit failure before retrying delivery commit.")
     return ("unknown", False, "Review the git failure before retrying delivery commit.")
+
+
+def _commit_failure_possible_causes(category: str | None) -> list[str]:
+    if category == "index_lock_permission_denied":
+        return [
+            "existing Git/index operation conflict",
+            "OS or ACL permission issue on .git or .git/index",
+            "antivirus or Controlled Folder Access blocking lock creation",
+            "terminal/user permission mismatch",
+            "read-only or protected .git directory",
+        ]
+    if category == "index_lock_exists":
+        return [
+            "another Git process is currently running",
+            "stale .git/index.lock left by an interrupted Git process",
+        ]
+    if category == "git_commit_failed":
+        return ["Git commit returned a non-zero exit code; inspect raw stderr before retrying."]
+    if category == "no_eligible_files":
+        return ["No commit-eligible files were present when guarded commit ran."]
+    return ["Commit failure cause is unknown; inspect raw stderr and current Git state."]
+
+
+def _commit_diagnostics_next_actions(project_name: str, delivery_id: str, report: DeliveryReport) -> list[str]:
+    if report.last_commit_failure_retryable and report.last_commit_failure_category in {"index_lock_permission_denied", "index_lock_exists"}:
+        return [
+            "Check that .git/index.lock is absent and no Git process is active.",
+            "Review .git and .git/index permissions, antivirus, Controlled Folder Access, and terminal/user permissions.",
+            (
+                f"After fixing the OS/Git issue, run devo delivery report-refresh --project {project_name} "
+                f"--report {delivery_id} --reopen --note \"<reason>\"."
+            ),
+            f"Then run devo delivery commit-preview --project {project_name} --report {delivery_id}.",
+            "Do not bypass Devo with a manual commit unless explicitly approved.",
+        ]
+    if report.commit_hash and not report.pushed:
+        return [f"Commit exists; run devo delivery push-preview --project {project_name} --report {delivery_id} before guarded push."]
+    if report.pushed:
+        return ["Delivery is already pushed; no commit retry is needed."]
+    return ["Resolve the reported blockers, refresh the delivery report, and preview guarded commit before retrying."]
+
+
+def _resolve_git_dir(repo_path: Path) -> Path | None:
+    result = _run_git(repo_path, ["rev-parse", "--git-dir"])
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = repo_path / path
+    return path
+
+
+def _git_version() -> str | None:
+    try:
+        result = subprocess.run(["git", "--version"], check=False, capture_output=True, text=True, timeout=5)
+    except OSError:
+        return None
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _path_attribute_summary(path: Path) -> list[str]:
+    if not path.exists():
+        return ["missing"]
+    try:
+        stat_result = path.stat()
+    except OSError as exc:
+        return [f"stat unavailable: {exc}"]
+    attrs = ["directory" if path.is_dir() else "file", f"mode={oct(stat_result.st_mode & 0o777)}"]
+    if not os.access(path, os.R_OK):
+        attrs.append("not_readable")
+    if not os.access(path, os.W_OK):
+        attrs.append("not_writable")
+    if path.name.startswith("."):
+        attrs.append("dotfile")
+    file_attributes = getattr(stat_result, "st_file_attributes", None)
+    if file_attributes is not None:
+        attrs.append(f"windows_attributes={file_attributes}")
+    return attrs
+
+
+def _windows_acl_summary(path: Path) -> list[str]:
+    if os.name != "nt" or not path.exists():
+        return []
+    try:
+        result = subprocess.run(["icacls", str(path)], check=False, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if result.returncode != 0 and result.stderr.strip():
+        lines.append(f"icacls stderr: {' '.join(result.stderr.split())}")
+    return lines[:8]
 
 
 def _is_retryable_report_blocker(blocker: str) -> bool:

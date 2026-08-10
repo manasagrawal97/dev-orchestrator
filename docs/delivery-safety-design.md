@@ -26,6 +26,7 @@ Relevant Devo capabilities already exist:
 - TASK-DEVO-110 dogfooded the full delivery lifecycle against an isolated temp repository and local bare remote. The flow is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; no live DevOrchestrator delivery commit/push was run.
 - TASK-DEVO-111 adds delivery operator polish and read-only Delivery dashboard visibility. Delivery reports label readiness as a report snapshot and mark it historical after commit or push. The UI shows delivery artifacts and copyable CLI commands only; commit/push execution remains CLI-only.
 - TASK-DEVO-113 adds `devo delivery report-refresh` as the supported recovery path for retryable guarded commit failures. It refreshes the current readiness snapshot and can reopen a blocked report only when the previous commit failure is retryable, the linked plan and approval remain approved, no commit/push has already happened, and current readiness has no blockers.
+- TASK-DEVO-114 adds `devo delivery commit-diagnostics` for read-only investigation of guarded commit failures. It surfaces Git executable/version, `.git` and `.git/index` state, `.git/index.lock` presence, ACL/attribute summaries when feasible, current changed-file state, retryable failure metadata, likely causes, and safe next actions before any retry.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -287,6 +288,8 @@ devo delivery report-show --project <project> --report <deliveryId>
 devo delivery report-refresh --project <project> --report <deliveryId> --note "<reason>"
 devo delivery report-refresh --project <project> --report <deliveryId> --reopen --note "<reason>"
 devo delivery commit-message --project <project> --plan <deliveryId>
+devo delivery commit-diagnostics --project <project> --report <deliveryId>
+devo delivery commit-diagnostics --project <project> --report <deliveryId> --index-lock-probe --confirm-probe
 devo delivery commit-preview --project <project> --report <deliveryId>
 devo delivery commit --project <project> --report <deliveryId> --confirm-commit
 devo delivery commit-show --project <project> --delivery <deliveryId>
@@ -295,7 +298,7 @@ devo delivery push --project <project> --report <deliveryId> --confirm-push
 devo delivery push-show --project <project> --delivery <deliveryId>
 ```
 
-The readiness, plan, approval, report-preparation, report-refresh, commit-message, commit-preview, guarded commit, push-preview, and guarded push commands exist now. Preview commands are read-only. `report-refresh` does not stage, unstage, commit, push, validate, run Codex, or modify target repo files; with `--reopen` it only changes Devo's delivery report state when reopening is safe. `commit` is CLI-only and requires `--confirm-commit`. `push` is CLI-only and requires `--confirm-push`. UI commit/push buttons remain deferred.
+The readiness, plan, approval, report-preparation, report-refresh, commit-message, commit-diagnostics, commit-preview, guarded commit, push-preview, and guarded push commands exist now. Preview and default diagnostics commands are read-only. `report-refresh` does not stage, unstage, commit, push, validate, run Codex, or modify target repo files; with `--reopen` it only changes Devo's delivery report state when reopening is safe. `commit-diagnostics --index-lock-probe --confirm-probe` is an explicit diagnostic probe that attempts to create and immediately remove `.git/index.lock`; it is never automatic and should be used only after the operator confirms no Git process is active. `commit` is CLI-only and requires `--confirm-commit`. `push` is CLI-only and requires `--confirm-push`. UI commit/push buttons remain deferred.
 
 ## Recovery After Guarded Commit Failure
 
@@ -306,12 +309,13 @@ The safe recovery sequence is:
 ```powershell
 devo delivery report-show --project <project> --report <deliveryId>
 devo delivery commit-preview --project <project> --report <deliveryId>
+devo delivery commit-diagnostics --project <project> --report <deliveryId>
 devo delivery report-refresh --project <project> --report <deliveryId> --note "<diagnosis>"
 devo delivery report-refresh --project <project> --report <deliveryId> --reopen --note "<diagnosis>"
 devo delivery commit-preview --project <project> --report <deliveryId>
 ```
 
-Only after the refreshed preview is clean should an operator run the guarded commit again. Do not manually bypass Devo delivery after a guarded failure unless the user explicitly approves that exceptional path.
+Only after diagnostics point to a resolved OS/Git issue and the refreshed preview is clean should an operator run the guarded commit again. Retryable means Devo can safely preserve recovery state; it does not mean immediate retry is safe. Do not manually bypass Devo delivery after a guarded failure unless the user explicitly approves that exceptional path.
 
 ## Approval Separation
 
@@ -367,7 +371,8 @@ Recommended next tasks:
 6. TASK-DEVO-110: End-to-end guarded delivery dogfood on isolated temp repo - completed
 7. TASK-DEVO-111: Delivery operator polish and read-only Delivery UI - completed
 8. TASK-DEVO-113: Delivery report recovery and refresh after retryable commit failures - completed
-9. TASK-DEVO-112 resume: Retry the live docs-only delivery only after report-refresh reopens the blocked report
+9. TASK-DEVO-114: Delivery commit diagnostics and index.lock failure hardening - completed
+10. TASK-DEVO-112 resume: Retry the live docs-only delivery only after diagnostics explain/fix the index.lock permission issue and report-refresh reopens the blocked report
 
 ## Deferred Scope
 

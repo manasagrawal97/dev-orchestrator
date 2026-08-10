@@ -624,7 +624,11 @@ devo delivery reject --project <name> --plan <deliveryId> --reviewer "<name>" --
 devo delivery report-prepare --project <name> --plan <deliveryId>
 devo delivery report-list --project <name>
 devo delivery report-show --project <name> --report <deliveryId>
+devo delivery report-refresh --project <name> --report <deliveryId> --note "<reason>"
+devo delivery report-refresh --project <name> --report <deliveryId> --reopen --note "<reason>"
 devo delivery commit-message --project <name> --plan <deliveryId>
+devo delivery commit-diagnostics --project <name> --report <deliveryId>
+devo delivery commit-diagnostics --project <name> --report <deliveryId> --index-lock-probe --confirm-probe
 devo delivery commit-preview --project <name> --report <deliveryId>
 devo delivery commit --project <name> --report <deliveryId> --confirm-commit
 devo delivery commit-show --project <name> --delivery <deliveryId>
@@ -642,6 +646,8 @@ Git delivery commands inspect Git state and write Git-focused evidence. Delivery
 After a plan is approved, `devo delivery report-prepare` writes `delivery-report-<id>.json` and `.md`, re-checks current readiness, summarizes blockers/warnings/validation/review/safety state, and marks whether the report is commit-ready. Readiness fields in delivery reports are snapshots from report preparation; after commit or push they are labeled historical, and `devo delivery check --write` should be run again if current repository state matters. `devo delivery commit-message` prints only the proposed commit message. `devo delivery commit-preview` shows exactly which files a guarded commit would stage and commit without changing anything.
 
 If a guarded commit fails for a transient Git issue such as `.git/index.lock` permission denial or a stale lock, Devo records the failure category and retryability on the delivery report and commit artifact. Use `devo delivery report-refresh --project <name> --report <deliveryId> --note "<reason>"` to refresh the current readiness snapshot without reopening. If it reports reopening is allowed, use `devo delivery report-refresh --project <name> --report <deliveryId> --reopen --note "<reason>"`, then run `devo delivery commit-preview` again. Refresh/reopen does not stage, unstage, commit, push, validate, run Codex, or modify target repo files.
+
+Before retrying a blocked report, run `devo delivery commit-diagnostics --project <name> --report <deliveryId>`. Diagnostics is read-only by default and shows Git executable/version, `.git`/`.git/index` state, `.git/index.lock` presence, staged/unstaged/untracked files, last failure category/message, likely causes, and safe next actions. For index lock permission failures, check for active Git operations, stale locks, `.git` ACLs, antivirus/Controlled Folder Access, terminal/user mismatches, and read-only/protected directories. The optional `--index-lock-probe --confirm-probe` is explicit and attempts to create/remove `.git/index.lock` only for diagnostics; do not use it unless you understand the probe and no Git process is active.
 
 `devo delivery commit --confirm-commit` is the only delivery command that may create a Git commit. It is CLI-only, requires a ready approved delivery report, re-runs safety checks, stages only eligible files, writes a commit result artifact, and updates the delivery report with the commit hash. It does not push, run validation, complete queue items, run Codex, run target commands, modify workspace artifacts for commit, or bypass GitHub policy.
 

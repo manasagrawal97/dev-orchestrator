@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-112 resume after TASK-DEVO-113 report recovery, or real Codex launcher retry after readiness
+- TASK-DEVO-112 resume after TASK-DEVO-114 diagnostics explain/fix the index.lock permission issue, or real Codex launcher retry after readiness
 
 ## Updated Roadmap Phases
 
@@ -210,6 +210,10 @@ Fixed the dogfood friction from TASK-DEVO-110. Delivery next-action text now poi
 ### TASK-DEVO-113 Delivery Report Recovery - Completed
 
 Added `devo delivery report-refresh` to recover safely from retryable guarded commit failures. Guarded commit failures now classify common Git errors such as `.git/index.lock` permission denial or stale lock, preserve raw stderr, record retryability on the commit artifact and report, and show recovery guidance in `commit-preview`. `report-refresh` updates the current readiness snapshot without staging or committing; with `--reopen`, it can restore a blocked report to commit-ready only when the linked plan and approval remain approved, current readiness has no blockers, and the report has not already committed or pushed.
+
+### TASK-DEVO-114 Delivery Commit Diagnostics - Completed
+
+Added `devo delivery commit-diagnostics` for read-only investigation of guarded commit failures. Diagnostics reports Git executable/version, target repo, branch/upstream, `.git` and `.git/index` state, `.git/index.lock` presence, current staged/unstaged/untracked files, delivery report/approval status, last failure category/message/retryability, likely causes, and safe next actions. Retryable index-lock failures now point operators to diagnostics first, then `report-refresh --reopen` only after the OS/Git issue is understood or fixed. Optional `--index-lock-probe --confirm-probe` is double-gated and cleans up after itself in isolated diagnostics.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

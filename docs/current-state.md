@@ -38,14 +38,14 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed source task: TASK-DEVO-113 delivery report recovery and refresh
+- Latest completed source task: TASK-DEVO-114 delivery commit diagnostics and index.lock failure hardening
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-099 first real Codex supervised dry-run report
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-DEVO-110 end-to-end guarded delivery dogfood run against an isolated temp repo/local bare remote
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: use `devo delivery report-refresh` to safely reopen retryable blocked delivery reports before retrying guarded commit previews, or retry real supervised Codex only after launcher readiness is proven. Auto-commit/push and UI commit/push buttons remain deferred.
+- Next recommended action: run `devo delivery commit-diagnostics` before retrying any blocked live delivery report with index-lock failure metadata; use `report-refresh --reopen` only after the OS/Git permission issue is understood or fixed. Auto-commit/push and UI commit/push buttons remain deferred.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -131,6 +131,7 @@ The working loop is:
 - TASK-DEVO-110 dogfoods the full delivery flow against an isolated temp repository and local bare remote. The flow validated delivery check -> plan -> approval -> report -> commit-preview -> guarded commit -> push-preview -> guarded push without running delivery commit/push against the live DevOrchestrator repo. The result is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; TASK-DEVO-111 resolved the stale push guidance and readiness snapshot labeling issues found there.
 - TASK-DEVO-111 polishes delivery operator guidance and adds read-only Delivery dashboard visibility. Post-commit guidance now points to `push-preview`/guarded `push`, post-push guidance points to `push-show`, delivery reports label readiness data as current or historical snapshots, the known unreadable global Git ignore warning is visible but non-blocking when status/diff pass, and the dashboard has a Delivery page for checks, plans, approvals, reports, commits, pushes, blockers, warnings, next action, and copyable CLI commands only. No UI commit/push/stage/unstage/validation controls were added.
 - TASK-DEVO-113 adds `devo delivery report-refresh` for retryable guarded commit failure recovery. Failed commit artifacts classify common Git failures such as `.git/index.lock` permission denial, preserve raw stderr and recovery history, and can reopen a blocked report only when the plan/approval remain approved and current readiness has no blockers. Refresh/reopen does not stage, commit, push, validate, run Codex, or modify target repositories.
+- TASK-DEVO-114 adds `devo delivery commit-diagnostics` for read-only guarded commit failure investigation. Diagnostics shows Git executable/version, `.git`/`.git/index` state, `.git/index.lock` presence, current staged/unstaged/untracked files, retryable failure metadata, likely causes, safe next actions, and optional double-confirmed index-lock probe support. It does not stage, commit, push, validate, run Codex, or modify target repositories by default.
 
 ## Readiness Estimate
 

@@ -19,6 +19,7 @@ from devo.delivery import (
     preview_delivery_push,
     push_delivery_report,
     refresh_delivery_report,
+    run_delivery_commit_diagnostics,
     run_delivery_readiness_check,
 )
 from devo.main import app
@@ -689,6 +690,33 @@ def test_delivery_commit_failure_classifies_index_lock_permission_denied(tmp_pat
     assert "report-refresh" in report.next_action
 
 
+def test_delivery_commit_failure_classifies_index_lock_exists_as_retryable(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["add"]:
+            return subprocess.CompletedProcess(
+                args,
+                128,
+                "",
+                "fatal: Unable to create '.git/index.lock': File exists. Another git process seems to be running.",
+            )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
+
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    report = load_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+
+    assert result.failure_category == "index_lock_exists"
+    assert result.failure_retryable is True
+    assert report is not None
+    assert report.last_commit_failure_category == "index_lock_exists"
+    assert report.last_commit_failure_retryable is True
+
+
 def test_delivery_report_refresh_without_reopen_keeps_retryable_report_blocked(tmp_path: Path, monkeypatch) -> None:
     workspace, repo = _workspace(tmp_path, monkeypatch)
     (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
@@ -861,6 +889,110 @@ def test_delivery_commit_preview_shows_recovery_guidance_for_retryable_blocked_r
     assert result.exit_code == 0, result.output
     assert "retryable guarded commit failure" in result.output
     assert "delivery report-refresh" in result.output
+
+
+def test_delivery_commit_preview_shows_diagnostics_command_for_retryable_blocked_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+
+    result = runner.invoke(app, ["delivery", "commit-preview", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "delivery commit-diagnostics --project sample --report DEL-0001" in result.output
+    assert "delivery report-refresh --project sample --report DEL-0001 --reopen" in result.output
+
+
+def test_delivery_commit_diagnostics_shows_retryable_failure_metadata(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+
+    result = run_delivery_commit_diagnostics("sample", "DEL-0001", workspace_root=workspace)
+
+    assert result.report_final_status == "blocked"
+    assert result.report_commit_ready is False
+    assert result.last_commit_failure_category == "index_lock_permission_denied"
+    assert result.last_commit_failure_retryable is True
+    assert result.failure_looks_retryable is True
+    assert result.git_index_lock_exists is False
+    assert any("Controlled Folder Access" in cause for cause in result.possible_causes)
+    assert any("commit-diagnostics" not in action for action in result.next_actions)
+
+
+def test_delivery_commit_diagnostics_is_read_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+    before_status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    before_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout
+
+    result = runner.invoke(app, ["delivery", "commit-diagnostics", "--project", "sample", "--report", "DEL-0001"], terminal_width=240)
+    after_status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    after_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout
+
+    assert result.exit_code == 0, result.output
+    assert "Last failure category: index_lock_permission_denied" in result.output
+    assert after_status == before_status
+    assert after_count == before_count
+
+
+def test_delivery_commit_diagnostics_reports_index_lock_present(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+    lock = repo / ".git" / "index.lock"
+    lock.write_text("stale\n", encoding="utf-8")
+
+    result = run_delivery_commit_diagnostics("sample", "DEL-0001", workspace_root=workspace)
+
+    assert result.git_index_lock_exists is True
+    assert result.git_index_lock_path == str(lock)
+
+
+def test_delivery_commit_diagnostics_handles_missing_report_clearly(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["delivery", "commit-diagnostics", "--project", "sample", "--report", "DEL-9999"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Delivery report not found: DEL-9999" in result.output
+
+
+def test_index_lock_probe_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "commit-diagnostics", "--project", "sample", "--report", "DEL-0001", "--index-lock-probe"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "--confirm-probe is required" in result.output
+    assert not (repo / ".git" / "index.lock").exists()
+
+
+def test_index_lock_probe_uses_temp_repo_and_cleans_up(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_index_lock_failed_report(workspace, monkeypatch)
+
+    result = run_delivery_commit_diagnostics(
+        "sample",
+        "DEL-0001",
+        index_lock_probe=True,
+        confirm_probe=True,
+        workspace_root=workspace,
+    )
+
+    assert result.probe_requested is True
+    assert result.probe_ran is True
+    assert result.can_create_index_lock is True
+    assert result.probe_error == ""
+    assert not (repo / ".git" / "index.lock").exists()
 
 
 def test_api_exposes_delivery_commit_result(tmp_path: Path, monkeypatch) -> None:
@@ -1129,8 +1261,9 @@ def _create_index_lock_failed_report(workspace: Path, monkeypatch) -> None:
             )
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
-    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    with monkeypatch.context() as scoped:
+        scoped.setattr("devo.delivery._run_git", fake_run_git)
+        result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
     assert result.status == "failed"
     assert result.failure_retryable is True
 
