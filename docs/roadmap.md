@@ -16,7 +16,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-112 resume after TASK-DEVO-114 diagnostics explain/fix the index.lock permission issue, or real Codex launcher retry after readiness
+- Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
 
@@ -214,6 +214,10 @@ Added `devo delivery report-refresh` to recover safely from retryable guarded co
 ### TASK-DEVO-114 Delivery Commit Diagnostics - Completed
 
 Added `devo delivery commit-diagnostics` for read-only investigation of guarded commit failures. Diagnostics reports Git executable/version, target repo, branch/upstream, `.git` and `.git/index` state, `.git/index.lock` presence, current staged/unstaged/untracked files, delivery report/approval status, last failure category/message/retryability, likely causes, and safe next actions. Retryable index-lock failures now point operators to diagnostics first, then `report-refresh --reopen` only after the OS/Git issue is understood or fixed. Optional `--index-lock-probe --confirm-probe` is double-gated and cleans up after itself in isolated diagnostics.
+
+### TASK-DEVO-115 Live Delivery Dogfood Closure - Completed
+
+Closed the first live DevOrchestrator self-delivery dogfood. DEL-0001 delivered the docs-only dogfood note through Devo delivery commands, producing commit `f0e8c0319c135f72973357776cd7c62d6cc8832b` with message `docs: dogfood live delivery flow` and pushing it to `origin/main`. The earlier failures were tied to restricted Codex/sandbox context being unable to create `.git/index.lock`; normal PowerShell as `MS\manas` using `.\.venv\Scripts\devo.exe` could create/remove the lock and complete guarded commit/push. The operating rule is now documented: live delivery commit/push should run from normal PowerShell unless diagnostics prove the current context can create `.git/index.lock`.
 
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 

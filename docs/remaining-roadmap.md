@@ -174,7 +174,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 38. TASK-DEVO-111: Delivery operator polish and read-only Delivery UI - completed.
 39. TASK-DEVO-113: Delivery report recovery and refresh after retryable guarded commit failure - completed.
 40. TASK-DEVO-114: Delivery commit diagnostics and index.lock failure hardening - completed.
-41. TASK-DEVO-112 resume: run `devo delivery commit-diagnostics`, fix or understand the index.lock permission issue, reopen the blocked live docs-only delivery report through `devo delivery report-refresh`, then retry guarded preview/commit/push if safe.
+41. TASK-DEVO-115: Live delivery dogfood closure and normal-PowerShell operating rule - completed.
 42. Later polish: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now

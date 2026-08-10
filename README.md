@@ -894,6 +894,17 @@ devo delivery push-show --project MyProject --delivery DEL-0001
 
 `devo delivery commit-diagnostics` is read-only by default. It shows the target repo, branch/upstream, Git executable/version, `.git` path, `.git/index` status, `.git/index.lock` presence, current staged/unstaged/untracked files, delivery report status, last commit failure category/message/retryability, likely causes, and safe next actions. Retryable index-lock failures can be caused by Git/index conflicts, ACL or OS permission problems, antivirus/Controlled Folder Access, terminal/user permission mismatch, or read-only/protected `.git` state. The optional `--index-lock-probe --confirm-probe` is double-gated and attempts to create/remove `.git/index.lock` only for explicit diagnostics; it is never run automatically. A retryable failure does not mean it is safe to retry immediately.
 
+For live DevOrchestrator delivery dogfood, run guarded delivery commit/push from normal local PowerShell as the normal Windows user, preferably with the explicit executable prefix:
+
+```powershell
+.\.venv\Scripts\devo.exe delivery commit-preview --project DevOrchestrator --report DEL-0001
+.\.venv\Scripts\devo.exe delivery commit --project DevOrchestrator --report DEL-0001 --confirm-commit
+.\.venv\Scripts\devo.exe delivery push-preview --project DevOrchestrator --report DEL-0001
+.\.venv\Scripts\devo.exe delivery push --project DevOrchestrator --report DEL-0001 --confirm-push
+```
+
+DEL-0001 proved this rule: restricted Codex/sandbox context could not create `.git/index.lock`, while normal PowerShell as `MS\manas` completed commit `f0e8c0319c135f72973357776cd7c62d6cc8832b` and pushed it to `origin/main` through Devo delivery commands. If index-lock permission issues appear, run `commit-diagnostics`, use the index-lock probe only with `--confirm-probe`, fix the OS/security/context issue, then run `report-refresh --reopen`, `commit-preview`, guarded commit, push-preview, and guarded push. Do not bypass Devo delivery with manual Git commit/push during dogfood unless explicitly approved.
+
 `devo delivery commit-preview` is read-only and shows the eligible files, blocked files, effective commit message, branch, readiness, and next action without staging or committing. `devo delivery commit` is CLI-only and requires `--confirm-commit`; it re-runs delivery readiness, requires the approved plan/report to be ready, stages only eligible safe files, runs `git commit -m <message>` with `subprocess` argument lists, updates the delivery report with the commit hash, and writes `delivery-commit-<id>.json` plus `.md`. It does not push, run validation, run Codex, run target commands, complete queues/tasks/workers, or modify workspace artifacts for commit. UI commit/push buttons remain deferred.
 
 `devo delivery push-preview` is read-only and shows the commit hash, branch, remote, push target, blockers, warnings, and whether guarded push would be allowed. `devo delivery push` is CLI-only and requires `--confirm-push`; it requires prior guarded commit metadata, verifies the remote/branch and that the commit is contained in the current branch, runs `git push <remote> <branch>` with `subprocess` argument lists, updates the delivery report with push metadata, and writes `delivery-push-<id>.json` plus `.md`. It does not commit, run validation, run Codex, complete queues/tasks/workers, or add UI push controls.

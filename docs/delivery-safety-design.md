@@ -25,8 +25,10 @@ Relevant Devo capabilities already exist:
 - `devo delivery push-preview` and guarded `devo delivery push --confirm-push` now provide the first CLI-only push path after commit metadata exists. The command verifies remote/branch/commit containment, writes push result artifacts, and does not create commits.
 - TASK-DEVO-110 dogfooded the full delivery lifecycle against an isolated temp repository and local bare remote. The flow is documented in `docs/dogfood/devo-delivery-dogfood-110.md`; no live DevOrchestrator delivery commit/push was run.
 - TASK-DEVO-111 adds delivery operator polish and read-only Delivery dashboard visibility. Delivery reports label readiness as a report snapshot and mark it historical after commit or push. The UI shows delivery artifacts and copyable CLI commands only; commit/push execution remains CLI-only.
+- TASK-DEVO-112 completed the first live DevOrchestrator docs-only delivery self-dogfood. DEL-0001 created commit `f0e8c0319c135f72973357776cd7c62d6cc8832b` and pushed it to `origin/main` through Devo delivery commands.
 - TASK-DEVO-113 adds `devo delivery report-refresh` as the supported recovery path for retryable guarded commit failures. It refreshes the current readiness snapshot and can reopen a blocked report only when the previous commit failure is retryable, the linked plan and approval remain approved, no commit/push has already happened, and current readiness has no blockers.
 - TASK-DEVO-114 adds `devo delivery commit-diagnostics` for read-only investigation of guarded commit failures. It surfaces Git executable/version, `.git` and `.git/index` state, `.git/index.lock` presence, ACL/attribute summaries when feasible, current changed-file state, retryable failure metadata, likely causes, and safe next actions before any retry.
+- TASK-DEVO-115 documents the operating rule found by DEL-0001: run live guarded delivery commit/push from normal local PowerShell with `.\.venv\Scripts\devo.exe`; restricted Codex/sandbox contexts may fail to create `.git/index.lock`.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 
@@ -344,6 +346,28 @@ Initial policy:
 
 Commit/push automation should not be connected directly to worker success. It should be connected to delivery readiness, approval, and explicit confirmation.
 
+## Live Delivery Operating Context
+
+DEL-0001 showed that Devo's delivery logic can be correct while the execution context cannot create `.git/index.lock`. Guarded commit failed from the restricted Codex/sandbox context with:
+
+```text
+fatal: Unable to create 'E:/DevOrchestrator/.git/index.lock': Permission denied
+```
+
+The same delivery later succeeded from normal local PowerShell as `MS\manas` using:
+
+```powershell
+.\.venv\Scripts\devo.exe
+```
+
+Operational rule:
+
+- Run live Devo delivery commit/push from normal local PowerShell as the normal Windows user.
+- Use the explicit `.\.venv\Scripts\devo.exe` prefix for live delivery dogfood.
+- Do not run live guarded delivery commit/push from restricted Codex/sandbox context unless `commit-diagnostics --index-lock-probe --confirm-probe` proves that context can create and remove `.git/index.lock`.
+- Do not bypass Devo delivery with manual `git add`, `git commit`, or `git push` during dogfood unless explicitly approved.
+- If index-lock permission failure appears, diagnose/fix the OS/security/context issue first, then run `report-refresh --reopen`, `commit-preview`, guarded commit, push-preview, and guarded push.
+
 ## UI Roadmap
 
 Future UI can show delivery visibility before actions:
@@ -372,7 +396,7 @@ Recommended next tasks:
 7. TASK-DEVO-111: Delivery operator polish and read-only Delivery UI - completed
 8. TASK-DEVO-113: Delivery report recovery and refresh after retryable commit failures - completed
 9. TASK-DEVO-114: Delivery commit diagnostics and index.lock failure hardening - completed
-10. TASK-DEVO-112 resume: Retry the live docs-only delivery only after diagnostics explain/fix the index.lock permission issue and report-refresh reopens the blocked report
+10. TASK-DEVO-115: Close live delivery dogfood and document normal-PowerShell delivery operating rule - completed
 
 ## Deferred Scope
 
