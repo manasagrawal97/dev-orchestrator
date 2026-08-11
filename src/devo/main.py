@@ -1526,6 +1526,7 @@ def _print_delivery_check(check: DeliveryCheck) -> None:
     console.print(f"  Forbidden staged: {len(check.forbidden_staged_files)}")
     console.print(f"  Workspace artifacts staged: {len(check.workspace_artifacts_staged)}")
     console.print(f"  Secret-risk files/signals: {len(check.secrets_risk_files)}")
+    console.print(f"  Secret documentation warnings: {len(check.secret_warning_files)}")
     console.print("Blockers:")
     if check.blockers:
         for blocker in check.blockers:

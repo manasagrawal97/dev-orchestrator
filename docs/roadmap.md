@@ -219,6 +219,14 @@ Added `devo delivery commit-diagnostics` for read-only investigation of guarded 
 
 Closed the first live DevOrchestrator self-delivery dogfood. DEL-0001 delivered the docs-only dogfood note through Devo delivery commands, producing commit `f0e8c0319c135f72973357776cd7c62d6cc8832b` with message `docs: dogfood live delivery flow` and pushing it to `origin/main`. The earlier failures were tied to restricted Codex/sandbox context being unable to create `.git/index.lock`; normal PowerShell as `MS\manas` using `.\.venv\Scripts\devo.exe` could create/remove the lock and complete guarded commit/push. The operating rule is now documented: live delivery commit/push should run from normal PowerShell unless diagnostics prove the current context can create `.git/index.lock`.
 
+### TASK-DEVO-116 Guarded Commit Context Preflight - Completed
+
+Added an automatic `.git/index.lock` preflight inside `devo delivery commit` before staging eligible files. Guarded commit now blocks before `git add` when the lock already exists, when the current process cannot create it, or when cleanup after the probe fails, and records retryable failure metadata with diagnostics, report-refresh, normal-PowerShell, commit-preview, and guarded retry guidance. `commit-preview` remains read-only and UI commit/push buttons remain deferred.
+
+### TASK-DEVO-116A Delivery Secret-Risk False Positive Reduction - Completed
+
+Refined delivery secret-risk classification so documentation files such as `README.md` and `docs/*.md` can mention secret-safety terms, placeholders, redacted examples, `.env`, API keys, and tokens without blocking delivery. High-confidence secret values in docs and secret-bearing paths such as `.env`, `.pem`, `.key`, `.pfx`, and appsettings-like files remain blockers.
+
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 
 Added the first planning pipeline artifacts: Project Brief and Blueprint. Devo can now create, show, and approve a brief from a local Markdown/text file, create a deterministic draft blueprint from that brief, show and approve the blueprint, expose planning status in ProjectOverview/read-only API responses, and show a read-only Planning card in the dashboard. This stores Devo workspace artifacts only and does not implement backlog/tasks/batches, direct AI/API calls, Codex CLI automation, or target repository mutation.

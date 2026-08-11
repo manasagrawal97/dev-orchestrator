@@ -572,6 +572,84 @@ def test_delivery_commit_refuses_staged_secret_risk_file(tmp_path: Path, monkeyp
     assert any("Secret-risk files or signals" in blocker for blocker in preview.blockers)
 
 
+def test_delivery_check_treats_readme_secret_terms_as_warning_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "README.md").write_text(
+        "Do not commit secrets, .env files, API keys, tokens, or passwords. Use <api-key> or your-token-here examples only.\n",
+        encoding="utf-8",
+    )
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", workspace_root=workspace)
+
+    assert check.blockers == []
+    assert check.secrets_risk_files == []
+    assert check.secret_warning_files == ["README.md"]
+    assert check.readiness_status == "warnings"
+    assert any("Documentation-only secret terms detected" in warning for warning in check.warnings)
+
+
+def test_delivery_check_treats_docs_secret_terms_as_warning_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "delivery.md").write_text(
+        "Secret-risk files are blocked. Placeholder token examples such as redacted, dummy, xxxx, and **** are not real values.\n",
+        encoding="utf-8",
+    )
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", workspace_root=workspace)
+
+    assert check.blockers == []
+    assert check.secrets_risk_files == []
+    assert check.secret_warning_files == ["docs/delivery.md"]
+    assert check.readiness_status == "warnings"
+
+
+def test_delivery_check_blocks_readme_with_real_looking_api_token(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    token = "sk-proj-" + "1234567890abcdef1234567890abcdef"
+    (repo / "README.md").write_text(
+        f"Do not publish this example:\nOPENAI_API_KEY={token}\n",
+        encoding="utf-8",
+    )
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", workspace_root=workspace)
+
+    assert "README.md" in check.secrets_risk_files
+    assert check.secret_warning_files == []
+    assert any("Secret-risk files or signals" in blocker for blocker in check.blockers)
+    assert check.readiness_status == "blocked"
+
+
+def test_delivery_check_blocks_readme_with_private_key(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    private_key_start = "-----BEGIN " + "PRIVATE KEY-----"
+    private_key_end = "-----END " + "PRIVATE KEY-----"
+    (repo / "README.md").write_text(
+        f"Bad example:\n{private_key_start}\nnot-real-but-high-confidence\n{private_key_end}\n",
+        encoding="utf-8",
+    )
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", workspace_root=workspace)
+
+    assert "README.md" in check.secrets_risk_files
+    assert check.readiness_status == "blocked"
+
+
+def test_delivery_check_blocks_secret_file_paths(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "cert.pem").write_text("not a real cert\n", encoding="utf-8")
+    (repo / "deploy.key").write_text("not a real key\n", encoding="utf-8")
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", workspace_root=workspace)
+
+    assert "cert.pem" in check.forbidden_changed_files
+    assert "deploy.key" in check.forbidden_changed_files
+    assert "cert.pem" in check.secrets_risk_files
+    assert "deploy.key" in check.secrets_risk_files
+    assert check.readiness_status == "blocked"
+
+
 def test_delivery_commit_refuses_when_no_eligible_changes(tmp_path: Path, monkeypatch) -> None:
     workspace, _repo = _workspace(tmp_path, monkeypatch)
     _create_ready_report(workspace)
@@ -645,6 +723,8 @@ def test_delivery_commit_failure_is_captured_safely(tmp_path: Path, monkeypatch)
     _create_ready_report(workspace)
 
     def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(args, 0, ".git", "")
         if args[:1] == ["add"]:
             return subprocess.CompletedProcess(args, 0, "", "")
         if args[:1] == ["commit"]:
@@ -666,6 +746,8 @@ def test_delivery_commit_failure_classifies_index_lock_permission_denied(tmp_pat
     _create_ready_report(workspace)
 
     def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(args, 0, ".git", "")
         if args[:1] == ["add"]:
             return subprocess.CompletedProcess(
                 args,
@@ -696,6 +778,8 @@ def test_delivery_commit_failure_classifies_index_lock_exists_as_retryable(tmp_p
     _create_ready_report(workspace)
 
     def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(args, 0, ".git", "")
         if args[:1] == ["add"]:
             return subprocess.CompletedProcess(
                 args,
@@ -714,6 +798,69 @@ def test_delivery_commit_failure_classifies_index_lock_exists_as_retryable(tmp_p
     assert result.failure_retryable is True
     assert report is not None
     assert report.last_commit_failure_category == "index_lock_exists"
+    assert report.last_commit_failure_retryable is True
+
+
+def test_delivery_commit_blocks_before_staging_when_index_lock_exists(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+    lock = repo / ".git" / "index.lock"
+    lock.write_text("stale\n", encoding="utf-8")
+
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    report = load_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+    lock.unlink()
+    status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+
+    assert result.status == "blocked"
+    assert result.failure_category == "index_lock_exists"
+    assert result.failure_retryable is True
+    assert "index-lock preflight failed before staging" in result.stderr
+    assert "commit-diagnostics --project sample --report DEL-0001 --index-lock-probe --confirm-probe" in result.next_action
+    assert "delivery report-refresh --project sample --report DEL-0001 --reopen" in result.next_action
+    assert status == "?? changed.txt\n"
+    assert report is not None
+    assert report.final_status == "blocked"
+    assert report.last_commit_failure_category == "index_lock_exists"
+
+
+def test_delivery_commit_blocks_before_staging_when_index_lock_probe_fails(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    def fake_probe(_repo_path: Path):
+        from devo.delivery import IndexLockProbeResult
+
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_permission_denied",
+            message="Permission denied creating .git/index.lock during guarded commit preflight.",
+            lock_path=str(repo / ".git" / "index.lock"),
+        )
+
+    def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["add"]:
+            raise AssertionError("git add must not run when index-lock preflight fails")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("devo.delivery._probe_git_index_lock", fake_probe)
+    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
+
+    result, _json_path, _markdown_path = commit_delivery_report("sample", "DEL-0001", confirm_commit=True, workspace_root=workspace)
+    report = load_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+    status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+
+    assert result.status == "blocked"
+    assert result.failure_category == "index_lock_permission_denied"
+    assert result.failure_retryable is True
+    assert "normal PowerShell" in result.next_action
+    assert "delivery report-refresh --project sample --report DEL-0001 --reopen" in result.next_action
+    assert status == "?? changed.txt\n"
+    assert report is not None
+    assert report.final_status == "blocked"
+    assert report.last_commit_failure_category == "index_lock_permission_denied"
     assert report.last_commit_failure_retryable is True
 
 
@@ -1252,6 +1399,8 @@ def _create_index_lock_failed_report(workspace: Path, monkeypatch) -> None:
     _create_ready_report(workspace)
 
     def fake_run_git(_repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ["rev-parse", "--git-dir"]:
+            return subprocess.CompletedProcess(args, 0, ".git", "")
         if args[:1] == ["add"]:
             return subprocess.CompletedProcess(
                 args,

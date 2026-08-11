@@ -300,11 +300,11 @@ devo delivery push --project <project> --report <deliveryId> --confirm-push
 devo delivery push-show --project <project> --delivery <deliveryId>
 ```
 
-The readiness, plan, approval, report-preparation, report-refresh, commit-message, commit-diagnostics, commit-preview, guarded commit, push-preview, and guarded push commands exist now. Preview and default diagnostics commands are read-only. `report-refresh` does not stage, unstage, commit, push, validate, run Codex, or modify target repo files; with `--reopen` it only changes Devo's delivery report state when reopening is safe. `commit-diagnostics --index-lock-probe --confirm-probe` is an explicit diagnostic probe that attempts to create and immediately remove `.git/index.lock`; it is never automatic and should be used only after the operator confirms no Git process is active. `commit` is CLI-only and requires `--confirm-commit`. `push` is CLI-only and requires `--confirm-push`. UI commit/push buttons remain deferred.
+The readiness, plan, approval, report-preparation, report-refresh, commit-message, commit-diagnostics, commit-preview, guarded commit, push-preview, and guarded push commands exist now. Preview and default diagnostics commands are read-only. `report-refresh` does not stage, unstage, commit, push, validate, run Codex, or modify target repo files; with `--reopen` it only changes Devo's delivery report state when reopening is safe. `commit-diagnostics --index-lock-probe --confirm-probe` is an explicit diagnostic probe that attempts to create and immediately remove `.git/index.lock` and should be used only after the operator confirms no Git process is active. `commit` is CLI-only and requires `--confirm-commit`; before staging it runs an automatic index-lock preflight and records a retryable blocked result if the current process cannot create/remove `.git/index.lock`. `push` is CLI-only and requires `--confirm-push`. UI commit/push buttons remain deferred.
 
 ## Recovery After Guarded Commit Failure
 
-If `devo delivery commit --confirm-commit` fails, Devo writes `delivery-commit-<id>.json` and marks the delivery report blocked. Retryable failures such as `.git/index.lock` permission denial or stale lock errors include a recovery next action.
+If `devo delivery commit --confirm-commit` fails, Devo writes `delivery-commit-<id>.json` and marks the delivery report blocked. The guarded commit path checks `.git/index.lock` before staging; if the lock exists, cannot be created, or cannot be removed after the probe, Devo blocks before `git add`, classifies the result as `index_lock_exists`, `index_lock_permission_denied`, or `index_lock_probe_failed`, and keeps the retry path explicit. Retryable failures such as `.git/index.lock` permission denial or stale lock errors include a recovery next action.
 
 The safe recovery sequence is:
 
@@ -318,6 +318,12 @@ devo delivery commit-preview --project <project> --report <deliveryId>
 ```
 
 Only after diagnostics point to a resolved OS/Git issue and the refreshed preview is clean should an operator run the guarded commit again. Retryable means Devo can safely preserve recovery state; it does not mean immediate retry is safe. Do not manually bypass Devo delivery after a guarded failure unless the user explicitly approves that exceptional path.
+
+## Secret-Risk Classification
+
+Delivery readiness treats secret-bearing paths and high-confidence credential values as blockers. Examples include `.env`, `.env.*`, private key/certificate files, appsettings-like files, private-key block markers, real-looking API keys, tokens, passwords, and connection strings with passwords.
+
+Documentation-only safety language is different. `README.md` and `docs/*.md` may mention `.env`, API keys, tokens, placeholders, redacted values, dummy values, or secret-handling rules as warnings rather than blockers. These docs are still blocked if they contain high-confidence secret values, so README/docs are not blanket-allowlisted.
 
 ## Approval Separation
 
@@ -367,6 +373,7 @@ Operational rule:
 - Do not run live guarded delivery commit/push from restricted Codex/sandbox context unless `commit-diagnostics --index-lock-probe --confirm-probe` proves that context can create and remove `.git/index.lock`.
 - Do not bypass Devo delivery with manual `git add`, `git commit`, or `git push` during dogfood unless explicitly approved.
 - If index-lock permission failure appears, diagnose/fix the OS/security/context issue first, then run `report-refresh --reopen`, `commit-preview`, guarded commit, push-preview, and guarded push.
+- If guarded commit preflight fails, no target files should have been staged; inspect the commit artifact and diagnostics before retrying.
 
 ## UI Roadmap
 

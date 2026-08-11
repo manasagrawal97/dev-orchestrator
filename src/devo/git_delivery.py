@@ -34,17 +34,34 @@ GLOBAL_IGNORE_WARNING_DETAIL = (
 )
 
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("OPENAI_API_KEY", re.compile(r"OPENAI_API_KEY", re.IGNORECASE)),
-    ("API_KEY", re.compile(r"\b[A-Z0-9_]*API[_-]?KEY\s*[:=]", re.IGNORECASE)),
-    ("SECRET", re.compile(r"\b[A-Z0-9_]*SECRET\s*[:=]", re.IGNORECASE)),
-    ("PASSWORD", re.compile(r"\b[A-Z0-9_]*PASSWORD\s*[:=]", re.IGNORECASE)),
-    ("TOKEN", re.compile(r"\b[A-Z0-9_]*TOKEN\s*[:=]", re.IGNORECASE)),
-    ("PRIVATE KEY", re.compile(r"PRIVATE KEY", re.IGNORECASE)),
+    ("OPENAI_API_KEY", re.compile(r"\bOPENAI_API_KEY\s*[:=]\s*['\"]?([A-Za-z0-9_\-]{20,})", re.IGNORECASE)),
+    ("API_KEY", re.compile(r"\b[A-Z0-9_]*API[_-]?KEY\s*[:=]\s*['\"]?([A-Za-z0-9_\-]{24,})", re.IGNORECASE)),
+    ("SECRET", re.compile(r"\b[A-Z0-9_]*SECRET\s*[:=]\s*['\"]?([A-Za-z0-9_\-/.+=]{16,})", re.IGNORECASE)),
+    ("PASSWORD", re.compile(r"\b[A-Z0-9_]*PASSWORD\s*[:=]\s*['\"]?([^'\";\s]{8,})", re.IGNORECASE)),
+    ("TOKEN", re.compile(r"\b[A-Z0-9_]*TOKEN\s*[:=]\s*['\"]?([A-Za-z0-9_\-/.+=]{24,})", re.IGNORECASE)),
+    ("PRIVATE KEY", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE)),
     (
         "connection string password",
-        re.compile(r"(connection\s*string|server\s*=|data\s+source\s*=).{0,500}password\s*=", re.IGNORECASE | re.DOTALL),
+        re.compile(r"(connection\s*string|server\s*=|data\s+source\s*=).{0,500}password\s*=\s*([^;\s]+)", re.IGNORECASE | re.DOTALL),
     ),
 )
+
+PLACEHOLDER_SECRET_VALUES = {
+    "changeme",
+    "dummy",
+    "example",
+    "example-password",
+    "fake",
+    "placeholder",
+    "redacted",
+    "safe_placeholder",
+    "secret",
+    "test",
+    "your-api-key",
+    "your-api-key-here",
+    "your-token",
+    "your-token-here",
+}
 
 
 def get_git_repository_status(project_name: str, workspace_root: Path | None = None) -> GitRepositoryStatus:
@@ -355,12 +372,38 @@ def _scan_secret_signals(repo_path: Path, files: Iterable[GitFileState]) -> list
         except UnicodeDecodeError:
             continue
         for signal_type, pattern in SECRET_PATTERNS:
-            if pattern.search(text):
+            if _pattern_has_real_secret_value(pattern, text):
                 key = (item.path, signal_type)
                 if key not in seen:
                     seen.add(key)
                     signals.append(GitSecretSignal(path=item.path, signal_type=signal_type))
     return signals
+
+
+def _pattern_has_real_secret_value(pattern: re.Pattern[str], text: str) -> bool:
+    for match in pattern.finditer(text):
+        if not match.groups():
+            return True
+        value = match.group(match.lastindex or 1).strip().strip("'\"")
+        if _looks_like_placeholder_secret_value(value):
+            continue
+        return True
+    return False
+
+
+def _looks_like_placeholder_secret_value(value: str) -> bool:
+    normalized = value.strip().strip("<>[]{}()'\"").lower()
+    if not normalized:
+        return True
+    if normalized in PLACEHOLDER_SECRET_VALUES:
+        return True
+    if "placeholder" in normalized or "redacted" in normalized:
+        return True
+    if set(normalized) <= {"x", "*"}:
+        return True
+    if normalized.startswith("your-") or normalized.endswith("-here"):
+        return True
+    return False
 
 
 def _validation_evidence(project_name: str, run_id: str | None, task_id: str | None, workspace_root: Path) -> list[str]:

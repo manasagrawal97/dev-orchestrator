@@ -175,7 +175,9 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 39. TASK-DEVO-113: Delivery report recovery and refresh after retryable guarded commit failure - completed.
 40. TASK-DEVO-114: Delivery commit diagnostics and index.lock failure hardening - completed.
 41. TASK-DEVO-115: Live delivery dogfood closure and normal-PowerShell operating rule - completed.
-42. Later polish: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+42. TASK-DEVO-116: Guarded commit context preflight before staging - completed.
+43. TASK-DEVO-116A: Delivery README/docs secret-risk false-positive reduction - completed.
+44. Later polish: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -50,6 +51,7 @@ class DeliveryCheck(BaseModel):
     forbidden_staged_files: list[str] = Field(default_factory=list)
     workspace_artifacts_staged: list[str] = Field(default_factory=list)
     secrets_risk_files: list[str] = Field(default_factory=list)
+    secret_warning_files: list[str] = Field(default_factory=list)
     validation_evidence_status: str = "not_linked"
     review_status: str = "not_linked"
     queue_item_status: str = "not_linked"
@@ -344,6 +346,18 @@ class DeliveryCommitDiagnostics(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class IndexLockProbeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    category: str | None = None
+    message: str = ""
+    lock_path: str | None = None
+    created: bool = False
+    removed: bool = False
+    cleanup_error: str = ""
+
+
 class DeliveryPushPreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -477,10 +491,14 @@ def run_delivery_readiness_check(
     forbidden_changed_files = [path for path in changed_files if _is_forbidden_path(path)]
     forbidden_staged_files = [path for path in staged_files if _is_forbidden_path(path)]
     workspace_artifacts_staged = [path for path in staged_files if _is_workspace_artifact_path(path)]
+    secret_warning_files = _documentation_secret_mention_paths(Path(target_repo_path), changed_files, secret_signal_paths)
+    if secret_warning_files:
+        warnings.append("Documentation-only secret terms detected; review manually if needed: " + ", ".join(secret_warning_files))
+
     secrets_risk_files = _dedupe(
         [
             path
-            for path in [*staged_files, *secret_signal_paths]
+            for path in [*changed_files, *secret_signal_paths]
             if _is_secret_risk_path(path) or path in secret_signal_paths
         ]
     )
@@ -557,6 +575,7 @@ def run_delivery_readiness_check(
         forbidden_staged_files=forbidden_staged_files,
         workspace_artifacts_staged=workspace_artifacts_staged,
         secrets_risk_files=secrets_risk_files,
+        secret_warning_files=secret_warning_files,
         validation_evidence_status=validation_evidence_status,
         review_status=review_status,
         queue_item_status=queue_item_status,
@@ -1040,27 +1059,11 @@ def run_delivery_commit_diagnostics(
 
     if index_lock_probe and git_index_lock:
         probe_ran = True
-        if git_index_lock.exists():
-            can_create_index_lock = False
-            probe_error = ".git/index.lock already exists; probe refused."
-        else:
-            try:
-                with git_index_lock.open("x", encoding="utf-8") as handle:
-                    handle.write("devo index lock probe\n")
-                can_create_index_lock = True
-            except OSError as exc:
-                can_create_index_lock = False
-                probe_error = str(exc)
-            finally:
-                if git_index_lock.exists():
-                    try:
-                        git_index_lock.unlink()
-                    except OSError as exc:
-                        can_create_index_lock = False
-                        probe_error = (
-                            f"{probe_error}; failed to remove probe lock: {exc}" if probe_error else f"failed to remove probe lock: {exc}"
-                        )
-                        warnings.append("WARNING: .git/index.lock still exists after probe cleanup failure.")
+        probe = _probe_git_index_lock(repo_path)
+        can_create_index_lock = probe.ok
+        probe_error = "" if probe.ok else probe.message
+        if probe.cleanup_error:
+            warnings.append("WARNING: .git/index.lock still exists after probe cleanup failure.")
 
     return DeliveryCommitDiagnostics(
         project=project_name,
@@ -1265,6 +1268,9 @@ def commit_delivery_report(
         raise ValueError("Delivery commit blocked: " + result.stderr)
     repo_path = Path(preview.target_repo_path)
     try:
+        index_lock_preflight = _probe_git_index_lock(repo_path)
+        if not index_lock_preflight.ok:
+            return _write_index_lock_preflight_failure(project_name, delivery_id, preview, index_lock_preflight, root)
         add_result = _run_git(repo_path, ["add", "--", *preview.eligible_files])
         if add_result.returncode != 0:
             return _write_failed_commit_result(project_name, delivery_id, preview, "git add failed", add_result, root)
@@ -1293,6 +1299,8 @@ def commit_delivery_report(
         return write_delivery_commit_result(result, workspace_root=root)
     except OSError as exc:
         category, retryable, next_action = _classify_commit_failure("git execution failed", "", str(exc))
+        if retryable and category.startswith("index_lock"):
+            next_action = _index_lock_retry_next_action(project_name, delivery_id)
         result = DeliveryCommitResult(
             project=project_name,
             delivery_id=delivery_id,
@@ -1584,6 +1592,7 @@ def render_delivery_check_markdown(check: DeliveryCheck) -> str:
             f"- Forbidden staged: {len(check.forbidden_staged_files)}",
             f"- Workspace artifacts staged: {len(check.workspace_artifacts_staged)}",
             f"- Secret-risk files/signals: {len(check.secrets_risk_files)}",
+            f"- Secret documentation warnings: {len(check.secret_warning_files)}",
             "",
             "## Blockers",
             "",
@@ -1997,6 +2006,37 @@ def _is_secret_risk_path(path: str) -> bool:
     )
 
 
+DOC_SECRET_TERMS_RE = re.compile(
+    r"(\.env\b|\bapi[ _-]?keys?\b|\btokens?\b|\bsecrets?\b|\bcredentials?\b|\bpasswords?\b)",
+    re.IGNORECASE,
+)
+
+
+def _documentation_secret_mention_paths(repo_path: Path, paths: list[str], secret_signal_paths: list[str]) -> list[str]:
+    signal_paths = set(secret_signal_paths)
+    warning_paths: list[str] = []
+    for path in paths:
+        if path in signal_paths or not _is_documentation_path(path):
+            continue
+        full_path = repo_path / path
+        if not full_path.exists() or not full_path.is_file():
+            continue
+        try:
+            if full_path.stat().st_size > 512_000:
+                continue
+            text = full_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if DOC_SECRET_TERMS_RE.search(text):
+            warning_paths.append(path)
+    return _dedupe(warning_paths)
+
+
+def _is_documentation_path(path: str) -> bool:
+    normalized = _normalize_git_path(path).lower()
+    return normalized == "readme.md" or (normalized.startswith("docs/") and normalized.endswith(".md"))
+
+
 def _normalize_git_path(path: str) -> str:
     normalized = path.replace("\\", "/").strip()
     if normalized.startswith("./"):
@@ -2077,6 +2117,105 @@ def _run_git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[st
     )
 
 
+def _probe_git_index_lock(repo_path: Path) -> IndexLockProbeResult:
+    git_dir = _resolve_git_dir(repo_path)
+    if not git_dir:
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_probe_failed",
+            message="Unable to resolve .git directory for index-lock preflight.",
+        )
+    git_index_lock = git_dir / "index.lock"
+    if git_index_lock.exists():
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_exists",
+            message=f".git/index.lock already exists; refusing guarded commit preflight: {git_index_lock}",
+            lock_path=str(git_index_lock),
+        )
+    created = False
+    try:
+        with git_index_lock.open("x", encoding="utf-8") as handle:
+            handle.write("devo guarded commit index-lock preflight\n")
+        created = True
+    except FileExistsError as exc:
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_exists",
+            message=f".git/index.lock appeared during guarded commit preflight: {exc}",
+            lock_path=str(git_index_lock),
+        )
+    except PermissionError as exc:
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_permission_denied",
+            message=f"Permission denied creating .git/index.lock during guarded commit preflight: {exc}",
+            lock_path=str(git_index_lock),
+        )
+    except OSError as exc:
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_probe_failed",
+            message=f"Could not create .git/index.lock during guarded commit preflight: {exc}",
+            lock_path=str(git_index_lock),
+        )
+    if created and git_index_lock.exists():
+        try:
+            git_index_lock.unlink()
+        except OSError as exc:
+            return IndexLockProbeResult(
+                ok=False,
+                category="index_lock_probe_failed",
+                message=f"Created .git/index.lock during guarded commit preflight but could not remove it: {exc}",
+                lock_path=str(git_index_lock),
+                created=True,
+                cleanup_error=str(exc),
+            )
+    return IndexLockProbeResult(ok=True, message="Index-lock preflight passed.", lock_path=str(git_index_lock), created=True, removed=True)
+
+
+def _index_lock_retry_next_action(project_name: str, delivery_id: str) -> str:
+    return (
+        f"Run devo delivery commit-diagnostics --project {project_name} --report {delivery_id} "
+        "--index-lock-probe --confirm-probe. If this context cannot create .git/index.lock, run live delivery from "
+        "normal PowerShell with .\\.venv\\Scripts\\devo.exe. After fixing the context, run "
+        f"devo delivery report-refresh --project {project_name} --report {delivery_id} --reopen --note \"<reason>\", "
+        f"then devo delivery commit-preview --project {project_name} --report {delivery_id}, then guarded commit."
+    )
+
+
+def _write_index_lock_preflight_failure(
+    project_name: str,
+    delivery_id: str,
+    preview: DeliveryCommitPreview,
+    probe: IndexLockProbeResult,
+    workspace_root: Path,
+) -> tuple[DeliveryCommitResult, Path, Path]:
+    category = probe.category or "index_lock_probe_failed"
+    detail = f"index-lock preflight failed before staging: {probe.message}"
+    result = DeliveryCommitResult(
+        project=project_name,
+        delivery_id=delivery_id,
+        status="blocked",
+        commit_message=preview.effective_commit_message,
+        eligible_files=preview.eligible_files,
+        stderr=detail,
+        failure_category=category,
+        failure_retryable=True,
+        next_action=_index_lock_retry_next_action(project_name, delivery_id),
+    )
+    _mark_delivery_report_blocked(
+        project_name,
+        delivery_id,
+        detail,
+        workspace_root=workspace_root,
+        failure_category=category,
+        failure_message=detail,
+        failure_retryable=True,
+    )
+    return write_delivery_commit_result(result, workspace_root=workspace_root)
+
+
 def _write_failed_commit_result(
     project_name: str,
     delivery_id: str,
@@ -2087,6 +2226,8 @@ def _write_failed_commit_result(
 ) -> tuple[DeliveryCommitResult, Path, Path]:
     detail = _single_line(label, completed.stdout, completed.stderr)
     category, retryable, next_action = _classify_commit_failure(label, completed.stdout, completed.stderr)
+    if retryable and category.startswith("index_lock"):
+        next_action = _index_lock_retry_next_action(project_name, delivery_id)
     result = DeliveryCommitResult(
         project=project_name,
         delivery_id=delivery_id,
@@ -2165,10 +2306,7 @@ def _mark_delivery_report_blocked(
             _recovery_history_note(report.updated_at, "commit_failed", report.last_commit_failure_message or detail, ""),
         ]
     if failure_retryable:
-        report.next_action = (
-            f"Diagnose .git/index.lock / permissions, then run devo delivery report-refresh --project {project_name} "
-            f"--report {delivery_id} --reopen --note \"transient commit failure resolved\"."
-        )
+        report.next_action = _index_lock_retry_next_action(project_name, delivery_id)
     else:
         report.next_action = "Resolve delivery commit blockers before retrying."
     write_delivery_report(report, workspace_root=workspace_root)
@@ -2277,6 +2415,12 @@ def _classify_commit_failure(label: str, stdout: str, stderr: str) -> tuple[str,
             True,
             "Run delivery commit-diagnostics, ensure no Git process is running, remove a stale lock only after manual verification, then run delivery report-refresh --reopen.",
         )
+    if "index-lock preflight" in text or "guarded commit preflight" in text:
+        return (
+            "index_lock_probe_failed",
+            True,
+            "Run delivery commit-diagnostics with --index-lock-probe --confirm-probe, fix the execution context, then run delivery report-refresh --reopen before retrying commit.",
+        )
     if "no commit-eligible changed files" in text:
         return ("no_eligible_files", False, "Create or select commit-eligible changes before retrying delivery commit.")
     if "git commit failed" in text:
@@ -2298,6 +2442,12 @@ def _commit_failure_possible_causes(category: str | None) -> list[str]:
             "another Git process is currently running",
             "stale .git/index.lock left by an interrupted Git process",
         ]
+    if category == "index_lock_probe_failed":
+        return [
+            "current process cannot safely create and remove .git/index.lock",
+            "unexpected .git directory or index-lock path state",
+            "OS, ACL, antivirus, or terminal sandbox restriction",
+        ]
     if category == "git_commit_failed":
         return ["Git commit returned a non-zero exit code; inspect raw stderr before retrying."]
     if category == "no_eligible_files":
@@ -2306,10 +2456,18 @@ def _commit_failure_possible_causes(category: str | None) -> list[str]:
 
 
 def _commit_diagnostics_next_actions(project_name: str, delivery_id: str, report: DeliveryReport) -> list[str]:
-    if report.last_commit_failure_retryable and report.last_commit_failure_category in {"index_lock_permission_denied", "index_lock_exists"}:
+    if report.last_commit_failure_retryable and report.last_commit_failure_category in {
+        "index_lock_permission_denied",
+        "index_lock_exists",
+        "index_lock_probe_failed",
+    }:
         return [
             "Check that .git/index.lock is absent and no Git process is active.",
             "Review .git and .git/index permissions, antivirus, Controlled Folder Access, and terminal/user permissions.",
+            (
+                f"If this context cannot create .git/index.lock, run live delivery from normal PowerShell with "
+                f".\\.venv\\Scripts\\devo.exe."
+            ),
             (
                 f"After fixing the OS/Git issue, run devo delivery report-refresh --project {project_name} "
                 f"--report {delivery_id} --reopen --note \"<reason>\"."
