@@ -4,6 +4,12 @@ DevOrchestrator, or Devo, is a local development control room for AI-assisted so
 
 Devo is not the AI itself. ChatGPT plans and reviews, Codex implements and operates, and Devo manages the workflow guardrails and evidence trail. This version intentionally does not include autonomous agents or AI API integration. It now includes a local read-only API and dashboard for inspecting Devo state.
 
+## Why Devo is open-source developer infrastructure
+
+AI coding agents can generate and edit code quickly, but developers still need durable context, scoped work packages, approvals, validation evidence, delivery checks, reports, and recovery workflows.
+
+Devo is being developed as reusable local developer infrastructure for that orchestration layer. It keeps AI-assisted development structured, evidence-based, recoverable, and human-controlled.
+
 ## Current Strategy
 
 Devo itself is the main product priority now. Target projects such as PersonalOS are primarily real-world test projects for proving Devo workflows, approvals, validation, delivery, reports, history, and recovery.
@@ -961,7 +967,7 @@ Create an environment snapshot:
 
 ```powershell
 devo env snapshot --name DevOrchestrator --path "E:\DevOrchestrator"
-devo env snapshot --name PersonalOS --path "E:\Personal OS"
+devo env snapshot --name MyProject --path "E:\path\to\target-project"
 ```
 
 Snapshots are written to:
@@ -1019,7 +1025,7 @@ workspace/environment/**
 workspace/current.json
 ```
 
-Workspace backup does not include DevOrchestrator source code, `.git`, `.venv`, target project repositories such as `E:\Personal OS`, caches, temporary files, lock files, or arbitrary paths outside the DevOrchestrator workspace. Do not use Google Drive as the active DevOrchestrator workspace; keep the active workspace local and use Drive only as a backup destination.
+Workspace backup does not include DevOrchestrator source code, `.git`, `.venv`, target project repositories outside the DevOrchestrator workspace, caches, temporary files, lock files, or arbitrary paths outside the DevOrchestrator workspace. Do not use Google Drive as the active DevOrchestrator workspace; keep the active workspace local and use Drive only as a backup destination.
 
 Create a normal backup:
 

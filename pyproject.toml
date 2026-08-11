@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "DevOrchestrator"
 version = "0.1.0"
-description = "A local CLI skeleton for registering software projects."
+description = "A local-first control plane for structured, recoverable AI-assisted software development."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
