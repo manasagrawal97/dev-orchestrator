@@ -431,6 +431,14 @@ class DeliveryLatestSummary(BaseModel):
     latest_push_result_status: str | None = None
     latest_pushed_delivery_id: str | None = None
     latest_pushed_at: str | None = None
+    latest_runner_request_id: str | None = None
+    latest_runner_request_status: str | None = None
+    latest_runner_run_id: str | None = None
+    latest_runner_run_status: str | None = None
+    latest_runner_commit_hash: str | None = None
+    latest_runner_pushed: bool | None = None
+    latest_runner_changed_file_count: int | None = None
+    latest_runner_next_action: str | None = None
     next_action: str
     warnings: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -1944,6 +1952,7 @@ def build_delivery_latest_summary(project_name: str, workspace_root: Path | None
     reports = list_delivery_reports(project_name, workspace_root=root)
     commit_results = list_delivery_commit_results(project_name, workspace_root=root)
     push_results = list_delivery_push_results(project_name, workspace_root=root)
+    runner_requests = list_delivery_runner_requests(project_name, workspace_root=root)
 
     latest_check = checks[0] if checks else None
     latest_meaningful_check = next((check for check in checks if not _is_empty_delivery_check(check)), None)
@@ -1952,6 +1961,12 @@ def build_delivery_latest_summary(project_name: str, workspace_root: Path | None
     latest_report = reports[0] if reports else None
     latest_commit = commit_results[0] if commit_results else None
     latest_push = push_results[0] if push_results else None
+    latest_runner_request = runner_requests[0] if runner_requests else None
+    latest_runner_run = (
+        load_delivery_runner_run(project_name, latest_runner_request.request_id, workspace_root=root)
+        if latest_runner_request
+        else None
+    )
     latest_pushed_report = next((report for report in reports if report.pushed), None)
     latest_pushed_push = next((push for push in push_results if push.pushed), None)
     latest_pushed_delivery_id = latest_pushed_push.delivery_id if latest_pushed_push else latest_pushed_report.delivery_id if latest_pushed_report else None
@@ -1995,6 +2010,19 @@ def build_delivery_latest_summary(project_name: str, workspace_root: Path | None
         latest_push_result_status=latest_push.push_status if latest_push else None,
         latest_pushed_delivery_id=latest_pushed_delivery_id,
         latest_pushed_at=latest_pushed_at,
+        latest_runner_request_id=latest_runner_request.request_id if latest_runner_request else None,
+        latest_runner_request_status=latest_runner_request.status if latest_runner_request else None,
+        latest_runner_run_id=latest_runner_run.run_id if latest_runner_run else None,
+        latest_runner_run_status=latest_runner_run.status if latest_runner_run else None,
+        latest_runner_commit_hash=latest_runner_run.commit_hash if latest_runner_run else None,
+        latest_runner_pushed=latest_runner_run.pushed if latest_runner_run else None,
+        latest_runner_changed_file_count=len(latest_runner_request.expected_changed_files) if latest_runner_request else None,
+        latest_runner_next_action=_runner_latest_next_action(
+            project_name,
+            latest_runner_request,
+            latest_runner_run,
+            current_repo_is_clean,
+        ),
         next_action=next_action,
         warnings=_dedupe(warnings),
     )
@@ -2525,6 +2553,34 @@ def _runner_next_action(
     if blockers:
         return "Resolve runner blockers before creating a new runner request: " + _summary_text(blockers)
     return _runner_run_command(project_name, request_id)
+
+
+def _runner_latest_next_action(
+    project_name: str,
+    request: DeliveryRunnerRequest | None,
+    latest_run: DeliveryRunnerRun | None,
+    current_repo_is_clean: bool,
+) -> str:
+    if not request:
+        if current_repo_is_clean:
+            return "No runner action needed; repository is clean and no runner request exists."
+        return (
+            "Create a runner request after validating the current changes: "
+            f'.\\.venv\\Scripts\\devo.exe delivery runner-request --project {project_name} '
+            '--message "<commit message>" --note "<task note>"'
+        )
+    if latest_run and latest_run.status == "completed" and latest_run.pushed:
+        return f"Runner delivery completed; no runner action needed for {request.request_id}."
+    if request.status == "completed":
+        return f"Runner request {request.request_id} is completed; no runner action needed."
+    if latest_run and latest_run.status in {"blocked", "failed"}:
+        return (
+            f"Review {request.request_id} with devo delivery runner-show --project {project_name} "
+            f"--request {request.request_id}, then create a fresh request after fixing blockers."
+        )
+    if request.status == "requested":
+        return _runner_run_command(project_name, request.request_id)
+    return f"Review runner request {request.request_id}: devo delivery runner-show --project {project_name} --request {request.request_id}"
 
 
 def _runner_run_command(project_name: str, request_id: str) -> str:

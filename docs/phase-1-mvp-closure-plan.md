@@ -57,7 +57,7 @@ Phase 1 is not:
 
 ## 5. Remaining Phase 1 Tasks
 
-### TASK-DEVO-120: Operator Workflow Polish After Trusted Runner
+### TASK-DEVO-120: Operator Workflow Polish After Trusted Runner - Completed
 
 Goal: Make the everyday post-Codex operator flow smoother now that the trusted runner exists.
 
@@ -68,6 +68,8 @@ Expected scope: Docs, command wording, operator prompts, small status/read-model
 What not to touch: No new delivery safety behavior, no daemon/service, no UI commit/push buttons, no AI-agent implementation, no PersonalOS changes.
 
 Done criteria: A normal post-Codex handoff clearly tells Manas what changed, what passed, which runner request exists, and the exact one-command delivery instruction.
+
+Result: `delivery latest` and `delivery runner-latest` now surface runner request/run/commit/push state and the exact pending normal PowerShell command. `runner-request` output includes changed/warning/blocker counts and artifact path context, while successful `runner-run` output clearly reports completion, commit hash, push target, and the next `git status` check.
 
 ### TASK-DEVO-121: Vision-To-Batch Intake Polish
 
@@ -195,7 +197,7 @@ Current risks and open questions:
 Recommended next task:
 
 ```text
-TASK-DEVO-120: Operator workflow polish after trusted runner
+TASK-DEVO-121: Vision-to-batch intake polish
 ```
 
-Now that the delivery runner works, the next value is to make the everyday operator flow smoother before adding more intelligence.
+Now that the delivery runner workflow is easier to inspect and resume, the next value is smoothing the human idea -> Project Brief -> Blueprint -> Backlog -> approved batch intake path before adding more intelligence.

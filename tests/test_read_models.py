@@ -76,6 +76,9 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.latest_codex_run_plan_status is None
     assert overview.latest_codex_preflight_status is None
     assert overview.latest_codex_run_plan_next_action is None
+    assert overview.latest_runner_run_id is None
+    assert overview.latest_runner_commit_hash is None
+    assert overview.latest_runner_pushed is None
     assert overview.project_completion_percent == 0.0
     assert overview.backlog_readiness_percent == 0.0
     assert overview.progress_next_action
@@ -197,6 +200,9 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "review_next_action" in overview_data
     assert "codex_run_plan_count" in overview_data
     assert "latest_codex_preflight_status" in overview_data
+    assert "latest_runner_run_id" in overview_data
+    assert "latest_runner_commit_hash" in overview_data
+    assert "latest_runner_pushed" in overview_data
 
 
 def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkeypatch) -> None:

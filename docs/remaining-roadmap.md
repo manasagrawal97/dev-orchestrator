@@ -181,7 +181,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 44. TASK-DEVO-117: Delivery latest status command - completed.
 45. TASK-DEVO-118: Trusted local delivery runner - completed.
 46. TASK-DEVO-119: Phase 1 MVP closure plan - completed.
-47. TASK-DEVO-120: Operator workflow polish after trusted runner.
+47. TASK-DEVO-120: Operator workflow polish after trusted runner - completed.
 48. TASK-DEVO-121: Vision-to-batch intake polish.
 49. TASK-DEVO-122: Phase 1 context and workflow efficiency audit.
 50. TASK-DEVO-123: End-to-end Phase 1 dogfood on DevOrchestrator.

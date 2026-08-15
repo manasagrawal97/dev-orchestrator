@@ -113,6 +113,28 @@ def test_delivery_latest_recommends_plan_for_safe_changes(tmp_path: Path, monkey
     assert "devo delivery plan --project sample --delivery DEL-0001" in result.output
 
 
+def test_delivery_latest_shows_pending_runner_request_and_command(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    created = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest runner request: REQ-0001 | requested" in result.output
+    assert "Latest runner run: none | unknown" in result.output
+    assert "Latest runner commit: none" in result.output
+    assert "Latest runner pushed: unknown" in result.output
+    assert "Runner next action:" in result.output
+    assert "runner-run --project sample --request REQ-0001" in result.output
+
+
 def test_delivery_latest_recommends_fixing_blockers(tmp_path: Path, monkeypatch) -> None:
     workspace, repo = _workspace(tmp_path, monkeypatch)
     (repo / ".env").write_text("SAFE_PLACEHOLDER=true\n", encoding="utf-8")
@@ -208,12 +230,20 @@ def test_delivery_runner_request_creates_snapshot_artifacts(tmp_path: Path, monk
     assert result.exit_code == 0, result.output
     assert "Runner request: REQ-0001" in result.output
     assert "runner-run --project sample --request REQ-0001" in result.output
+    assert "Next normal PowerShell command:" in result.output
+    assert "Changed file count: 1" in result.output
+    assert "Warnings count:" in result.output
+    assert "Blockers count: 0" in result.output
+    assert "Request artifact path:" in result.output
     request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
     assert request is not None
     assert request.expected_changed_files == ["changed.txt"]
     overview = build_project_overview("sample", workspace_root=workspace)
     assert overview.latest_runner_request_id == "REQ-0001"
     assert overview.latest_runner_request_status == "requested"
+    assert overview.latest_runner_run_id is None
+    assert overview.latest_runner_commit_hash is None
+    assert overview.latest_runner_pushed is None
     assert "runner-run --project sample --request REQ-0001" in (overview.latest_runner_next_action or "")
     request_dir = workspace / "projects" / "sample" / "delivery" / "runner-requests"
     assert (request_dir / "runner-request-req-0001.json").exists()
@@ -313,6 +343,34 @@ def test_delivery_runner_list_and_show_work(tmp_path: Path, monkeypatch) -> None
     assert shown.exit_code == 0, shown.output
     assert "REQ-0001 | requested" in listed.output
     assert "Expected changed files: 1" in shown.output
+
+
+def test_delivery_runner_latest_shows_no_request_cleanly(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["delivery", "runner-latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest runner request: none" in result.output
+    assert "Expected changed files: 0" in result.output
+    assert "No runner action needed" in result.output
+
+
+def test_delivery_runner_latest_shows_pending_request_and_command(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+
+    result = runner.invoke(app, ["delivery", "runner-latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest runner request: REQ-0001 | requested" in result.output
+    assert "Expected changed files: 1" in result.output
+    assert "Latest runner run: none" in result.output
+    assert "Commit hash: none" in result.output
+    assert "Pushed: False" in result.output
+    assert "runner-run --project sample --request REQ-0001" in result.output
 
 
 def test_delivery_runner_run_refuses_without_confirmation(tmp_path: Path, monkeypatch) -> None:
@@ -433,6 +491,9 @@ def test_delivery_runner_run_completes_guarded_commit_and_push(tmp_path: Path, m
     )
 
     assert result.exit_code == 0, result.output
+    assert "Trusted delivery runner completed." in result.output
+    assert "Repo should now be clean." in result.output
+    assert "Next check: git status" in result.output
     run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
     request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
     assert run is not None
@@ -444,6 +505,25 @@ def test_delivery_runner_run_completes_guarded_commit_and_push(tmp_path: Path, m
     assert _git(repo, "status", "--short", capture=True).stdout.strip() == ""
     remote_ref = _git(repo, "ls-remote", "origin", "refs/heads/main", capture=True).stdout
     assert run.commit_hash in remote_ref
+    overview = build_project_overview("sample", workspace_root=workspace)
+    assert overview.latest_runner_request_id == "REQ-0001"
+    assert overview.latest_runner_request_status == "completed"
+    assert overview.latest_runner_run_id == run.run_id
+    assert overview.latest_runner_run_status == "completed"
+    assert overview.latest_runner_commit_hash == run.commit_hash
+    assert overview.latest_runner_pushed is True
+
+    latest = runner.invoke(app, ["delivery", "runner-latest", "--project", "sample"], terminal_width=240)
+    assert latest.exit_code == 0, latest.output
+    assert "Latest runner request: REQ-0001 | completed" in latest.output
+    assert "Final status: completed" in latest.output
+    assert "Pushed: True" in latest.output
+
+    delivery_latest = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+    assert delivery_latest.exit_code == 0, delivery_latest.output
+    assert "Latest runner request: REQ-0001 | completed" in delivery_latest.output
+    assert "Latest runner run: RUN-" in delivery_latest.output
+    assert "Latest runner pushed: True" in delivery_latest.output
 
 
 def test_delivery_runner_run_does_not_push_if_commit_fails(tmp_path: Path, monkeypatch) -> None:

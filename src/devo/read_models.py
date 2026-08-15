@@ -135,7 +135,10 @@ class ProjectOverview(BaseModel):
     latest_pushed_delivery_id: str | None = None
     latest_runner_request_id: str | None = None
     latest_runner_request_status: str | None = None
+    latest_runner_run_id: str | None = None
     latest_runner_run_status: str | None = None
+    latest_runner_commit_hash: str | None = None
+    latest_runner_pushed: bool | None = None
     latest_runner_next_action: str | None = None
     brief_status: str = "missing"
     blueprint_status: str = "missing"
@@ -320,7 +323,12 @@ def build_project_overview_with_timing(
             latest_runner_request_status=(
                 str(delivery["latest_runner_request_status"]) if delivery["latest_runner_request_status"] else None
             ),
+            latest_runner_run_id=str(delivery["latest_runner_run_id"]) if delivery["latest_runner_run_id"] else None,
             latest_runner_run_status=str(delivery["latest_runner_run_status"]) if delivery["latest_runner_run_status"] else None,
+            latest_runner_commit_hash=str(delivery["latest_runner_commit_hash"]) if delivery["latest_runner_commit_hash"] else None,
+            latest_runner_pushed=(
+                bool(delivery["latest_runner_pushed"]) if delivery["latest_runner_pushed"] is not None else None
+            ),
             latest_runner_next_action=str(delivery["latest_runner_next_action"]) if delivery["latest_runner_next_action"] else None,
             brief_status=str(planning["brief_status"]),
             blueprint_status=str(planning["blueprint_status"]),
@@ -868,7 +876,10 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_pushed_delivery_id": None,
             "latest_runner_request_id": None,
             "latest_runner_request_status": None,
+            "latest_runner_run_id": None,
             "latest_runner_run_status": None,
+            "latest_runner_commit_hash": None,
+            "latest_runner_pushed": None,
             "latest_runner_next_action": f"Review delivery artifacts: {exc}",
         }
     latest = checks[0] if checks else None
@@ -924,8 +935,11 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_pushed_delivery_id": latest_summary.latest_pushed_delivery_id if latest_summary else None,
         "latest_runner_request_id": runner_request.request_id if runner_request else None,
         "latest_runner_request_status": runner_request.status if runner_request else None,
+        "latest_runner_run_id": runner_run.run_id if runner_run else None,
         "latest_runner_run_status": runner_run.status if runner_run else None,
-        "latest_runner_next_action": runner_run.next_action if runner_run else runner_request.next_action if runner_request else None,
+        "latest_runner_commit_hash": runner_run.commit_hash if runner_run else None,
+        "latest_runner_pushed": runner_run.pushed if runner_run else None,
+        "latest_runner_next_action": latest_summary.latest_runner_next_action if latest_summary else None,
     }
 
 

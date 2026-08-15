@@ -1839,6 +1839,19 @@ def _print_delivery_latest_summary(summary: DeliveryLatestSummary) -> None:
         f"{summary.latest_pushed_delivery_id or 'none'}"
         f" | {summary.latest_pushed_at or 'not pushed'}"
     )
+    console.print(
+        "Latest runner request: "
+        f"{summary.latest_runner_request_id or 'none'}"
+        f" | {summary.latest_runner_request_status or 'unknown'}"
+    )
+    console.print(
+        "Latest runner run: "
+        f"{summary.latest_runner_run_id or 'none'}"
+        f" | {summary.latest_runner_run_status or 'unknown'}"
+    )
+    console.print(f"Latest runner commit: {summary.latest_runner_commit_hash or 'none'}")
+    console.print(f"Latest runner pushed: {summary.latest_runner_pushed if summary.latest_runner_pushed is not None else 'unknown'}")
+    console.print(f"Runner next action: {summary.latest_runner_next_action or 'none'}", soft_wrap=True)
     console.print("Warnings:")
     if summary.warnings:
         for warning in summary.warnings:
@@ -1869,6 +1882,9 @@ def _print_delivery_runner_request(request: DeliveryRunnerRequest, latest_run: D
             console.print(f"  {blocker}", soft_wrap=True)
     else:
         console.print("  none")
+    console.print(f"Changed file count: {len(request.expected_changed_files)}")
+    console.print(f"Warnings count: {len(request.warnings)}")
+    console.print(f"Blockers count: {len(request.blockers)}")
     if latest_run:
         console.print(f"Latest runner run: {latest_run.run_id} | {latest_run.status}")
         console.print(f"Latest commit hash: {latest_run.commit_hash or 'none'}")
@@ -1876,6 +1892,9 @@ def _print_delivery_runner_request(request: DeliveryRunnerRequest, latest_run: D
     else:
         console.print("Latest runner run: none")
     console.print(f"Next action: {request.next_action}", soft_wrap=True)
+    if request.status == "requested":
+        console.print("Next normal PowerShell command:", style="bold")
+        console.print(request.next_action, soft_wrap=True)
 
 
 def _print_delivery_runner_run(run: DeliveryRunnerRun) -> None:
@@ -1889,6 +1908,13 @@ def _print_delivery_runner_run(run: DeliveryRunnerRun) -> None:
     console.print(f"Commit hash: {run.commit_hash or 'none'}")
     console.print(f"Pushed: {run.pushed}")
     console.print(f"Push target: {run.push_remote or 'unknown'} {run.push_branch or 'unknown'}")
+    if run.status == "completed":
+        console.print("Trusted delivery runner completed.", style="bold")
+        console.print(f"Commit: {run.commit_hash or 'none'}")
+        console.print(f"Pushed: {run.pushed}")
+        console.print(f"Push target: {run.push_remote or 'unknown'} {run.push_branch or 'unknown'}")
+        console.print("Repo should now be clean.")
+        console.print("Next check: git status")
     console.print("Index-lock probe:")
     console.print(f"  Can create index.lock: {run.index_lock_probe_result.get('ok', 'unknown')}")
     console.print(f"  Message: {run.index_lock_probe_result.get('message', 'none')}", soft_wrap=True)
@@ -1913,6 +1939,37 @@ def _print_delivery_runner_run(run: DeliveryRunnerRun) -> None:
     console.print(f"Next action: {run.next_action}", soft_wrap=True)
 
 
+def _print_delivery_runner_latest(project_name: str, request: DeliveryRunnerRequest | None) -> None:
+    console.print(f"Project: {project_name}")
+    if not request:
+        summary = build_delivery_latest_summary(project_name)
+        console.print("Latest runner request: none")
+        console.print("Expected changed files: 0")
+        console.print(f"Current git status: {summary.current_git_status_summary}")
+        console.print(f"Runner next action: {summary.latest_runner_next_action}", soft_wrap=True)
+        return
+    latest_run = load_delivery_runner_run(project_name, request.request_id)
+    console.print(f"Latest runner request: {request.request_id} | {request.status}")
+    console.print(f"Expected changed files: {len(request.expected_changed_files)}")
+    console.print(f"Warnings count: {len(request.warnings)}")
+    console.print(f"Blockers count: {len(request.blockers)}")
+    if latest_run:
+        console.print(f"Latest runner run: {latest_run.run_id} | {latest_run.status}")
+        console.print(f"Commit hash: {latest_run.commit_hash or 'none'}")
+        console.print(f"Pushed: {latest_run.pushed}")
+        console.print(f"Push target: {latest_run.push_remote or 'unknown'} {latest_run.push_branch or 'unknown'}")
+        console.print(f"Final status: {latest_run.status}")
+        console.print(f"Runner next action: {latest_run.next_action}", soft_wrap=True)
+    else:
+        console.print("Latest runner run: none")
+        console.print("Commit hash: none")
+        console.print("Pushed: False")
+        console.print(f"Runner next action: {request.next_action}", soft_wrap=True)
+        if request.status == "requested":
+            console.print("Next normal PowerShell command:", style="bold")
+            console.print(request.next_action, soft_wrap=True)
+
+
 @delivery_app.command("runner-request")
 def create_delivery_runner_request_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -1934,7 +1991,9 @@ def create_delivery_runner_request_command(
     _print_delivery_runner_request(request)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
-    console.print(f"Normal PowerShell command: {request.next_action}", soft_wrap=True)
+    console.print(f"Request artifact path: {_named_path(json_path)}")
+    console.print("Next normal PowerShell command:", style="bold")
+    console.print(request.next_action, soft_wrap=True)
 
 
 @delivery_app.command("runner-list")
@@ -1955,6 +2014,16 @@ def list_delivery_runner_requests_command(
             f"run {latest_run.status if latest_run else 'none'} | {request.updated_at.isoformat()}",
             soft_wrap=True,
         )
+
+
+@delivery_app.command("runner-latest")
+def latest_delivery_runner_request_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the latest trusted local delivery runner request and next action."""
+    resolved_project = _resolve_project(project_name)
+    requests = list_delivery_runner_requests(resolved_project)
+    _print_delivery_runner_latest(resolved_project, requests[0] if requests else None)
 
 
 @delivery_app.command("runner-show")
