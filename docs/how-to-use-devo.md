@@ -64,6 +64,21 @@ For current PersonalOS maintenance, use the simpler practical flow from [Persona
 
 The older two-stop flow, separate source approval followed by separate build approval, remains useful when a bundle is not available or the scope/risk changes.
 
+## Vision-To-Batch Intake
+
+When the starting point is a rough idea instead of a final brief, use the intake helpers first:
+
+```powershell
+devo project intake-status --project MyProject
+devo project intake-next --project MyProject
+devo project intake-template --project MyProject --write
+devo project intake-prompt --project MyProject --idea "Rough project idea" --write
+```
+
+`intake-status` summarizes the whole planning path: Project Brief, Blueprint, Backlog, task counts, latest Batch approval, latest Queue, latest Handoff, progress percentages, and the exact next command. `intake-next` prints only the next action and command for quick handoff. `intake-template` gives the operator a standard Markdown shape for the raw idea, while `intake-prompt` creates a copyable planning prompt that asks Codex/ChatGPT to produce a brief draft, blueprint outline, candidate backlog/tasks, batch suggestion, risks, non-goals, and validation expectations.
+
+These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.
+
 ## Project Brief And Blueprint
 
 The first planning pipeline artifacts are Project Brief, Blueprint, Backlog, Tasks, and planning Batches.

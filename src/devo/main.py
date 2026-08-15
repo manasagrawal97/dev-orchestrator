@@ -110,6 +110,7 @@ from .project_planning import (
     ExecutionQueue,
     QueueItem,
     ProjectProgress,
+    ProjectIntakeStatus,
     ProjectBacklog,
     ProjectBatch,
     ProjectBlueprint,
@@ -133,6 +134,7 @@ from .project_planning import (
     approve_project_brief,
     block_queue_item,
     calculate_project_progress,
+    build_project_intake_status,
     create_project_batch,
     create_project_backlog,
     create_project_blueprint,
@@ -151,6 +153,8 @@ from .project_planning import (
     execute_codex_worker_run,
     complete_queue_item,
     generate_backlog_refinement_prompt,
+    render_intake_prompt,
+    render_intake_template,
     get_backlog_task,
     get_codex_queue_worker_status,
     get_codex_worker_flow_summary,
@@ -195,6 +199,8 @@ from .project_planning import (
     validate_refined_backlog_file,
     validate_codex_worker_report_file,
     import_codex_worker_report,
+    write_intake_prompt,
+    write_intake_template,
     worker_report_artifact_paths,
     worker_review_artifact_paths,
     worker_execution_log_paths,
@@ -595,6 +601,44 @@ def _print_project_progress(progress: ProjectProgress) -> None:
             f"blocked={item.blocked_task_count} completion={item.completion_percent:.1f}% {item.title or ''}",
             soft_wrap=True,
         )
+
+
+def _print_project_intake_status(status: ProjectIntakeStatus) -> None:
+    console.print(f"[bold]Project intake: {status.project}[/bold]")
+    console.print(f"Target repo: {status.target_repo_path}", soft_wrap=True)
+    console.print(f"Brief: {status.brief_status}")
+    console.print(f"Blueprint: {status.blueprint_status}")
+    console.print(f"Backlog: {status.backlog_status}")
+    console.print(
+        f"Tasks: total={status.task_count} ready={status.ready_task_count} blocked={status.blocked_task_count}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Batches: total={status.batch_count} latest={status.latest_batch_id or 'none'} "
+        f"status={status.latest_batch_status or 'none'} approval={status.latest_batch_approval_status or 'none'}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Queues: total={status.queue_count} latest={status.latest_queue_id or 'none'} "
+        f"status={status.latest_queue_status or 'none'}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Handoffs: total={status.handoff_count} latest={status.latest_handoff_id or 'none'} "
+        f"status={status.latest_handoff_status or 'none'}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Progress: project={status.project_completion_percent:.1f}% "
+        f"backlog_readiness={status.backlog_readiness_percent:.1f}% blocked={status.blocked_percent:.1f}%",
+        soft_wrap=True,
+    )
+    console.print(f"Next action: {status.next_action}", soft_wrap=True)
+    console.print(f"Command: {status.next_command}", soft_wrap=True)
+    if status.helper_commands:
+        console.print("Helpful commands:")
+        for command in status.helper_commands:
+            console.print(f"  {command}", soft_wrap=True)
 
 
 def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
@@ -2673,6 +2717,77 @@ def show_project_overview(
         _print_json_model(overview)
         return
     _print_project_overview(overview)
+
+
+@project_app.command("intake-status")
+def show_project_intake_status_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show vision-to-batch planning intake status without mutating the target project."""
+    project_name = _resolve_project(project_name, announce=not json_output)
+    try:
+        status = build_project_intake_status(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    if json_output:
+        _print_json_model(status)
+        return
+    _print_project_intake_status(status)
+
+
+@project_app.command("intake-next")
+def show_project_intake_next_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Print only the next vision-to-batch planning action and command."""
+    project_name = _resolve_project(project_name)
+    try:
+        status = build_project_intake_status(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"Next action: {status.next_action}", soft_wrap=True)
+    console.print(f"Command: {status.next_command}", soft_wrap=True)
+    if status.helper_commands:
+        console.print("Helpful commands:")
+        for command in status.helper_commands:
+            console.print(f"  {command}", soft_wrap=True)
+
+
+@project_app.command("intake-template")
+def show_project_intake_template_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    write: bool = typer.Option(False, "--write", help="Write workspace/projects/<project>/planning/intake-template.md."),
+) -> None:
+    """Print or write a standard intake template before creating a Project Brief."""
+    project_name = _resolve_project(project_name)
+    try:
+        if write:
+            path = write_intake_template(project_name)
+            console.print(f"[green]Intake template written[/green] {_named_path(path)}")
+            return
+        load_registered_project(project_name)
+        console.print(render_intake_template(project_name), soft_wrap=True)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+
+
+@project_app.command("intake-prompt")
+def show_project_intake_prompt_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    idea: str | None = typer.Option(None, "--idea", help="Optional rough idea to include in the prompt."),
+    write: bool = typer.Option(False, "--write", help="Write workspace/projects/<project>/planning/intake-prompt.md."),
+) -> None:
+    """Print or write a Codex/operator prompt for refining a rough idea into planning artifacts."""
+    project_name = _resolve_project(project_name)
+    try:
+        if write:
+            path = write_intake_prompt(project_name, idea=idea)
+            console.print(f"[green]Intake prompt written[/green] {_named_path(path)}")
+            return
+        console.print(render_intake_prompt(project_name, idea=idea), soft_wrap=True)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
 
 
 @project_app.command("brief-create")

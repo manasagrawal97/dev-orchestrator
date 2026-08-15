@@ -9,6 +9,7 @@ from devo.main import app
 from devo.project_planning import (
     BacklogTask,
     ProjectBacklog,
+    build_project_intake_status,
     calculate_project_progress,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
@@ -679,6 +680,134 @@ def test_progress_aggregates_batch_progress(tmp_path: Path, monkeypatch) -> None
     assert progress.approved_batch_count == 2
     assert progress.completed_batch_count == 1
     assert progress.batch_completion_percent == 50.0
+
+
+def test_intake_status_and_next_start_with_brief_guidance(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    status = runner.invoke(app, ["project", "intake-status", "--project", "sample"], terminal_width=240)
+    next_result = runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240)
+    model = build_project_intake_status("sample", workspace_root=workspace)
+
+    assert status.exit_code == 0, status.output
+    assert next_result.exit_code == 0, next_result.output
+    assert "Project intake: sample" in status.output
+    assert "Brief: missing" in status.output
+    assert "Create a project brief" in next_result.output
+    assert "brief-create" in next_result.output
+    assert model.brief_status == "missing"
+    assert model.next_command.startswith("devo project brief-create")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_intake_next_walks_operator_through_planning_pipeline(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    brief_file = _brief_file(tmp_path)
+
+    runner.invoke(app, ["project", "brief-create", "--project", "sample", "--title", "Sample Product", "--file", str(brief_file)])
+    assert "brief-approve" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "brief-approve", "--project", "sample"])
+    assert "blueprint-create" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "blueprint-create", "--project", "sample"])
+    assert "blueprint-approve" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "blueprint-approve", "--project", "sample"])
+    assert "backlog-create" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "backlog-create", "--project", "sample"])
+    assert "backlog-approve" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+    assert "batch-suggest" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    assert "batch-approval-request" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "batch-approval-request", "--project", "sample", "--batch", "B001", "--note", "Ready."])
+    assert "batch-approval-show" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+    assert "queue-create" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    assert "handoff-next" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+    assert "worker codex run-create" in runner.invoke(app, ["project", "intake-next", "--project", "sample"], terminal_width=240).output
+
+
+def test_intake_status_json_summarizes_existing_pipeline_state(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "backlog-approve", "--project", "sample"])
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "handoff-next", "--project", "sample", "--queue", "Q001"])
+
+    result = runner.invoke(app, ["project", "intake-status", "--project", "sample", "--json"], terminal_width=240)
+    data = json.loads(result.output)
+
+    assert result.exit_code == 0, result.output
+    assert data["brief_status"] == "approved"
+    assert data["blueprint_status"] == "approved"
+    assert data["backlog_status"] == "approved"
+    assert data["task_count"] == 2
+    assert data["batch_count"] == 1
+    assert data["latest_batch_id"] == "B001"
+    assert data["latest_batch_approval_status"] == "approved"
+    assert data["queue_count"] == 1
+    assert data["latest_queue_id"] == "Q001"
+    assert data["handoff_count"] == 1
+    assert data["latest_handoff_id"] == "H001"
+    assert "worker codex run-create" in data["next_command"]
+
+
+def test_intake_template_prints_and_writes_workspace_artifact_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    shown = runner.invoke(app, ["project", "intake-template", "--project", "sample"], terminal_width=240)
+    written = runner.invoke(app, ["project", "intake-template", "--project", "sample", "--write"], terminal_width=240)
+
+    assert shown.exit_code == 0, shown.output
+    assert "## Problem / Goal" in shown.output
+    assert "## Validation Expectations" in shown.output
+    assert written.exit_code == 0, written.output
+    path = planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "intake-template.md"
+    assert path.exists()
+    assert "## Delivery Expectations" in path.read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_intake_prompt_prints_idea_and_writes_workspace_artifact_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    shown = runner.invoke(
+        app,
+        ["project", "intake-prompt", "--project", "sample", "--idea", "Improve vision intake."],
+        terminal_width=240,
+    )
+    written = runner.invoke(
+        app,
+        ["project", "intake-prompt", "--project", "sample", "--idea", "Improve vision intake.", "--write"],
+        terminal_width=240,
+    )
+
+    assert shown.exit_code == 0, shown.output
+    assert "Improve vision intake." in shown.output
+    assert "Project brief draft" in shown.output
+    assert "Batch suggestion" in shown.output
+    assert "Phase 1 is not autonomous" in shown.output
+    assert written.exit_code == 0, written.output
+    path = planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "intake-prompt.md"
+    assert path.exists()
+    assert "Current Suggested Next Devo Action" in path.read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
 
 
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:

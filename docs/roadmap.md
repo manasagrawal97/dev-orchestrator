@@ -243,6 +243,10 @@ Added `docs/phase-1-mvp-closure-plan.md` as the canonical Phase 1 closure defini
 
 Enhanced the post-Codex trusted runner handoff. `devo delivery latest` now includes latest runner request/run/commit/push state and runner next action, `devo delivery runner-latest` shows the newest request without manually copying IDs from `runner-list`, `runner-request` prints changed/warning/blocker counts and the exact normal PowerShell command, and successful `runner-run` output clearly reports completion, commit hash, push target, and the next `git status` check.
 
+### TASK-DEVO-121 Vision-To-Batch Intake Polish - Completed
+
+Added planning intake helpers for the rough idea -> Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Handoff path. `devo project intake-status` gives a compact whole-pipeline status and next command, `intake-next` prints only the next action, `intake-template` prints or writes a standard intake Markdown template, and `intake-prompt` prints or writes a copyable planning prompt seeded with the rough idea and current Devo planning state. These are workspace-only helpers and do not call AI, approve implementation, create queues, run Codex, validate, commit, push, or modify target repositories.
+
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 
 Added the first planning pipeline artifacts: Project Brief and Blueprint. Devo can now create, show, and approve a brief from a local Markdown/text file, create a deterministic draft blueprint from that brief, show and approve the blueprint, expose planning status in ProjectOverview/read-only API responses, and show a read-only Planning card in the dashboard. This stores Devo workspace artifacts only and does not implement backlog/tasks/batches, direct AI/API calls, Codex CLI automation, or target repository mutation.

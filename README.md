@@ -128,6 +128,19 @@ devo project settings-set --project PersonalOS --default-lane low-risk-ui-mainte
 
 Project settings are Devo workspace metadata. They do not modify the target project. Defaults can store the normal lane, validation command, full-test command, branch, scope-template behavior, delivery mode, and notes for a project.
 
+Refine a rough idea into the planning pipeline:
+
+```powershell
+devo project intake-status --project MyProject
+devo project intake-next --project MyProject
+devo project intake-template --project MyProject
+devo project intake-template --project MyProject --write
+devo project intake-prompt --project MyProject --idea "Rough project idea"
+devo project intake-prompt --project MyProject --idea "Rough project idea" --write
+```
+
+The intake commands are workspace/read-only helpers around the existing Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Codex handoff path. `intake-status` summarizes planning artifacts, task/batch/queue/handoff counts, progress percentages, and the next command. `intake-next` prints only the next action. `intake-template --write` and `intake-prompt --write` create `intake-template.md` and `intake-prompt.md` under `workspace/projects/<project>/planning/`; they do not call AI, approve work, create queues, run Codex, run validation, commit, push, or modify the target project.
+
 Create the first planning artifacts from a final project brief:
 
 ```powershell

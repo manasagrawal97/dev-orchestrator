@@ -83,6 +83,8 @@ What not to touch: No AI API calls, no direct autonomous planning agents, no tar
 
 Done criteria: A user can start with a short project idea and follow a clear local-first path to an approved implementation batch.
 
+Result: `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt` now give a compact rough-idea -> Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Handoff guide. Template/prompt writes stay under Devo workspace planning artifacts and remain planning-only.
+
 ### TASK-DEVO-122: Phase 1 Context And Workflow Efficiency Audit
 
 Goal: Audit whether Phase 1 has become too verbose, artifact-heavy, or repetitive before adding Phase 2 intelligence.
@@ -197,7 +199,7 @@ Current risks and open questions:
 Recommended next task:
 
 ```text
-TASK-DEVO-121: Vision-to-batch intake polish
+TASK-DEVO-122: Phase 1 context and workflow efficiency audit
 ```
 
-Now that the delivery runner workflow is easier to inspect and resume, the next value is smoothing the human idea -> Project Brief -> Blueprint -> Backlog -> approved batch intake path before adding more intelligence.
+Now that the delivery runner workflow and vision-to-batch intake path are easier to inspect and resume, the next value is checking whether Phase 1 has become too verbose, artifact-heavy, or repetitive before adding more intelligence.

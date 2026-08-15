@@ -22,6 +22,8 @@ BLUEPRINT_MD = "blueprint.md"
 BACKLOG_JSON = "backlog.json"
 BACKLOG_MD = "backlog.md"
 BACKLOG_REFINEMENT_PROMPT_MD = "backlog-refinement-prompt.md"
+INTAKE_TEMPLATE_MD = "intake-template.md"
+INTAKE_PROMPT_MD = "intake-prompt.md"
 BATCHES_DIR_NAME = "batches"
 BATCH_INDEX_JSON = "batch-index.json"
 BATCH_APPROVALS_DIR_NAME = "approvals"
@@ -340,6 +342,37 @@ class ProjectProgress(BaseModel):
     epic_progress: list[PlanningProgressGroup] = Field(default_factory=list)
     next_action: str = "Create a Project Brief."
     warnings: list[str] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ProjectIntakeStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    target_repo_path: str
+    brief_status: str = "missing"
+    blueprint_status: str = "missing"
+    backlog_status: str = "missing"
+    task_count: int = 0
+    ready_task_count: int = 0
+    blocked_task_count: int = 0
+    batch_count: int = 0
+    latest_batch_id: str | None = None
+    latest_batch_status: str | None = None
+    latest_batch_approval_status: str | None = None
+    queue_count: int = 0
+    latest_queue_id: str | None = None
+    latest_queue_status: str | None = None
+    handoff_count: int = 0
+    latest_handoff_id: str | None = None
+    latest_handoff_status: str | None = None
+    project_completion_percent: float = 0.0
+    backlog_readiness_percent: float = 0.0
+    blocked_percent: float = 0.0
+    next_action: str
+    next_command: str
+    helper_commands: list[str] = Field(default_factory=list)
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -1591,6 +1624,192 @@ def calculate_project_progress(project_name: str, workspace_root: Path | None = 
         warnings=warnings,
         generated_at=datetime.now(UTC),
     )
+
+
+def build_project_intake_status(project_name: str, workspace_root: Path | None = None) -> ProjectIntakeStatus:
+    root = workspace_root or get_workspace_root()
+    registration = load_registered_project(project_name, workspace_root=root)
+    brief = load_project_brief(project_name, workspace_root=root)
+    blueprint = load_project_blueprint(project_name, workspace_root=root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    batches = list_project_batches(project_name, workspace_root=root)
+    queues = list_execution_queues(project_name, workspace_root=root)
+    handoffs = list_codex_handoffs(project_name, workspace_root=root)
+    progress = calculate_project_progress(project_name, workspace_root=root)
+    latest_batch = batches[0] if batches else None
+    latest_batch_approval = load_batch_approval(project_name, latest_batch.batch_id, workspace_root=root) if latest_batch else None
+    latest_queue = queues[0] if queues else None
+    latest_handoff = handoffs[0] if handoffs else None
+    next_action, next_command, helper_commands = _intake_next_step(
+        project_name,
+        brief,
+        blueprint,
+        backlog,
+        latest_batch,
+        latest_batch_approval,
+        latest_queue,
+        latest_handoff,
+    )
+    return ProjectIntakeStatus(
+        project=project_name,
+        target_repo_path=str(registration.path),
+        brief_status=brief.status if brief else "missing",
+        blueprint_status=blueprint.status if blueprint else "missing",
+        backlog_status=backlog.status if backlog else "missing",
+        task_count=backlog.task_count if backlog else 0,
+        ready_task_count=backlog.ready_task_count if backlog else 0,
+        blocked_task_count=backlog.blocked_task_count if backlog else 0,
+        batch_count=len(batches),
+        latest_batch_id=latest_batch.batch_id if latest_batch else None,
+        latest_batch_status=latest_batch.status if latest_batch else None,
+        latest_batch_approval_status=(
+            latest_batch_approval.approval_status if latest_batch_approval else latest_batch.approval_status if latest_batch else None
+        ),
+        queue_count=len(queues),
+        latest_queue_id=latest_queue.queue_id if latest_queue else None,
+        latest_queue_status=latest_queue.status if latest_queue else None,
+        handoff_count=len(handoffs),
+        latest_handoff_id=latest_handoff.handoff_id if latest_handoff else None,
+        latest_handoff_status=latest_handoff.status if latest_handoff else None,
+        project_completion_percent=progress.project_completion_percent,
+        backlog_readiness_percent=progress.backlog_readiness_percent,
+        blocked_percent=progress.blocked_percent,
+        next_action=next_action,
+        next_command=next_command,
+        helper_commands=helper_commands,
+        generated_at=datetime.now(UTC),
+    )
+
+
+def render_intake_template(project_name: str) -> str:
+    return "\n".join(
+        [
+            f"# Intake Template: {project_name}",
+            "",
+            "Use this local-first template before creating a Project Brief.",
+            "",
+            "## Title",
+            "",
+            "<short feature or product title>",
+            "",
+            "## Problem / Goal",
+            "",
+            "<what problem are we solving, or what outcome should exist?>",
+            "",
+            "## Why Now",
+            "",
+            "<why this matters now>",
+            "",
+            "## Target Users",
+            "",
+            "- <user or operator>",
+            "",
+            "## Must-Have Outcomes",
+            "",
+            "- <observable outcome>",
+            "",
+            "## Non-Goals",
+            "",
+            "- <what should stay out of scope>",
+            "",
+            "## Constraints",
+            "",
+            "- <safety, platform, time, local-only, or workflow constraints>",
+            "",
+            "## Risks",
+            "",
+            "- <known risk or uncertainty>",
+            "",
+            "## Known Files / Areas",
+            "",
+            "- <docs, source areas, modules, or commands likely involved>",
+            "",
+            "## Validation Expectations",
+            "",
+            "- <checks or tests expected later>",
+            "",
+            "## Delivery Expectations",
+            "",
+            "- <commit/push, runner, or review expectations>",
+            "",
+            "## Notes For Codex",
+            "",
+            "- <implementation or inspection notes>",
+            "",
+        ]
+    )
+
+
+def write_intake_template(project_name: str, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.planning_dir.mkdir(parents=True, exist_ok=True)
+    path = paths.planning_dir / INTAKE_TEMPLATE_MD
+    path.write_text(render_intake_template(project_name), encoding="utf-8")
+    return path
+
+
+def render_intake_prompt(project_name: str, idea: str | None = None, workspace_root: Path | None = None) -> str:
+    status = build_project_intake_status(project_name, workspace_root=workspace_root)
+    idea_text = idea.strip() if idea and idea.strip() else "<paste rough idea here>"
+    return "\n".join(
+        [
+            f"# Intake Refinement Prompt: {project_name}",
+            "",
+            "You are helping refine a rough project idea into Devo planning artifacts.",
+            "Devo is local-first and Phase 1 is not autonomous: do not claim Devo will call AI APIs, run Codex by itself, approve work, modify target repositories, validate, commit, or push.",
+            "",
+            "## Rough Idea",
+            "",
+            idea_text,
+            "",
+            "## Current Devo Planning State",
+            "",
+            f"- Brief: {status.brief_status}",
+            f"- Blueprint: {status.blueprint_status}",
+            f"- Backlog: {status.backlog_status}",
+            f"- Tasks: {status.task_count} ready={status.ready_task_count} blocked={status.blocked_task_count}",
+            f"- Batches: {status.batch_count} latest={status.latest_batch_id or 'none'} approval={status.latest_batch_approval_status or 'none'}",
+            f"- Queues: {status.queue_count} latest={status.latest_queue_id or 'none'} status={status.latest_queue_status or 'none'}",
+            f"- Handoffs: {status.handoff_count} latest={status.latest_handoff_id or 'none'}",
+            "",
+            "## Produce",
+            "",
+            "- Project brief draft",
+            "- Blueprint outline",
+            "- Candidate milestones",
+            "- Candidate backlog/tasks",
+            "- Batch suggestion",
+            "- Risks and non-goals",
+            "- Validation expectations",
+            "",
+            "## Output Guidance",
+            "",
+            "- Keep the plan small enough for approved Devo batches.",
+            "- Identify assumptions and open questions.",
+            "- Separate must-haves from nice-to-haves.",
+            "- Mention files or areas only when supported by known context.",
+            "- Do not include secrets or local setting values.",
+            "- End with the next Devo command the operator should run.",
+            "",
+            "## Current Suggested Next Devo Action",
+            "",
+            f"- Next action: {status.next_action}",
+            f"- Command: {status.next_command}",
+            "",
+        ]
+    )
+
+
+def write_intake_prompt(project_name: str, idea: str | None = None, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.planning_dir.mkdir(parents=True, exist_ok=True)
+    path = paths.planning_dir / INTAKE_PROMPT_MD
+    path.write_text(render_intake_prompt(project_name, idea=idea, workspace_root=root), encoding="utf-8")
+    return path
 
 
 def render_project_progress_markdown(progress: ProjectProgress) -> str:
@@ -4908,6 +5127,99 @@ def _progress_next_action(
     if not any(batch.approval_status == "approved" for batch in batches):
         return f"Review and approve a Batch: devo project batch-show --project {project_name} --batch {latest_batch.batch_id}"
     return "Approved planning batch is ready; create an execution queue or generate a batch handoff."
+
+
+def _intake_next_step(
+    project_name: str,
+    brief: ProjectBrief | None,
+    blueprint: ProjectBlueprint | None,
+    backlog: ProjectBacklog | None,
+    latest_batch: ProjectBatch | None,
+    latest_batch_approval: BatchApproval | None,
+    latest_queue: ExecutionQueue | None,
+    latest_handoff: CodexHandoff | None,
+) -> tuple[str, str, list[str]]:
+    if not brief:
+        return (
+            "Create a project brief.",
+            f'devo project brief-create --project {project_name} --title "<title>" --file <brief.md>',
+            [
+                f"devo project intake-template --project {project_name}",
+                f'devo project intake-prompt --project {project_name} --idea "<rough idea>"',
+            ],
+        )
+    if brief.status != "approved":
+        return (
+            "Approve or revise the project brief.",
+            f"devo project brief-approve --project {project_name}",
+            [f"devo project brief-show --project {project_name}"],
+        )
+    if not blueprint:
+        return (
+            "Create a blueprint from the approved brief.",
+            f"devo project blueprint-create --project {project_name}",
+            [f"devo project brief-show --project {project_name}"],
+        )
+    if blueprint.status != "approved":
+        return (
+            "Approve or revise the blueprint.",
+            f"devo project blueprint-approve --project {project_name}",
+            [f"devo project blueprint-show --project {project_name}"],
+        )
+    if not backlog:
+        return (
+            "Create a starter backlog from the approved blueprint.",
+            f"devo project backlog-create --project {project_name}",
+            [f"devo project blueprint-show --project {project_name}"],
+        )
+    if backlog.status != "approved":
+        return (
+            "Approve or refine the backlog.",
+            f"devo project backlog-approve --project {project_name}",
+            [
+                f"devo project backlog-prompt --project {project_name}",
+                f"devo project backlog-show --project {project_name}",
+            ],
+        )
+    if not latest_batch:
+        return (
+            "Create or suggest a planning batch from approved backlog tasks.",
+            f"devo project batch-suggest --project {project_name} --limit 10",
+            [f"devo project batch-suggest --project {project_name} --limit 10 --write"],
+        )
+    approval_status = latest_batch_approval.approval_status if latest_batch_approval else latest_batch.approval_status
+    if approval_status != "approved":
+        if approval_status == "requested":
+            return (
+                "Review or approve the latest planning batch.",
+                f"devo project batch-approval-show --project {project_name} --batch {latest_batch.batch_id}",
+                [
+                    f'devo project batch-review --project {project_name} --batch {latest_batch.batch_id} --note "<review note>"',
+                    f'devo project batch-approve --project {project_name} --batch {latest_batch.batch_id} --note "<decision note>"',
+                ],
+            )
+        return (
+            "Request approval for the latest planning batch.",
+            f'devo project batch-approval-request --project {project_name} --batch {latest_batch.batch_id} --note "<note>"',
+            [f"devo project batch-show --project {project_name} --batch {latest_batch.batch_id}"],
+        )
+    if not latest_queue:
+        return (
+            "Create an execution queue from the approved batch.",
+            f"devo project queue-create --project {project_name} --batch {latest_batch.batch_id}",
+            [f"devo project batch-show --project {project_name} --batch {latest_batch.batch_id}"],
+        )
+    if not latest_handoff:
+        return (
+            "Generate a Codex handoff for the current queue item.",
+            f"devo project handoff-next --project {project_name} --queue {latest_queue.queue_id}",
+            [f"devo project queue-next --project {project_name} --queue {latest_queue.queue_id}"],
+        )
+    return (
+        "Use the latest Codex handoff or create a worker run from it.",
+        f"devo worker codex run-create --project {project_name} --handoff {latest_handoff.handoff_id}",
+        [f"devo project handoff-show --project {project_name} --handoff {latest_handoff.handoff_id}"],
+    )
 
 
 def _progress_warnings(

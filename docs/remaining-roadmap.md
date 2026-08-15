@@ -182,7 +182,7 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 45. TASK-DEVO-118: Trusted local delivery runner - completed.
 46. TASK-DEVO-119: Phase 1 MVP closure plan - completed.
 47. TASK-DEVO-120: Operator workflow polish after trusted runner - completed.
-48. TASK-DEVO-121: Vision-to-batch intake polish.
+48. TASK-DEVO-121: Vision-to-batch intake polish - completed.
 49. TASK-DEVO-122: Phase 1 context and workflow efficiency audit.
 50. TASK-DEVO-123: End-to-end Phase 1 dogfood on DevOrchestrator.
 51. TASK-DEVO-124: Phase 1 MVP tag/checkpoint.
@@ -219,6 +219,8 @@ The completion target for returning more focus to other projects is:
 - one dogfood end-to-end run
 
 That dogfood point has now been reached. Devo can be considered around 80-85% complete for personal use, with the next work focused on making the proven manual pipeline smoother and less surprising.
+
+TASK-DEVO-121 added that smoother intake layer with `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt`, so the next remaining Phase 1 work should audit context size, artifact noise, and operator repetition before adding Phase 2 intelligence.
 
 ## Decision Rules For Future Task Selection
 
