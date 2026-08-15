@@ -16,7 +16,7 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-126: trusted runner watch mode
+- TASK-DEVO-127: Windows scheduled/background trusted runner
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
@@ -55,7 +55,7 @@ TASK-DEVO-124 records the Phase 1 MVP checkpoint in `docs/phase-1-mvp-checkpoint
 
 ### Phase 2 Autonomy Roadmap - Active
 
-TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. Phase 2 should start with trusted runner watch mode and bounded queue autonomy, not direct AI-agent workers or sandbox commit/push.
+TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. TASK-DEVO-126 adds one-shot trusted runner watch mode. Phase 2 should continue with scheduled/background trusted runner and bounded queue autonomy, not direct AI-agent workers or sandbox commit/push.
 
 ## Readiness Target
 

@@ -514,6 +514,29 @@ class DeliveryRunnerRun(BaseModel):
     next_action: str
 
 
+class DeliveryRunnerWatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    watch_id: str
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    mode: str = "once"
+    approver: str
+    pending_request_count: int = 0
+    selected_request_id: str | None = None
+    selected_run_id: str | None = None
+    delivery_id: str | None = None
+    status: str = "failed"
+    commit_hash: str | None = None
+    pushed: bool = False
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    steps_run: list[str] = Field(default_factory=list)
+    next_action: str
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -573,6 +596,12 @@ def delivery_runner_run_artifact_paths(project_name: str, request_id: str, works
     directory = delivery_runner_request_directory(project_name, workspace_root=workspace_root)
     stem = request_id.lower()
     return directory / f"runner-run-{stem}.json", directory / f"runner-run-{stem}.md"
+
+
+def delivery_runner_watch_artifact_paths(project_name: str, watch_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    directory = delivery_runner_request_directory(project_name, workspace_root=workspace_root)
+    stem = watch_id.lower()
+    return directory / f"runner-watch-{stem}.json", directory / f"runner-watch-{stem}.md"
 
 
 def run_delivery_readiness_check(
@@ -1806,6 +1835,112 @@ def load_delivery_runner_run(
     return DeliveryRunnerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def write_delivery_runner_watch(
+    watch: DeliveryRunnerWatch,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerWatch, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_request_directory(watch.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = delivery_runner_watch_artifact_paths(watch.project, watch.watch_id, workspace_root=root)
+    json_path.write_text(watch.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text(render_delivery_runner_watch_markdown(watch), encoding="utf-8")
+    return watch, json_path, markdown_path
+
+
+def list_delivery_runner_watches(project_name: str, workspace_root: Path | None = None) -> list[DeliveryRunnerWatch]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_request_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    watches: list[DeliveryRunnerWatch] = []
+    for path in sorted(directory.glob("runner-watch-*.json")):
+        try:
+            watches.append(DeliveryRunnerWatch.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(watches, key=lambda item: item.started_at, reverse=True)
+
+
+def run_delivery_runner_watch(
+    project_name: str,
+    *,
+    approver: str,
+    once: bool = False,
+    confirm_runner_watch: bool = False,
+    request_id: str | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerWatch, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    approver_name = approver.strip()
+    if not confirm_runner_watch:
+        msg = "Refusing to run trusted runner watch without --confirm-runner-watch."
+        raise ValueError(msg)
+    if not approver_name:
+        msg = "--approver is required."
+        raise ValueError(msg)
+    if not once:
+        msg = "--once is required. Continuous runner watch is deferred to TASK-DEVO-127."
+        raise ValueError(msg)
+
+    watch = _new_runner_watch(project_name, approver_name, mode="once")
+    steps = list(watch.steps_run)
+    blockers: list[str] = []
+    warnings: list[str] = []
+    pending_requests = _pending_runner_requests(project_name, workspace_root=root)
+    watch.pending_request_count = len(pending_requests)
+    steps.append(f"found pending runner requests: {len(pending_requests)}")
+
+    selected_request: DeliveryRunnerRequest | None = None
+    if request_id:
+        requested = load_delivery_runner_request(project_name, request_id, workspace_root=root)
+        if not requested:
+            blockers.append(f"Delivery runner request not found: {request_id}")
+        elif requested.status != "requested":
+            blockers.append(f"Delivery runner request {request_id} is {requested.status}, not requested.")
+        else:
+            selected_request = requested
+    elif pending_requests:
+        selected_request = pending_requests[0]
+
+    if blockers:
+        return _finish_runner_watch(watch, "blocked", blockers, warnings, steps, root)
+    if not selected_request:
+        return _finish_runner_watch(
+            watch,
+            "no_pending",
+            blockers,
+            warnings,
+            steps,
+            root,
+            next_action="No pending runner requests.",
+        )
+
+    watch.selected_request_id = selected_request.request_id
+    steps.append(f"selected runner request {selected_request.request_id}")
+    run, _run_json, _run_md = run_delivery_runner_request(
+        project_name,
+        selected_request.request_id,
+        approver=approver_name,
+        confirm_runner_delivery=True,
+        workspace_root=root,
+    )
+    watch.selected_run_id = run.run_id
+    watch.delivery_id = run.delivery_report_id or run.delivery_plan_id or run.delivery_check_id
+    watch.commit_hash = run.commit_hash
+    watch.pushed = run.pushed
+    warnings.extend(run.warnings)
+    blockers.extend(run.blockers)
+    steps.extend(run.steps_run)
+    status = "completed" if run.status == "completed" else "blocked" if run.status == "blocked" else "failed"
+    next_action = (
+        "Trusted runner watch completed one request."
+        if status == "completed"
+        else run.next_action
+    )
+    return _finish_runner_watch(watch, status, blockers, warnings, steps, root, next_action=next_action)
+
+
 def run_delivery_runner_request(
     project_name: str,
     request_id: str,
@@ -2376,6 +2511,45 @@ def render_delivery_runner_run_markdown(run: DeliveryRunnerRun) -> str:
     )
 
 
+def render_delivery_runner_watch_markdown(watch: DeliveryRunnerWatch) -> str:
+    return "\n".join(
+        [
+            f"# Delivery Runner Watch: {watch.watch_id}",
+            "",
+            f"- Project: `{watch.project}`",
+            f"- Watch id: `{watch.watch_id}`",
+            f"- Mode: `{watch.mode}`",
+            f"- Status: `{watch.status}`",
+            f"- Approver: `{watch.approver}`",
+            f"- Pending requests: `{watch.pending_request_count}`",
+            f"- Selected request: `{watch.selected_request_id or 'none'}`",
+            f"- Selected run: `{watch.selected_run_id or 'none'}`",
+            f"- Delivery id: `{watch.delivery_id or 'none'}`",
+            f"- Commit hash: `{watch.commit_hash or 'none'}`",
+            f"- Pushed: `{watch.pushed}`",
+            f"- Started at: `{watch.started_at.isoformat()}`",
+            f"- Completed at: `{watch.completed_at.isoformat() if watch.completed_at else 'not completed'}`",
+            "",
+            "## Steps Run",
+            "",
+            *_markdown_list(watch.steps_run),
+            "",
+            "## Blockers",
+            "",
+            *_markdown_list(watch.blockers),
+            "",
+            "## Warnings",
+            "",
+            *_markdown_list(watch.warnings),
+            "",
+            "## Next Action",
+            "",
+            watch.next_action,
+            "",
+        ]
+    )
+
+
 def _write_delivery_index(project_name: str, workspace_root: Path | None = None) -> DeliveryIndex:
     root = workspace_root or get_workspace_root()
     directory = delivery_directory(project_name, workspace_root=root)
@@ -2507,6 +2681,55 @@ def _new_runner_run(project_name: str, request: DeliveryRunnerRequest) -> Delive
         steps_run=["loaded runner request"],
         next_action="Runner has not completed.",
     )
+
+
+def _new_runner_watch(project_name: str, approver: str, *, mode: str) -> DeliveryRunnerWatch:
+    now = datetime.now(UTC)
+    return DeliveryRunnerWatch(
+        project=project_name,
+        watch_id=f"WATCH-{now.strftime('%Y%m%d%H%M%S%f')}",
+        started_at=now,
+        mode=mode,
+        approver=approver,
+        status="failed",
+        steps_run=["started trusted runner watch"],
+        next_action="Runner watch has not completed.",
+    )
+
+
+def _finish_runner_watch(
+    watch: DeliveryRunnerWatch,
+    status: str,
+    blockers: list[str],
+    warnings: list[str],
+    steps: list[str],
+    workspace_root: Path,
+    *,
+    next_action: str | None = None,
+) -> tuple[DeliveryRunnerWatch, Path, Path]:
+    watch.status = status
+    watch.completed_at = datetime.now(UTC)
+    watch.blockers = _dedupe(blockers)
+    watch.warnings = _dedupe(warnings)
+    watch.steps_run = _dedupe(steps)
+    watch.next_action = next_action or _runner_watch_next_action(watch.status, watch.blockers)
+    return write_delivery_runner_watch(watch, workspace_root=workspace_root)
+
+
+def _pending_runner_requests(project_name: str, workspace_root: Path) -> list[DeliveryRunnerRequest]:
+    requests = list_delivery_runner_requests(project_name, workspace_root=workspace_root)
+    pending = [request for request in requests if request.status == "requested"]
+    return sorted(pending, key=lambda item: item.created_at)
+
+
+def _runner_watch_next_action(status: str, blockers: list[str]) -> str:
+    if status == "no_pending":
+        return "No pending runner requests."
+    if status == "completed":
+        return "Trusted runner watch completed one request."
+    if blockers:
+        return "Resolve runner watch blockers before retrying: " + _summary_text(blockers)
+    return "Review runner watch artifact."
 
 
 def _finish_runner_run(

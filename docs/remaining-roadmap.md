@@ -187,8 +187,9 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 50. TASK-DEVO-123: End-to-end Phase 1 dogfood on DevOrchestrator - completed.
 51. TASK-DEVO-124: Phase 1 MVP tag/checkpoint - completed.
 52. TASK-DEVO-125: Phase 2 autonomy roadmap and trusted execution model - completed.
-53. TASK-DEVO-126: Trusted runner watch mode - next recommended task.
-54. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+53. TASK-DEVO-126: Trusted runner watch mode - completed.
+54. TASK-DEVO-127: Windows scheduled/background trusted runner - next recommended task.
+55. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 
@@ -222,7 +223,7 @@ The completion target for returning more focus to other projects is:
 
 That dogfood point has now been reached and recorded in the Phase 1 MVP checkpoint. Devo can be considered around 80-85% complete for personal use, with the next work focused on post-Phase-1 polish and carefully bounded Phase 2 planning.
 
-TASK-DEVO-121 added that smoother intake layer with `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt`. TASK-DEVO-122 then audited context size, artifact noise, operator repetition, and documentation overlap with a `watch` verdict. TASK-DEVO-123 dogfooded the current path and found no checkpoint blocker. TASK-DEVO-124 records the final checkpoint and the `phase-1-mvp` tag now exists. TASK-DEVO-125 moves active focus to practical Phase 2 autonomy, with TASK-DEVO-126 trusted runner watch mode as the recommended next step.
+TASK-DEVO-121 added that smoother intake layer with `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt`. TASK-DEVO-122 then audited context size, artifact noise, operator repetition, and documentation overlap with a `watch` verdict. TASK-DEVO-123 dogfooded the current path and found no checkpoint blocker. TASK-DEVO-124 records the final checkpoint and the `phase-1-mvp` tag now exists. TASK-DEVO-125 moves active focus to practical Phase 2 autonomy. TASK-DEVO-126 adds one-shot trusted runner watch mode, so TASK-DEVO-127 scheduled/background trusted runner is the next recommended step.
 
 ## Decision Rules For Future Task Selection
 

@@ -175,13 +175,13 @@ The preferred Phase 2 direction is to improve the trusted local executor rather 
 
 ## 5. Runner Watch Mode Design
 
-TASK-DEVO-126 should start with this command shape:
+TASK-DEVO-126 starts with this command shape:
 
 ```powershell
-.\.venv\Scripts\devo.exe delivery runner-watch --project DevOrchestrator --approver "Manas" --once
+.\.venv\Scripts\devo.exe delivery runner-watch --project DevOrchestrator --approver "Manas" --once --confirm-runner-watch
 ```
 
-Later, after the one-shot behavior is proven:
+Later, after the one-shot behavior is proven, TASK-DEVO-127 can design background scheduling:
 
 ```powershell
 .\.venv\Scripts\devo.exe delivery runner-watch --project DevOrchestrator --approver "Manas" --interval-seconds 60
@@ -193,13 +193,14 @@ Expected behavior:
 - pick the oldest safe pending request
 - run the same delivery logic as `runner-run`
 - write runner-run artifact
+- write runner-watch artifact
 - stop on blocker or failure
 - with `--once`, process one request and exit
-- without `--once`, loop with an interval
+- continuous interval mode is deferred
 - never process cancelled or completed requests
 - never run without trusted approval policy
 
-Watch mode should not implement queue execution, Codex execution, or new delivery safety behavior. It should be a small wrapper around the already trusted runner path.
+Watch mode does not implement queue execution, Codex execution, scheduling, UI controls, or new delivery safety behavior. It is a small wrapper around the already trusted runner path.
 
 ## 6. Background/Scheduled Runner Design
 

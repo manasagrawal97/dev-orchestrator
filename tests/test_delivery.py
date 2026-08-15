@@ -19,12 +19,14 @@ from devo.delivery import (
     load_delivery_runner_run,
     load_delivery_report,
     list_delivery_checks,
+    list_delivery_runner_watches,
     prepare_delivery_report,
     preview_delivery_commit,
     preview_delivery_push,
     push_delivery_report,
     request_delivery_approval,
     refresh_delivery_report,
+    run_delivery_runner_watch,
     run_delivery_commit_diagnostics,
     run_delivery_readiness_check,
 )
@@ -567,6 +569,247 @@ def test_delivery_runner_run_does_not_push_if_commit_fails(tmp_path: Path, monke
     assert run.status == "failed"
     assert push_called is False
     assert run.pushed is False
+
+
+def test_delivery_runner_watch_refuses_without_confirmation(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-watch", "--project", "sample", "--approver", "Manas", "--once"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Refusing to run trusted runner watch without --confirm-runner-watch." in result.output
+
+
+def test_delivery_runner_watch_requires_approver(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-watch", "--project", "sample", "--once", "--confirm-runner-watch"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Missing option" in result.output
+    assert "--approver" in result.output
+
+
+def test_delivery_runner_watch_no_pending_exits_cleanly(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-watch",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--once",
+            "--confirm-runner-watch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Pending requests: 0" in result.output
+    assert "Status: no_pending" in result.output
+    assert "No pending runner requests." in result.output
+    watches = list_delivery_runner_watches("sample", workspace_root=workspace)
+    assert len(watches) == 1
+    assert watches[0].status == "no_pending"
+    assert watches[0].selected_request_id is None
+    assert _git(repo, "status", "--short", capture=True).stdout.strip() == ""
+    assert _git(repo, "diff", "--cached", "--name-only", capture=True).stdout.strip() == ""
+
+
+def test_delivery_runner_watch_selects_oldest_requested_request(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    create_delivery_runner_request("sample", "feat: first", "", workspace_root=workspace)
+    create_delivery_runner_request("sample", "feat: second", "", workspace_root=workspace)
+
+    watch, _json_path, _markdown_path = run_delivery_runner_watch(
+        "sample",
+        approver="Manas",
+        once=True,
+        confirm_runner_watch=True,
+        workspace_root=workspace,
+    )
+
+    assert watch.status == "completed"
+    assert watch.pending_request_count == 2
+    assert watch.selected_request_id == "REQ-0001"
+    assert watch.selected_run_id
+    assert watch.commit_hash
+    assert watch.pushed is True
+    first = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    second = load_delivery_runner_request("sample", "REQ-0002", workspace_root=workspace)
+    assert first is not None
+    assert second is not None
+    assert first.status == "completed"
+    assert second.status == "requested"
+
+
+def test_delivery_runner_watch_completes_guarded_commit_and_push(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted watch"], terminal_width=240)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-watch",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--once",
+            "--confirm-runner-watch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Pending requests: 1" in result.output
+    assert "Selected request: REQ-0001" in result.output
+    assert "Status: completed" in result.output
+    assert "Pushed: True" in result.output
+    assert "Trusted runner watch completed one request." in result.output
+    watch = list_delivery_runner_watches("sample", workspace_root=workspace)[0]
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert watch.status == "completed"
+    assert run is not None
+    assert watch.selected_run_id == run.run_id
+    assert watch.delivery_id == run.delivery_report_id
+    assert watch.commit_hash == run.commit_hash
+    assert watch.pushed is True
+    assert _git(repo, "status", "--short", capture=True).stdout.strip() == ""
+    remote_ref = _git(repo, "ls-remote", "origin", "refs/heads/main", capture=True).stdout
+    assert watch.commit_hash in remote_ref
+
+
+def test_delivery_runner_watch_stops_after_one_request(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    create_delivery_runner_request("sample", "feat: first", "", workspace_root=workspace)
+    create_delivery_runner_request("sample", "feat: second", "", workspace_root=workspace)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-watch",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--once",
+            "--confirm-runner-watch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    first = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    second = load_delivery_runner_request("sample", "REQ-0002", workspace_root=workspace)
+    assert first is not None
+    assert second is not None
+    assert first.status == "completed"
+    assert second.status == "requested"
+
+
+def test_delivery_runner_watch_does_not_process_non_requested_requests(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    from devo.delivery import write_delivery_runner_request
+
+    completed, _json_path, _markdown_path = create_delivery_runner_request("sample", "feat: done", "", workspace_root=workspace)
+    cancelled, _json_path, _markdown_path = create_delivery_runner_request("sample", "feat: cancelled", "", workspace_root=workspace)
+    failed, _json_path, _markdown_path = create_delivery_runner_request("sample", "feat: failed", "", workspace_root=workspace)
+    create_delivery_runner_request("sample", "feat: pending", "", workspace_root=workspace)
+    for request, status in [(completed, "completed"), (cancelled, "cancelled"), (failed, "failed")]:
+        write_delivery_runner_request(request.model_copy(update={"status": status, "updated_at": datetime.now(UTC)}), workspace_root=workspace)
+
+    watch, _watch_json, _watch_md = run_delivery_runner_watch(
+        "sample",
+        approver="Manas",
+        once=True,
+        confirm_runner_watch=True,
+        workspace_root=workspace,
+    )
+
+    assert watch.pending_request_count == 1
+    assert watch.selected_request_id == "REQ-0004"
+    statuses = {
+        request_id: load_delivery_runner_request("sample", request_id, workspace_root=workspace).status  # type: ignore[union-attr]
+        for request_id in ["REQ-0001", "REQ-0002", "REQ-0003"]
+    }
+    assert statuses == {"REQ-0001": "completed", "REQ-0002": "cancelled", "REQ-0003": "failed"}
+
+
+def test_delivery_runner_watch_blocks_when_snapshot_changes(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    (repo / "extra.txt").write_text("extra\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-watch",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--once",
+            "--confirm-runner-watch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: blocked" in result.output
+    assert "Current changed files differ" in result.output
+    watch = list_delivery_runner_watches("sample", workspace_root=workspace)[0]
+    assert watch.status == "blocked"
+    assert watch.selected_request_id == "REQ-0001"
+    assert any("Current changed files differ" in blocker for blocker in watch.blockers)
+    assert _git(repo, "diff", "--cached", "--name-only", capture=True).stdout.strip() == ""
+
+
+def test_delivery_runner_watch_latest_works(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-watch",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--once",
+            "--confirm-runner-watch",
+        ],
+        terminal_width=240,
+    )
+
+    result = runner.invoke(app, ["delivery", "runner-watch-latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Runner watch: WATCH-" in result.output
+    assert "Status: no_pending" in result.output
 
 
 def test_delivery_check_blocks_forbidden_staged_paths(tmp_path: Path, monkeypatch) -> None:

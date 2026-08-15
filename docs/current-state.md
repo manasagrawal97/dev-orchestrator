@@ -38,8 +38,8 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed implementation task: TASK-DEVO-124 Phase 1 MVP checkpoint
-- Latest docs/design task prepared for delivery: TASK-DEVO-125 Phase 2 autonomy roadmap and trusted execution model
+- Latest completed implementation task: TASK-DEVO-126 Trusted runner watch mode
+- Latest docs/design task: TASK-DEVO-125 Phase 2 autonomy roadmap and trusted execution model
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-099 first real Codex supervised dry-run report
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
@@ -47,8 +47,8 @@ The working loop is:
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Phase 1 MVP status: complete after TASK-DEVO-124 and checkpointed with the `phase-1-mvp` tag.
-- Active focus: Phase 2 autonomy planning. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas or a future trusted local runner watch mode.
-- Next recommended task: TASK-DEVO-126 Trusted runner watch mode.
+- Active focus: Phase 2 autonomy. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas using `delivery runner-watch --once --confirm-runner-watch` or the precise `delivery runner-run --request ...` fallback.
+- Next recommended task: TASK-DEVO-127 Windows scheduled/background trusted runner.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -148,6 +148,7 @@ The working loop is:
 - TASK-DEVO-123 adds `docs/dogfood/phase-1-end-to-end-dogfood-123.md`. The dogfood verified intake/status, planning state review, queue/handoff readiness, docs-only change validation, and trusted runner request flow. Phase 1 is ready for TASK-DEVO-124 checkpoint, with post-checkpoint polish recommended for queue-aware next actions and `flow-summary` queue defaults.
 - TASK-DEVO-124 adds `docs/phase-1-mvp-checkpoint.md` and marks Phase 1 MVP complete. The checkpoint records the proven workflow, capability map, evidence, non-blocking limitations, Phase 2 boundary, and recommended `phase-1-mvp` tag commands for Manas to run from normal PowerShell after delivery.
 - TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. The roadmap defines practical autonomy levels, the trusted local executor model, runner watch mode, scheduled runner design, batch approval policy, queue worker loop, pause conditions, UI boundaries, cleanup priorities, and the recommended next task: TASK-DEVO-126 trusted runner watch mode.
+- TASK-DEVO-126 adds `devo delivery runner-watch --once --confirm-runner-watch` and read-only `runner-watch-latest`. Watch mode finds the oldest pending runner request, delegates to the existing guarded `runner-run` delivery logic, writes runner-watch artifacts, and stops after one request. It is not a scheduler, daemon, service, UI control, or delivery safety bypass.
 
 ## Readiness Estimate
 
@@ -158,7 +159,7 @@ The latest personal-use completion target was brief intake, blueprint/backlog, b
 
 DevOrchestrator can execute registered low/medium validation commands with safety gates, dry-run high-risk target commands, summarize Git delivery readiness, refresh project context, generate project/run/handoff reports, run read-only doctor and project onboarding checks, store project workflow defaults, save/show current project/run context, bootstrap scoped work packages across multiple built-in lanes, generate lane-aware scope templates, resume work packages with compact operator plans, bundle related approvals without bypassing child approval records, generate next-action and phase-specific work-package prompts, mark work packages delivered with final commit/validation/git evidence, summarize recent work/project activity, generate Codex-ready handoff prompts from planning queue/batch/task artifacts, track manual Codex worker runs and imported worker reports as review evidence, preflight future Codex worker runs, store run-plan previews with optional explicit executable paths or wrapper paths for controlled dogfood/testing, diagnose Codex launcher paths without running Codex, create local wrapper templates, block WindowsApps aliases for guarded execution, handle launch-time subprocess failures with failed worker/log/queue state, attempt one supervised Codex CLI launch only from an approved plan with explicit confirmation, summarize queue-linked worker flow evidence after completion/failure, provide Codex launcher setup and real-Codex dry-run safety runbooks, check delivery readiness, prepare approved delivery plans/reports and proposed commit messages, run guarded CLI-only delivery commits and pushes with explicit confirmation, expose UI-ready JSON read models and a local read-only API server, provide a polished read-only React/Vite dashboard MVP with read-only Planning Intake, Blueprint, Backlog, Batch, Queue, Handoff, Worker Runs, and Progress pages, document the future local UI/API architecture and first read-only dashboard MVP, generate Mermaid workspace visual reports from structured data, and complete manual-assisted dogfood runs.
 
-The next implementation step should be TASK-DEVO-126 trusted runner watch mode unless a higher-priority safety issue appears. Retry real supervised Codex only after `devo worker codex doctor` reports a safe real executable or wrapper launcher. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
+The next implementation step should be TASK-DEVO-127 Windows scheduled/background trusted runner unless a higher-priority safety issue appears. Retry real supervised Codex only after `devo worker codex doctor` reports a safe real executable or wrapper launcher. PersonalOS should be used occasionally for controlled dogfood batches that validate Devo behavior, not as the main development focus.
 
 ## Completed Work
 

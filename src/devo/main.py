@@ -62,6 +62,7 @@ from .delivery import (
     DeliveryReportRefresh,
     DeliveryRunnerRequest,
     DeliveryRunnerRun,
+    DeliveryRunnerWatch,
     approve_delivery_plan,
     build_delivery_latest_summary,
     commit_delivery_report,
@@ -72,6 +73,7 @@ from .delivery import (
     list_delivery_plans,
     list_delivery_reports,
     list_delivery_runner_requests,
+    list_delivery_runner_watches,
     load_delivery_commit_result,
     load_delivery_push_result,
     load_delivery_approval,
@@ -91,6 +93,7 @@ from .delivery import (
     request_delivery_approval,
     run_delivery_readiness_check,
     run_delivery_runner_request,
+    run_delivery_runner_watch,
 )
 from .reports import (
     build_handoff_report,
@@ -1983,6 +1986,41 @@ def _print_delivery_runner_run(run: DeliveryRunnerRun) -> None:
     console.print(f"Next action: {run.next_action}", soft_wrap=True)
 
 
+def _print_delivery_runner_watch(watch: DeliveryRunnerWatch) -> None:
+    console.print(f"Project: {watch.project}")
+    console.print(f"Runner watch: {watch.watch_id}")
+    console.print(f"Mode: {watch.mode}")
+    console.print(f"Pending requests: {watch.pending_request_count}")
+    if watch.selected_request_id:
+        console.print(f"Selected request: {watch.selected_request_id}")
+    else:
+        console.print("Selected request: none")
+    console.print(f"Runner run: {watch.selected_run_id or 'none'}")
+    console.print(f"Delivery id: {watch.delivery_id or 'none'}")
+    console.print(f"Status: {watch.status}")
+    console.print(f"Commit: {watch.commit_hash or 'none'}")
+    console.print(f"Pushed: {watch.pushed}")
+    console.print("Steps run:")
+    if watch.steps_run:
+        for step in watch.steps_run:
+            console.print(f"  {step}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Warnings:")
+    if watch.warnings:
+        for warning in watch.warnings:
+            console.print(f"  {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Blockers:")
+    if watch.blockers:
+        for blocker in watch.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {watch.next_action}", soft_wrap=True)
+
+
 def _print_delivery_runner_latest(project_name: str, request: DeliveryRunnerRequest | None) -> None:
     console.print(f"Project: {project_name}")
     if not request:
@@ -2105,6 +2143,49 @@ def run_delivery_runner_request_command(
     _print_delivery_runner_run(run)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("runner-watch")
+def watch_delivery_runner_requests_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    approver: str = typer.Option(..., "--approver", help="Approver name recorded in delivery approval."),
+    once: bool = typer.Option(False, "--once", help="Process one pending runner request and exit."),
+    confirm_runner_watch: bool = typer.Option(False, "--confirm-runner-watch", help="Required confirmation to run trusted runner watch."),
+    request_id: str | None = typer.Option(None, "--request", help="Optional pending runner request ID."),
+) -> None:
+    """Find and process a pending trusted delivery runner request."""
+    resolved_project = _resolve_project(project_name)
+    if not confirm_runner_watch:
+        console.print("Refusing to run trusted runner watch without --confirm-runner-watch.")
+        raise typer.Exit(1)
+    try:
+        watch, json_path, markdown_path = run_delivery_runner_watch(
+            resolved_project,
+            approver=approver,
+            once=once,
+            confirm_runner_watch=confirm_runner_watch,
+            request_id=request_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--confirm-runner-watch") from exc
+    _print_delivery_runner_watch(watch)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("runner-watch-latest")
+def latest_delivery_runner_watch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the latest trusted runner watch artifact."""
+    resolved_project = _resolve_project(project_name)
+    watches = list_delivery_runner_watches(resolved_project)
+    console.print(f"Project: {resolved_project}")
+    if not watches:
+        console.print("Latest runner watch: none")
+        console.print("Next action: No runner watch artifacts exist.")
+        return
+    _print_delivery_runner_watch(watches[0])
 
 
 @delivery_app.command("check")
