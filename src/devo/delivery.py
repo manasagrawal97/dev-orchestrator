@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import getpass
 import os
 import re
 import shutil
@@ -435,6 +436,76 @@ class DeliveryLatestSummary(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class DeliveryRunnerRequestIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    status: str
+    intended_commit_message: str
+    changed_file_count: int = 0
+    latest_run_status: str | None = None
+    path: str
+    updated_at: datetime
+
+
+class DeliveryRunnerRequestIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    requests: list[DeliveryRunnerRequestIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class DeliveryRunnerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    request_id: str
+    requested_by: str
+    requested_from_context: str
+    target_repo_path: str
+    intended_commit_message: str
+    note: str = ""
+    expected_changed_files: list[str] = Field(default_factory=list)
+    allowed_changed_files: list[str] = Field(default_factory=list)
+    forbidden_changed_files: list[str] = Field(default_factory=list)
+    validation_summary: str | None = None
+    test_summary: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    status: str = "requested"
+    next_action: str
+
+
+class DeliveryRunnerRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    request_id: str
+    run_id: str
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    runner_context: str
+    index_lock_probe_result: dict[str, object] = Field(default_factory=dict)
+    delivery_check_id: str | None = None
+    delivery_plan_id: str | None = None
+    delivery_report_id: str | None = None
+    commit_hash: str | None = None
+    pushed: bool = False
+    push_remote: str | None = None
+    push_branch: str | None = None
+    status: str = "failed"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    steps_run: list[str] = Field(default_factory=list)
+    next_action: str
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -474,6 +545,26 @@ def delivery_push_artifact_paths(project_name: str, delivery_id: str, workspace_
     directory = delivery_directory(project_name, workspace_root=workspace_root)
     stem = delivery_id.lower()
     return directory / f"delivery-push-{stem}.json", directory / f"delivery-push-{stem}.md"
+
+
+def delivery_runner_request_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    return delivery_directory(project_name, workspace_root=workspace_root) / "runner-requests"
+
+
+def delivery_runner_request_index_path(project_name: str, workspace_root: Path | None = None) -> Path:
+    return delivery_runner_request_directory(project_name, workspace_root=workspace_root) / "runner-request-index.json"
+
+
+def delivery_runner_request_artifact_paths(project_name: str, request_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    directory = delivery_runner_request_directory(project_name, workspace_root=workspace_root)
+    stem = request_id.lower()
+    return directory / f"runner-request-{stem}.json", directory / f"runner-request-{stem}.md"
+
+
+def delivery_runner_run_artifact_paths(project_name: str, request_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    directory = delivery_runner_request_directory(project_name, workspace_root=workspace_root)
+    stem = request_id.lower()
+    return directory / f"runner-run-{stem}.json", directory / f"runner-run-{stem}.md"
 
 
 def run_delivery_readiness_check(
@@ -1593,6 +1684,241 @@ def list_delivery_push_results(project_name: str, workspace_root: Path | None = 
     return sorted(results, key=lambda item: item.updated_at, reverse=True)
 
 
+def create_delivery_runner_request(
+    project_name: str,
+    intended_commit_message: str,
+    note: str,
+    *,
+    allow_empty_request: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerRequest, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    message = intended_commit_message.strip()
+    if not message:
+        msg = "Intended commit message is required."
+        raise ValueError(msg)
+    check, _json_path, _markdown_path = run_delivery_readiness_check(project_name, write=False, workspace_root=root)
+    blockers = list(check.blockers)
+    if not check.changed_files and not allow_empty_request:
+        blockers.append("Target repository is clean; use --allow-empty-request only for explicit no-change runner requests.")
+    if blockers:
+        msg = "Delivery runner request blocked: " + _summary_text(_dedupe(blockers))
+        raise ValueError(msg)
+    request_id = _next_runner_request_id(project_name, workspace_root=root)
+    now = datetime.now(UTC)
+    request = DeliveryRunnerRequest(
+        project=project_name,
+        request_id=request_id,
+        requested_by=_current_operator_name(),
+        requested_from_context="devo delivery runner-request",
+        target_repo_path=check.target_repo_path,
+        intended_commit_message=message,
+        note=note.strip(),
+        expected_changed_files=check.changed_files,
+        forbidden_changed_files=_dedupe(
+            [
+                *check.forbidden_changed_files,
+                *check.forbidden_staged_files,
+                *check.workspace_artifacts_staged,
+                *check.secrets_risk_files,
+            ]
+        ),
+        warnings=check.warnings,
+        created_at=now,
+        updated_at=now,
+        status="requested",
+        next_action=_runner_run_command(project_name, request_id),
+    )
+    return write_delivery_runner_request(request, workspace_root=root)
+
+
+def write_delivery_runner_request(
+    request: DeliveryRunnerRequest,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerRequest, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_request_directory(request.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = delivery_runner_request_artifact_paths(request.project, request.request_id, workspace_root=root)
+    json_path.write_text(request.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text(render_delivery_runner_request_markdown(request), encoding="utf-8")
+    _write_delivery_runner_request_index(request.project, workspace_root=root)
+    return request, json_path, markdown_path
+
+
+def load_delivery_runner_request(
+    project_name: str,
+    request_id: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerRequest | None:
+    root = workspace_root or get_workspace_root()
+    json_path, _markdown_path = delivery_runner_request_artifact_paths(project_name, request_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return DeliveryRunnerRequest.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_delivery_runner_requests(project_name: str, workspace_root: Path | None = None) -> list[DeliveryRunnerRequest]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_request_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    requests: list[DeliveryRunnerRequest] = []
+    for path in sorted(directory.glob("runner-request-*.json")):
+        try:
+            requests.append(DeliveryRunnerRequest.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(requests, key=lambda item: item.updated_at, reverse=True)
+
+
+def write_delivery_runner_run(
+    run: DeliveryRunnerRun,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_request_directory(run.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    json_path, markdown_path = delivery_runner_run_artifact_paths(run.project, run.request_id, workspace_root=root)
+    json_path.write_text(run.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text(render_delivery_runner_run_markdown(run), encoding="utf-8")
+    _write_delivery_runner_request_index(run.project, workspace_root=root)
+    return run, json_path, markdown_path
+
+
+def load_delivery_runner_run(
+    project_name: str,
+    request_id: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerRun | None:
+    root = workspace_root or get_workspace_root()
+    json_path, _markdown_path = delivery_runner_run_artifact_paths(project_name, request_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return DeliveryRunnerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def run_delivery_runner_request(
+    project_name: str,
+    request_id: str,
+    *,
+    approver: str,
+    confirm_runner_delivery: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    if not confirm_runner_delivery:
+        msg = "--confirm-runner-delivery is required."
+        raise ValueError(msg)
+    request = load_delivery_runner_request(project_name, request_id, workspace_root=root)
+    if not request:
+        msg = f"Delivery runner request not found: {request_id}"
+        raise ValueError(msg)
+    if request.status in {"cancelled", "completed", "consumed"}:
+        msg = f"Delivery runner request {request_id} is {request.status}; create a new request for another delivery."
+        raise ValueError(msg)
+
+    run = _new_runner_run(project_name, request)
+    steps = list(run.steps_run)
+    blockers: list[str] = []
+    warnings: list[str] = []
+    try:
+        registration = load_registered_project(project_name, workspace_root=root)
+        repo_path = Path(request.target_repo_path)
+        if repo_path.resolve() != registration.path.resolve():
+            blockers.append(f"Request target repo path no longer matches project registration: {repo_path} != {registration.path}")
+        if not repo_path.exists():
+            blockers.append(f"Target repository path does not exist: {repo_path}")
+        if blockers:
+            return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+
+        status = get_git_repository_status(project_name, workspace_root=root)
+        steps.append("verified target repo path, branch, and upstream")
+        if not status.current_branch:
+            blockers.append("Current Git branch could not be determined.")
+        if not status.upstream_branch:
+            warnings.append("No upstream branch was detected; push preview may block.")
+
+        probe = _probe_git_index_lock(repo_path)
+        run.index_lock_probe_result = _probe_result_payload(probe)
+        steps.append("index-lock preflight")
+        if not probe.ok:
+            blockers.append(probe.message)
+            return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+
+        check, _check_json, _check_md = run_delivery_readiness_check(project_name, write=True, workspace_root=root)
+        steps.append(f"delivery check {check.delivery_id}")
+        run.delivery_check_id = check.delivery_id
+        warnings.extend(check.warnings)
+        if check.blockers:
+            blockers.extend(check.blockers)
+            return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+        mismatch = _changed_file_mismatch(request.expected_changed_files, check.changed_files)
+        if mismatch:
+            blockers.append(mismatch)
+            return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+
+        plan, _plan_json, _plan_md = create_delivery_plan(project_name, check.delivery_id, request.intended_commit_message, workspace_root=root)
+        run.delivery_plan_id = plan.delivery_id
+        steps.append(f"delivery plan {plan.delivery_id}")
+        request_delivery_approval(
+            project_name,
+            plan.delivery_id,
+            request.note or "Trusted local delivery runner approval requested.",
+            workspace_root=root,
+        )
+        steps.append(f"approval requested {plan.delivery_id}")
+        approve_delivery_plan(
+            project_name,
+            plan.delivery_id,
+            approver,
+            f"Approved trusted local delivery runner request {request.request_id}.",
+            workspace_root=root,
+        )
+        steps.append(f"approval approved {plan.delivery_id}")
+        report, _report_json, _report_md = prepare_delivery_report(project_name, plan.delivery_id, workspace_root=root)
+        run.delivery_report_id = report.delivery_id
+        steps.append(f"delivery report {report.delivery_id}")
+        preview = preview_delivery_commit(project_name, report.delivery_id, workspace_root=root)
+        steps.append("commit preview")
+        if not preview.commit_ready:
+            blockers.extend(preview.blockers)
+            return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+        commit, _commit_json, _commit_md = commit_delivery_report(
+            project_name,
+            report.delivery_id,
+            confirm_commit=True,
+            author_note=f"Trusted local delivery runner request {request.request_id}.",
+            workspace_root=root,
+        )
+        steps.append("guarded commit")
+        run.commit_hash = commit.commit_hash
+        if commit.status != "committed":
+            detail = commit.stderr or commit.stdout or commit.failure_category or "Guarded commit did not complete."
+            blockers.append(detail)
+            status_name = "blocked" if commit.status == "blocked" else "failed"
+            return _finish_runner_run(project_name, request, run, status_name, blockers, warnings, steps, root)
+        push_preview = preview_delivery_push(project_name, report.delivery_id, workspace_root=root)
+        steps.append("push preview")
+        if not push_preview.push_allowed:
+            blockers.extend(push_preview.blockers)
+            return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+        push, _push_json, _push_md = push_delivery_report(project_name, report.delivery_id, confirm_push=True, workspace_root=root)
+        steps.append("guarded push")
+        run.pushed = push.pushed
+        run.push_remote = push.push_remote
+        run.push_branch = push.push_branch
+        if not push.pushed:
+            blockers.extend(push.blockers)
+            if push.push_stderr:
+                blockers.append(push.push_stderr)
+            return _finish_runner_run(project_name, request, run, "failed", blockers, warnings, steps, root)
+        return _finish_runner_run(project_name, request, run, "completed", blockers, warnings, steps, root)
+    except ValueError as exc:
+        blockers.append(str(exc))
+        return _finish_runner_run(project_name, request, run, "failed", blockers, warnings, steps, root)
+
+
 def build_delivery_latest_summary(project_name: str, workspace_root: Path | None = None) -> DeliveryLatestSummary:
     root = workspace_root or get_workspace_root()
     registration = load_registered_project(project_name, workspace_root=root)
@@ -1947,6 +2273,81 @@ def render_delivery_push_markdown(result: DeliveryPush) -> str:
     )
 
 
+def render_delivery_runner_request_markdown(request: DeliveryRunnerRequest) -> str:
+    return "\n".join(
+        [
+            f"# Delivery Runner Request: {request.request_id}",
+            "",
+            f"- Project: `{request.project}`",
+            f"- Status: `{request.status}`",
+            f"- Requested by: `{request.requested_by}`",
+            f"- Requested from: `{request.requested_from_context}`",
+            f"- Target repo: `{request.target_repo_path}`",
+            f"- Commit message: `{request.intended_commit_message}`",
+            f"- Note: {request.note or 'none'}",
+            f"- Expected changed files: {len(request.expected_changed_files)}",
+            "",
+            "## Expected Changed Files",
+            "",
+            *_markdown_list(request.expected_changed_files),
+            "",
+            "## Warnings",
+            "",
+            *_markdown_list(request.warnings),
+            "",
+            "## Blockers",
+            "",
+            *_markdown_list(request.blockers),
+            "",
+            "## Next Action",
+            "",
+            request.next_action,
+            "",
+        ]
+    )
+
+
+def render_delivery_runner_run_markdown(run: DeliveryRunnerRun) -> str:
+    return "\n".join(
+        [
+            f"# Delivery Runner Run: {run.request_id}",
+            "",
+            f"- Project: `{run.project}`",
+            f"- Request: `{run.request_id}`",
+            f"- Run id: `{run.run_id}`",
+            f"- Status: `{run.status}`",
+            f"- Commit hash: `{run.commit_hash or 'none'}`",
+            f"- Pushed: `{run.pushed}`",
+            f"- Remote: `{run.push_remote or 'unknown'}`",
+            f"- Branch: `{run.push_branch or 'unknown'}`",
+            f"- Started at: `{run.started_at.isoformat()}`",
+            f"- Completed at: `{run.completed_at.isoformat() if run.completed_at else 'not completed'}`",
+            "",
+            "## Steps Run",
+            "",
+            *_markdown_list(run.steps_run),
+            "",
+            "## Index Lock Probe",
+            "",
+            f"- Can create index.lock: `{run.index_lock_probe_result.get('ok', 'unknown')}`",
+            f"- Message: {run.index_lock_probe_result.get('message', 'none')}",
+            "",
+            "## Blockers",
+            "",
+            *_markdown_list(run.blockers),
+            "",
+            "## Warnings",
+            "",
+            *_markdown_list(run.warnings),
+            "",
+            "## Next Action",
+            "",
+            run.next_action,
+            "",
+        ]
+    )
+
+
 def _write_delivery_index(project_name: str, workspace_root: Path | None = None) -> DeliveryIndex:
     root = workspace_root or get_workspace_root()
     directory = delivery_directory(project_name, workspace_root=root)
@@ -2020,6 +2421,30 @@ def _write_delivery_index(project_name: str, workspace_root: Path | None = None)
     return index
 
 
+def _write_delivery_runner_request_index(project_name: str, workspace_root: Path | None = None) -> DeliveryRunnerRequestIndex:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_request_directory(project_name, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    requests = list_delivery_runner_requests(project_name, workspace_root=root)
+    entries = []
+    for request in requests:
+        latest_run = load_delivery_runner_run(project_name, request.request_id, workspace_root=root)
+        entries.append(
+            DeliveryRunnerRequestIndexEntry(
+                request_id=request.request_id,
+                status=request.status,
+                intended_commit_message=request.intended_commit_message,
+                changed_file_count=len(request.expected_changed_files),
+                latest_run_status=latest_run.status if latest_run else None,
+                path=str(delivery_runner_request_artifact_paths(project_name, request.request_id, workspace_root=root)[0]),
+                updated_at=request.updated_at,
+            )
+        )
+    index = DeliveryRunnerRequestIndex(project=project_name, requests=entries, updated_at=datetime.now(UTC))
+    delivery_runner_request_index_path(project_name, workspace_root=root).write_text(index.model_dump_json(indent=2), encoding="utf-8")
+    return index
+
+
 def _next_delivery_id(project_name: str, workspace_root: Path | None = None) -> str:
     checks = list_delivery_checks(project_name, workspace_root=workspace_root)
     highest = 0
@@ -2029,6 +2454,114 @@ def _next_delivery_id(project_name: str, workspace_root: Path | None = None) -> 
         except ValueError:
             continue
     return f"DEL-{highest + 1:04d}"
+
+
+def _next_runner_request_id(project_name: str, workspace_root: Path | None = None) -> str:
+    requests = list_delivery_runner_requests(project_name, workspace_root=workspace_root)
+    highest = 0
+    for request in requests:
+        try:
+            highest = max(highest, int(request.request_id.rsplit("-", 1)[-1]))
+        except ValueError:
+            continue
+    return f"REQ-{highest + 1:04d}"
+
+
+def _new_runner_run(project_name: str, request: DeliveryRunnerRequest) -> DeliveryRunnerRun:
+    now = datetime.now(UTC)
+    return DeliveryRunnerRun(
+        project=project_name,
+        request_id=request.request_id,
+        run_id=f"RUN-{now.strftime('%Y%m%d%H%M%S')}-{request.request_id.lower()}",
+        started_at=now,
+        runner_context="devo delivery runner-run",
+        status="failed",
+        steps_run=["loaded runner request"],
+        next_action="Runner has not completed.",
+    )
+
+
+def _finish_runner_run(
+    project_name: str,
+    request: DeliveryRunnerRequest,
+    run: DeliveryRunnerRun,
+    status: str,
+    blockers: list[str],
+    warnings: list[str],
+    steps: list[str],
+    workspace_root: Path,
+) -> tuple[DeliveryRunnerRun, Path, Path]:
+    now = datetime.now(UTC)
+    run.status = status
+    run.completed_at = now
+    run.blockers = _dedupe(blockers)
+    run.warnings = _dedupe(warnings)
+    run.steps_run = _dedupe(steps)
+    run.next_action = _runner_next_action(project_name, request.request_id, status, run.blockers, run.commit_hash, run.pushed)
+    request_status = "completed" if status == "completed" else "failed" if status == "failed" else "requested"
+    updated_request = request.model_copy(
+        update={
+            "status": request_status,
+            "updated_at": now,
+            "blockers": run.blockers,
+            "warnings": _dedupe([*request.warnings, *run.warnings]),
+            "next_action": run.next_action,
+        }
+    )
+    write_delivery_runner_request(updated_request, workspace_root=workspace_root)
+    return write_delivery_runner_run(run, workspace_root=workspace_root)
+
+
+def _runner_next_action(
+    project_name: str,
+    request_id: str,
+    status: str,
+    blockers: list[str],
+    commit_hash: str | None,
+    pushed: bool,
+) -> str:
+    if status == "completed" and pushed:
+        return f"Trusted delivery runner completed and pushed commit {commit_hash or 'unknown'}."
+    if blockers:
+        return "Resolve runner blockers before creating a new runner request: " + _summary_text(blockers)
+    return _runner_run_command(project_name, request_id)
+
+
+def _runner_run_command(project_name: str, request_id: str) -> str:
+    return (
+        f'.\\.venv\\Scripts\\devo.exe delivery runner-run --project {project_name} --request {request_id} '
+        '--approver "Manas" --confirm-runner-delivery'
+    )
+
+
+def _current_operator_name() -> str:
+    return os.environ.get("USERNAME") or os.environ.get("USER") or getpass.getuser() or "unknown"
+
+
+def _probe_result_payload(probe: IndexLockProbeResult) -> dict[str, object]:
+    return {
+        "ok": probe.ok,
+        "category": probe.category,
+        "message": probe.message,
+        "lock_path": probe.lock_path,
+        "created": probe.created,
+        "removed": probe.removed,
+    }
+
+
+def _changed_file_mismatch(expected: list[str], current: list[str]) -> str | None:
+    expected_set = set(expected)
+    current_set = set(current)
+    if expected_set == current_set:
+        return None
+    added = sorted(current_set - expected_set)
+    removed = sorted(expected_set - current_set)
+    parts = []
+    if added:
+        parts.append("unexpected files: " + ", ".join(added))
+    if removed:
+        parts.append("missing expected files: " + ", ".join(removed))
+    return "Current changed files differ from runner request snapshot; " + "; ".join(parts)
 
 
 def _require_delivery_plan(project_name: str, delivery_id: str, workspace_root: Path) -> DeliveryPlan:

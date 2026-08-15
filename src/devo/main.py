@@ -60,20 +60,26 @@ from .delivery import (
     DeliveryPushPreview,
     DeliveryReport,
     DeliveryReportRefresh,
+    DeliveryRunnerRequest,
+    DeliveryRunnerRun,
     approve_delivery_plan,
     build_delivery_latest_summary,
     commit_delivery_report,
     create_delivery_plan,
+    create_delivery_runner_request,
     list_delivery_checks,
     list_delivery_approvals,
     list_delivery_plans,
     list_delivery_reports,
+    list_delivery_runner_requests,
     load_delivery_commit_result,
     load_delivery_push_result,
     load_delivery_approval,
     load_delivery_check,
     load_delivery_plan,
     load_delivery_report,
+    load_delivery_runner_request,
+    load_delivery_runner_run,
     prepare_delivery_report,
     preview_delivery_commit,
     preview_delivery_push,
@@ -84,6 +90,7 @@ from .delivery import (
     reject_delivery_plan,
     request_delivery_approval,
     run_delivery_readiness_check,
+    run_delivery_runner_request,
 )
 from .reports import (
     build_handoff_report,
@@ -1839,6 +1846,152 @@ def _print_delivery_latest_summary(summary: DeliveryLatestSummary) -> None:
     else:
         console.print("  none")
     console.print(f"Next recommended action: {summary.next_action}", soft_wrap=True)
+
+
+def _print_delivery_runner_request(request: DeliveryRunnerRequest, latest_run: DeliveryRunnerRun | None = None) -> None:
+    console.print(f"Project: {request.project}")
+    console.print(f"Runner request: {request.request_id}")
+    console.print(f"Status: {request.status}")
+    console.print(f"Target repo: {request.target_repo_path}", soft_wrap=True)
+    console.print(f"Commit message: {request.intended_commit_message}", soft_wrap=True)
+    console.print(f"Expected changed files: {len(request.expected_changed_files)}")
+    for path in request.expected_changed_files:
+        console.print(f"  {path}", soft_wrap=True)
+    console.print("Warnings:")
+    if request.warnings:
+        for warning in request.warnings:
+            console.print(f"  {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Blockers:")
+    if request.blockers:
+        for blocker in request.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    if latest_run:
+        console.print(f"Latest runner run: {latest_run.run_id} | {latest_run.status}")
+        console.print(f"Latest commit hash: {latest_run.commit_hash or 'none'}")
+        console.print(f"Latest pushed: {latest_run.pushed}")
+    else:
+        console.print("Latest runner run: none")
+    console.print(f"Next action: {request.next_action}", soft_wrap=True)
+
+
+def _print_delivery_runner_run(run: DeliveryRunnerRun) -> None:
+    console.print(f"Project: {run.project}")
+    console.print(f"Runner request: {run.request_id}")
+    console.print(f"Runner run: {run.run_id}")
+    console.print(f"Status: {run.status}")
+    console.print(f"Delivery check: {run.delivery_check_id or 'none'}")
+    console.print(f"Delivery plan: {run.delivery_plan_id or 'none'}")
+    console.print(f"Delivery report: {run.delivery_report_id or 'none'}")
+    console.print(f"Commit hash: {run.commit_hash or 'none'}")
+    console.print(f"Pushed: {run.pushed}")
+    console.print(f"Push target: {run.push_remote or 'unknown'} {run.push_branch or 'unknown'}")
+    console.print("Index-lock probe:")
+    console.print(f"  Can create index.lock: {run.index_lock_probe_result.get('ok', 'unknown')}")
+    console.print(f"  Message: {run.index_lock_probe_result.get('message', 'none')}", soft_wrap=True)
+    console.print("Steps run:")
+    if run.steps_run:
+        for step in run.steps_run:
+            console.print(f"  {step}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Warnings:")
+    if run.warnings:
+        for warning in run.warnings:
+            console.print(f"  {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print("Blockers:")
+    if run.blockers:
+        for blocker in run.blockers:
+            console.print(f"  {blocker}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {run.next_action}", soft_wrap=True)
+
+
+@delivery_app.command("runner-request")
+def create_delivery_runner_request_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    message: str = typer.Option(..., "--message", help="Intended commit message for the trusted runner."),
+    note: str = typer.Option("", "--note", help="Operator note for the trusted runner request."),
+    allow_empty_request: bool = typer.Option(False, "--allow-empty-request", help="Allow a runner request when the repo is clean."),
+) -> None:
+    """Create a trusted local delivery runner request without staging, committing, or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        request, json_path, markdown_path = create_delivery_runner_request(
+            resolved_project,
+            message,
+            note,
+            allow_empty_request=allow_empty_request,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--message") from exc
+    _print_delivery_runner_request(request)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print(f"Normal PowerShell command: {request.next_action}", soft_wrap=True)
+
+
+@delivery_app.command("runner-list")
+def list_delivery_runner_requests_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List trusted local delivery runner requests."""
+    resolved_project = _resolve_project(project_name)
+    requests = list_delivery_runner_requests(resolved_project)
+    console.print(f"Delivery runner requests for {resolved_project}: {len(requests)}")
+    if not requests:
+        console.print("  none")
+        return
+    for request in requests:
+        latest_run = load_delivery_runner_run(resolved_project, request.request_id)
+        console.print(
+            f"  {request.request_id} | {request.status} | files {len(request.expected_changed_files)} | "
+            f"run {latest_run.status if latest_run else 'none'} | {request.updated_at.isoformat()}",
+            soft_wrap=True,
+        )
+
+
+@delivery_app.command("runner-show")
+def show_delivery_runner_request_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    request_id: str = typer.Option(..., "--request", help="Runner request ID."),
+) -> None:
+    """Show one trusted local delivery runner request."""
+    resolved_project = _resolve_project(project_name)
+    request = load_delivery_runner_request(resolved_project, request_id)
+    if not request:
+        raise typer.BadParameter(f"Delivery runner request not found: {request_id}", param_hint="--request")
+    latest_run = load_delivery_runner_run(resolved_project, request.request_id)
+    _print_delivery_runner_request(request, latest_run=latest_run)
+
+
+@delivery_app.command("runner-run")
+def run_delivery_runner_request_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    request_id: str = typer.Option(..., "--request", help="Runner request ID."),
+    approver: str = typer.Option(..., "--approver", help="Approver name recorded in delivery approval."),
+    confirm_runner_delivery: bool = typer.Option(False, "--confirm-runner-delivery", help="Required confirmation to run guarded commit and push."),
+) -> None:
+    """Run the full guarded delivery flow for an approved local runner request."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        run, json_path, markdown_path = run_delivery_runner_request(
+            resolved_project,
+            request_id,
+            approver=approver,
+            confirm_runner_delivery=confirm_runner_delivery,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--request") from exc
+    _print_delivery_runner_run(run)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
 
 
 @delivery_app.command("check")

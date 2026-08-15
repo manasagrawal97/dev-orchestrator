@@ -14,6 +14,9 @@ from devo.delivery import (
     commit_delivery_report,
     create_delivery_plan,
     approve_delivery_plan,
+    create_delivery_runner_request,
+    load_delivery_runner_request,
+    load_delivery_runner_run,
     load_delivery_report,
     list_delivery_checks,
     prepare_delivery_report,
@@ -190,6 +193,300 @@ def test_delivery_latest_json_output_and_read_only(tmp_path: Path, monkeypatch) 
     assert "delivery plan --project sample --delivery DEL-0001" in payload["next_action"]
     assert after_status == before_status
     assert after_count == before_count
+
+
+def test_delivery_runner_request_creates_snapshot_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner", "--note", "TASK"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Runner request: REQ-0001" in result.output
+    assert "runner-run --project sample --request REQ-0001" in result.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert request.expected_changed_files == ["changed.txt"]
+    overview = build_project_overview("sample", workspace_root=workspace)
+    assert overview.latest_runner_request_id == "REQ-0001"
+    assert overview.latest_runner_request_status == "requested"
+    assert "runner-run --project sample --request REQ-0001" in (overview.latest_runner_next_action or "")
+    request_dir = workspace / "projects" / "sample" / "delivery" / "runner-requests"
+    assert (request_dir / "runner-request-req-0001.json").exists()
+    assert (request_dir / "runner-request-req-0001.md").exists()
+    assert (request_dir / "runner-request-index.json").exists()
+
+
+def test_delivery_runner_request_refuses_clean_repo_by_default(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo_path = _workspace(tmp_path, monkeypatch)
+
+    try:
+        create_delivery_runner_request("sample", "feat: trusted runner", "", workspace_root=workspace)
+    except ValueError as exc:
+        assert "Target repository is clean" in str(exc)
+    else:
+        raise AssertionError("Expected clean repo runner request to be refused.")
+
+
+def test_delivery_runner_request_allows_clean_repo_with_explicit_flag(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo_path = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "chore: empty", "--allow-empty-request"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert request.expected_changed_files == []
+
+
+def test_delivery_runner_request_refuses_forbidden_changed_files(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo_path = _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "workspace").mkdir()
+    (repo / "workspace" / "artifact.md").write_text("artifact\n", encoding="utf-8")
+
+    try:
+        create_delivery_runner_request("sample", "feat: trusted runner", "", workspace_root=workspace)
+    except ValueError as exc:
+        assert "Forbidden delivery paths are changed" in str(exc)
+    else:
+        raise AssertionError("Expected forbidden path runner request to be refused.")
+
+
+def test_delivery_runner_request_refuses_secret_risk_blockers(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / ".env").write_text("TOKEN=value\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Secret-risk files or signals" in result.output
+
+
+def test_delivery_runner_request_allows_documentation_secret_warnings(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "delivery.md").write_text("Document how secrets are handled without values.\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "docs: update delivery docs"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert request.expected_changed_files == ["docs/delivery.md"]
+    assert request.warnings
+
+
+def test_delivery_runner_list_and_show_work(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    created = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+
+    listed = runner.invoke(app, ["delivery", "runner-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["delivery", "runner-show", "--project", "sample", "--request", "REQ-0001"], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "REQ-0001 | requested" in listed.output
+    assert "Expected changed files: 1" in shown.output
+
+
+def test_delivery_runner_run_refuses_without_confirmation(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-run", "--project", "sample", "--request", "REQ-0001", "--approver", "Manas"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "--confirm-runner-delivery is required" in result.output
+
+
+def test_delivery_runner_run_blocks_before_staging_if_index_lock_probe_fails(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+
+    def fake_probe(_repo_path: Path):
+        from devo.delivery import IndexLockProbeResult
+
+        return IndexLockProbeResult(
+            ok=False,
+            category="index_lock_permission_denied",
+            message="Permission denied creating .git/index.lock",
+            lock_path=str(repo / ".git" / "index.lock"),
+        )
+
+    monkeypatch.setattr("devo.delivery._probe_git_index_lock", fake_probe)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert request is not None
+    assert run.status == "blocked"
+    assert request.status == "requested"
+    assert run.delivery_check_id is None
+    assert "Permission denied creating .git/index.lock" in result.output
+    assert _git(repo, "diff", "--cached", "--name-only", capture=True).stdout.strip() == ""
+
+
+def test_delivery_runner_run_blocks_if_changed_files_differ_from_snapshot(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    (repo / "extra.txt").write_text("extra\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "blocked"
+    assert any("Current changed files differ" in blocker for blocker in run.blockers)
+    assert _git(repo, "diff", "--cached", "--name-only", capture=True).stdout.strip() == ""
+
+
+def test_delivery_runner_run_completes_guarded_commit_and_push(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    created = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner", "--note", "approved batch"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert request is not None
+    assert run.status == "completed"
+    assert run.commit_hash
+    assert run.pushed is True
+    assert request.status == "completed"
+    assert _git(repo, "status", "--short", capture=True).stdout.strip() == ""
+    remote_ref = _git(repo, "ls-remote", "origin", "refs/heads/main", capture=True).stdout
+    assert run.commit_hash in remote_ref
+
+
+def test_delivery_runner_run_does_not_push_if_commit_fails(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    push_called = False
+    import devo.delivery as delivery_module
+
+    real_run_git = delivery_module._run_git
+
+    def fake_run_git(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal push_called
+        if args[:1] == ["commit"]:
+            return subprocess.CompletedProcess(args, 1, "", "commit failed")
+        if args[:1] == ["push"]:
+            push_called = True
+        return real_run_git(repo_path, args)
+
+    monkeypatch.setattr("devo.delivery._run_git", fake_run_git)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "failed"
+    assert push_called is False
+    assert run.pushed is False
 
 
 def test_delivery_check_blocks_forbidden_staged_paths(tmp_path: Path, monkeypatch) -> None:

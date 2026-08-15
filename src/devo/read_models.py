@@ -7,7 +7,14 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import list_backup_inventory
-from .delivery import build_delivery_latest_summary, list_delivery_checks, list_delivery_plans, list_delivery_reports
+from .delivery import (
+    build_delivery_latest_summary,
+    list_delivery_checks,
+    list_delivery_plans,
+    list_delivery_reports,
+    list_delivery_runner_requests,
+    load_delivery_runner_run,
+)
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
@@ -126,6 +133,10 @@ class ProjectOverview(BaseModel):
     current_repo_is_clean: bool = False
     latest_meaningful_delivery_id: str | None = None
     latest_pushed_delivery_id: str | None = None
+    latest_runner_request_id: str | None = None
+    latest_runner_request_status: str | None = None
+    latest_runner_run_status: str | None = None
+    latest_runner_next_action: str | None = None
     brief_status: str = "missing"
     blueprint_status: str = "missing"
     blueprint_milestone_count: int = 0
@@ -305,6 +316,12 @@ def build_project_overview_with_timing(
                 str(delivery["latest_meaningful_delivery_id"]) if delivery["latest_meaningful_delivery_id"] else None
             ),
             latest_pushed_delivery_id=str(delivery["latest_pushed_delivery_id"]) if delivery["latest_pushed_delivery_id"] else None,
+            latest_runner_request_id=str(delivery["latest_runner_request_id"]) if delivery["latest_runner_request_id"] else None,
+            latest_runner_request_status=(
+                str(delivery["latest_runner_request_status"]) if delivery["latest_runner_request_status"] else None
+            ),
+            latest_runner_run_status=str(delivery["latest_runner_run_status"]) if delivery["latest_runner_run_status"] else None,
+            latest_runner_next_action=str(delivery["latest_runner_next_action"]) if delivery["latest_runner_next_action"] else None,
             brief_status=str(planning["brief_status"]),
             blueprint_status=str(planning["blueprint_status"]),
             blueprint_milestone_count=int(planning["blueprint_milestone_count"]),
@@ -849,10 +866,23 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "current_repo_is_clean": False,
             "latest_meaningful_delivery_id": None,
             "latest_pushed_delivery_id": None,
+            "latest_runner_request_id": None,
+            "latest_runner_request_status": None,
+            "latest_runner_run_status": None,
+            "latest_runner_next_action": f"Review delivery artifacts: {exc}",
         }
     latest = checks[0] if checks else None
     latest_plan = plans[0] if plans else None
     latest_report = reports[0] if reports else None
+    runner_request = None
+    runner_run = None
+    try:
+        runner_requests = list_delivery_runner_requests(project_name, workspace_root=workspace_root)
+        runner_request = runner_requests[0] if runner_requests else None
+        runner_run = load_delivery_runner_run(project_name, runner_request.request_id, workspace_root=workspace_root) if runner_request else None
+    except Exception:
+        runner_request = None
+        runner_run = None
     try:
         latest_summary = build_delivery_latest_summary(project_name, workspace_root=workspace_root)
     except Exception:
@@ -892,6 +922,10 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "current_repo_is_clean": latest_summary.current_repo_is_clean if latest_summary else False,
         "latest_meaningful_delivery_id": latest_summary.latest_meaningful_delivery_check_id if latest_summary else None,
         "latest_pushed_delivery_id": latest_summary.latest_pushed_delivery_id if latest_summary else None,
+        "latest_runner_request_id": runner_request.request_id if runner_request else None,
+        "latest_runner_request_status": runner_request.status if runner_request else None,
+        "latest_runner_run_status": runner_run.status if runner_run else None,
+        "latest_runner_next_action": runner_run.next_action if runner_run else runner_request.next_action if runner_request else None,
     }
 
 
