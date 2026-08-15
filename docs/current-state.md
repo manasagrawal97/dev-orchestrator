@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/delivery-safety-design.md`, `docs/phase-1-mvp-closure-plan.md`, `docs/runbooks/codex-launcher-setup.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/delivery-safety-design.md`, `docs/phase-1-mvp-closure-plan.md`, `docs/phase-1-context-workflow-efficiency-audit.md`, `docs/runbooks/codex-launcher-setup.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -38,14 +38,14 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed implementation task: TASK-DEVO-121 vision-to-batch intake polish
+- Latest completed implementation task: TASK-DEVO-122 Phase 1 context and workflow efficiency audit
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-099 first real Codex supervised dry-run report
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-DEVO-110 end-to-end guarded delivery dogfood run against an isolated temp repo/local bare remote
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: TASK-DEVO-122 Phase 1 context and workflow efficiency audit. The standard post-Codex delivery path is now `delivery runner-request` from Codex/sandbox, `delivery runner-latest` or enhanced `delivery latest` to recover the latest request/command, then one normal local PowerShell `.\.venv\Scripts\devo.exe delivery runner-run ... --confirm-runner-delivery` command by Manas. Auto-commit/push daemons and UI commit/push buttons remain deferred.
+- Next recommended action: TASK-DEVO-123 end-to-end Phase 1 dogfood on DevOrchestrator. The standard post-Codex delivery path is now `delivery runner-request` from Codex/sandbox, `delivery runner-latest` or enhanced `delivery latest` to recover the latest request/command, then one normal local PowerShell `.\.venv\Scripts\devo.exe delivery runner-run ... --confirm-runner-delivery` command by Manas. Auto-commit/push daemons and UI commit/push buttons remain deferred.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -141,6 +141,7 @@ The working loop is:
 - TASK-DEVO-119 adds `docs/phase-1-mvp-closure-plan.md` as the canonical Phase 1 closure definition, acceptance checklist, remaining task list, Phase 2 boundary, and next-task recommendation.
 - TASK-DEVO-120 polishes the trusted runner operator flow. `delivery latest` now shows latest runner request/run/commit/push state and runner next action, `delivery runner-latest` finds the newest request without copying IDs from `runner-list`, `runner-request` prints changed/warning/blocker counts plus the exact normal PowerShell command, and successful `runner-run` output has an obvious completion summary.
 - TASK-DEVO-121 adds vision-to-batch intake helpers. `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt` summarize the Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Handoff path, generate local planning templates/prompts, and keep the rough-idea intake flow workspace-only with no AI/API calls, target edits, validation, commit, or push.
+- TASK-DEVO-122 adds `docs/phase-1-context-workflow-efficiency-audit.md`. The audit verdict is `watch`: Phase 1 is healthy enough for end-to-end dogfood, but prompt length, duplicated docs, artifact navigation, and command count should be simplified after the dogfood instead of adding more features now.
 
 ## Readiness Estimate
 
