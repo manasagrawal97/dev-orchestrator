@@ -12,10 +12,11 @@ The near-term strategy is CLI-first and local-first:
 - avoid requiring direct OpenAI, Claude, Gemini, or local model API tokens for current development
 - keep manual/Codex mode supported even after future model adapters exist
 
-Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The active post-Phase-1 roadmap is now `docs/remaining-roadmap.md`. It supersedes older isolated task ordering and prioritizes improvements around the proven workflow: project brief -> blueprint -> backlog -> batch -> execution queue -> Codex handoff -> validation/delivery/progress -> review/resume.
+Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The active Phase 2 plan is now `docs/phase-2-autonomy-roadmap.md`. It prioritizes practical autonomy around approved batches, queue work, validation, and trusted local delivery rather than direct Codex/sandbox commits.
 
 ## Immediate Planned Tasks
 
+- TASK-DEVO-126: trusted runner watch mode
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
@@ -51,6 +52,10 @@ Add persistent read-model snapshots only if needed, better report viewing, bette
 ### Phase 1 MVP Checkpoint - Completed
 
 TASK-DEVO-124 records the Phase 1 MVP checkpoint in `docs/phase-1-mvp-checkpoint.md`. After that docs commit is delivered through the trusted runner and the repository is clean, Manas should create and push the `phase-1-mvp` tag from normal PowerShell.
+
+### Phase 2 Autonomy Roadmap - Active
+
+TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. Phase 2 should start with trusted runner watch mode and bounded queue autonomy, not direct AI-agent workers or sandbox commit/push.
 
 ## Readiness Target
 

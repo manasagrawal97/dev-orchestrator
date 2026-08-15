@@ -22,7 +22,7 @@ The current strategy is CLI-first and local-first:
 - Manual/Codex mode must remain supported even after future model adapters exist.
 - Dashboard/UI work stays read-only for now; the CLI remains the execution and recovery path.
 
-The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred. Phase 1 MVP is complete and recorded in [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md). Future work should follow the post-Phase-1 priorities in [Remaining roadmap](docs/remaining-roadmap.md).
+The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred. Phase 1 MVP is complete and recorded in [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md). Active focus now moves to the [Phase 2 autonomy roadmap](docs/phase-2-autonomy-roadmap.md), starting with trusted local runner watch mode.
 
 ## Project Memory
 
@@ -35,6 +35,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Delivery safety design](docs/delivery-safety-design.md)
 - [Phase 1 MVP closure plan](docs/phase-1-mvp-closure-plan.md)
 - [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md)
+- [Phase 2 autonomy roadmap](docs/phase-2-autonomy-roadmap.md)
 - [Codex launcher setup runbook](docs/runbooks/codex-launcher-setup.md)
 - [Real Codex supervised dry-run runbook](docs/runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](docs/remaining-roadmap.md)

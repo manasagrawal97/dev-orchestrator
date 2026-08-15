@@ -105,9 +105,9 @@ Deferred improvements:
 
 ## 7. Phase 2 Boundary
 
-Phase 2 should attach AI brains/workers to the existing Devo role contracts and workflow states.
+Phase 2 should start with practical autonomy around the trusted local executor, then later attach AI brains/workers to the existing Devo role contracts and workflow states.
 
-Do not start Phase 2 from this checkpoint. Phase 2 should reuse the proven Phase 1 control plane rather than bypassing it.
+The Phase 2 plan is documented in `phase-2-autonomy-roadmap.md`. Phase 2 should reuse the proven Phase 1 control plane rather than bypassing it.
 
 ## 8. Tag Recommendation
 
