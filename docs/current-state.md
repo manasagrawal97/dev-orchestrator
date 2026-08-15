@@ -136,6 +136,7 @@ The working loop is:
 - TASK-DEVO-115 documents the delivery operating rule found by DEL-0001: live Devo delivery commit/push should run from normal local PowerShell as the normal Windows user with `.\.venv\Scripts\devo.exe`, not from restricted Codex/sandbox context unless diagnostics prove that context can create/remove `.git/index.lock`.
 - TASK-DEVO-116 hardens guarded commit with an automatic index-lock preflight before staging. If `.git/index.lock` exists, cannot be created, or cannot be removed after the probe, `devo delivery commit` records a retryable blocked result and leaves the target Git index unstaged; operators should diagnose with `commit-diagnostics --index-lock-probe --confirm-probe`, fix the execution context, reopen the report, and retry from normal PowerShell when needed.
 - TASK-DEVO-116A refines delivery secret-risk classification so `README.md` and `docs/*.md` secret-safety mentions are warnings unless high-confidence secret values are present. Real secret files and real-looking credentials remain blockers.
+- TASK-DEVO-117 adds `devo delivery latest --project <project>` as a read-only operator shortcut for the latest useful delivery state. It separates empty clean checks from meaningful delivery candidates, shows latest plan/approval/report/commit/push history, and recommends plan, report, commit-preview, push-preview, or no action as appropriate.
 
 ## Readiness Estimate
 

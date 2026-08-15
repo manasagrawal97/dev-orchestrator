@@ -54,12 +54,14 @@ from .delivery import (
     DeliveryCommitDiagnostics,
     DeliveryCommitPreview,
     DeliveryCommitResult,
+    DeliveryLatestSummary,
     DeliveryPlan,
     DeliveryPush,
     DeliveryPushPreview,
     DeliveryReport,
     DeliveryReportRefresh,
     approve_delivery_plan,
+    build_delivery_latest_summary,
     commit_delivery_report,
     create_delivery_plan,
     list_delivery_checks,
@@ -1799,6 +1801,46 @@ def _print_delivery_push_result(result: DeliveryPush) -> None:
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
 
 
+def _print_delivery_latest_summary(summary: DeliveryLatestSummary) -> None:
+    console.print(f"Project: {summary.project}")
+    console.print(f"Target repo: {summary.target_repo_path}", soft_wrap=True)
+    console.print(f"Current git status: {summary.current_git_status_summary}")
+    console.print(f"Repository clean: {summary.current_repo_is_clean}")
+    console.print(
+        "Latest delivery check: "
+        f"{summary.latest_delivery_check_id or 'none'}"
+        f" | {summary.latest_delivery_check_status or 'unknown'}"
+        f" | empty {summary.latest_delivery_check_is_empty}"
+    )
+    console.print(
+        "Latest meaningful delivery check: "
+        f"{summary.latest_meaningful_delivery_check_id or 'none'}"
+        f" | {summary.latest_meaningful_delivery_check_status or 'unknown'}"
+    )
+    console.print(f"Latest plan: {summary.latest_plan_id or 'none'} | {summary.latest_plan_status or 'unknown'}")
+    console.print(f"Latest approval: {summary.latest_approval_id or 'none'} | {summary.latest_approval_status or 'unknown'}")
+    console.print(f"Latest report: {summary.latest_report_id or 'none'} | {summary.latest_report_status or 'unknown'}")
+    console.print(
+        "Latest commit result: "
+        f"{summary.latest_commit_result_id or 'none'}"
+        f" | {summary.latest_commit_result_status or 'unknown'}"
+        f" | {summary.latest_commit_hash or 'no hash'}"
+    )
+    console.print(f"Latest push result: {summary.latest_push_result_id or 'none'} | {summary.latest_push_result_status or 'unknown'}")
+    console.print(
+        "Latest pushed delivery: "
+        f"{summary.latest_pushed_delivery_id or 'none'}"
+        f" | {summary.latest_pushed_at or 'not pushed'}"
+    )
+    console.print("Warnings:")
+    if summary.warnings:
+        for warning in summary.warnings:
+            console.print(f"  - {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next recommended action: {summary.next_action}", soft_wrap=True)
+
+
 @delivery_app.command("check")
 def check_delivery_readiness(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -2172,6 +2214,23 @@ def show_delivery_push_result_command(
     if not result:
         raise typer.BadParameter(f"Delivery push result not found: {delivery_id}", param_hint="--delivery")
     _print_delivery_push_result(result)
+
+
+@delivery_app.command("latest")
+def latest_delivery_status_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show the latest useful delivery state without staging, committing, or pushing."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        summary = build_delivery_latest_summary(resolved_project)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    if json_output:
+        typer.echo(summary.model_dump_json(indent=2))
+        return
+    _print_delivery_latest_summary(summary)
 
 
 @delivery_app.command("list")

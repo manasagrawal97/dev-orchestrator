@@ -7,7 +7,7 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import list_backup_inventory
-from .delivery import list_delivery_checks, list_delivery_plans, list_delivery_reports
+from .delivery import build_delivery_latest_summary, list_delivery_checks, list_delivery_plans, list_delivery_reports
 from .doctor import run_doctor_with_timing
 from .git_delivery import get_git_repository_status
 from .project_onboarding import build_project_onboarding_report
@@ -118,6 +118,14 @@ class ProjectOverview(BaseModel):
     latest_delivery_push_branch: str | None = None
     latest_delivery_pushed_at: str | None = None
     latest_delivery_push_next_action: str | None = None
+    latest_delivery_summary_status: str | None = None
+    latest_delivery_summary_id: str | None = None
+    latest_delivery_summary_kind: str | None = None
+    latest_delivery_summary_next_action: str | None = None
+    current_repo_has_pending_changes: bool = False
+    current_repo_is_clean: bool = False
+    latest_meaningful_delivery_id: str | None = None
+    latest_pushed_delivery_id: str | None = None
     brief_status: str = "missing"
     blueprint_status: str = "missing"
     blueprint_milestone_count: int = 0
@@ -281,6 +289,22 @@ def build_project_overview_with_timing(
             latest_delivery_push_next_action=(
                 str(delivery["latest_delivery_push_next_action"]) if delivery["latest_delivery_push_next_action"] else None
             ),
+            latest_delivery_summary_status=(
+                str(delivery["latest_delivery_summary_status"]) if delivery["latest_delivery_summary_status"] else None
+            ),
+            latest_delivery_summary_id=str(delivery["latest_delivery_summary_id"]) if delivery["latest_delivery_summary_id"] else None,
+            latest_delivery_summary_kind=(
+                str(delivery["latest_delivery_summary_kind"]) if delivery["latest_delivery_summary_kind"] else None
+            ),
+            latest_delivery_summary_next_action=(
+                str(delivery["latest_delivery_summary_next_action"]) if delivery["latest_delivery_summary_next_action"] else None
+            ),
+            current_repo_has_pending_changes=bool(delivery["current_repo_has_pending_changes"]),
+            current_repo_is_clean=bool(delivery["current_repo_is_clean"]),
+            latest_meaningful_delivery_id=(
+                str(delivery["latest_meaningful_delivery_id"]) if delivery["latest_meaningful_delivery_id"] else None
+            ),
+            latest_pushed_delivery_id=str(delivery["latest_pushed_delivery_id"]) if delivery["latest_pushed_delivery_id"] else None,
             brief_status=str(planning["brief_status"]),
             blueprint_status=str(planning["blueprint_status"]),
             blueprint_milestone_count=int(planning["blueprint_milestone_count"]),
@@ -817,10 +841,22 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_delivery_push_branch": None,
             "latest_delivery_pushed_at": None,
             "latest_delivery_push_next_action": f"Review delivery artifacts: {exc}",
+            "latest_delivery_summary_status": "unknown",
+            "latest_delivery_summary_id": None,
+            "latest_delivery_summary_kind": None,
+            "latest_delivery_summary_next_action": f"Review delivery artifacts: {exc}",
+            "current_repo_has_pending_changes": False,
+            "current_repo_is_clean": False,
+            "latest_meaningful_delivery_id": None,
+            "latest_pushed_delivery_id": None,
         }
     latest = checks[0] if checks else None
     latest_plan = plans[0] if plans else None
     latest_report = reports[0] if reports else None
+    try:
+        latest_summary = build_delivery_latest_summary(project_name, workspace_root=workspace_root)
+    except Exception:
+        latest_summary = None
     return {
         "delivery_check_count": len(checks),
         "latest_delivery_id": latest.delivery_id if latest else None,
@@ -848,7 +884,46 @@ def _delivery_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_delivery_push_branch": latest_report.push_branch if latest_report else None,
         "latest_delivery_pushed_at": latest_report.pushed_at.isoformat() if latest_report and latest_report.pushed_at else None,
         "latest_delivery_push_next_action": latest_report.next_action if latest_report and latest_report.push_status else None,
+        "latest_delivery_summary_status": _delivery_overview_summary_status(latest_summary),
+        "latest_delivery_summary_id": _delivery_overview_summary_id(latest_summary),
+        "latest_delivery_summary_kind": _delivery_overview_summary_kind(latest_summary),
+        "latest_delivery_summary_next_action": latest_summary.next_action if latest_summary else None,
+        "current_repo_has_pending_changes": latest_summary.current_repo_has_pending_changes if latest_summary else False,
+        "current_repo_is_clean": latest_summary.current_repo_is_clean if latest_summary else False,
+        "latest_meaningful_delivery_id": latest_summary.latest_meaningful_delivery_check_id if latest_summary else None,
+        "latest_pushed_delivery_id": latest_summary.latest_pushed_delivery_id if latest_summary else None,
     }
+
+
+def _delivery_overview_summary_status(summary: object | None) -> str:
+    if not summary:
+        return "unknown"
+    if getattr(summary, "current_repo_is_clean", False) and "No delivery needed" in getattr(summary, "next_action", ""):
+        return "clean"
+    check_status = getattr(summary, "latest_delivery_check_status", None)
+    if check_status == "blocked":
+        return "blocked"
+    if getattr(summary, "current_repo_has_pending_changes", False):
+        return "pending_changes"
+    if getattr(summary, "latest_pushed_delivery_id", None):
+        return "pushed"
+    return str(check_status or "unknown")
+
+
+def _delivery_overview_summary_id(summary: object | None) -> str | None:
+    if not summary:
+        return None
+    return getattr(summary, "latest_delivery_check_id", None) or getattr(summary, "latest_pushed_delivery_id", None)
+
+
+def _delivery_overview_summary_kind(summary: object | None) -> str | None:
+    if not summary:
+        return None
+    if getattr(summary, "latest_delivery_check_id", None):
+        return "delivery_check"
+    if getattr(summary, "latest_pushed_delivery_id", None):
+        return "pushed_delivery"
+    return None
 
 
 def _queue_next_action(project_name: str, queue: object | None) -> str:

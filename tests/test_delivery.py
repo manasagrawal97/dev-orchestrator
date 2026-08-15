@@ -10,14 +10,17 @@ from typer.testing import CliRunner
 
 from devo.api import create_app
 from devo.delivery import (
+    build_delivery_latest_summary,
     commit_delivery_report,
     create_delivery_plan,
+    approve_delivery_plan,
     load_delivery_report,
     list_delivery_checks,
     prepare_delivery_report,
     preview_delivery_commit,
     preview_delivery_push,
     push_delivery_report,
+    request_delivery_approval,
     refresh_delivery_report,
     run_delivery_commit_diagnostics,
     run_delivery_readiness_check,
@@ -63,6 +66,130 @@ def test_delivery_check_write_creates_json_markdown_and_index(tmp_path: Path, mo
     index = json.loads((delivery_dir / "delivery-index.json").read_text(encoding="utf-8"))
     assert index["checks"][0]["delivery_id"] == "DEL-0001"
     assert list_delivery_checks("sample", workspace_root=workspace)[0].delivery_id == "DEL-0001"
+
+
+def test_delivery_latest_reports_clean_empty_check_as_no_delivery_needed(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+    summary = build_delivery_latest_summary("sample", workspace_root=workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest delivery check: DEL-0001 | ready | empty True" in result.output
+    assert "No delivery needed; repository is clean." in result.output
+    assert summary.latest_delivery_check_is_empty is True
+    assert summary.latest_meaningful_delivery_check_id is None
+
+
+def test_delivery_latest_distinguishes_latest_check_from_latest_meaningful(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    _git(repo, "add", "changed.txt")
+    _git(repo, "commit", "-m", "make repo clean")
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest delivery check: DEL-0002 | ready | empty True" in result.output
+    assert "Latest meaningful delivery check: DEL-0001" in result.output
+    assert "No delivery needed; repository is clean." in result.output
+
+
+def test_delivery_latest_recommends_plan_for_safe_changes(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest delivery check: DEL-0001" in result.output
+    assert "devo delivery plan --project sample --delivery DEL-0001" in result.output
+
+
+def test_delivery_latest_recommends_fixing_blockers(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / ".env").write_text("SAFE_PLACEHOLDER=true\n", encoding="utf-8")
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest delivery check: DEL-0001 | blocked" in result.output
+    assert "Fix blockers from DEL-0001" in result.output
+
+
+def test_delivery_latest_recommends_report_prepare_for_approved_plan(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    create_delivery_plan("sample", check.delivery_id, "feat: deliver", workspace_root=workspace)
+    request_delivery_approval("sample", check.delivery_id, "review", workspace_root=workspace)
+    approve_delivery_plan("sample", check.delivery_id, "Manas", "approved", workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest plan: DEL-0001 | approved" in result.output
+    assert "delivery report-prepare --project sample --plan DEL-0001" in result.output
+
+
+def test_delivery_latest_recommends_commit_preview_for_ready_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    _create_ready_report(workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest report: DEL-0001 | ready" in result.output
+    assert "delivery commit-preview --project sample --report DEL-0001" in result.output
+
+
+def test_delivery_latest_recommends_push_preview_for_committed_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest commit result: DEL-0001 | committed" in result.output
+    assert "delivery push-preview --project sample --report DEL-0001" in result.output
+
+
+def test_delivery_latest_reports_pushed_delivery_as_completed(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _create_committed_report(workspace)
+    push_delivery_report("sample", "DEL-0001", confirm_push=True, workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest push result: DEL-0001 | pushed" in result.output
+    assert "Latest pushed delivery: DEL-0001" in result.output
+    assert "Delivery completed and pushed" in result.output
+
+
+def test_delivery_latest_json_output_and_read_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
+    before_status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    before_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout
+
+    result = runner.invoke(app, ["delivery", "latest", "--project", "sample", "--json"], terminal_width=240)
+    after_status = _git(repo, "status", "--porcelain=v1", "-uall", capture=True).stdout
+    after_count = _git(repo, "rev-list", "--count", "HEAD", capture=True).stdout
+    payload = json.loads(result.output)
+
+    assert result.exit_code == 0, result.output
+    assert payload["latest_delivery_check_id"] == "DEL-0001"
+    assert "delivery plan --project sample --delivery DEL-0001" in payload["next_action"]
+    assert after_status == before_status
+    assert after_count == before_count
 
 
 def test_delivery_check_blocks_forbidden_staged_paths(tmp_path: Path, monkeypatch) -> None:
@@ -341,7 +468,8 @@ def test_delivery_commit_message_prints_proposed_message(tmp_path: Path, monkeyp
 
 
 def test_project_overview_includes_delivery_summary(tmp_path: Path, monkeypatch) -> None:
-    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
     run_delivery_readiness_check("sample", write=True, workspace_root=workspace)
     create_delivery_plan("sample", "DEL-0001", "feat: deliver safely", workspace_root=workspace)
     runner.invoke(
@@ -355,7 +483,7 @@ def test_project_overview_includes_delivery_summary(tmp_path: Path, monkeypatch)
 
     assert overview.delivery_check_count == 1
     assert overview.latest_delivery_id == "DEL-0001"
-    assert overview.latest_delivery_readiness_status == "ready"
+    assert overview.latest_delivery_readiness_status == "warnings"
     assert overview.latest_delivery_blocker_count == 0
     assert overview.delivery_plan_count == 1
     assert overview.latest_delivery_plan_id == "DEL-0001"
@@ -366,6 +494,12 @@ def test_project_overview_includes_delivery_summary(tmp_path: Path, monkeypatch)
     assert overview.latest_delivery_report_status == "ready"
     assert overview.latest_delivery_commit_ready is True
     assert overview.latest_delivery_push_ready is False
+    assert overview.latest_delivery_summary_status == "pending_changes"
+    assert overview.latest_delivery_summary_id == "DEL-0001"
+    assert overview.latest_delivery_summary_kind == "delivery_check"
+    assert "commit-preview" in (overview.latest_delivery_summary_next_action or "")
+    assert overview.current_repo_has_pending_changes is True
+    assert overview.latest_meaningful_delivery_id == "DEL-0001"
 
 
 def test_api_exposes_delivery_checks_plans_and_approvals(tmp_path: Path, monkeypatch) -> None:

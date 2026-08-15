@@ -227,6 +227,10 @@ Added an automatic `.git/index.lock` preflight inside `devo delivery commit` bef
 
 Refined delivery secret-risk classification so documentation files such as `README.md` and `docs/*.md` can mention secret-safety terms, placeholders, redacted examples, `.env`, API keys, and tokens without blocking delivery. High-confidence secret values in docs and secret-bearing paths such as `.env`, `.pem`, `.key`, `.pfx`, and appsettings-like files remain blockers.
 
+### TASK-DEVO-117 Delivery Latest Status Command - Completed
+
+Added `devo delivery latest --project <project>` as a read-only delivery status shortcut. It summarizes current Git status, latest delivery check, latest meaningful non-empty check, latest plan/approval/report, latest commit/push result, latest pushed delivery, and next recommended action. Empty clean checks no longer look like work to deliver; they are reported as no delivery needed.
+
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 
 Added the first planning pipeline artifacts: Project Brief and Blueprint. Devo can now create, show, and approve a brief from a local Markdown/text file, create a deterministic draft blueprint from that brief, show and approve the blueprint, expose planning status in ProjectOverview/read-only API responses, and show a read-only Planning card in the dashboard. This stores Devo workspace artifacts only and does not implement backlog/tasks/batches, direct AI/API calls, Codex CLI automation, or target repository mutation.

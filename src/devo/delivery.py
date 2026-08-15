@@ -403,6 +403,38 @@ class DeliveryPush(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class DeliveryLatestSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    target_repo_path: str
+    current_git_status_summary: str = "unknown"
+    current_repo_is_clean: bool = False
+    current_repo_has_pending_changes: bool = False
+    latest_delivery_check_id: str | None = None
+    latest_delivery_check_status: str | None = None
+    latest_delivery_check_is_empty: bool = False
+    latest_meaningful_delivery_check_id: str | None = None
+    latest_meaningful_delivery_check_status: str | None = None
+    latest_plan_id: str | None = None
+    latest_plan_status: str | None = None
+    latest_approval_id: str | None = None
+    latest_approval_status: str | None = None
+    latest_report_id: str | None = None
+    latest_report_status: str | None = None
+    latest_commit_result_id: str | None = None
+    latest_commit_result_status: str | None = None
+    latest_commit_hash: str | None = None
+    latest_push_result_id: str | None = None
+    latest_push_result_status: str | None = None
+    latest_pushed_delivery_id: str | None = None
+    latest_pushed_at: str | None = None
+    next_action: str
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -1533,6 +1565,115 @@ def load_delivery_push_result(project_name: str, delivery_id: str, workspace_roo
     return DeliveryPush.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def list_delivery_commit_results(project_name: str, workspace_root: Path | None = None) -> list[DeliveryCommitResult]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    results: list[DeliveryCommitResult] = []
+    for path in sorted(directory.glob("delivery-commit-*.json")):
+        try:
+            results.append(DeliveryCommitResult.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(results, key=lambda item: item.updated_at, reverse=True)
+
+
+def list_delivery_push_results(project_name: str, workspace_root: Path | None = None) -> list[DeliveryPush]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    results: list[DeliveryPush] = []
+    for path in sorted(directory.glob("delivery-push-*.json")):
+        try:
+            results.append(DeliveryPush.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(results, key=lambda item: item.updated_at, reverse=True)
+
+
+def build_delivery_latest_summary(project_name: str, workspace_root: Path | None = None) -> DeliveryLatestSummary:
+    root = workspace_root or get_workspace_root()
+    registration = load_registered_project(project_name, workspace_root=root)
+    target_repo_path = str(Path(registration.path).expanduser())
+    warnings: list[str] = []
+    current_git_status_summary = "unknown"
+    current_repo_is_clean = False
+    try:
+        status = get_git_repository_status(project_name, workspace_root=root)
+        target_repo_path = str(status.repo_path)
+        staged_files = [item.path for item in status.staged_files]
+        unstaged_files = [item.path for item in status.unstaged_files]
+        untracked_files = [item.path for item in status.untracked_files]
+        current_git_status_summary = _git_status_summary(staged_files, unstaged_files, untracked_files)
+        current_repo_is_clean = status.working_tree_clean
+        warnings.extend(status.warnings)
+    except ValueError as exc:
+        warnings.append(f"Current Git status unavailable: {exc}")
+
+    checks = list_delivery_checks(project_name, workspace_root=root)
+    plans = list_delivery_plans(project_name, workspace_root=root)
+    approvals = list_delivery_approvals(project_name, workspace_root=root)
+    reports = list_delivery_reports(project_name, workspace_root=root)
+    commit_results = list_delivery_commit_results(project_name, workspace_root=root)
+    push_results = list_delivery_push_results(project_name, workspace_root=root)
+
+    latest_check = checks[0] if checks else None
+    latest_meaningful_check = next((check for check in checks if not _is_empty_delivery_check(check)), None)
+    latest_plan = plans[0] if plans else None
+    latest_approval = approvals[0] if approvals else None
+    latest_report = reports[0] if reports else None
+    latest_commit = commit_results[0] if commit_results else None
+    latest_push = push_results[0] if push_results else None
+    latest_pushed_report = next((report for report in reports if report.pushed), None)
+    latest_pushed_push = next((push for push in push_results if push.pushed), None)
+    latest_pushed_delivery_id = latest_pushed_push.delivery_id if latest_pushed_push else latest_pushed_report.delivery_id if latest_pushed_report else None
+    latest_pushed_at = (
+        latest_pushed_push.pushed_at.isoformat()
+        if latest_pushed_push and latest_pushed_push.pushed_at
+        else latest_pushed_report.pushed_at.isoformat()
+        if latest_pushed_report and latest_pushed_report.pushed_at
+        else None
+    )
+    next_action = _delivery_latest_next_action(
+        project_name,
+        latest_check,
+        latest_plan,
+        latest_report,
+        latest_commit,
+        latest_push,
+        current_repo_is_clean,
+    )
+    return DeliveryLatestSummary(
+        project=project_name,
+        target_repo_path=target_repo_path,
+        current_git_status_summary=current_git_status_summary,
+        current_repo_is_clean=current_repo_is_clean,
+        current_repo_has_pending_changes=not current_repo_is_clean,
+        latest_delivery_check_id=latest_check.delivery_id if latest_check else None,
+        latest_delivery_check_status=latest_check.readiness_status if latest_check else None,
+        latest_delivery_check_is_empty=_is_empty_delivery_check(latest_check) if latest_check else False,
+        latest_meaningful_delivery_check_id=latest_meaningful_check.delivery_id if latest_meaningful_check else None,
+        latest_meaningful_delivery_check_status=latest_meaningful_check.readiness_status if latest_meaningful_check else None,
+        latest_plan_id=latest_plan.delivery_id if latest_plan else None,
+        latest_plan_status=latest_plan.delivery_status if latest_plan else None,
+        latest_approval_id=latest_approval.delivery_id if latest_approval else None,
+        latest_approval_status=latest_approval.approval_status if latest_approval else None,
+        latest_report_id=latest_report.delivery_id if latest_report else None,
+        latest_report_status=latest_report.final_status if latest_report else None,
+        latest_commit_result_id=latest_commit.delivery_id if latest_commit else None,
+        latest_commit_result_status=latest_commit.status if latest_commit else None,
+        latest_commit_hash=latest_commit.commit_hash if latest_commit else latest_report.commit_hash if latest_report else None,
+        latest_push_result_id=latest_push.delivery_id if latest_push else None,
+        latest_push_result_status=latest_push.push_status if latest_push else None,
+        latest_pushed_delivery_id=latest_pushed_delivery_id,
+        latest_pushed_at=latest_pushed_at,
+        next_action=next_action,
+        warnings=_dedupe(warnings),
+    )
+
+
 def load_delivery_check(project_name: str, delivery_id: str, workspace_root: Path | None = None) -> DeliveryCheck | None:
     root = workspace_root or get_workspace_root()
     json_path, _markdown_path = delivery_artifact_paths(project_name, delivery_id, workspace_root=root)
@@ -1959,6 +2100,64 @@ def _git_status_summary(staged: list[str], unstaged: list[str], untracked: list[
     if not staged and not unstaged and not untracked:
         return "clean"
     return f"staged {len(staged)}, unstaged {len(unstaged)}, untracked {len(untracked)}"
+
+
+def _is_empty_delivery_check(check: DeliveryCheck) -> bool:
+    return (
+        len(check.changed_files) == 0
+        and len(check.staged_files) == 0
+        and len(check.unstaged_files) == 0
+        and len(check.untracked_files) == 0
+        and len(check.blockers) == 0
+        and len(check.warnings) == 0
+        and check.readiness_status == READY
+    )
+
+
+def _check_has_no_file_changes(check: DeliveryCheck | None) -> bool:
+    return bool(check) and not check.changed_files and not check.staged_files and not check.unstaged_files and not check.untracked_files
+
+
+def _delivery_latest_next_action(
+    project_name: str,
+    latest_check: DeliveryCheck | None,
+    latest_plan: DeliveryPlan | None,
+    latest_report: DeliveryReport | None,
+    latest_commit: DeliveryCommitResult | None,
+    latest_push: DeliveryPush | None,
+    current_repo_is_clean: bool,
+) -> str:
+    if latest_check and current_repo_is_clean and _check_has_no_file_changes(latest_check) and not latest_check.blockers:
+        return "No delivery needed; repository is clean."
+    if latest_check and latest_check.blockers:
+        return f"Fix blockers from {latest_check.delivery_id}, then rerun devo delivery check --project {project_name} --write."
+    if current_repo_is_clean and latest_push and latest_push.pushed:
+        return "Delivery completed and pushed. Run delivery check again if current repository state matters."
+    if current_repo_is_clean and latest_report and latest_report.pushed:
+        return "Delivery completed and pushed. Run delivery check again if current repository state matters."
+    if not current_repo_is_clean and (not latest_check or _check_has_no_file_changes(latest_check)):
+        return f"Run devo delivery check --project {project_name} --write to capture current delivery readiness."
+    if latest_plan and latest_plan.approval_status == "approved":
+        if not latest_report or latest_report.source_delivery_plan_id != latest_plan.delivery_id:
+            return f"Approved plan exists; run devo delivery report-prepare --project {project_name} --plan {latest_plan.delivery_id}."
+    if latest_report and latest_report.final_status == "ready" and not latest_report.commit_hash:
+        return f"Report is ready; run devo delivery commit-preview --project {project_name} --report {latest_report.delivery_id}."
+    if latest_report and latest_report.commit_hash and not latest_report.pushed:
+        return f"Commit exists; run devo delivery push-preview --project {project_name} --report {latest_report.delivery_id}."
+    if latest_commit and latest_commit.status == "committed" and not (
+        (latest_push and latest_push.delivery_id == latest_commit.delivery_id and latest_push.pushed)
+        or (latest_report and latest_report.delivery_id == latest_commit.delivery_id and latest_report.pushed)
+    ):
+        return f"Commit exists; run devo delivery push-preview --project {project_name} --report {latest_commit.delivery_id}."
+    if latest_check and latest_check.changed_files and not latest_check.blockers:
+        return f"Create a delivery plan: devo delivery plan --project {project_name} --delivery {latest_check.delivery_id} --message \"<message>\"."
+    if latest_push and latest_push.pushed:
+        return "Delivery completed and pushed. Run delivery check again if current repository state matters."
+    if latest_report and latest_report.pushed:
+        return "Delivery completed and pushed. Run delivery check again if current repository state matters."
+    if current_repo_is_clean:
+        return "No delivery needed; repository is clean."
+    return f"Run devo delivery check --project {project_name} --write to capture current delivery readiness."
 
 
 def _is_forbidden_path(path: str) -> bool:
