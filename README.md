@@ -222,6 +222,20 @@ devo project queue-resume --project MyProject --queue Q001
 
 Queue artifacts are stored under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. The execution queue is state tracking only. It does not run Codex, run validation, run Git commands, commit, push, or modify target project source.
 
+Create a bounded batch execution policy for future autonomous queue work:
+
+```powershell
+devo project execution-policy-create --project MyProject --batch B001 --queue Q001 --title "Small approved batch"
+devo project execution-policy-request --project MyProject --policy POL-0001 --note "Ready for bounded execution review."
+devo project execution-policy-approve --project MyProject --policy POL-0001 --approver "Manas" --note "Approved inside these limits."
+devo project execution-policy-list --project MyProject
+devo project execution-policy-show --project MyProject --policy POL-0001
+devo project execution-policy-check --project MyProject --policy POL-0001
+devo project execution-policy-reject --project MyProject --policy POL-0001 --reviewer "Manas" --note "Too broad."
+```
+
+Execution policy artifacts are stored under `workspace/projects/<project>/planning/execution-policies/` as `execution-policy-<policy_id>.json`, `execution-policy-<policy_id>.md`, and `execution-policy-index.json`. A policy is a bounded approval contract for a batch/queue: allowed tasks, optional queue items, allowed and forbidden file patterns, per-task and per-run limits, validation commands, auto-delivery/auto-push permissions, pause conditions, approval metadata, and expiry. It is not autonomous execution yet, does not run Codex, does not run validation, does not create delivery runner requests, does not stage/commit/push, and does not modify target projects. `auto_delivery_allowed` and `auto_push_allowed` only describe what a future TASK-DEVO-129 queue worker may do inside the policy bounds through the trusted runner path.
+
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
 
 ```powershell

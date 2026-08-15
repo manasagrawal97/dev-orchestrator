@@ -12,7 +12,9 @@ from devo.project_planning import (
     build_project_intake_status,
     calculate_project_progress,
     create_execution_queue_from_batch,
+    execution_policy_artifact_paths,
     generate_backlog_refinement_prompt,
+    list_execution_policies,
     list_codex_handoffs,
     list_batch_approvals,
     list_execution_queues,
@@ -20,6 +22,7 @@ from devo.project_planning import (
     load_codex_handoff,
     list_project_batches,
     load_execution_queue,
+    load_execution_policy,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
@@ -833,6 +836,253 @@ def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monk
     assert queue.items[0].task_id == "T001"
     assert "state is tracking only" in queue_md.read_text(encoding="utf-8")
     assert _target_snapshot(project_path) == before_target
+
+
+def test_execution_policy_create_creates_draft_policy_artifact(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_batch(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--title",
+            "Safe policy",
+            "--allowed-task",
+            "T001",
+            "--allowed-file",
+            "docs/**",
+            "--forbidden-file",
+            ".env",
+            "--max-tasks",
+            "1",
+            "--max-tasks-per-run",
+            "1",
+            "--max-changed-files-per-task",
+            "20",
+            "--validation-command",
+            "git diff --check",
+            "--note",
+            "Create draft only.",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Execution policy saved" in result.output
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    assert policy.status == "draft"
+    assert policy.batch_id == "B001"
+    assert policy.allowed_task_ids == ["T001"]
+    assert policy.allowed_file_patterns == ["docs/**"]
+    assert policy.forbidden_file_patterns == [".env"]
+    assert policy.max_tasks == 1
+    assert policy.validation_commands == ["git diff --check"]
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    assert json_path.exists()
+    assert markdown_path.exists()
+    assert "bounded approval contract" in markdown_path.read_text(encoding="utf-8")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_execution_policy_create_validates_batch_and_records_queue(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+
+    missing = runner.invoke(
+        app,
+        ["project", "execution-policy-create", "--project", "sample", "--batch", "B999", "--title", "Missing"],
+        terminal_width=240,
+    )
+    created = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--title",
+            "Queued policy",
+            "--allowed-task",
+            "T001",
+        ],
+        terminal_width=240,
+    )
+
+    assert missing.exit_code != 0
+    assert "Project batch not found" in missing.output
+    assert created.exit_code == 0, created.output
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    assert policy.queue_id == "Q001"
+    assert policy.allowed_queue_item_ids == ["QI001"]
+
+
+def test_execution_policy_request_approve_reject_list_show_and_check(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--title",
+            "Approval policy",
+            "--allowed-task",
+            "T001",
+            "--allowed-file",
+            "src/**",
+            "--forbidden-file",
+            ".env",
+            "--validation-command",
+            "pytest",
+        ],
+    )
+
+    requested = runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", "POL-0001", "--note", "Ready."], terminal_width=240)
+    approved = runner.invoke(
+        app,
+        ["project", "execution-policy-approve", "--project", "sample", "--policy", "POL-0001", "--approver", "Manas", "--note", "Approved bounds."],
+        terminal_width=240,
+    )
+    listed = runner.invoke(app, ["project", "execution-policy-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["project", "execution-policy-show", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+    checked = runner.invoke(app, ["project", "execution-policy-check", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+
+    assert requested.exit_code == 0, requested.output
+    assert approved.exit_code == 0, approved.output
+    assert "Execution policy approved" in approved.output
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    assert policy.status == "approved"
+    assert policy.approver == "Manas"
+    assert "TASK-DEVO-129" in policy.next_action
+    assert listed.exit_code == 0, listed.output
+    assert "POL-0001" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Approval policy" in shown.output
+    assert checked.exit_code == 0, checked.output
+    assert "Usable: True" in checked.output
+
+    runner.invoke(app, ["project", "execution-policy-create", "--project", "sample", "--batch", "B001", "--title", "Rejected policy", "--allowed-task", "T001"])
+    runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", "POL-0002"])
+    rejected = runner.invoke(
+        app,
+        ["project", "execution-policy-reject", "--project", "sample", "--policy", "POL-0002", "--reviewer", "Manas", "--note", "Too broad."],
+        terminal_width=240,
+    )
+    assert rejected.exit_code == 0, rejected.output
+    rejected_policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert rejected_policy is not None
+    assert rejected_policy.status == "rejected"
+    assert len(list_execution_policies("sample", workspace_root=workspace)) == 2
+
+
+def test_execution_policy_request_refuses_empty_allowed_scope(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_batch(tmp_path, task_ids="")
+
+    runner.invoke(app, ["project", "execution-policy-create", "--project", "sample", "--batch", "B001", "--title", "Empty policy"], terminal_width=240)
+    result = runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", "POL-0001", "--note", "Ready."], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "must include allowed tasks" in result.output
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    assert policy.status == "draft"
+
+
+def test_execution_policy_check_blocks_expired_missing_refs_and_auto_push_without_delivery(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--title",
+            "Broken policy",
+            "--allowed-task",
+            "T001",
+            "--no-auto-delivery",
+            "--expires-at",
+            "2000-01-01T00:00:00+00:00",
+        ],
+    )
+    runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", "POL-0001"])
+    runner.invoke(app, ["project", "execution-policy-approve", "--project", "sample", "--policy", "POL-0001", "--approver", "Manas"])
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    broken = policy.model_copy(update={"batch_id": "B999", "queue_id": "Q999", "allowed_task_ids": ["T999"], "allowed_queue_item_ids": ["QI999"]})
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(broken.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("broken test policy\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["project", "execution-policy-check", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Policy expired" in result.output
+    assert "Referenced batch not found" in result.output
+    assert "Referenced queue not found" in result.output
+    assert "auto_push_allowed requires auto_delivery_allowed" in result.output
+
+
+def test_execution_policy_check_blocks_missing_allowed_task(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--title",
+            "Stale policy",
+            "--allowed-task",
+            "T001",
+        ],
+    )
+    runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", "POL-0001"])
+    runner.invoke(app, ["project", "execution-policy-approve", "--project", "sample", "--policy", "POL-0001", "--approver", "Manas"])
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    stale = policy.model_copy(update={"allowed_task_ids": ["T999"]})
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(stale.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("stale test policy\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["project", "execution-policy-check", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Allowed tasks missing from batch B001: T999" in result.output
 
 
 def test_queue_create_rejects_unapproved_and_unknown_batch(tmp_path: Path, monkeypatch) -> None:

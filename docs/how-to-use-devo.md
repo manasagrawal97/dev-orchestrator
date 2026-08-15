@@ -213,6 +213,24 @@ devo project queue-resume --project MyProject --queue Q001
 
 Queue artifacts live under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. Completing or blocking a queue item can update the corresponding Devo backlog task status so progress reflects queue state, but it still does not edit the target repository.
 
+## Batch Execution Policies
+
+A batch execution policy is the bounded approval contract that a future queue worker must obey. It is not the worker loop itself.
+
+```powershell
+devo project execution-policy-create --project MyProject --batch B001 --queue Q001 --title "Small approved batch" --allowed-task T001 --allowed-file "docs/**" --forbidden-file ".env" --max-tasks 1 --max-tasks-per-run 1 --max-changed-files-per-task 20 --validation-command "git diff --check"
+devo project execution-policy-request --project MyProject --policy POL-0001 --note "Ready for review."
+devo project execution-policy-approve --project MyProject --policy POL-0001 --approver "Manas" --note "Approved inside these limits."
+devo project execution-policy-list --project MyProject
+devo project execution-policy-show --project MyProject --policy POL-0001
+devo project execution-policy-check --project MyProject --policy POL-0001
+devo project execution-policy-reject --project MyProject --policy POL-0001 --reviewer "Manas" --note "Too broad."
+```
+
+Policies live under `workspace/projects/<project>/planning/execution-policies/`. They record the project, batch, optional queue, allowed task ids, allowed queue item ids, allowed and forbidden file patterns, maximum task and changed-file limits, validation commands, auto-delivery and auto-push permissions, required worker review/validation evidence, pause conditions, approver/reviewer notes, expiry, status, and next action.
+
+Policy approval is not blanket permission for arbitrary changes. It is permission only inside the recorded batch/task/file/validation bounds. Future automation must pause on failed tests, secret risk, forbidden paths, changed files outside scope, too many files, unclear worker output, usage limits, commit failures, push failures, or expired/missing policy references. Scheduled trusted runner delivery remains the delivery mechanism; the policy does not bypass guarded commit/push.
+
 ## Codex Handoff Prompts
 
 Codex handoff prompts are generated workspace artifacts that package one queue item, one backlog task, or one approved batch into a Codex-ready operator prompt. They are a safe manual bridge from Devo planning to Codex execution.

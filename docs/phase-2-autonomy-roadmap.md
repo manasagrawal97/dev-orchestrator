@@ -79,6 +79,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: Worker loop execution, UI controls, or AI-agent decisions.
 - Safety rules: Batch approval is not blanket permission for anything; it is a bounded contract.
 - Done criteria: Devo can represent whether a planned queue item is inside or outside an approved batch policy.
+- Status: Completed. Devo now stores batch execution policy artifacts under `workspace/projects/<project>/planning/execution-policies/` and exposes create/request/approve/reject/list/show/check commands. These commands create approval evidence only and do not execute queues, run Codex, validate, stage, commit, push, or modify target projects.
 
 ### TASK-DEVO-129: Autonomous Queue Worker Loop
 
@@ -246,9 +247,9 @@ Implemented command shape:
 
 Real scheduled delivery remains a normal-Windows-user operation. Codex/sandbox can plan and dry-run the schedule, but Manas should decide whether to install and enable the live task.
 
-## 7. Batch Approval Policy
+## 7. Batch Execution Policy
 
-TASK-DEVO-128 should define the batch policy contract before multi-task autonomy.
+TASK-DEVO-128 defines the batch policy contract before multi-task autonomy.
 
 Suggested fields:
 
@@ -268,7 +269,7 @@ Suggested fields:
 - expiry
 - status
 
-Batch approval is not blanket permission for anything. It is a bounded contract.
+Batch execution policy approval is not blanket permission for anything. It is a bounded contract. `auto_delivery_allowed` and `auto_push_allowed` are meaningful only inside that contract and still require the trusted delivery runner path.
 
 If work exceeds the contract, Devo must pause and ask for a new approval or revised policy.
 

@@ -117,6 +117,7 @@ from .project_onboarding import ProjectOnboardingReport, build_project_onboardin
 from .project_planning import (
     BacklogTask,
     BacklogValidationResult,
+    BatchExecutionPolicy,
     BatchApproval,
     BatchSuggestionResult,
     CodexHandoff,
@@ -136,11 +137,13 @@ from .project_planning import (
     CodexPreflightResult,
     CodexRunPlan,
     CodexWorkerReport,
+    ExecutionPolicyCheckResult,
     QueueItemCompletionReadiness,
     WorkerReview,
     WorkerReportValidationResult,
     WorkerRun,
     approve_codex_run_plan,
+    approve_execution_policy,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -148,6 +151,8 @@ from .project_planning import (
     block_queue_item,
     calculate_project_progress,
     build_project_intake_status,
+    check_execution_policy,
+    create_batch_execution_policy,
     create_project_batch,
     create_project_backlog,
     create_project_blueprint,
@@ -176,6 +181,7 @@ from .project_planning import (
     import_refined_backlog,
     attach_codex_worker_review_evidence,
     list_execution_queues,
+    list_execution_policies,
     list_batch_approvals,
     list_codex_handoffs,
     list_codex_run_plans,
@@ -184,6 +190,7 @@ from .project_planning import (
     list_codex_worker_runs,
     list_project_batches,
     load_execution_queue,
+    load_execution_policy,
     load_batch_approval,
     load_codex_handoff,
     load_codex_run_plan,
@@ -201,6 +208,8 @@ from .project_planning import (
     prepare_codex_worker_for_queue_next,
     preview_codex_worker_execution,
     reject_project_batch,
+    reject_execution_policy,
+    request_execution_policy,
     request_batch_approval,
     review_project_batch,
     record_codex_worker_review,
@@ -295,7 +304,14 @@ from .work_history import ProjectActivitySummary, WorkPackageSummary, build_proj
 from .visual_reports import generate_project_activity_visual, generate_work_package_visual
 from .workflow import WorkflowAction, advance_workflow, get_next_workflow_action, get_workflow_status, run_workflow_batch
 
-app = typer.Typer(help="DevOrchestrator local development CLI.")
+
+class DevoTyper(typer.Typer):
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        kwargs.setdefault("windows_expand_args", False)
+        return super().__call__(*args, **kwargs)
+
+
+app = DevoTyper(help="DevOrchestrator local development CLI.")
 project_app = typer.Typer(help="Manage registered projects.")
 agent_app = typer.Typer(help="Inspect agent definitions and generate prompts.")
 run_app = typer.Typer(help="Manage development runs.")
@@ -572,6 +588,57 @@ def _print_batch_suggestion(result: BatchSuggestionResult) -> None:
         console.print("Warnings:")
         for item in result.warnings:
             console.print(f"  - {item}", soft_wrap=True)
+
+
+def _print_execution_policy(policy: BatchExecutionPolicy, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Execution policy: {policy.policy_id}[/bold]")
+    console.print(f"Title: {policy.title}")
+    console.print(f"Status: {policy.status}")
+    console.print(f"Batch: {policy.batch_id}")
+    console.print(f"Queue: {policy.queue_id or 'none'}")
+    console.print(f"Risk: {policy.risk_level}")
+    console.print(f"Allowed tasks: {', '.join(policy.allowed_task_ids) if policy.allowed_task_ids else 'none'}", soft_wrap=True)
+    console.print(f"Allowed queue items: {', '.join(policy.allowed_queue_item_ids) if policy.allowed_queue_item_ids else 'none'}", soft_wrap=True)
+    console.print(f"Allowed files: {', '.join(policy.allowed_file_patterns) if policy.allowed_file_patterns else 'none'}", soft_wrap=True)
+    console.print(f"Forbidden files: {', '.join(policy.forbidden_file_patterns) if policy.forbidden_file_patterns else 'none'}", soft_wrap=True)
+    console.print(
+        f"Limits: max_tasks={policy.max_tasks} max_tasks_per_run={policy.max_tasks_per_run} "
+        f"max_changed_files_per_task={policy.max_changed_files_per_task} max_total_changed_files={policy.max_total_changed_files}",
+        soft_wrap=True,
+    )
+    console.print(f"Validation commands: {', '.join(policy.validation_commands) if policy.validation_commands else 'none'}", soft_wrap=True)
+    console.print(f"Auto delivery: {policy.auto_delivery_allowed}")
+    console.print(f"Auto push: {policy.auto_push_allowed}")
+    console.print(f"Requires worker review: {policy.requires_worker_review}")
+    console.print(f"Requires validation evidence: {policy.requires_validation_evidence}")
+    console.print(f"Approver: {policy.approver or 'none'}")
+    console.print(f"Reviewer: {policy.reviewer or 'none'}")
+    console.print(f"Expires: {policy.expires_at.isoformat() if policy.expires_at else 'none'}")
+    console.print("Pause conditions:")
+    for item in policy.pause_conditions or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    if policy.notes:
+        console.print("Notes:")
+        for note in policy.notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    console.print(f"Next action: {policy.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+def _print_execution_policy_check(result: ExecutionPolicyCheckResult) -> None:
+    console.print(f"[bold]Execution policy check: {result.policy_id}[/bold]")
+    console.print(f"Status: {result.status}")
+    console.print(f"Usable: {result.usable}")
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
 
 
 def _print_project_progress(progress: ProjectProgress) -> None:
@@ -1137,6 +1204,22 @@ def _resolve_project_run(project_name: str | None, run_id: str | None, *, announ
     if not run_id and announce:
         console.print(f"Using current run: {resolved_run}")
     return resolved_project, resolved_run
+
+
+def _parse_optional_datetime(value: str | None) -> object | None:
+    if not value:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if cleaned.endswith("Z"):
+        cleaned = f"{cleaned[:-1]}+00:00"
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(cleaned)
+    except ValueError as exc:
+        raise typer.BadParameter(f"Invalid ISO timestamp: {value}", param_hint="--expires-at") from exc
 
 
 @app.command("doctor")
@@ -3566,6 +3649,157 @@ def reject_batch_command(
     _print_project_batch(batch, json_path=json_path, markdown_path=markdown_path)
     _print_batch_approval(approval, json_path=approval_json, markdown_path=approval_md)
     console.print("No batch was deleted and no target project files were modified.")
+
+
+@project_app.command("execution-policy-create")
+def create_execution_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    batch_id: str = typer.Option(..., "--batch", help="Planning batch id."),
+    title: str = typer.Option(..., "--title", help="Execution policy title."),
+    queue_id: str | None = typer.Option(None, "--queue", help="Optional execution queue id."),
+    allowed_tasks: list[str] | None = typer.Option(None, "--allowed-task", help="Allowed backlog task id. Repeatable or comma-separated."),
+    allowed_files: list[str] | None = typer.Option(None, "--allowed-file", help="Allowed file pattern. Repeatable or comma-separated."),
+    forbidden_files: list[str] | None = typer.Option(None, "--forbidden-file", help="Forbidden file pattern. Repeatable or comma-separated."),
+    max_tasks: int | None = typer.Option(None, "--max-tasks", help="Maximum tasks covered by this policy."),
+    max_tasks_per_run: int = typer.Option(1, "--max-tasks-per-run", help="Maximum tasks a future worker may process per run."),
+    max_changed_files_per_task: int = typer.Option(20, "--max-changed-files-per-task", help="Maximum changed files allowed per task."),
+    validation_commands: list[str] | None = typer.Option(None, "--validation-command", help="Required validation command. Repeatable or comma-separated."),
+    auto_delivery: bool = typer.Option(True, "--auto-delivery/--no-auto-delivery", help="Allow future runner-request creation within policy bounds."),
+    auto_push: bool = typer.Option(True, "--auto-push/--no-auto-push", help="Allow future trusted runner push within policy bounds."),
+    expires_at: str | None = typer.Option(None, "--expires-at", help="Optional ISO timestamp when policy expires."),
+    note: str = typer.Option("", "--note", help="Policy note."),
+) -> None:
+    """Create a draft bounded execution policy without executing work."""
+    project_name = _resolve_project(project_name)
+    try:
+        policy, json_path, markdown_path = create_batch_execution_policy(
+            project_name,
+            batch_id=batch_id,
+            title=title,
+            queue_id=queue_id,
+            allowed_task_ids=allowed_tasks,
+            allowed_file_patterns=allowed_files,
+            forbidden_file_patterns=forbidden_files,
+            max_tasks=max_tasks,
+            max_tasks_per_run=max_tasks_per_run,
+            max_changed_files_per_task=max_changed_files_per_task,
+            validation_commands=validation_commands,
+            auto_delivery_allowed=auto_delivery,
+            auto_push_allowed=auto_push,
+            expires_at=_parse_optional_datetime(expires_at),
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--batch") from exc
+    console.print(f"[green]Execution policy saved[/green] {project_name}")
+    _print_execution_policy(policy, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Suggested next command: devo project execution-policy-request --project {project_name} --policy {policy.policy_id} --note \"<note>\"")
+
+
+@project_app.command("execution-policy-request")
+def request_execution_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+    note: str = typer.Option("", "--note", help="Request note."),
+) -> None:
+    """Move a draft execution policy to requested without executing work."""
+    project_name = _resolve_project(project_name)
+    try:
+        policy, json_path, markdown_path = request_execution_policy(project_name, policy_id, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    console.print(f"[green]Execution policy approval requested[/green] {project_name}")
+    _print_execution_policy(policy, json_path=json_path, markdown_path=markdown_path)
+    console.print(f"Suggested next command: devo project execution-policy-approve --project {project_name} --policy {policy.policy_id} --approver \"<name>\" --note \"<note>\"")
+
+
+@project_app.command("execution-policy-approve")
+def approve_execution_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+    approver: str = typer.Option(..., "--approver", help="Approver name."),
+    note: str = typer.Option("", "--note", help="Approval note."),
+) -> None:
+    """Approve a requested execution policy without executing queue work."""
+    project_name = _resolve_project(project_name)
+    try:
+        policy, json_path, markdown_path = approve_execution_policy(project_name, policy_id, approver=approver, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    console.print(f"[green]Execution policy approved[/green] {project_name}")
+    _print_execution_policy(policy, json_path=json_path, markdown_path=markdown_path)
+    console.print("No autonomous worker was started. No delivery request was created.")
+
+
+@project_app.command("execution-policy-reject")
+def reject_execution_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+    reviewer: str = typer.Option(..., "--reviewer", help="Reviewer name."),
+    note: str = typer.Option(..., "--note", help="Rejection note."),
+) -> None:
+    """Reject an execution policy without deleting artifacts."""
+    project_name = _resolve_project(project_name)
+    try:
+        policy, json_path, markdown_path = reject_execution_policy(project_name, policy_id, reviewer=reviewer, note=note)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    console.print(f"[yellow]Execution policy rejected[/yellow] {project_name}")
+    _print_execution_policy(policy, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("execution-policy-list")
+def list_execution_policies_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List batch execution policies for a project."""
+    project_name = _resolve_project(project_name)
+    try:
+        policies = list_execution_policies(project_name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    console.print(f"[bold]Execution policies: {project_name}[/bold]")
+    if not policies:
+        console.print("[yellow]No execution policies recorded.[/yellow]")
+        console.print(f"Suggested next command: devo project execution-policy-create --project {project_name} --batch <batchId> --title \"<title>\"")
+        return
+    for policy in policies:
+        console.print(
+            f"{policy.policy_id} | {policy.status} | batch={policy.batch_id} | queue={policy.queue_id or 'none'} | "
+            f"tasks={len(policy.allowed_task_ids)} | auto_delivery={policy.auto_delivery_allowed} auto_push={policy.auto_push_allowed} | {policy.title}",
+            soft_wrap=True,
+        )
+
+
+@project_app.command("execution-policy-show")
+def show_execution_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+) -> None:
+    """Show execution policy details without mutating them."""
+    project_name = _resolve_project(project_name)
+    try:
+        policy = load_execution_policy(project_name, policy_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    if not policy:
+        console.print(f"[yellow]Execution policy not found: {policy_id}[/yellow]")
+        console.print(f"Suggested next command: devo project execution-policy-list --project {project_name}")
+        return
+    _print_execution_policy(policy)
+
+
+@project_app.command("execution-policy-check")
+def check_execution_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+) -> None:
+    """Check whether an approved execution policy is usable for future autonomous work."""
+    project_name = _resolve_project(project_name)
+    result = check_execution_policy(project_name, policy_id)
+    _print_execution_policy_check(result)
+    if not result.usable:
+        raise typer.Exit(1)
 
 
 @project_app.command("progress")

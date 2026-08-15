@@ -28,6 +28,7 @@ from .project_planning import (
     list_codex_worker_reviews,
     list_codex_worker_runs,
     list_project_batches,
+    list_execution_policies,
     list_execution_queues,
     load_codex_worker_run,
     load_project_backlog,
@@ -162,6 +163,13 @@ class ProjectOverview(BaseModel):
     batch_rejected_count: int = 0
     batch_needs_changes_count: int = 0
     batch_approval_next_action: str = "Create a Project Brief."
+    execution_policy_count: int = 0
+    approved_execution_policy_count: int = 0
+    latest_execution_policy_id: str | None = None
+    latest_execution_policy_status: str | None = None
+    latest_execution_policy_batch_id: str | None = None
+    latest_execution_policy_queue_id: str | None = None
+    execution_policy_next_action: str = "Create a Project Brief."
     queue_count: int = 0
     latest_queue_id: str | None = None
     latest_queue_status: str | None = None
@@ -352,6 +360,13 @@ def build_project_overview_with_timing(
             batch_rejected_count=int(planning["batch_rejected_count"]),
             batch_needs_changes_count=int(planning["batch_needs_changes_count"]),
             batch_approval_next_action=str(planning["batch_approval_next_action"]),
+            execution_policy_count=int(planning["execution_policy_count"]),
+            approved_execution_policy_count=int(planning["approved_execution_policy_count"]),
+            latest_execution_policy_id=str(planning["latest_execution_policy_id"]) if planning["latest_execution_policy_id"] else None,
+            latest_execution_policy_status=str(planning["latest_execution_policy_status"]) if planning["latest_execution_policy_status"] else None,
+            latest_execution_policy_batch_id=str(planning["latest_execution_policy_batch_id"]) if planning["latest_execution_policy_batch_id"] else None,
+            latest_execution_policy_queue_id=str(planning["latest_execution_policy_queue_id"]) if planning["latest_execution_policy_queue_id"] else None,
+            execution_policy_next_action=str(planning["execution_policy_next_action"]),
             queue_count=int(planning["queue_count"]),
             latest_queue_id=str(planning["latest_queue_id"]) if planning["latest_queue_id"] else None,
             latest_queue_status=str(planning["latest_queue_status"]) if planning["latest_queue_status"] else None,
@@ -625,6 +640,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         backlog = load_project_backlog(project_name, workspace_root=workspace_root)
         batches = list_project_batches(project_name, workspace_root=workspace_root)
         batch_approvals = list_batch_approvals(project_name, workspace_root=workspace_root)
+        execution_policies = list_execution_policies(project_name, workspace_root=workspace_root)
         queues = list_execution_queues(project_name, workspace_root=workspace_root)
         handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
         worker_runs = list_codex_worker_runs(project_name, workspace_root=workspace_root)
@@ -656,6 +672,13 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "batch_rejected_count": 0,
             "batch_needs_changes_count": 0,
             "batch_approval_next_action": f"Review planning artifacts: {exc}",
+            "execution_policy_count": 0,
+            "approved_execution_policy_count": 0,
+            "latest_execution_policy_id": None,
+            "latest_execution_policy_status": None,
+            "latest_execution_policy_batch_id": None,
+            "latest_execution_policy_queue_id": None,
+            "execution_policy_next_action": f"Review execution policy artifacts: {exc}",
             "queue_count": 0,
             "latest_queue_id": None,
             "latest_queue_status": None,
@@ -712,6 +735,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     latest_batch = batches[0] if batches else None
     latest_batch_approval = next((approval for approval in batch_approvals if latest_batch and approval.batch_id == latest_batch.batch_id), None)
+    latest_execution_policy = execution_policies[0] if execution_policies else None
     latest_queue = queues[0] if queues else None
     latest_handoff = handoffs[0] if handoffs else None
     latest_worker_run = worker_runs[0] if worker_runs else None
@@ -751,6 +775,11 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             next_action = f"Request Batch approval: devo project batch-approval-request --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'} --note \"<note>\""
     elif not queues:
         next_action = f"Create an Execution Queue: devo project queue-create --project {project_name} --batch {latest_batch.batch_id if latest_batch else '<batchId>'}"
+    elif not any(policy.status == "approved" for policy in execution_policies):
+        next_action = (
+            f"Create a Batch Execution Policy: devo project execution-policy-create --project {project_name} "
+            f"--batch {latest_batch.batch_id if latest_batch else '<batchId>'} --queue {latest_queue.queue_id if latest_queue else '<queueId>'} --title \"<title>\""
+        )
     else:
         next_action = f"Continue the Execution Queue: devo project queue-next --project {project_name} --queue {latest_queue.queue_id if latest_queue else '<queueId>'}"
     queue_next_action = _queue_next_action(project_name, latest_queue)
@@ -778,6 +807,20 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "batch_rejected_count": sum(1 for approval in batch_approvals if approval.approval_status == "rejected"),
         "batch_needs_changes_count": sum(1 for approval in batch_approvals if approval.review_status == "needs_changes"),
         "batch_approval_next_action": latest_batch_approval.next_action if latest_batch_approval else next_action,
+        "execution_policy_count": len(execution_policies),
+        "approved_execution_policy_count": sum(1 for policy in execution_policies if policy.status == "approved"),
+        "latest_execution_policy_id": latest_execution_policy.policy_id if latest_execution_policy else None,
+        "latest_execution_policy_status": latest_execution_policy.status if latest_execution_policy else None,
+        "latest_execution_policy_batch_id": latest_execution_policy.batch_id if latest_execution_policy else None,
+        "latest_execution_policy_queue_id": latest_execution_policy.queue_id if latest_execution_policy else None,
+        "execution_policy_next_action": (
+            latest_execution_policy.next_action
+            if latest_execution_policy
+            else (
+                f"Create a Batch Execution Policy: devo project execution-policy-create --project {project_name} "
+                f"--batch {latest_batch.batch_id if latest_batch else '<batchId>'} --title \"<title>\""
+            )
+        ),
         "queue_count": len(queues),
         "latest_queue_id": latest_queue.queue_id if latest_queue else None,
         "latest_queue_status": latest_queue.status if latest_queue else None,

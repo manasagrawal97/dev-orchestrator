@@ -172,6 +172,10 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "latest_batch_approval_status" in overview_data
     assert "batch_approval_requested_count" in overview_data
     assert "batch_approval_next_action" in overview_data
+    assert "execution_policy_count" in overview_data
+    assert "approved_execution_policy_count" in overview_data
+    assert "latest_execution_policy_status" in overview_data
+    assert "execution_policy_next_action" in overview_data
     assert "project_completion_percent" in overview_data
     assert "progress_next_action" in overview_data
     assert "queue_count" in overview_data
@@ -219,6 +223,40 @@ def test_project_overview_includes_batch_approval_summary(tmp_path: Path, monkey
     assert overview.latest_batch_review_status == "not_reviewed"
     assert overview.batch_approval_requested_count == 1
     assert "batch-approval-show" in overview.batch_approval_next_action
+
+
+def test_project_overview_includes_execution_policy_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--title",
+            "Policy",
+            "--allowed-task",
+            "T001",
+        ],
+    )
+
+    overview = build_project_overview("sample")
+
+    assert overview.execution_policy_count == 1
+    assert overview.latest_execution_policy_id == "POL-0001"
+    assert overview.latest_execution_policy_status == "draft"
+    assert overview.latest_execution_policy_batch_id == "B001"
+    assert overview.latest_execution_policy_queue_id == "Q001"
+    assert "execution-policy-request" in overview.execution_policy_next_action
 
 
 def test_project_overview_includes_worker_run_summary(tmp_path: Path, monkeypatch) -> None:

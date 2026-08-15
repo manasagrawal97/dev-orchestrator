@@ -29,6 +29,8 @@ BATCH_INDEX_JSON = "batch-index.json"
 BATCH_APPROVALS_DIR_NAME = "approvals"
 QUEUES_DIR_NAME = "queues"
 QUEUE_INDEX_JSON = "queue-index.json"
+EXECUTION_POLICIES_DIR_NAME = "execution-policies"
+EXECUTION_POLICY_INDEX_JSON = "execution-policy-index.json"
 HANDOFFS_DIR_NAME = "handoffs"
 HANDOFF_INDEX_JSON = "handoff-index.json"
 WORKERS_DIR_NAME = "workers"
@@ -49,6 +51,7 @@ ALLOWED_BATCH_APPROVAL_STATUSES = {"not_requested", "requested", "approved", "re
 ALLOWED_BATCH_REVIEW_STATUSES = {"not_reviewed", "reviewed", "needs_changes"}
 ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
 ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "waiting_review", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
+ALLOWED_EXECUTION_POLICY_STATUSES = {"draft", "requested", "approved", "rejected", "expired", "cancelled", "completed"}
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
 ALLOWED_HANDOFF_STATUSES = {"draft", "used", "superseded"}
 ALLOWED_HANDOFF_TYPES = {"task", "batch", "queue_next"}
@@ -73,6 +76,17 @@ ALLOWED_WORKER_RUN_PLAN_APPROVAL_STATUSES = {"not_requested", "requested", "appr
 ALLOWED_WORKER_PREFLIGHT_STATUSES = {"not_run", "passed", "warnings", "blocked"}
 SELECTABLE_TASK_STATUSES = {"draft", "ready", "approved"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+DEFAULT_EXECUTION_POLICY_PAUSE_CONDITIONS = [
+    "tests failed",
+    "secret risk",
+    "forbidden path",
+    "changed files outside allowed scope",
+    "too many files",
+    "unclear worker output",
+    "usage limit",
+    "commit failure",
+    "push failure",
+]
 
 
 class ProjectBrief(BaseModel):
@@ -271,6 +285,81 @@ class BatchIndex(BaseModel):
     project: str
     batches: list[BatchIndexEntry] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class BatchExecutionPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    policy_id: str
+    batch_id: str
+    queue_id: str | None = None
+    title: str
+    status: str = "draft"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    requested_at: datetime | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    expires_at: datetime | None = None
+    approver: str | None = None
+    reviewer: str | None = None
+    decision_note: str = ""
+    allowed_task_ids: list[str] = Field(default_factory=list)
+    allowed_queue_item_ids: list[str] = Field(default_factory=list)
+    allowed_file_patterns: list[str] = Field(default_factory=list)
+    forbidden_file_patterns: list[str] = Field(default_factory=list)
+    max_tasks: int = 1
+    max_tasks_per_run: int = 1
+    max_changed_files_per_task: int = 20
+    max_total_changed_files: int = 20
+    validation_commands: list[str] = Field(default_factory=list)
+    auto_delivery_allowed: bool = True
+    auto_push_allowed: bool = True
+    requires_worker_review: bool = True
+    requires_validation_evidence: bool = True
+    pause_conditions: list[str] = Field(default_factory=lambda: list(DEFAULT_EXECUTION_POLICY_PAUSE_CONDITIONS))
+    risk_level: str = "medium"
+    notes: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class ExecutionPolicyIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy_id: str
+    batch_id: str
+    queue_id: str | None = None
+    title: str
+    status: str
+    task_count: int
+    auto_delivery_allowed: bool
+    auto_push_allowed: bool
+    path: str
+    updated_at: datetime
+
+
+class ExecutionPolicyIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    policies: list[ExecutionPolicyIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ExecutionPolicyCheckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    usable: bool = False
+    status: str = "missing"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
 
 
 class BatchSuggestion(BaseModel):
@@ -903,6 +992,8 @@ class PlanningArtifactPaths(BaseModel):
     batch_index_json: Path
     queues_dir: Path
     queue_index_json: Path
+    execution_policies_dir: Path
+    execution_policy_index_json: Path
     handoffs_dir: Path
     handoff_index_json: Path
 
@@ -924,6 +1015,8 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         batch_index_json=planning_dir / BATCHES_DIR_NAME / BATCH_INDEX_JSON,
         queues_dir=planning_dir / QUEUES_DIR_NAME,
         queue_index_json=planning_dir / QUEUES_DIR_NAME / QUEUE_INDEX_JSON,
+        execution_policies_dir=planning_dir / EXECUTION_POLICIES_DIR_NAME,
+        execution_policy_index_json=planning_dir / EXECUTION_POLICIES_DIR_NAME / EXECUTION_POLICY_INDEX_JSON,
         handoffs_dir=planning_dir / HANDOFFS_DIR_NAME,
         handoff_index_json=planning_dir / HANDOFFS_DIR_NAME / HANDOFF_INDEX_JSON,
     )
@@ -1409,6 +1502,12 @@ def batch_approval_artifact_paths(project_name: str, batch_id: str, workspace_ro
     return paths.batch_approvals_dir / f"batch-{safe_id}-approval.json", paths.batch_approvals_dir / f"batch-{safe_id}-approval.md"
 
 
+def execution_policy_artifact_paths(project_name: str, policy_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_policy_id(policy_id)
+    return paths.execution_policies_dir / f"execution-policy-{safe_id}.json", paths.execution_policies_dir / f"execution-policy-{safe_id}.md"
+
+
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -1431,6 +1530,289 @@ def list_batch_approvals(project_name: str, workspace_root: Path | None = None) 
         except (ValueError, ValidationError):
             continue
     return sorted(approvals, key=lambda approval: approval.updated_at, reverse=True)
+
+
+def load_execution_policy_index(project_name: str, workspace_root: Path | None = None) -> ExecutionPolicyIndex:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.execution_policy_index_json.exists():
+        return ExecutionPolicyIndex(project=project_name)
+    return ExecutionPolicyIndex.model_validate_json(paths.execution_policy_index_json.read_text(encoding="utf-8"))
+
+
+def list_execution_policies(project_name: str, workspace_root: Path | None = None) -> list[BatchExecutionPolicy]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    if not paths.execution_policies_dir.exists():
+        return []
+    policies: list[BatchExecutionPolicy] = []
+    for path in sorted(paths.execution_policies_dir.glob("execution-policy-*.json")):
+        if path.name == EXECUTION_POLICY_INDEX_JSON:
+            continue
+        try:
+            policies.append(BatchExecutionPolicy.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(policies, key=lambda policy: policy.updated_at, reverse=True)
+
+
+def load_execution_policy(project_name: str, policy_id: str, workspace_root: Path | None = None) -> BatchExecutionPolicy | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = execution_policy_artifact_paths(project_name, policy_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return BatchExecutionPolicy.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def create_batch_execution_policy(
+    project_name: str,
+    *,
+    batch_id: str,
+    title: str,
+    queue_id: str | None = None,
+    allowed_task_ids: list[str] | None = None,
+    allowed_file_patterns: list[str] | None = None,
+    forbidden_file_patterns: list[str] | None = None,
+    max_tasks: int | None = None,
+    max_tasks_per_run: int = 1,
+    max_changed_files_per_task: int = 20,
+    validation_commands: list[str] | None = None,
+    auto_delivery_allowed: bool = True,
+    auto_push_allowed: bool = True,
+    expires_at: datetime | None = None,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[BatchExecutionPolicy, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    batch = _require_batch(project_name, batch_id, root)
+    normalized_queue_id = _normalize_queue_id(queue_id) if queue_id else None
+    queue = None
+    if normalized_queue_id:
+        queue = load_execution_queue(project_name, normalized_queue_id, workspace_root=root)
+        if not queue:
+            msg = f"Execution queue not found: {queue_id}"
+            raise ValueError(msg)
+        if _normalize_batch_id(queue.source_batch_id) != _normalize_batch_id(batch.batch_id):
+            msg = f"Execution queue {normalized_queue_id} is not for batch {batch.batch_id}."
+            raise ValueError(msg)
+    normalized_allowed_tasks = _normalize_task_ids(allowed_task_ids or [])
+    if not normalized_allowed_tasks:
+        normalized_allowed_tasks = list(batch.task_ids)
+    batch_tasks = {_normalize_task_id(task_id) for task_id in batch.task_ids}
+    unknown_tasks = [task_id for task_id in normalized_allowed_tasks if _normalize_task_id(task_id) not in batch_tasks]
+    if unknown_tasks:
+        msg = f"Allowed task ids are not in batch {batch.batch_id}: {', '.join(unknown_tasks)}"
+        raise ValueError(msg)
+    allowed_queue_items = [item.item_id for item in queue.items if _normalize_task_id(item.task_id) in {_normalize_task_id(task) for task in normalized_allowed_tasks}] if queue else []
+    cleaned_title = _clean_planning_text(title).strip()
+    if not cleaned_title:
+        msg = "Policy title must not be empty."
+        raise ValueError(msg)
+    effective_max_tasks = max_tasks if max_tasks is not None else max(1, len(normalized_allowed_tasks))
+    _validate_positive_limit("--max-tasks", effective_max_tasks)
+    _validate_positive_limit("--max-tasks-per-run", max_tasks_per_run)
+    _validate_positive_limit("--max-changed-files-per-task", max_changed_files_per_task)
+    now = datetime.now(UTC)
+    notes: list[str] = []
+    cleaned_note = note.strip()
+    if cleaned_note:
+        notes.append(f"{now.isoformat()}: {cleaned_note}")
+    max_total_changed_files = effective_max_tasks * max_changed_files_per_task
+    policy = BatchExecutionPolicy(
+        project=project_name,
+        policy_id=_next_policy_id(project_name, workspace_root=root),
+        batch_id=batch.batch_id,
+        queue_id=normalized_queue_id,
+        title=cleaned_title,
+        status="draft",
+        created_at=now,
+        updated_at=now,
+        expires_at=expires_at,
+        allowed_task_ids=normalized_allowed_tasks,
+        allowed_queue_item_ids=allowed_queue_items,
+        allowed_file_patterns=_clean_string_list(allowed_file_patterns or []),
+        forbidden_file_patterns=_clean_string_list(forbidden_file_patterns or []),
+        max_tasks=effective_max_tasks,
+        max_tasks_per_run=max_tasks_per_run,
+        max_changed_files_per_task=max_changed_files_per_task,
+        max_total_changed_files=max_total_changed_files,
+        validation_commands=_clean_string_list(validation_commands or []),
+        auto_delivery_allowed=auto_delivery_allowed,
+        auto_push_allowed=auto_push_allowed,
+        notes=notes,
+        risk_level=_highest_policy_risk(batch),
+        next_action=f"Request policy approval: devo project execution-policy-request --project {project_name} --policy <policyId> --note \"<note>\"",
+    )
+    return _write_execution_policy(project_name, policy, workspace_root=root)
+
+
+def request_execution_policy(
+    project_name: str,
+    policy_id: str,
+    *,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[BatchExecutionPolicy, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    policy = _require_execution_policy(project_name, policy_id, root)
+    if policy.status not in {"draft", "requested"}:
+        msg = f"Execution policy must be draft or requested, not {policy.status}."
+        raise ValueError(msg)
+    if not policy.allowed_task_ids and not policy.allowed_queue_item_ids:
+        msg = "Execution policy must include allowed tasks or queue items before approval request."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    notes = _with_timed_note(policy.notes, note, "request", now)
+    warnings = []
+    if not policy.forbidden_file_patterns:
+        warnings.append("Warning: no forbidden file patterns recorded.")
+    updated = policy.model_copy(
+        update={
+            "status": "requested",
+            "requested_at": policy.requested_at or now,
+            "updated_at": now,
+            "notes": [*notes, *warnings],
+            "next_action": f"Approve or reject: devo project execution-policy-approve --project {project_name} --policy {policy.policy_id} --approver \"<name>\" --note \"<note>\"",
+        }
+    )
+    return _write_execution_policy(project_name, updated, workspace_root=root)
+
+
+def approve_execution_policy(
+    project_name: str,
+    policy_id: str,
+    *,
+    approver: str,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[BatchExecutionPolicy, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    policy = _require_execution_policy(project_name, policy_id, root)
+    if policy.status != "requested":
+        msg = f"Execution policy must be requested before approval, not {policy.status}."
+        raise ValueError(msg)
+    cleaned_approver = approver.strip()
+    if not cleaned_approver:
+        msg = "Approver must not be empty."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    notes = _with_timed_note(policy.notes, note, "approval", now)
+    updated = policy.model_copy(
+        update={
+            "status": "approved",
+            "approved_at": now,
+            "approver": cleaned_approver,
+            "decision_note": note.strip() or policy.decision_note,
+            "updated_at": now,
+            "notes": notes,
+            "next_action": "TASK-DEVO-129 autonomous queue worker loop can use this approved policy.",
+        }
+    )
+    return _write_execution_policy(project_name, updated, workspace_root=root)
+
+
+def reject_execution_policy(
+    project_name: str,
+    policy_id: str,
+    *,
+    reviewer: str,
+    note: str,
+    workspace_root: Path | None = None,
+) -> tuple[BatchExecutionPolicy, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    policy = _require_execution_policy(project_name, policy_id, root)
+    cleaned_reviewer = reviewer.strip()
+    cleaned_note = note.strip()
+    if not cleaned_reviewer:
+        msg = "Reviewer must not be empty."
+        raise ValueError(msg)
+    if not cleaned_note:
+        msg = "Rejection note must not be empty."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    notes = _with_timed_note(policy.notes, cleaned_note, "rejection", now)
+    updated = policy.model_copy(
+        update={
+            "status": "rejected",
+            "rejected_at": now,
+            "reviewer": cleaned_reviewer,
+            "decision_note": cleaned_note,
+            "updated_at": now,
+            "notes": notes,
+            "next_action": "Revise or create a smaller execution policy.",
+        }
+    )
+    return _write_execution_policy(project_name, updated, workspace_root=root)
+
+
+def check_execution_policy(
+    project_name: str,
+    policy_id: str,
+    workspace_root: Path | None = None,
+) -> ExecutionPolicyCheckResult:
+    root = workspace_root or get_workspace_root()
+    policy = load_execution_policy(project_name, policy_id, workspace_root=root)
+    if not policy:
+        return ExecutionPolicyCheckResult(
+            project=project_name,
+            policy_id=_normalize_policy_id(policy_id),
+            status="missing",
+            blockers=[f"Execution policy not found: {policy_id}"],
+            next_action=f"List policies: devo project execution-policy-list --project {project_name}",
+        )
+    blockers: list[str] = []
+    warnings: list[str] = []
+    now = datetime.now(UTC)
+    if policy.status != "approved":
+        blockers.append(f"Policy status is {policy.status}; approved is required.")
+    if policy.expires_at and policy.expires_at <= now:
+        blockers.append(f"Policy expired at {policy.expires_at.isoformat()}.")
+    batch = load_project_batch(project_name, policy.batch_id, workspace_root=root)
+    if not batch:
+        blockers.append(f"Referenced batch not found: {policy.batch_id}.")
+    elif policy.allowed_task_ids:
+        batch_tasks = {_normalize_task_id(task_id) for task_id in batch.task_ids}
+        missing = [task_id for task_id in policy.allowed_task_ids if _normalize_task_id(task_id) not in batch_tasks]
+        if missing:
+            blockers.append(f"Allowed tasks missing from batch {policy.batch_id}: {', '.join(missing)}.")
+    if policy.queue_id:
+        queue = load_execution_queue(project_name, policy.queue_id, workspace_root=root)
+        if not queue:
+            blockers.append(f"Referenced queue not found: {policy.queue_id}.")
+        elif policy.allowed_queue_item_ids:
+            queue_items = {_normalize_queue_item_id(item.item_id) for item in queue.items}
+            missing_items = [item_id for item_id in policy.allowed_queue_item_ids if _normalize_queue_item_id(item_id) not in queue_items]
+            if missing_items:
+                blockers.append(f"Allowed queue items missing from queue {policy.queue_id}: {', '.join(missing_items)}.")
+    if not policy.allowed_task_ids and not policy.allowed_queue_item_ids:
+        blockers.append("Policy has no allowed tasks or queue items.")
+    for label, value in [
+        ("max_tasks", policy.max_tasks),
+        ("max_tasks_per_run", policy.max_tasks_per_run),
+        ("max_changed_files_per_task", policy.max_changed_files_per_task),
+        ("max_total_changed_files", policy.max_total_changed_files),
+    ]:
+        if value < 1:
+            blockers.append(f"{label} must be positive.")
+    if policy.auto_push_allowed and not policy.auto_delivery_allowed:
+        blockers.append("auto_push_allowed requires auto_delivery_allowed.")
+    if not policy.validation_commands:
+        warnings.append("No validation commands recorded; future autonomous execution should pause for explicit validation guidance.")
+    if not policy.forbidden_file_patterns:
+        warnings.append("No forbidden file patterns recorded.")
+    usable = not blockers
+    next_action = "TASK-DEVO-129 autonomous queue worker loop can use this approved policy." if usable else "Resolve blockers before autonomous execution."
+    return ExecutionPolicyCheckResult(
+        project=project_name,
+        policy_id=policy.policy_id,
+        usable=usable,
+        status=policy.status,
+        blockers=blockers,
+        warnings=warnings,
+        next_action=next_action,
+    )
 
 
 def request_batch_approval(
@@ -3810,6 +4192,58 @@ def render_batch_approval_markdown(approval: BatchApproval) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_execution_policy_markdown(policy: BatchExecutionPolicy) -> str:
+    lines = [
+        f"# Execution Policy: {policy.policy_id}",
+        "",
+        f"- Project: `{policy.project}`",
+        f"- Policy id: `{policy.policy_id}`",
+        f"- Batch id: `{policy.batch_id}`",
+        f"- Queue id: `{policy.queue_id or 'none'}`",
+        f"- Title: {policy.title}",
+        f"- Status: `{policy.status}`",
+        f"- Risk level: `{policy.risk_level}`",
+        f"- Auto delivery allowed: `{policy.auto_delivery_allowed}`",
+        f"- Auto push allowed: `{policy.auto_push_allowed}`",
+        f"- Requires worker review: `{policy.requires_worker_review}`",
+        f"- Requires validation evidence: `{policy.requires_validation_evidence}`",
+        f"- Max tasks: `{policy.max_tasks}`",
+        f"- Max tasks per run: `{policy.max_tasks_per_run}`",
+        f"- Max changed files per task: `{policy.max_changed_files_per_task}`",
+        f"- Max total changed files: `{policy.max_total_changed_files}`",
+        f"- Requested at: `{policy.requested_at.isoformat() if policy.requested_at else 'none'}`",
+        f"- Approved at: `{policy.approved_at.isoformat() if policy.approved_at else 'none'}`",
+        f"- Rejected at: `{policy.rejected_at.isoformat() if policy.rejected_at else 'none'}`",
+        f"- Expires at: `{policy.expires_at.isoformat() if policy.expires_at else 'none'}`",
+        f"- Approver: `{policy.approver or 'none'}`",
+        f"- Reviewer: `{policy.reviewer or 'none'}`",
+        f"- Decision note: {policy.decision_note or 'none'}",
+        f"- Created: `{policy.created_at.isoformat()}`",
+        f"- Updated: `{policy.updated_at.isoformat()}`",
+        "",
+    ]
+    _append_list_section(lines, "Allowed Tasks", policy.allowed_task_ids)
+    _append_list_section(lines, "Allowed Queue Items", policy.allowed_queue_item_ids)
+    _append_list_section(lines, "Allowed File Patterns", policy.allowed_file_patterns)
+    _append_list_section(lines, "Forbidden File Patterns", policy.forbidden_file_patterns)
+    _append_list_section(lines, "Validation Commands", policy.validation_commands)
+    _append_list_section(lines, "Pause Conditions", policy.pause_conditions)
+    _append_list_section(lines, "Notes", policy.notes)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "This is a bounded approval contract only. It does not execute queue items, run Codex, run validation, create runner requests, commit, push, or bypass delivery safety gates.",
+            "",
+            "## Next Action",
+            "",
+            policy.next_action or "Review policy status.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_backlog_refinement_prompt(
     project_name: str,
     brief: ProjectBrief | None,
@@ -4109,11 +4543,28 @@ def _normalize_task_ids(task_ids: list[str]) -> list[str]:
     return normalized
 
 
+def _normalize_task_id(task_id: str) -> str:
+    return task_id.strip().upper()
+
+
 def _normalize_batch_id(batch_id: str) -> str:
     cleaned = batch_id.strip()
     if cleaned.lower().startswith("batch-"):
         cleaned = cleaned[6:]
     return cleaned.upper()
+
+
+def _normalize_policy_id(policy_id: str) -> str:
+    cleaned = policy_id.strip()
+    if cleaned.lower().startswith("execution-policy-"):
+        cleaned = cleaned[17:]
+    if cleaned.lower().startswith("policy-"):
+        cleaned = cleaned[7:]
+    return cleaned.upper()
+
+
+def _normalize_queue_item_id(item_id: str) -> str:
+    return item_id.strip().upper()
 
 
 def _normalize_queue_id(queue_id: str) -> str:
@@ -4194,6 +4645,16 @@ def _next_run_plan_id(project_name: str, workspace_root: Path | None = None) -> 
         index += 1
 
 
+def _next_policy_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_policy_id(policy.policy_id) for policy in list_execution_policies(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"POL-{index:04d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
 def _build_batch_from_tasks(
     *,
     project_name: str,
@@ -4250,6 +4711,23 @@ def _write_batch_approval(project_name: str, approval: BatchApproval, workspace_
     return approval, json_path, markdown_path
 
 
+def _write_execution_policy(project_name: str, policy: BatchExecutionPolicy, workspace_root: Path | None = None) -> tuple[BatchExecutionPolicy, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.execution_policies_dir.mkdir(parents=True, exist_ok=True)
+    if policy.status not in ALLOWED_EXECUTION_POLICY_STATUSES:
+        msg = f"Invalid execution policy status: {policy.status}"
+        raise ValueError(msg)
+    if policy.risk_level not in ALLOWED_RISK_LEVELS:
+        msg = f"Invalid execution policy risk level: {policy.risk_level}"
+        raise ValueError(msg)
+    json_path, markdown_path = execution_policy_artifact_paths(project_name, policy.policy_id, workspace_root=root)
+    _write_model(json_path, policy)
+    markdown_path.write_text(render_execution_policy_markdown(policy), encoding="utf-8")
+    _write_execution_policy_index(project_name, workspace_root=root)
+    return policy, json_path, markdown_path
+
+
 def _write_batch_index(project_name: str, workspace_root: Path | None = None) -> BatchIndex:
     root = workspace_root or get_workspace_root()
     paths = planning_artifact_paths(project_name, workspace_root=root)
@@ -4269,6 +4747,31 @@ def _write_batch_index(project_name: str, workspace_root: Path | None = None) ->
     ]
     index = BatchIndex(project=project_name, batches=entries, updated_at=datetime.now(UTC))
     _write_model(paths.batch_index_json, index)
+    return index
+
+
+def _write_execution_policy_index(project_name: str, workspace_root: Path | None = None) -> ExecutionPolicyIndex:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.execution_policies_dir.mkdir(parents=True, exist_ok=True)
+    policies = list_execution_policies(project_name, workspace_root=root)
+    entries = [
+        ExecutionPolicyIndexEntry(
+            policy_id=policy.policy_id,
+            batch_id=policy.batch_id,
+            queue_id=policy.queue_id,
+            title=policy.title,
+            status=policy.status,
+            task_count=len(policy.allowed_task_ids),
+            auto_delivery_allowed=policy.auto_delivery_allowed,
+            auto_push_allowed=policy.auto_push_allowed,
+            path=str(execution_policy_artifact_paths(project_name, policy.policy_id, workspace_root=root)[0]),
+            updated_at=policy.updated_at,
+        )
+        for policy in policies
+    ]
+    index = ExecutionPolicyIndex(project=project_name, policies=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.execution_policy_index_json, index)
     return index
 
 
@@ -4973,6 +5476,46 @@ def _require_batch(project_name: str, batch_id: str, workspace_root: Path) -> Pr
         msg = f"Project batch not found: {batch_id}"
         raise ValueError(msg)
     return batch
+
+
+def _require_execution_policy(project_name: str, policy_id: str, workspace_root: Path) -> BatchExecutionPolicy:
+    policy = load_execution_policy(project_name, policy_id, workspace_root=workspace_root)
+    if not policy:
+        msg = f"Execution policy not found: {policy_id}"
+        raise ValueError(msg)
+    return policy
+
+
+def _validate_positive_limit(label: str, value: int) -> None:
+    if value < 1:
+        msg = f"{label} must be at least 1."
+        raise ValueError(msg)
+
+
+def _clean_string_list(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    for raw in values:
+        for item in str(raw).split(","):
+            value = item.strip()
+            if value and value not in cleaned:
+                cleaned.append(value)
+    return cleaned
+
+
+def _with_timed_note(notes: list[str], note: str, label: str, now: datetime) -> list[str]:
+    cleaned = note.strip()
+    if not cleaned:
+        return list(notes)
+    return [*notes, f"{now.isoformat()}: {label}: {cleaned}"]
+
+
+def _highest_policy_risk(batch: ProjectBatch) -> str:
+    if not batch.risk_summary:
+        return "medium"
+    known = [risk for risk, count in batch.risk_summary.items() if count > 0 and risk in RISK_ORDER]
+    if not known:
+        return "medium"
+    return max(known, key=lambda risk: RISK_ORDER.get(risk, 0))
 
 
 def _build_batch_approval(
