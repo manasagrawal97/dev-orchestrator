@@ -231,6 +231,18 @@ Policies live under `workspace/projects/<project>/planning/execution-policies/`.
 
 Policy approval is not blanket permission for arbitrary changes. It is permission only inside the recorded batch/task/file/validation bounds. Future automation must pause on failed tests, secret risk, forbidden paths, changed files outside scope, too many files, unclear worker output, usage limits, commit failures, push failures, or expired/missing policy references. Scheduled trusted runner delivery remains the delivery mechanism; the policy does not bypass guarded commit/push.
 
+Prepare one policy-gated queue-worker step:
+
+```powershell
+devo project queue-worker-plan --project MyProject --policy POL-0001
+devo project queue-worker-run --project MyProject --policy POL-0001 --once --confirm-queue-worker
+devo project queue-worker-list --project MyProject
+devo project queue-worker-show --project MyProject --run QWR-0001
+devo project queue-worker-latest --project MyProject
+```
+
+Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 worker loop is deliberately limited: it checks the approved execution policy, chooses at most one eligible queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted worker run record, and then pauses for the human/Codex worker. It does not run real Codex, run validation, create delivery runner requests, complete queue items, stage, commit, push, or modify the target repository.
+
 ## Codex Handoff Prompts
 
 Codex handoff prompts are generated workspace artifacts that package one queue item, one backlog task, or one approved batch into a Codex-ready operator prompt. They are a safe manual bridge from Devo planning to Codex execution.

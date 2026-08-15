@@ -14,6 +14,7 @@ from devo.project_planning import (
     create_project_blueprint,
     create_project_brief,
     create_project_batch,
+    create_batch_execution_policy,
     create_codex_handoff_for_queue_next,
     create_codex_worker_run_from_handoff,
     create_codex_worker_run_plan,
@@ -21,7 +22,10 @@ from devo.project_planning import (
     import_codex_worker_report,
     create_execution_queue_from_batch,
     generate_backlog_refinement_prompt,
+    approve_execution_policy,
     request_batch_approval,
+    request_execution_policy,
+    run_queue_worker_once,
 )
 from devo.runs import save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -351,6 +355,50 @@ def test_project_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -
     assert queue_worker_flow.json()["next_commands"]
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "worker_run_not_found"
+
+
+def test_project_queue_worker_run_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    brief_file = tmp_path / "brief.md"
+    brief_file.write_text("# Product\n\n## Goals\n- Make planning visible\n", encoding="utf-8")
+    create_project_brief("sample", "Product", brief_file, workspace_root=workspace)
+    create_project_blueprint("sample", workspace_root=workspace)
+    create_project_backlog("sample", workspace_root=workspace)
+    batch, _batch_json, _batch_md = create_project_batch("sample", "API batch", ["T001"], workspace_root=workspace)
+    approved = batch.model_copy(update={"status": "approved", "approval_status": "approved"})
+    batch_json = workspace / "projects" / "sample" / "planning" / "batches" / "batch-B001.json"
+    batch_json.write_text(approved.model_dump_json(indent=2), encoding="utf-8")
+    create_execution_queue_from_batch("sample", "B001", workspace_root=workspace)
+    create_batch_execution_policy(
+        "sample",
+        batch_id="B001",
+        queue_id="Q001",
+        title="API policy",
+        allowed_task_ids=["T001"],
+        allowed_file_patterns=["src/**"],
+        forbidden_file_patterns=[".env"],
+        validation_commands=["pytest"],
+        workspace_root=workspace,
+    )
+    request_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    approve_execution_policy("sample", "POL-0001", approver="Manas", workspace_root=workspace)
+    run_queue_worker_once("sample", "POL-0001", workspace_root=workspace)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    runs = client.get("/api/projects/sample/queue-worker-runs")
+    run = client.get("/api/projects/sample/queue-worker-runs/QWR-0001")
+    missing = client.get("/api/projects/sample/queue-worker-runs/QWR-9999")
+
+    assert runs.status_code == 200
+    assert runs.json()["count"] == 1
+    assert runs.json()["queue_worker_runs"][0]["run_id"] == "QWR-0001"
+    assert runs.json()["queue_worker_runs"][0]["status"] == "waiting_worker"
+    assert run.status_code == 200
+    assert run.json()["selected_queue_item_id"] == "QI001"
+    assert run.json()["selected_worker_run_id"] == "WR001"
+    assert run.json()["blockers"] == []
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["error"] == "queue_worker_run_not_found"
 
 
 def test_project_worker_report_endpoints_return_json(tmp_path: Path, monkeypatch) -> None:

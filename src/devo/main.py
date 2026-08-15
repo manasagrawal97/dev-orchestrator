@@ -138,6 +138,8 @@ from .project_planning import (
     CodexRunPlan,
     CodexWorkerReport,
     ExecutionPolicyCheckResult,
+    QueueWorkerPlan,
+    QueueWorkerRun,
     QueueItemCompletionReadiness,
     WorkerReview,
     WorkerReportValidationResult,
@@ -182,6 +184,7 @@ from .project_planning import (
     attach_codex_worker_review_evidence,
     list_execution_queues,
     list_execution_policies,
+    list_queue_worker_runs,
     list_batch_approvals,
     list_codex_handoffs,
     list_codex_run_plans,
@@ -191,6 +194,7 @@ from .project_planning import (
     list_project_batches,
     load_execution_queue,
     load_execution_policy,
+    load_queue_worker_run,
     load_batch_approval,
     load_codex_handoff,
     load_codex_run_plan,
@@ -202,6 +206,7 @@ from .project_planning import (
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    plan_queue_worker_run,
     pause_execution_queue,
     mark_codex_handoff_used,
     mark_codex_worker_run_handoff_used,
@@ -216,6 +221,7 @@ from .project_planning import (
     resume_execution_queue,
     suggest_project_batch,
     start_execution_queue,
+    run_queue_worker_once,
     run_codex_worker_preflight,
     update_codex_worker_run_status,
     validate_refined_backlog_file,
@@ -639,6 +645,64 @@ def _print_execution_policy_check(result: ExecutionPolicyCheckResult) -> None:
     for warning in result.warnings or ["none"]:
         console.print(f"  - {warning}", soft_wrap=True)
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
+
+
+def _print_queue_worker_plan(plan: QueueWorkerPlan) -> None:
+    console.print(f"[bold]Queue worker plan: {plan.policy_id}[/bold]")
+    console.print(f"Status: {plan.status}")
+    console.print(f"Usable: {plan.usable}")
+    console.print(f"Batch: {plan.batch_id or 'none'}")
+    console.print(f"Queue: {plan.queue_id or 'none'}")
+    console.print(f"Selected item: {plan.selected_queue_item_id or 'none'}")
+    console.print(f"Selected task: {plan.selected_task_id or 'none'}")
+    console.print(f"Eligible items: {', '.join(plan.eligible_queue_item_ids) if plan.eligible_queue_item_ids else 'none'}", soft_wrap=True)
+    console.print(f"Policy check: {plan.policy_check_summary}", soft_wrap=True)
+    console.print(f"Selection: {plan.selection_reason or 'none'}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in plan.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in plan.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    if plan.skipped_queue_item_summaries:
+        console.print("Skipped items:")
+        for item in plan.skipped_queue_item_summaries:
+            console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"Next action: {plan.next_action}", soft_wrap=True)
+
+
+def _print_queue_worker_run(run: QueueWorkerRun, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Queue worker run: {run.run_id}[/bold]")
+    console.print(f"Status: {run.status}")
+    console.print(f"Policy: {run.policy_id}")
+    console.print(f"Batch: {run.batch_id or 'none'}")
+    console.print(f"Queue: {run.queue_id or 'none'}")
+    console.print(f"Selected item: {run.selected_queue_item_id or 'none'}")
+    console.print(f"Selected task: {run.selected_task_id or 'none'}")
+    console.print(f"Handoff: {run.selected_handoff_id or 'none'}")
+    console.print(f"Worker run: {run.selected_worker_run_id or 'none'}")
+    console.print(f"Mode: {run.mode}")
+    console.print(f"Pause reason: {run.pause_reason or 'none'}")
+    console.print(f"Policy check: {run.policy_check_summary}", soft_wrap=True)
+    console.print(f"Selection: {run.selection_reason or 'none'}", soft_wrap=True)
+    console.print("Steps run:")
+    for step in run.steps_run or ["none"]:
+        console.print(f"  - {step}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in run.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in run.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    if run.skipped_queue_item_summaries:
+        console.print("Skipped items:")
+        for item in run.skipped_queue_item_summaries:
+            console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"Next action: {run.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
 
 
 def _print_project_progress(progress: ProjectProgress) -> None:
@@ -3800,6 +3864,91 @@ def check_execution_policy_command(
     _print_execution_policy_check(result)
     if not result.usable:
         raise typer.Exit(1)
+
+
+@project_app.command("queue-worker-plan")
+def plan_queue_worker_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+) -> None:
+    """Read-only plan for the next policy-gated queue worker step."""
+    project_name = _resolve_project(project_name)
+    plan = plan_queue_worker_run(project_name, policy_id)
+    _print_queue_worker_plan(plan)
+    if not plan.usable:
+        raise typer.Exit(1)
+
+
+@project_app.command("queue-worker-run")
+def run_queue_worker_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+    once: bool = typer.Option(False, "--once", help="Process at most one queue item."),
+    confirm_queue_worker: bool = typer.Option(False, "--confirm-queue-worker", help="Confirm workspace-only queue worker preparation."),
+    approver: str | None = typer.Option(None, "--approver", help="Optional operator/approver note."),
+) -> None:
+    """Prepare one policy-gated queue item handoff/worker record without executing Codex."""
+    project_name = _resolve_project(project_name)
+    if not once:
+        console.print("queue-worker-run v1 requires --once.")
+        raise typer.Exit(1)
+    if not confirm_queue_worker:
+        console.print("queue-worker-run requires --confirm-queue-worker.")
+        raise typer.Exit(1)
+    run, json_path, markdown_path = run_queue_worker_once(project_name, policy_id, approver=approver)
+    _print_queue_worker_run(run, json_path=json_path, markdown_path=markdown_path)
+    console.print("No real Codex CLI was executed. No validation, delivery, commit, push, or queue completion was run.")
+    if run.blockers:
+        raise typer.Exit(1)
+
+
+@project_app.command("queue-worker-list")
+def list_queue_worker_runs_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List policy-gated queue worker run artifacts."""
+    project_name = _resolve_project(project_name)
+    runs = list_queue_worker_runs(project_name)
+    console.print(f"[bold]Queue worker runs: {project_name}[/bold]")
+    if not runs:
+        console.print("[yellow]No queue worker runs recorded.[/yellow]")
+        console.print(f"Suggested next command: devo project queue-worker-plan --project {project_name} --policy <POL-ID>")
+        return
+    for run in runs:
+        console.print(
+            f"{run.run_id} | {run.status} | policy={run.policy_id} | queue={run.queue_id or 'none'} | "
+            f"item={run.selected_queue_item_id or 'none'} | worker={run.selected_worker_run_id or 'none'}",
+            soft_wrap=True,
+        )
+
+
+@project_app.command("queue-worker-show")
+def show_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+) -> None:
+    """Show one policy-gated queue worker run artifact."""
+    project_name = _resolve_project(project_name)
+    run = load_queue_worker_run(project_name, run_id)
+    if not run:
+        console.print(f"[yellow]Queue worker run not found: {run_id}[/yellow]")
+        console.print(f"Suggested next command: devo project queue-worker-list --project {project_name}")
+        return
+    _print_queue_worker_run(run)
+
+
+@project_app.command("queue-worker-latest")
+def latest_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the latest policy-gated queue worker run artifact."""
+    project_name = _resolve_project(project_name)
+    runs = list_queue_worker_runs(project_name)
+    if not runs:
+        console.print(f"[yellow]No queue worker runs recorded for {project_name}.[/yellow]")
+        console.print(f"Suggested next command: devo project queue-worker-plan --project {project_name} --policy <POL-ID>")
+        return
+    _print_queue_worker_run(runs[0])
 
 
 @project_app.command("progress")

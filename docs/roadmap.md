@@ -16,7 +16,7 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 
 ## Immediate Planned Tasks
 
-- TASK-DEVO-129: Autonomous queue worker loop
+- TASK-DEVO-130: Failure pause/resume and usage-limit handling
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
@@ -55,7 +55,7 @@ TASK-DEVO-124 records the Phase 1 MVP checkpoint in `docs/phase-1-mvp-checkpoint
 
 ### Phase 2 Autonomy Roadmap - Active
 
-TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. TASK-DEVO-126 adds one-shot trusted runner watch mode. TASK-DEVO-127 adds scheduled/background trusted runner management with read-only planning/status, dry-run install, disabled-by-default real installation, and explicit enable/disable/run-now/remove confirmations. TASK-DEVO-128 adds bounded batch execution policies as approval contracts for future queue work. Phase 2 should continue with the autonomous queue worker loop inside those policy bounds, not direct AI-agent workers or sandbox commit/push.
+TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. TASK-DEVO-126 adds one-shot trusted runner watch mode. TASK-DEVO-127 adds scheduled/background trusted runner management with read-only planning/status, dry-run install, disabled-by-default real installation, and explicit enable/disable/run-now/remove confirmations. TASK-DEVO-128 adds bounded batch execution policies as approval contracts for future queue work. TASK-DEVO-129 adds the first policy-gated queue worker loop, limited to one item and pausing at handoff/worker readiness. Phase 2 should continue with pause/resume and failure recovery polish, not direct AI-agent workers or sandbox commit/push.
 
 ## Readiness Target
 

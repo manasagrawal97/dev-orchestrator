@@ -30,6 +30,7 @@ from .project_planning import (
     list_project_batches,
     list_execution_policies,
     list_execution_queues,
+    list_queue_worker_runs,
     load_codex_worker_run,
     load_project_backlog,
     load_project_blueprint,
@@ -187,6 +188,14 @@ class ProjectOverview(BaseModel):
     current_queue_item_completion_blockers: list[str] = Field(default_factory=list)
     current_queue_item_validation_status: str | None = None
     queue_worker_next_action: str | None = None
+    queue_worker_run_count: int = 0
+    latest_queue_worker_run_id: str | None = None
+    latest_queue_worker_run_status: str | None = None
+    latest_queue_worker_run_policy_id: str | None = None
+    latest_queue_worker_run_selected_item: str | None = None
+    latest_queue_worker_run_selected_task: str | None = None
+    latest_queue_worker_run_worker_run_id: str | None = None
+    latest_queue_worker_run_next_action: str | None = None
     handoff_count: int = 0
     latest_handoff_id: str | None = None
     latest_handoff_type: str | None = None
@@ -390,6 +399,22 @@ def build_project_overview_with_timing(
                 str(planning["current_queue_item_validation_status"]) if planning["current_queue_item_validation_status"] else None
             ),
             queue_worker_next_action=str(planning["queue_worker_next_action"]) if planning["queue_worker_next_action"] else None,
+            queue_worker_run_count=int(planning["queue_worker_run_count"]),
+            latest_queue_worker_run_id=str(planning["latest_queue_worker_run_id"]) if planning["latest_queue_worker_run_id"] else None,
+            latest_queue_worker_run_status=str(planning["latest_queue_worker_run_status"]) if planning["latest_queue_worker_run_status"] else None,
+            latest_queue_worker_run_policy_id=str(planning["latest_queue_worker_run_policy_id"]) if planning["latest_queue_worker_run_policy_id"] else None,
+            latest_queue_worker_run_selected_item=(
+                str(planning["latest_queue_worker_run_selected_item"]) if planning["latest_queue_worker_run_selected_item"] else None
+            ),
+            latest_queue_worker_run_selected_task=(
+                str(planning["latest_queue_worker_run_selected_task"]) if planning["latest_queue_worker_run_selected_task"] else None
+            ),
+            latest_queue_worker_run_worker_run_id=(
+                str(planning["latest_queue_worker_run_worker_run_id"]) if planning["latest_queue_worker_run_worker_run_id"] else None
+            ),
+            latest_queue_worker_run_next_action=(
+                str(planning["latest_queue_worker_run_next_action"]) if planning["latest_queue_worker_run_next_action"] else None
+            ),
             handoff_count=int(planning["handoff_count"]),
             latest_handoff_id=str(planning["latest_handoff_id"]) if planning["latest_handoff_id"] else None,
             latest_handoff_type=str(planning["latest_handoff_type"]) if planning["latest_handoff_type"] else None,
@@ -642,6 +667,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         batch_approvals = list_batch_approvals(project_name, workspace_root=workspace_root)
         execution_policies = list_execution_policies(project_name, workspace_root=workspace_root)
         queues = list_execution_queues(project_name, workspace_root=workspace_root)
+        queue_worker_runs = list_queue_worker_runs(project_name, workspace_root=workspace_root)
         handoffs = list_codex_handoffs(project_name, workspace_root=workspace_root)
         worker_runs = list_codex_worker_runs(project_name, workspace_root=workspace_root)
         worker_reports = list_codex_worker_reports(project_name, workspace_root=workspace_root)
@@ -696,6 +722,14 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "current_queue_item_completion_blockers": [f"Review queue worker artifacts: {exc}"],
             "current_queue_item_validation_status": None,
             "queue_worker_next_action": f"Review queue worker artifacts: {exc}",
+            "queue_worker_run_count": 0,
+            "latest_queue_worker_run_id": None,
+            "latest_queue_worker_run_status": None,
+            "latest_queue_worker_run_policy_id": None,
+            "latest_queue_worker_run_selected_item": None,
+            "latest_queue_worker_run_selected_task": None,
+            "latest_queue_worker_run_worker_run_id": None,
+            "latest_queue_worker_run_next_action": f"Review queue worker artifacts: {exc}",
             "handoff_count": 0,
             "latest_handoff_id": None,
             "latest_handoff_type": None,
@@ -737,6 +771,7 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
     latest_batch_approval = next((approval for approval in batch_approvals if latest_batch and approval.batch_id == latest_batch.batch_id), None)
     latest_execution_policy = execution_policies[0] if execution_policies else None
     latest_queue = queues[0] if queues else None
+    latest_queue_worker_run = queue_worker_runs[0] if queue_worker_runs else None
     latest_handoff = handoffs[0] if handoffs else None
     latest_worker_run = worker_runs[0] if worker_runs else None
     latest_worker_report = worker_reports[0] if worker_reports else None
@@ -838,6 +873,14 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "current_queue_item_completion_blockers": queue_worker_status.current_queue_item_completion_blockers if queue_worker_status else [],
         "current_queue_item_validation_status": queue_worker_status.current_queue_item_validation_status if queue_worker_status else None,
         "queue_worker_next_action": queue_worker_status.next_action if queue_worker_status else None,
+        "queue_worker_run_count": len(queue_worker_runs),
+        "latest_queue_worker_run_id": latest_queue_worker_run.run_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_status": latest_queue_worker_run.status if latest_queue_worker_run else None,
+        "latest_queue_worker_run_policy_id": latest_queue_worker_run.policy_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_selected_item": latest_queue_worker_run.selected_queue_item_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_selected_task": latest_queue_worker_run.selected_task_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_worker_run_id": latest_queue_worker_run.selected_worker_run_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_next_action": latest_queue_worker_run.next_action if latest_queue_worker_run else None,
         "handoff_count": len(handoffs),
         "latest_handoff_id": latest_handoff.handoff_id if latest_handoff else None,
         "latest_handoff_type": latest_handoff.handoff_type if latest_handoff else None,

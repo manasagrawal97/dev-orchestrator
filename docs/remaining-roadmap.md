@@ -50,6 +50,7 @@ Devo already has:
 - Delivery plan and approval artifacts before commit/push automation
 - Delivery report, commit-message preparation, guarded CLI commit, guarded CLI push, isolated delivery dogfood, and read-only Delivery UI visibility
 - Delivery latest status and trusted local delivery runner for one-command normal-PowerShell delivery after Codex validation
+- Policy-gated queue-worker loop v1 for preparing one approved queue item and pausing at handoff/worker readiness
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -190,8 +191,9 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 53. TASK-DEVO-126: Trusted runner watch mode - completed.
 54. TASK-DEVO-127: Windows scheduled/background trusted runner - completed.
 55. TASK-DEVO-128: Batch execution policy and approval contract - completed.
-56. TASK-DEVO-129: Autonomous queue worker loop - next recommended task.
-57. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+56. TASK-DEVO-129: Autonomous queue worker loop - completed.
+57. TASK-DEVO-130: Failure pause/resume and usage-limit handling - next recommended task.
+58. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

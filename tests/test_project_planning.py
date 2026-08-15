@@ -18,11 +18,14 @@ from devo.project_planning import (
     list_codex_handoffs,
     list_batch_approvals,
     list_execution_queues,
+    list_queue_worker_runs,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_run,
     list_project_batches,
     load_execution_queue,
     load_execution_policy,
+    load_queue_worker_run,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
@@ -31,6 +34,7 @@ from devo.project_planning import (
     project_batch_artifact_paths,
     batch_approval_artifact_paths,
     queue_artifact_paths,
+    queue_worker_run_artifact_paths,
 )
 from devo.read_models import build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -1085,6 +1089,205 @@ def test_execution_policy_check_blocks_missing_allowed_task(tmp_path: Path, monk
     assert "Allowed tasks missing from batch B001: T999" in result.output
 
 
+def test_queue_worker_plan_blocks_missing_and_draft_policy(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+
+    missing = runner.invoke(app, ["project", "queue-worker-plan", "--project", "sample", "--policy", "POL-999"], terminal_width=240)
+    _create_execution_policy(tmp_path, allowed_task="T001", request=False, approve=False)
+    draft = runner.invoke(app, ["project", "queue-worker-plan", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+
+    assert missing.exit_code != 0
+    assert "Execution policy not found" in missing.output
+    assert draft.exit_code != 0
+    assert "Policy status is draft" in draft.output
+    assert "Usable: False" in draft.output
+
+
+def test_queue_worker_plan_shows_usable_approved_policy(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    result = runner.invoke(app, ["project", "queue-worker-plan", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Queue worker plan: POL-0001" in result.output
+    assert "Usable: True" in result.output
+    assert "Selected item: QI001" in result.output
+    assert "Selected task: T001" in result.output
+    assert "queue-worker-run --project sample --policy POL-0001 --once --confirm-queue-worker" in result.output
+
+
+def test_queue_worker_run_requires_confirmation_and_blocks_unapproved_or_expired_policy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001", request=False, approve=False)
+
+    missing_confirm = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once"],
+        terminal_width=240,
+    )
+    draft = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+
+    assert missing_confirm.exit_code != 0
+    assert "requires --confirm-queue-worker" in missing_confirm.output
+    assert draft.exit_code != 0
+    assert "Queue worker run: QWR-0001" in draft.output
+    assert "Policy status is draft" in draft.output
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace) is not None
+
+    _create_execution_policy(tmp_path, allowed_task="T001", expires_at="2000-01-01T00:00:00+00:00")
+    expired = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0002", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+
+    assert expired.exit_code != 0
+    assert "Policy expired" in expired.output
+
+
+def test_queue_worker_run_creates_artifacts_handoff_and_worker_without_completing_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker", "--approver", "Manas"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Queue worker run: QWR-0001" in result.output
+    assert "Status: waiting_worker" in result.output
+    assert "No real Codex CLI was executed" in result.output
+    queue_worker_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert queue_worker_run is not None
+    assert queue_worker_run.selected_queue_item_id == "QI001"
+    assert queue_worker_run.selected_task_id == "T001"
+    assert queue_worker_run.selected_handoff_id == "H001"
+    assert queue_worker_run.selected_worker_run_id == "WR001"
+    json_path, markdown_path = queue_worker_run_artifact_paths("sample", "QWR-0001", workspace_root=workspace)
+    assert json_path.exists()
+    assert markdown_path.exists()
+    handoff = load_codex_handoff("sample", "H001", workspace_root=workspace)
+    worker = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert handoff is not None
+    assert handoff.source_queue_id == "Q001"
+    assert handoff.source_item_id == "QI001"
+    assert worker is not None
+    assert worker.mode == "manual_handoff"
+    assert worker.status == "planned"
+    assert worker.source_queue_item_id == "QI001"
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert queue.items[0].status == "pending"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_run_selects_next_allowed_item_and_processes_only_one(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T002")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    queue_worker_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert queue_worker_run is not None
+    assert queue_worker_run.selected_queue_item_id == "QI002"
+    assert queue_worker_run.selected_task_id == "T002"
+    assert queue_worker_run.selected_worker_run_id == "WR001"
+    assert len(list_queue_worker_runs("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_handoffs("sample", workspace_root=workspace)) == 1
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert [item.status for item in queue.items] == ["pending", "pending"]
+
+
+def test_queue_worker_run_ignores_terminal_items_and_reports_no_ready_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    updated_items = [
+        queue.items[0].model_copy(update={"status": "completed"}),
+        queue.items[1].model_copy(update={"status": "blocked"}),
+    ]
+    updated = queue.model_copy(update={"items": updated_items})
+    json_path, _markdown_path = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    json_path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Status: no_ready_item" in result.output
+    assert "QI001: item status is completed" in result.output
+    assert "QI002: item status blocked requires review or manual recovery" in result.output
+    assert list_codex_handoffs("sample", workspace_root=workspace) == []
+
+
+def test_queue_worker_run_blocks_missing_policy_references(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    broken = policy.model_copy(update={"batch_id": "B999", "queue_id": "Q999", "allowed_task_ids": ["T999"], "allowed_queue_item_ids": ["QI999"]})
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(broken.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("broken queue worker policy\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Referenced batch not found: B999" in result.output
+    assert "Referenced queue not found: Q999" in result.output
+
+
+def test_queue_worker_list_show_latest_work(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+
+    listed = runner.invoke(app, ["project", "queue-worker-list", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["project", "queue-worker-show", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    latest = runner.invoke(app, ["project", "queue-worker-latest", "--project", "sample"], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    assert "QWR-0001" in listed.output
+    assert shown.exit_code == 0, shown.output
+    assert "Queue worker run: QWR-0001" in shown.output
+    assert latest.exit_code == 0, latest.output
+    assert "Queue worker run: QWR-0001" in latest.output
+
+
+def test_queue_worker_plan_read_only_does_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
+    _workspace_path, project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "queue-worker-plan", "--project", "sample", "--policy", "POL-0001"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_queue_create_rejects_unapproved_and_unknown_batch(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     _create_backlog(tmp_path)
@@ -1606,6 +1809,58 @@ def _create_approved_batch(tmp_path: Path, task_ids: str = "T001,T002") -> None:
         markdown_path.write_text("# Empty approved batch\n", encoding="utf-8")
         return
     runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+
+
+def _ensure_queue(tmp_path: Path) -> None:
+    if load_execution_queue("sample", "Q001") is not None:
+        return
+    _create_queue(tmp_path)
+
+
+def _create_execution_policy(
+    tmp_path: Path,
+    *,
+    allowed_task: str = "T001",
+    request: bool = True,
+    approve: bool = True,
+    expires_at: str | None = None,
+) -> None:
+    _ensure_queue(tmp_path)
+    args = [
+        "project",
+        "execution-policy-create",
+        "--project",
+        "sample",
+        "--batch",
+        "B001",
+        "--queue",
+        "Q001",
+        "--title",
+        "Queue worker policy",
+        "--allowed-file",
+        "src/**",
+        "--forbidden-file",
+        ".env",
+        "--validation-command",
+        "pytest",
+        "--max-tasks",
+        "5",
+        "--max-tasks-per-run",
+        "1",
+    ]
+    for task_id in [value.strip() for value in allowed_task.split(",") if value.strip()]:
+        args.extend(["--allowed-task", task_id])
+    if expires_at:
+        args.extend(["--expires-at", expires_at])
+    created = runner.invoke(app, args, terminal_width=240)
+    assert created.exit_code == 0, created.output
+    policy_id = list_execution_policies("sample")[0].policy_id
+    if request:
+        requested = runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", policy_id], terminal_width=240)
+        assert requested.exit_code == 0, requested.output
+    if approve:
+        approved = runner.invoke(app, ["project", "execution-policy-approve", "--project", "sample", "--policy", policy_id, "--approver", "Manas"], terminal_width=240)
+        assert approved.exit_code == 0, approved.output
 
 
 def _create_queue(tmp_path: Path) -> None:

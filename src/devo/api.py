@@ -34,7 +34,9 @@ from .project_planning import (
     list_codex_worker_runs,
     list_project_batches,
     list_execution_queues,
+    list_queue_worker_runs,
     load_execution_queue,
+    load_queue_worker_run,
     load_batch_approval,
     load_codex_handoff,
     load_codex_run_plan,
@@ -85,6 +87,8 @@ API_ROUTES = (
     "GET /api/projects/{project}/queues/{queue_id}/next",
     "GET /api/projects/{project}/queues/{queue_id}/worker-status",
     "GET /api/projects/{project}/queues/{queue_id}/flow-summary",
+    "GET /api/projects/{project}/queue-worker-runs",
+    "GET /api/projects/{project}/queue-worker-runs/{run_id}",
     "GET /api/projects/{project}/handoffs",
     "GET /api/projects/{project}/handoffs/{handoff_id}",
     "GET /api/projects/{project}/worker-runs",
@@ -370,6 +374,23 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail={"error": "queue_not_found", "message": str(exc)}) from exc
         return _model_dump(summary)
+
+    @api.get("/api/projects/{project}/queue-worker-runs")
+    def project_queue_worker_runs(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        runs = list_queue_worker_runs(project, workspace_root=root)
+        return {"project": project, "count": len(runs), "queue_worker_runs": [_model_dump(run) for run in runs]}
+
+    @api.get("/api/projects/{project}/queue-worker-runs/{run_id}")
+    def project_queue_worker_run(project: str, run_id: str) -> dict[str, object]:
+        _require_project(project, root)
+        run = load_queue_worker_run(project, run_id, workspace_root=root)
+        if not run:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "queue_worker_run_not_found", "message": f"Queue worker run not found: {run_id}"},
+            )
+        return _model_dump(run)
 
     @api.get("/api/projects/{project}/handoffs")
     def project_handoffs(project: str) -> dict[str, object]:

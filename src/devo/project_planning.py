@@ -31,6 +31,8 @@ QUEUES_DIR_NAME = "queues"
 QUEUE_INDEX_JSON = "queue-index.json"
 EXECUTION_POLICIES_DIR_NAME = "execution-policies"
 EXECUTION_POLICY_INDEX_JSON = "execution-policy-index.json"
+QUEUE_WORKER_RUNS_DIR_NAME = "queue-worker-runs"
+QUEUE_WORKER_RUN_INDEX_JSON = "queue-worker-run-index.json"
 HANDOFFS_DIR_NAME = "handoffs"
 HANDOFF_INDEX_JSON = "handoff-index.json"
 WORKERS_DIR_NAME = "workers"
@@ -52,6 +54,7 @@ ALLOWED_BATCH_REVIEW_STATUSES = {"not_reviewed", "reviewed", "needs_changes"}
 ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
 ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "waiting_review", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
 ALLOWED_EXECUTION_POLICY_STATUSES = {"draft", "requested", "approved", "rejected", "expired", "cancelled", "completed"}
+ALLOWED_QUEUE_WORKER_RUN_STATUSES = {"no_policy", "blocked", "no_ready_item", "handoff_ready", "waiting_worker", "failed"}
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
 ALLOWED_HANDOFF_STATUSES = {"draft", "used", "superseded"}
 ALLOWED_HANDOFF_TYPES = {"task", "batch", "queue_next"}
@@ -360,6 +363,78 @@ class ExecutionPolicyCheckResult(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     next_action: str = ""
+
+
+class QueueWorkerPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    usable: bool = False
+    status: str = "blocked"
+    batch_id: str | None = None
+    queue_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    eligible_queue_item_ids: list[str] = Field(default_factory=list)
+    skipped_queue_item_summaries: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    policy_check_summary: str = ""
+    selection_reason: str = ""
+    next_action: str = ""
+
+
+class QueueWorkerRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    run_id: str
+    policy_id: str
+    batch_id: str | None = None
+    queue_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    selected_handoff_id: str | None = None
+    selected_worker_run_id: str | None = None
+    mode: str = "assisted"
+    status: str = "blocked"
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    approver: str | None = None
+    steps_run: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    skipped_queue_item_summaries: list[str] = Field(default_factory=list)
+    policy_check_summary: str = ""
+    selection_reason: str = ""
+    pause_reason: str = ""
+    next_action: str = ""
+
+
+class QueueWorkerRunIndexEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    policy_id: str
+    batch_id: str | None = None
+    queue_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    selected_worker_run_id: str | None = None
+    status: str
+    path: str
+    updated_at: datetime
+
+
+class QueueWorkerRunIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    runs: list[QueueWorkerRunIndexEntry] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class BatchSuggestion(BaseModel):
@@ -994,6 +1069,8 @@ class PlanningArtifactPaths(BaseModel):
     queue_index_json: Path
     execution_policies_dir: Path
     execution_policy_index_json: Path
+    queue_worker_runs_dir: Path
+    queue_worker_run_index_json: Path
     handoffs_dir: Path
     handoff_index_json: Path
 
@@ -1017,6 +1094,8 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         queue_index_json=planning_dir / QUEUES_DIR_NAME / QUEUE_INDEX_JSON,
         execution_policies_dir=planning_dir / EXECUTION_POLICIES_DIR_NAME,
         execution_policy_index_json=planning_dir / EXECUTION_POLICIES_DIR_NAME / EXECUTION_POLICY_INDEX_JSON,
+        queue_worker_runs_dir=planning_dir / QUEUE_WORKER_RUNS_DIR_NAME,
+        queue_worker_run_index_json=planning_dir / QUEUE_WORKER_RUNS_DIR_NAME / QUEUE_WORKER_RUN_INDEX_JSON,
         handoffs_dir=planning_dir / HANDOFFS_DIR_NAME,
         handoff_index_json=planning_dir / HANDOFFS_DIR_NAME / HANDOFF_INDEX_JSON,
     )
@@ -1508,6 +1587,12 @@ def execution_policy_artifact_paths(project_name: str, policy_id: str, workspace
     return paths.execution_policies_dir / f"execution-policy-{safe_id}.json", paths.execution_policies_dir / f"execution-policy-{safe_id}.md"
 
 
+def queue_worker_run_artifact_paths(project_name: str, run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_queue_worker_run_id(run_id)
+    return paths.queue_worker_runs_dir / f"queue-worker-run-{safe_id}.json", paths.queue_worker_runs_dir / f"queue-worker-run-{safe_id}.md"
+
+
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -1563,6 +1648,39 @@ def load_execution_policy(project_name: str, policy_id: str, workspace_root: Pat
     if not json_path.exists():
         return None
     return BatchExecutionPolicy.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def load_queue_worker_run_index(project_name: str, workspace_root: Path | None = None) -> QueueWorkerRunIndex:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    if not paths.queue_worker_run_index_json.exists():
+        return QueueWorkerRunIndex(project=project_name)
+    return QueueWorkerRunIndex.model_validate_json(paths.queue_worker_run_index_json.read_text(encoding="utf-8"))
+
+
+def list_queue_worker_runs(project_name: str, workspace_root: Path | None = None) -> list[QueueWorkerRun]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    if not paths.queue_worker_runs_dir.exists():
+        return []
+    runs: list[QueueWorkerRun] = []
+    for path in sorted(paths.queue_worker_runs_dir.glob("queue-worker-run-*.json")):
+        if path.name == QUEUE_WORKER_RUN_INDEX_JSON:
+            continue
+        try:
+            runs.append(QueueWorkerRun.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(runs, key=lambda run: run.started_at, reverse=True)
+
+
+def load_queue_worker_run(project_name: str, run_id: str, workspace_root: Path | None = None) -> QueueWorkerRun | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = queue_worker_run_artifact_paths(project_name, run_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return QueueWorkerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
 def create_batch_execution_policy(
@@ -1813,6 +1931,154 @@ def check_execution_policy(
         warnings=warnings,
         next_action=next_action,
     )
+
+
+def plan_queue_worker_run(project_name: str, policy_id: str, workspace_root: Path | None = None) -> QueueWorkerPlan:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_policy_id = _normalize_policy_id(policy_id)
+    policy = load_execution_policy(project_name, normalized_policy_id, workspace_root=root)
+    if not policy:
+        return QueueWorkerPlan(
+            project=project_name,
+            policy_id=normalized_policy_id,
+            status="no_policy",
+            blockers=[f"Execution policy not found: {policy_id}"],
+            policy_check_summary="Policy missing.",
+            next_action=f"List policies: devo project execution-policy-list --project {project_name}",
+        )
+    policy_check = check_execution_policy(project_name, policy.policy_id, workspace_root=root)
+    blockers = list(policy_check.blockers)
+    warnings = list(policy_check.warnings)
+    policy_summary = f"usable={policy_check.usable}; status={policy_check.status}; blockers={len(policy_check.blockers)}; warnings={len(policy_check.warnings)}"
+    if not policy.queue_id:
+        blockers.append("Queue worker v1 requires policy.queue_id.")
+    if not policy.validation_commands:
+        blockers.append("Queue worker v1 requires validation_commands in the approved policy.")
+    batch = load_project_batch(project_name, policy.batch_id, workspace_root=root)
+    queue = load_execution_queue(project_name, policy.queue_id, workspace_root=root) if policy.queue_id else None
+    if policy.queue_id and not queue and not any("Referenced queue not found" in blocker for blocker in blockers):
+        blockers.append(f"Referenced queue not found: {policy.queue_id}.")
+    if not batch and not any("Referenced batch not found" in blocker for blocker in blockers):
+        blockers.append(f"Referenced batch not found: {policy.batch_id}.")
+    if blockers:
+        return QueueWorkerPlan(
+            project=project_name,
+            policy_id=policy.policy_id,
+            usable=False,
+            status="blocked",
+            batch_id=policy.batch_id,
+            queue_id=policy.queue_id,
+            blockers=blockers,
+            warnings=warnings,
+            policy_check_summary=policy_summary,
+            next_action="Resolve policy blockers before queue-worker-run.",
+        )
+    assert queue is not None
+    eligible, skipped = _select_policy_queue_items(project_name, policy, queue, workspace_root=root)
+    if not eligible:
+        return QueueWorkerPlan(
+            project=project_name,
+            policy_id=policy.policy_id,
+            usable=False,
+            status="no_ready_item",
+            batch_id=policy.batch_id,
+            queue_id=queue.queue_id,
+            skipped_queue_item_summaries=skipped,
+            blockers=["No pending or running queue item matched the approved policy bounds."],
+            warnings=warnings,
+            policy_check_summary=policy_summary,
+            selection_reason="No pending or running queue item matched the approved policy bounds.",
+            next_action="Review queue state and policy scope before retrying.",
+        )
+    selected = eligible[0]
+    existing_worker = _latest_worker_run_for_queue_item(project_name, queue.queue_id, selected.item_id, workspace_root=root)
+    review = load_codex_worker_review(project_name, existing_worker.worker_run_id, workspace_root=root) if existing_worker else None
+    worker_blockers = _queue_worker_existing_worker_blockers(existing_worker, review)
+    if worker_blockers:
+        return QueueWorkerPlan(
+            project=project_name,
+            policy_id=policy.policy_id,
+            usable=False,
+            status="blocked",
+            batch_id=policy.batch_id,
+            queue_id=queue.queue_id,
+            selected_queue_item_id=selected.item_id,
+            selected_task_id=selected.task_id,
+            eligible_queue_item_ids=[item.item_id for item in eligible],
+            skipped_queue_item_summaries=skipped,
+            blockers=worker_blockers,
+            warnings=warnings,
+            policy_check_summary=policy_summary,
+            selection_reason=f"Selected {selected.item_id} but existing worker/review state needs attention.",
+            next_action="Review the existing worker output before creating another queue-worker run.",
+        )
+    return QueueWorkerPlan(
+        project=project_name,
+        policy_id=policy.policy_id,
+        usable=True,
+        status="handoff_ready" if existing_worker else "waiting_worker",
+        batch_id=policy.batch_id,
+        queue_id=queue.queue_id,
+        selected_queue_item_id=selected.item_id,
+        selected_task_id=selected.task_id,
+        eligible_queue_item_ids=[item.item_id for item in eligible],
+        skipped_queue_item_summaries=skipped,
+        warnings=warnings,
+        policy_check_summary=policy_summary,
+        selection_reason=f"Selected first eligible queue item {selected.item_id} for task {selected.task_id}.",
+        next_action=f"Run once: devo project queue-worker-run --project {project_name} --policy {policy.policy_id} --once --confirm-queue-worker",
+    )
+
+
+def run_queue_worker_once(project_name: str, policy_id: str, *, approver: str | None = None, workspace_root: Path | None = None) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    plan = plan_queue_worker_run(project_name, policy_id, workspace_root=root)
+    now = datetime.now(UTC)
+    run = QueueWorkerRun(
+        project=project_name,
+        run_id=_next_queue_worker_run_id(project_name, workspace_root=root),
+        policy_id=plan.policy_id,
+        batch_id=plan.batch_id,
+        queue_id=plan.queue_id,
+        selected_queue_item_id=plan.selected_queue_item_id,
+        selected_task_id=plan.selected_task_id,
+        status=plan.status,
+        started_at=now,
+        approver=approver.strip() if approver and approver.strip() else None,
+        steps_run=["loaded execution policy", "checked policy", "selected eligible queue item"],
+        blockers=list(plan.blockers),
+        warnings=list(plan.warnings),
+        skipped_queue_item_summaries=list(plan.skipped_queue_item_summaries),
+        policy_check_summary=plan.policy_check_summary,
+        selection_reason=plan.selection_reason,
+        pause_reason="blocked" if plan.blockers else plan.status,
+        next_action=plan.next_action,
+    )
+    if not plan.usable:
+        return _write_queue_worker_run(project_name, run, workspace_root=root)
+    assert plan.queue_id is not None
+    assert plan.selected_queue_item_id is not None
+    handoff = _create_or_reuse_handoff_for_queue_item(project_name, plan.queue_id, plan.selected_queue_item_id, workspace_root=root)
+    worker_run = _latest_worker_run_for_queue_item(project_name, plan.queue_id, plan.selected_queue_item_id, workspace_root=root)
+    steps = [*run.steps_run, f"handoff ready: {handoff.handoff_id}"]
+    if not worker_run:
+        worker_run, _worker_json, _worker_md = create_codex_worker_run_from_handoff(project_name, handoff.handoff_id, workspace_root=root)
+        steps.append(f"created assisted/manual Codex worker run: {worker_run.worker_run_id}")
+    else:
+        steps.append(f"reused existing Codex worker run: {worker_run.worker_run_id}")
+    updated = run.model_copy(
+        update={
+            "status": "waiting_worker",
+            "selected_handoff_id": handoff.handoff_id,
+            "selected_worker_run_id": worker_run.worker_run_id,
+            "steps_run": steps,
+            "pause_reason": "waiting_worker",
+            "next_action": f"Use devo worker codex run-show --project {project_name} --run {worker_run.worker_run_id}, then give the generated handoff to Codex and import/review the result before queue completion.",
+        }
+    )
+    return _write_queue_worker_run(project_name, updated, workspace_root=root)
 
 
 def request_batch_approval(
@@ -4093,6 +4359,54 @@ def render_execution_queue_markdown(queue: ExecutionQueue) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_queue_worker_run_markdown(run: QueueWorkerRun) -> str:
+    lines = [
+        f"# Queue Worker Run {run.run_id}",
+        "",
+        f"- Project: `{run.project}`",
+        f"- Run id: `{run.run_id}`",
+        f"- Policy id: `{run.policy_id}`",
+        f"- Batch id: `{run.batch_id or 'none'}`",
+        f"- Queue id: `{run.queue_id or 'none'}`",
+        f"- Selected queue item: `{run.selected_queue_item_id or 'none'}`",
+        f"- Selected task: `{run.selected_task_id or 'none'}`",
+        f"- Handoff id: `{run.selected_handoff_id or 'none'}`",
+        f"- Worker run id: `{run.selected_worker_run_id or 'none'}`",
+        f"- Mode: `{run.mode}`",
+        f"- Status: `{run.status}`",
+        f"- Started: `{run.started_at.isoformat()}`",
+        f"- Completed: `{run.completed_at.isoformat() if run.completed_at else 'none'}`",
+        f"- Approver: `{run.approver or 'none'}`",
+        f"- Pause reason: `{run.pause_reason or 'none'}`",
+        "",
+        "## Policy Check",
+        "",
+        run.policy_check_summary or "No policy check summary recorded.",
+        "",
+        "## Selection",
+        "",
+        run.selection_reason or "No queue item selected.",
+        "",
+    ]
+    _append_list_section(lines, "Steps Run", run.steps_run)
+    _append_list_section(lines, "Blockers", run.blockers)
+    _append_list_section(lines, "Warnings", run.warnings)
+    _append_list_section(lines, "Skipped Queue Items", run.skipped_queue_item_summaries)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            run.next_action or "Review the queue-worker run.",
+            "",
+            "## Safety Note",
+            "",
+            "Queue worker v1 prepares and controls the approved queue path. It does not execute Codex automatically, complete tasks, run validation, create delivery requests, commit, push, or modify target repositories.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_project_batch_markdown(batch: ProjectBatch) -> str:
     lines = [
         f"# {batch.title}",
@@ -4588,6 +4902,13 @@ def _normalize_worker_run_id(worker_run_id: str) -> str:
     return cleaned.upper()
 
 
+def _normalize_queue_worker_run_id(run_id: str) -> str:
+    cleaned = run_id.strip()
+    if cleaned.lower().startswith("queue-worker-run-"):
+        cleaned = cleaned[17:]
+    return cleaned.upper()
+
+
 def _normalize_run_plan_id(plan_id: str) -> str:
     cleaned = plan_id.strip()
     if cleaned.lower().startswith("run-plan-"):
@@ -4650,6 +4971,16 @@ def _next_policy_id(project_name: str, workspace_root: Path | None = None) -> st
     index = 1
     while True:
         candidate = f"POL-{index:04d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _next_queue_worker_run_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {_normalize_queue_worker_run_id(run.run_id) for run in list_queue_worker_runs(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"QWR-{index:04d}"
         if candidate not in existing:
             return candidate
         index += 1
@@ -4728,6 +5059,20 @@ def _write_execution_policy(project_name: str, policy: BatchExecutionPolicy, wor
     return policy, json_path, markdown_path
 
 
+def _write_queue_worker_run(project_name: str, run: QueueWorkerRun, workspace_root: Path | None = None) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.queue_worker_runs_dir.mkdir(parents=True, exist_ok=True)
+    if run.status not in ALLOWED_QUEUE_WORKER_RUN_STATUSES:
+        msg = f"Invalid queue worker run status: {run.status}"
+        raise ValueError(msg)
+    json_path, markdown_path = queue_worker_run_artifact_paths(project_name, run.run_id, workspace_root=root)
+    _write_model(json_path, run)
+    markdown_path.write_text(render_queue_worker_run_markdown(run), encoding="utf-8")
+    _write_queue_worker_run_index(project_name, workspace_root=root)
+    return run, json_path, markdown_path
+
+
 def _write_batch_index(project_name: str, workspace_root: Path | None = None) -> BatchIndex:
     root = workspace_root or get_workspace_root()
     paths = planning_artifact_paths(project_name, workspace_root=root)
@@ -4772,6 +5117,31 @@ def _write_execution_policy_index(project_name: str, workspace_root: Path | None
     ]
     index = ExecutionPolicyIndex(project=project_name, policies=entries, updated_at=datetime.now(UTC))
     _write_model(paths.execution_policy_index_json, index)
+    return index
+
+
+def _write_queue_worker_run_index(project_name: str, workspace_root: Path | None = None) -> QueueWorkerRunIndex:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.queue_worker_runs_dir.mkdir(parents=True, exist_ok=True)
+    runs = list_queue_worker_runs(project_name, workspace_root=root)
+    entries = [
+        QueueWorkerRunIndexEntry(
+            run_id=run.run_id,
+            policy_id=run.policy_id,
+            batch_id=run.batch_id,
+            queue_id=run.queue_id,
+            selected_queue_item_id=run.selected_queue_item_id,
+            selected_task_id=run.selected_task_id,
+            selected_worker_run_id=run.selected_worker_run_id,
+            status=run.status,
+            path=str(queue_worker_run_artifact_paths(project_name, run.run_id, workspace_root=root)[0]),
+            updated_at=run.completed_at or run.started_at,
+        )
+        for run in runs
+    ]
+    index = QueueWorkerRunIndex(project=project_name, runs=entries, updated_at=datetime.now(UTC))
+    _write_model(paths.queue_worker_run_index_json, index)
     return index
 
 
@@ -5085,6 +5455,94 @@ def _find_handoff_for_queue_item(project_name: str, queue_id: str, item_id: str,
         ):
             return handoff
     return None
+
+
+def _create_or_reuse_handoff_for_queue_item(project_name: str, queue_id: str, item_id: str, workspace_root: Path | None = None) -> CodexHandoff:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    item = _require_queue_item(queue, item_id)
+    existing = _find_handoff_for_queue_item(project_name, queue.queue_id, item.item_id, workspace_root=root)
+    if existing:
+        return existing
+    task = _try_get_backlog_task(project_name, item.task_id, root)
+    prompt = render_codex_handoff_prompt(
+        project_name,
+        handoff_type="queue_next",
+        title=f"{item.task_id}: {item.title}",
+        queue=queue,
+        queue_item=item,
+        task=task,
+        batch=load_project_batch(project_name, queue.source_batch_id, workspace_root=root),
+        workspace_root=root,
+    )
+    handoff, _json_path, _markdown_path = _write_codex_handoff(
+        project_name,
+        handoff_type="queue_next",
+        title=f"{item.task_id}: {item.title}",
+        prompt=prompt,
+        source_queue_id=queue.queue_id,
+        source_batch_id=queue.source_batch_id,
+        source_item_id=item.item_id,
+        source_task_id=item.task_id,
+        workspace_root=root,
+    )
+    return handoff
+
+
+def _select_policy_queue_items(
+    project_name: str,
+    policy: BatchExecutionPolicy,
+    queue: ExecutionQueue,
+    workspace_root: Path | None = None,
+) -> tuple[list[QueueItem], list[str]]:
+    root = workspace_root or get_workspace_root()
+    allowed_tasks = {_normalize_task_id(task_id) for task_id in policy.allowed_task_ids}
+    allowed_items = {_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids}
+    eligible: list[QueueItem] = []
+    skipped: list[str] = []
+    for item in queue.items:
+        reason = _queue_worker_item_skip_reason(project_name, policy, item, allowed_tasks, allowed_items, workspace_root=root)
+        if reason:
+            skipped.append(f"{item.item_id}: {reason}")
+            continue
+        eligible.append(item)
+    return eligible[: max(1, policy.max_tasks_per_run)], skipped
+
+
+def _queue_worker_item_skip_reason(
+    project_name: str,
+    policy: BatchExecutionPolicy,
+    item: QueueItem,
+    allowed_tasks: set[str],
+    allowed_items: set[str],
+    workspace_root: Path | None = None,
+) -> str:
+    if _normalize_batch_id(item.batch_id) != _normalize_batch_id(policy.batch_id):
+        return f"batch {item.batch_id} is outside policy batch {policy.batch_id}"
+    if allowed_tasks and _normalize_task_id(item.task_id) not in allowed_tasks:
+        return f"task {item.task_id} is outside allowed_task_ids"
+    if allowed_items and _normalize_queue_item_id(item.item_id) not in allowed_items:
+        return f"item {item.item_id} is outside allowed_queue_item_ids"
+    if item.status in {"completed", "cancelled", "skipped", "superseded"}:
+        return f"item status is {item.status}"
+    if item.status in {"blocked", "failed", "paused", "waiting_review"}:
+        return f"item status {item.status} requires review or manual recovery"
+    if item.status not in {"pending", "running"}:
+        return f"item status {item.status} is not eligible for queue worker v1"
+    if not _try_get_backlog_task(project_name, item.task_id, workspace_root or get_workspace_root()):
+        return f"task {item.task_id} is missing from backlog"
+    return ""
+
+
+def _queue_worker_existing_worker_blockers(worker_run: WorkerRun | None, review: WorkerReview | None) -> list[str]:
+    blockers: list[str] = []
+    if worker_run and worker_run.status in {"failed", "blocked_needs_approval", "cancelled"}:
+        blockers.append(f"Existing worker run {worker_run.worker_run_id} has status {worker_run.status}.")
+    if review and review.review_status in {"reviewed_needs_changes", "rejected"}:
+        blockers.append(f"Existing worker review {review.review_id} has status {review.review_status}.")
+    if review and review.validation_evidence.validation_status == "failed":
+        blockers.append(f"Existing worker review {review.review_id} has failed validation evidence.")
+    return blockers
 
 
 def _latest_worker_run_for_queue_item(

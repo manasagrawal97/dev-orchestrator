@@ -52,6 +52,10 @@ def test_project_overview_handles_valid_registered_project(tmp_path: Path, monke
     assert overview.current_queue_item_completion_blockers == []
     assert overview.current_queue_item_validation_status is None
     assert overview.queue_worker_next_action is None
+    assert overview.queue_worker_run_count == 0
+    assert overview.latest_queue_worker_run_id is None
+    assert overview.latest_queue_worker_run_status is None
+    assert overview.latest_queue_worker_run_worker_run_id is None
     assert overview.handoff_count == 0
     assert overview.latest_handoff_id is None
     assert overview.handoff_next_action
@@ -189,6 +193,10 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "current_queue_item_completion_blockers" in overview_data
     assert "current_queue_item_validation_status" in overview_data
     assert "queue_worker_next_action" in overview_data
+    assert "queue_worker_run_count" in overview_data
+    assert "latest_queue_worker_run_id" in overview_data
+    assert "latest_queue_worker_run_status" in overview_data
+    assert "latest_queue_worker_run_worker_run_id" in overview_data
     assert "handoff_count" in overview_data
     assert "handoff_next_action" in overview_data
     assert "worker_run_count" in overview_data
@@ -257,6 +265,53 @@ def test_project_overview_includes_execution_policy_summary(tmp_path: Path, monk
     assert overview.latest_execution_policy_batch_id == "B001"
     assert overview.latest_execution_policy_queue_id == "Q001"
     assert "execution-policy-request" in overview.execution_policy_next_action
+
+
+def test_project_overview_includes_queue_worker_run_summary(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_backlog(tmp_path)
+    runner.invoke(app, ["project", "batch-create", "--project", "sample", "--title", "First batch", "--tasks", "T001"])
+    runner.invoke(app, ["project", "batch-approve", "--project", "sample", "--batch", "B001"])
+    runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+    runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-create",
+            "--project",
+            "sample",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--title",
+            "Policy",
+            "--allowed-task",
+            "T001",
+            "--allowed-file",
+            "src/**",
+            "--forbidden-file",
+            ".env",
+            "--validation-command",
+            "pytest",
+        ],
+    )
+    runner.invoke(app, ["project", "execution-policy-request", "--project", "sample", "--policy", "POL-0001"])
+    runner.invoke(app, ["project", "execution-policy-approve", "--project", "sample", "--policy", "POL-0001", "--approver", "Manas"])
+    result = runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+    assert result.exit_code == 0, result.output
+
+    overview = build_project_overview("sample")
+
+    assert overview.queue_worker_run_count == 1
+    assert overview.latest_queue_worker_run_id == "QWR-0001"
+    assert overview.latest_queue_worker_run_status == "waiting_worker"
+    assert overview.latest_queue_worker_run_policy_id == "POL-0001"
+    assert overview.latest_queue_worker_run_selected_item == "QI001"
+    assert overview.latest_queue_worker_run_selected_task == "T001"
+    assert overview.latest_queue_worker_run_worker_run_id == "WR001"
+    assert overview.latest_queue_worker_run_next_action is not None
+    assert "run-show" in overview.latest_queue_worker_run_next_action
 
 
 def test_project_overview_includes_worker_run_summary(tmp_path: Path, monkeypatch) -> None:

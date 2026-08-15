@@ -89,6 +89,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: Fully reliable real Codex automation if the launcher path is still not ready, AI model integration, daemonization, or broad UI controls.
 - Safety rules: Work one queue item at a time, stop on any pause condition, never silently continue after validation or delivery failure, and require the trusted executor for delivery.
 - Done criteria: Devo can run through one approved queue item and either complete it safely or pause with a precise reason.
+- Status: Completed as a v1 preparation loop. `devo project queue-worker-plan` and `devo project queue-worker-run --once --confirm-queue-worker` now load an approved policy, choose one eligible queue item, create/reuse the Codex handoff and manual/assisted worker run record, write queue-worker run artifacts, and pause at `waiting_worker` or a blocker. The v1 loop deliberately does not run real Codex, validation, delivery runner requests, queue completion, commit, or push.
 
 ### TASK-DEVO-130: Failure Pause/Resume And Usage-Limit Handling
 

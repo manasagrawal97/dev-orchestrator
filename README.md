@@ -234,7 +234,19 @@ devo project execution-policy-check --project MyProject --policy POL-0001
 devo project execution-policy-reject --project MyProject --policy POL-0001 --reviewer "Manas" --note "Too broad."
 ```
 
-Execution policy artifacts are stored under `workspace/projects/<project>/planning/execution-policies/` as `execution-policy-<policy_id>.json`, `execution-policy-<policy_id>.md`, and `execution-policy-index.json`. A policy is a bounded approval contract for a batch/queue: allowed tasks, optional queue items, allowed and forbidden file patterns, per-task and per-run limits, validation commands, auto-delivery/auto-push permissions, pause conditions, approval metadata, and expiry. It is not autonomous execution yet, does not run Codex, does not run validation, does not create delivery runner requests, does not stage/commit/push, and does not modify target projects. `auto_delivery_allowed` and `auto_push_allowed` only describe what a future TASK-DEVO-129 queue worker may do inside the policy bounds through the trusted runner path.
+Execution policy artifacts are stored under `workspace/projects/<project>/planning/execution-policies/` as `execution-policy-<policy_id>.json`, `execution-policy-<policy_id>.md`, and `execution-policy-index.json`. A policy is a bounded approval contract for a batch/queue: allowed tasks, optional queue items, allowed and forbidden file patterns, per-task and per-run limits, validation commands, auto-delivery/auto-push permissions, pause conditions, approval metadata, and expiry.
+
+Prepare one policy-gated queue worker step:
+
+```powershell
+devo project queue-worker-plan --project MyProject --policy POL-0001
+devo project queue-worker-run --project MyProject --policy POL-0001 --once --confirm-queue-worker
+devo project queue-worker-list --project MyProject
+devo project queue-worker-show --project MyProject --run QWR-0001
+devo project queue-worker-latest --project MyProject
+```
+
+Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 loop checks the approved policy, selects at most one eligible pending/running queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted Codex worker run record, records what happened, and pauses at `waiting_worker` or a blocker state. It does not run real Codex, call AI APIs, run validation, create delivery runner requests, complete queue items, stage, commit, push, or modify target projects.
 
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
 
