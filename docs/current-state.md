@@ -38,14 +38,14 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed implementation task: TASK-DEVO-122 Phase 1 context and workflow efficiency audit
+- Latest completed implementation task: TASK-DEVO-123 end-to-end Phase 1 dogfood on DevOrchestrator
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-099 first real Codex supervised dry-run report
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
-- Latest completed dogfood run: TASK-DEVO-110 end-to-end guarded delivery dogfood run against an isolated temp repo/local bare remote
+- Latest completed dogfood run: TASK-DEVO-123 end-to-end Phase 1 dogfood on DevOrchestrator
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
-- Next recommended action: TASK-DEVO-123 end-to-end Phase 1 dogfood on DevOrchestrator. The standard post-Codex delivery path is now `delivery runner-request` from Codex/sandbox, `delivery runner-latest` or enhanced `delivery latest` to recover the latest request/command, then one normal local PowerShell `.\.venv\Scripts\devo.exe delivery runner-run ... --confirm-runner-delivery` command by Manas. Auto-commit/push daemons and UI commit/push buttons remain deferred.
+- Next recommended action: TASK-DEVO-124 Phase 1 MVP tag/checkpoint. The standard post-Codex delivery path is now `delivery runner-request` from Codex/sandbox, `delivery runner-latest` or enhanced `delivery latest` to recover the latest request/command, then one normal local PowerShell `.\.venv\Scripts\devo.exe delivery runner-run ... --confirm-runner-delivery` command by Manas. Auto-commit/push daemons and UI commit/push buttons remain deferred.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -142,6 +142,7 @@ The working loop is:
 - TASK-DEVO-120 polishes the trusted runner operator flow. `delivery latest` now shows latest runner request/run/commit/push state and runner next action, `delivery runner-latest` finds the newest request without copying IDs from `runner-list`, `runner-request` prints changed/warning/blocker counts plus the exact normal PowerShell command, and successful `runner-run` output has an obvious completion summary.
 - TASK-DEVO-121 adds vision-to-batch intake helpers. `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt` summarize the Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Handoff path, generate local planning templates/prompts, and keep the rough-idea intake flow workspace-only with no AI/API calls, target edits, validation, commit, or push.
 - TASK-DEVO-122 adds `docs/phase-1-context-workflow-efficiency-audit.md`. The audit verdict is `watch`: Phase 1 is healthy enough for end-to-end dogfood, but prompt length, duplicated docs, artifact navigation, and command count should be simplified after the dogfood instead of adding more features now.
+- TASK-DEVO-123 adds `docs/dogfood/phase-1-end-to-end-dogfood-123.md`. The dogfood verified intake/status, planning state review, queue/handoff readiness, docs-only change validation, and trusted runner request flow. Phase 1 is ready for TASK-DEVO-124 checkpoint, with post-checkpoint polish recommended for queue-aware next actions and `flow-summary` queue defaults.
 
 ## Readiness Estimate
 
