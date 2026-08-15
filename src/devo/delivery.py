@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -537,6 +538,76 @@ class DeliveryRunnerWatch(BaseModel):
     next_action: str
 
 
+class DeliveryRunnerSchedulePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    task_name: str
+    repo_path: str
+    devo_executable: str
+    working_directory: str
+    approver: str
+    interval_minutes: int
+    enabled: bool = False
+    wrapper_path: str
+    log_path: str
+    config_path: str
+    status_path: str
+    runner_watch_command: list[str] = Field(default_factory=list)
+    scheduler_create_args: list[str] = Field(default_factory=list)
+    scheduler_enable_args: list[str] = Field(default_factory=list)
+    scheduler_disable_args: list[str] = Field(default_factory=list)
+    scheduler_run_now_args: list[str] = Field(default_factory=list)
+    scheduler_remove_args: list[str] = Field(default_factory=list)
+    next_action: str
+
+
+class DeliveryRunnerScheduleConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    task_name: str
+    repo_path: str
+    devo_executable: str
+    working_directory: str
+    approver: str
+    interval_minutes: int
+    enabled: bool = False
+    wrapper_path: str
+    log_path: str
+    installed_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_status_check_at: datetime | None = None
+    last_action: str = "planned"
+    last_action_result: str = "not_run"
+    next_action: str
+
+
+class DeliveryRunnerScheduleStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = DELIVERY_SCHEMA_VERSION
+    project: str
+    task_name: str | None = None
+    installed: bool | None = None
+    enabled: bool | None = None
+    last_run: str | None = None
+    next_run: str | None = None
+    last_result: str | None = None
+    latest_watch_id: str | None = None
+    latest_watch_status: str | None = None
+    latest_watch_request_id: str | None = None
+    latest_watch_commit_hash: str | None = None
+    latest_watch_pushed: bool | None = None
+    last_status_check_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_action: str = "status"
+    last_action_result: str = "not_checked"
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str
+
+
 def delivery_directory(project_name: str, workspace_root: Path | None = None) -> Path:
     root = workspace_root or get_workspace_root()
     return root / "projects" / project_name / "delivery"
@@ -582,6 +653,10 @@ def delivery_runner_request_directory(project_name: str, workspace_root: Path | 
     return delivery_directory(project_name, workspace_root=workspace_root) / "runner-requests"
 
 
+def delivery_runner_schedule_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    return delivery_directory(project_name, workspace_root=workspace_root) / "runner-schedule"
+
+
 def delivery_runner_request_index_path(project_name: str, workspace_root: Path | None = None) -> Path:
     return delivery_runner_request_directory(project_name, workspace_root=workspace_root) / "runner-request-index.json"
 
@@ -602,6 +677,23 @@ def delivery_runner_watch_artifact_paths(project_name: str, watch_id: str, works
     directory = delivery_runner_request_directory(project_name, workspace_root=workspace_root)
     stem = watch_id.lower()
     return directory / f"runner-watch-{stem}.json", directory / f"runner-watch-{stem}.md"
+
+
+def delivery_runner_schedule_config_path(project_name: str, workspace_root: Path | None = None) -> Path:
+    return delivery_runner_schedule_directory(project_name, workspace_root=workspace_root) / "runner-schedule-config.json"
+
+
+def delivery_runner_schedule_status_path(project_name: str, workspace_root: Path | None = None) -> Path:
+    return delivery_runner_schedule_directory(project_name, workspace_root=workspace_root) / "runner-schedule-status.json"
+
+
+def delivery_runner_schedule_wrapper_path(project_name: str, workspace_root: Path | None = None) -> Path:
+    safe_project = re.sub(r"[^A-Za-z0-9_.-]+", "-", project_name).strip("-") or "project"
+    return delivery_runner_schedule_directory(project_name, workspace_root=workspace_root) / f"runner-watch-{safe_project}.cmd"
+
+
+def delivery_runner_schedule_log_path(project_name: str, workspace_root: Path | None = None) -> Path:
+    return delivery_runner_schedule_directory(project_name, workspace_root=workspace_root) / "runner-watch.log"
 
 
 def run_delivery_readiness_check(
@@ -1862,6 +1954,381 @@ def list_delivery_runner_watches(project_name: str, workspace_root: Path | None 
     return sorted(watches, key=lambda item: item.started_at, reverse=True)
 
 
+def build_delivery_runner_schedule_plan(
+    project_name: str,
+    *,
+    approver: str,
+    interval_minutes: int = 5,
+    task_name: str | None = None,
+    enable: bool = False,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerSchedulePlan:
+    root = workspace_root or get_workspace_root()
+    approver_name = approver.strip()
+    if not approver_name:
+        msg = "--approver is required."
+        raise ValueError(msg)
+    if interval_minutes < 1:
+        msg = "--interval-minutes must be at least 1."
+        raise ValueError(msg)
+    registration = load_registered_project(project_name, workspace_root=root)
+    resolved_task_name = task_name.strip() if task_name and task_name.strip() else f"DevoTrustedRunner-{project_name}"
+    wrapper_path = delivery_runner_schedule_wrapper_path(project_name, workspace_root=root)
+    log_path = delivery_runner_schedule_log_path(project_name, workspace_root=root)
+    config_path = delivery_runner_schedule_config_path(project_name, workspace_root=root)
+    status_path = delivery_runner_schedule_status_path(project_name, workspace_root=root)
+    working_directory = Path.cwd().resolve()
+    devo_executable = _default_devo_executable()
+    runner_watch_command = [
+        str(devo_executable),
+        "delivery",
+        "runner-watch",
+        "--project",
+        project_name,
+        "--approver",
+        approver_name,
+        "--once",
+        "--confirm-runner-watch",
+    ]
+    scheduler_create_args = [
+        "schtasks.exe",
+        "/Create",
+        "/TN",
+        resolved_task_name,
+        "/TR",
+        f'cmd.exe /c "{wrapper_path}"',
+        "/SC",
+        "MINUTE",
+        "/MO",
+        str(interval_minutes),
+        "/F",
+    ]
+    scheduler_enable_args = ["schtasks.exe", "/Change", "/TN", resolved_task_name, "/ENABLE"]
+    scheduler_disable_args = ["schtasks.exe", "/Change", "/TN", resolved_task_name, "/DISABLE"]
+    scheduler_run_now_args = ["schtasks.exe", "/Run", "/TN", resolved_task_name]
+    scheduler_remove_args = ["schtasks.exe", "/Delete", "/TN", resolved_task_name, "/F"]
+    return DeliveryRunnerSchedulePlan(
+        project=project_name,
+        task_name=resolved_task_name,
+        repo_path=str(registration.path),
+        devo_executable=str(devo_executable),
+        working_directory=str(working_directory),
+        approver=approver_name,
+        interval_minutes=interval_minutes,
+        enabled=enable,
+        wrapper_path=str(wrapper_path),
+        log_path=str(log_path),
+        config_path=str(config_path),
+        status_path=str(status_path),
+        runner_watch_command=runner_watch_command,
+        scheduler_create_args=scheduler_create_args,
+        scheduler_enable_args=scheduler_enable_args,
+        scheduler_disable_args=scheduler_disable_args,
+        scheduler_run_now_args=scheduler_run_now_args,
+        scheduler_remove_args=scheduler_remove_args,
+        next_action=(
+            f"Install with devo delivery runner-schedule-install --project {project_name} "
+            f'--approver "{approver_name}" --interval-minutes {interval_minutes} --confirm-install'
+        ),
+    )
+
+
+def install_delivery_runner_schedule(
+    project_name: str,
+    *,
+    approver: str,
+    interval_minutes: int = 5,
+    task_name: str | None = None,
+    enable: bool = False,
+    dry_run: bool = False,
+    confirm_install: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerScheduleConfig, DeliveryRunnerScheduleStatus, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    if not confirm_install:
+        msg = "--confirm-install is required."
+        raise ValueError(msg)
+    plan = build_delivery_runner_schedule_plan(
+        project_name,
+        approver=approver,
+        interval_minutes=interval_minutes,
+        task_name=task_name,
+        enable=enable,
+        workspace_root=root,
+    )
+    schedule_dir = delivery_runner_schedule_directory(project_name, workspace_root=root)
+    schedule_dir.mkdir(parents=True, exist_ok=True)
+    _write_runner_schedule_wrapper(plan)
+    now = datetime.now(UTC)
+    action_result = "dry_run"
+    warnings: list[str] = []
+    installed_at: datetime | None = None
+    installed: bool | None = False
+    enabled: bool | None = enable
+    if not dry_run:
+        if os.name != "nt":
+            msg = "Windows Task Scheduler commands require Windows. Use --dry-run on non-Windows systems."
+            raise ValueError(msg)
+        create_result = _run_scheduler_command(plan.scheduler_create_args)
+        if create_result.returncode != 0:
+            action_result = create_result.stderr.strip() or create_result.stdout.strip() or "scheduler create failed"
+            warnings.append(action_result)
+            installed = False
+        else:
+            installed_at = now
+            installed = True
+            change_args = plan.scheduler_enable_args if enable else plan.scheduler_disable_args
+            change_result = _run_scheduler_command(change_args)
+            action_result = change_result.stderr.strip() or change_result.stdout.strip() or "installed"
+            if change_result.returncode != 0:
+                warnings.append(action_result)
+                enabled = None
+            else:
+                action_result = "installed_enabled" if enable else "installed_disabled"
+                enabled = enable
+    config = DeliveryRunnerScheduleConfig(
+        project=project_name,
+        task_name=plan.task_name,
+        repo_path=plan.repo_path,
+        devo_executable=plan.devo_executable,
+        working_directory=plan.working_directory,
+        approver=plan.approver,
+        interval_minutes=plan.interval_minutes,
+        enabled=bool(enable),
+        wrapper_path=plan.wrapper_path,
+        log_path=plan.log_path,
+        installed_at=installed_at,
+        updated_at=now,
+        last_action="install_dry_run" if dry_run else "install",
+        last_action_result=action_result,
+        next_action=_schedule_next_action(project_name, installed=bool(installed), enabled=enabled),
+    )
+    status = DeliveryRunnerScheduleStatus(
+        project=project_name,
+        task_name=plan.task_name,
+        installed=installed,
+        enabled=enabled,
+        last_status_check_at=now,
+        last_action=config.last_action,
+        last_action_result=action_result,
+        warnings=warnings,
+        next_action=config.next_action,
+    )
+    config_path, status_path = write_delivery_runner_schedule_artifacts(config, status, workspace_root=root)
+    return config, status, config_path, status_path
+
+
+def load_delivery_runner_schedule_config(
+    project_name: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerScheduleConfig | None:
+    root = workspace_root or get_workspace_root()
+    path = delivery_runner_schedule_config_path(project_name, workspace_root=root)
+    if not path.exists():
+        return None
+    return DeliveryRunnerScheduleConfig.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def load_delivery_runner_schedule_status(
+    project_name: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerScheduleStatus | None:
+    root = workspace_root or get_workspace_root()
+    path = delivery_runner_schedule_status_path(project_name, workspace_root=root)
+    if not path.exists():
+        return None
+    return DeliveryRunnerScheduleStatus.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def write_delivery_runner_schedule_artifacts(
+    config: DeliveryRunnerScheduleConfig,
+    status: DeliveryRunnerScheduleStatus,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    root = workspace_root or get_workspace_root()
+    directory = delivery_runner_schedule_directory(config.project, workspace_root=root)
+    directory.mkdir(parents=True, exist_ok=True)
+    config_path = delivery_runner_schedule_config_path(config.project, workspace_root=root)
+    status_path = delivery_runner_schedule_status_path(config.project, workspace_root=root)
+    config_path.write_text(config.model_dump_json(indent=2), encoding="utf-8")
+    status_path.write_text(status.model_dump_json(indent=2), encoding="utf-8")
+    return config_path, status_path
+
+
+def get_delivery_runner_schedule_status(
+    project_name: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerScheduleStatus:
+    root = workspace_root or get_workspace_root()
+    config = load_delivery_runner_schedule_config(project_name, workspace_root=root)
+    latest_watch = next(iter(list_delivery_runner_watches(project_name, workspace_root=root)), None)
+    if not config:
+        return DeliveryRunnerScheduleStatus(
+            project=project_name,
+            installed=False,
+            enabled=False,
+            latest_watch_id=latest_watch.watch_id if latest_watch else None,
+            latest_watch_status=latest_watch.status if latest_watch else None,
+            latest_watch_request_id=latest_watch.selected_request_id if latest_watch else None,
+            latest_watch_commit_hash=latest_watch.commit_hash if latest_watch else None,
+            latest_watch_pushed=latest_watch.pushed if latest_watch else None,
+            last_action_result="missing_config",
+            next_action=(
+                f"Plan or install scheduled runner: devo delivery runner-schedule-plan --project {project_name} "
+                '--approver "<name>" --interval-minutes 5'
+            ),
+        )
+    warnings: list[str] = []
+    installed: bool | None = None
+    enabled: bool | None = config.enabled
+    last_run: str | None = None
+    next_run: str | None = None
+    last_result: str | None = None
+    action_result = config.last_action_result
+    if os.name != "nt":
+        warnings.append("Windows Task Scheduler status is unavailable on non-Windows systems.")
+        installed = None
+    else:
+        result = _run_scheduler_command(["schtasks.exe", "/Query", "/TN", config.task_name, "/FO", "LIST", "/V"])
+        if result.returncode != 0:
+            installed = False
+            action_result = result.stderr.strip() or result.stdout.strip() or "scheduled task not found"
+        else:
+            installed = True
+            fields = _parse_schtasks_list_output(result.stdout)
+            status_text = fields.get("Scheduled Task State") or fields.get("Status") or ""
+            enabled = "disabled" not in status_text.lower()
+            last_run = fields.get("Last Run Time")
+            next_run = fields.get("Next Run Time")
+            last_result = fields.get("Last Result")
+            action_result = "status_ok"
+    return DeliveryRunnerScheduleStatus(
+        project=project_name,
+        task_name=config.task_name,
+        installed=installed,
+        enabled=enabled,
+        last_run=last_run,
+        next_run=next_run,
+        last_result=last_result,
+        latest_watch_id=latest_watch.watch_id if latest_watch else None,
+        latest_watch_status=latest_watch.status if latest_watch else None,
+        latest_watch_request_id=latest_watch.selected_request_id if latest_watch else None,
+        latest_watch_commit_hash=latest_watch.commit_hash if latest_watch else None,
+        latest_watch_pushed=latest_watch.pushed if latest_watch else None,
+        last_action="status",
+        last_action_result=action_result,
+        warnings=warnings,
+        next_action=_schedule_next_action(project_name, installed=installed, enabled=enabled),
+    )
+
+
+def enable_delivery_runner_schedule(
+    project_name: str,
+    *,
+    confirm_enable: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerScheduleConfig, DeliveryRunnerScheduleStatus, Path, Path]:
+    if not confirm_enable:
+        msg = "--confirm-enable is required."
+        raise ValueError(msg)
+    return _change_runner_schedule_state(project_name, action="enable", workspace_root=workspace_root)
+
+
+def disable_delivery_runner_schedule(
+    project_name: str,
+    *,
+    confirm_disable: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerScheduleConfig, DeliveryRunnerScheduleStatus, Path, Path]:
+    if not confirm_disable:
+        msg = "--confirm-disable is required."
+        raise ValueError(msg)
+    return _change_runner_schedule_state(project_name, action="disable", workspace_root=workspace_root)
+
+
+def run_now_delivery_runner_schedule(
+    project_name: str,
+    *,
+    confirm_run_now: bool = False,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerScheduleStatus:
+    root = workspace_root or get_workspace_root()
+    if not confirm_run_now:
+        msg = "--confirm-run-now is required."
+        raise ValueError(msg)
+    config = _require_runner_schedule_config(project_name, root)
+    if os.name != "nt":
+        msg = "Windows Task Scheduler run-now requires Windows."
+        raise ValueError(msg)
+    result = _run_scheduler_command(["schtasks.exe", "/Run", "/TN", config.task_name])
+    action_result = result.stderr.strip() or result.stdout.strip() or "run_now_requested"
+    status = DeliveryRunnerScheduleStatus(
+        project=project_name,
+        task_name=config.task_name,
+        installed=result.returncode == 0,
+        enabled=config.enabled,
+        last_action="run_now",
+        last_action_result=action_result,
+        warnings=[] if result.returncode == 0 else [action_result],
+        next_action=(
+            f"Check latest watch: devo delivery runner-watch-latest --project {project_name}; "
+            f"then delivery latest: devo delivery latest --project {project_name}"
+        ),
+    )
+    updated_config = config.model_copy(update={"updated_at": datetime.now(UTC), "last_action": "run_now", "last_action_result": action_result})
+    write_delivery_runner_schedule_artifacts(updated_config, status, workspace_root=root)
+    return status
+
+
+def remove_delivery_runner_schedule(
+    project_name: str,
+    *,
+    confirm_remove: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerScheduleConfig, DeliveryRunnerScheduleStatus, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    if not confirm_remove:
+        msg = "--confirm-remove is required."
+        raise ValueError(msg)
+    config = _require_runner_schedule_config(project_name, root)
+    warnings: list[str] = []
+    action_result = "removed"
+    installed: bool | None = False
+    if os.name != "nt":
+        warnings.append("Windows Task Scheduler removal is unavailable on non-Windows systems.")
+        installed = None
+        action_result = "unsupported_platform"
+    else:
+        result = _run_scheduler_command(["schtasks.exe", "/Delete", "/TN", config.task_name, "/F"])
+        action_result = result.stderr.strip() or result.stdout.strip() or "removed"
+        if result.returncode != 0:
+            warnings.append(action_result)
+            installed = None
+    now = datetime.now(UTC)
+    updated_config = config.model_copy(
+        update={
+            "enabled": False,
+            "updated_at": now,
+            "last_action": "remove",
+            "last_action_result": action_result,
+            "next_action": f"Scheduled runner removed. Reinstall with devo delivery runner-schedule-install --project {project_name} ...",
+        }
+    )
+    status = DeliveryRunnerScheduleStatus(
+        project=project_name,
+        task_name=config.task_name,
+        installed=installed,
+        enabled=False,
+        last_status_check_at=now,
+        last_action="remove",
+        last_action_result=action_result,
+        warnings=warnings,
+        next_action=updated_config.next_action,
+    )
+    config_path, status_path = write_delivery_runner_schedule_artifacts(updated_config, status, workspace_root=root)
+    return updated_config, status, config_path, status_path
+
+
 def run_delivery_runner_watch(
     project_name: str,
     *,
@@ -2730,6 +3197,121 @@ def _runner_watch_next_action(status: str, blockers: list[str]) -> str:
     if blockers:
         return "Resolve runner watch blockers before retrying: " + _summary_text(blockers)
     return "Review runner watch artifact."
+
+
+def _default_devo_executable() -> Path:
+    executable = Path(sys.executable)
+    candidate = executable.with_name("devo.exe")
+    if candidate.exists():
+        return candidate
+    return executable
+
+
+def _quote_cmd_path(value: str | Path) -> str:
+    return f'"{value}"'
+
+
+def _write_runner_schedule_wrapper(plan: DeliveryRunnerSchedulePlan) -> Path:
+    wrapper_path = Path(plan.wrapper_path)
+    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    runner_args = " ".join(_quote_cmd_arg(arg) for arg in plan.runner_watch_command[1:])
+    content = "\n".join(
+        [
+            "@echo off",
+            f"cd /d {_quote_cmd_path(plan.working_directory)}",
+            (
+                f"{_quote_cmd_path(plan.devo_executable)} {runner_args} "
+                f">> {_quote_cmd_path(plan.log_path)} 2>&1"
+            ),
+            "",
+        ]
+    )
+    wrapper_path.write_text(content, encoding="utf-8")
+    return wrapper_path
+
+
+def _quote_cmd_arg(value: str) -> str:
+    if not value:
+        return '""'
+    if re.search(r"\s|[&()^=;!'+,`~]", value):
+        return '"' + value.replace('"', '""') + '"'
+    return value
+
+
+def _run_scheduler_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, check=False, capture_output=True, text=True)
+
+
+def _parse_schtasks_list_output(output: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+def _require_runner_schedule_config(project_name: str, workspace_root: Path) -> DeliveryRunnerScheduleConfig:
+    config = load_delivery_runner_schedule_config(project_name, workspace_root=workspace_root)
+    if not config:
+        msg = f"Runner schedule config not found for project {project_name}."
+        raise ValueError(msg)
+    return config
+
+
+def _change_runner_schedule_state(
+    project_name: str,
+    *,
+    action: str,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerScheduleConfig, DeliveryRunnerScheduleStatus, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    config = _require_runner_schedule_config(project_name, root)
+    if os.name != "nt":
+        msg = "Windows Task Scheduler state changes require Windows."
+        raise ValueError(msg)
+    enabled = action == "enable"
+    args = ["schtasks.exe", "/Change", "/TN", config.task_name, "/ENABLE" if enabled else "/DISABLE"]
+    result = _run_scheduler_command(args)
+    action_result = result.stderr.strip() or result.stdout.strip() or f"{action}_requested"
+    warnings = [] if result.returncode == 0 else [action_result]
+    now = datetime.now(UTC)
+    updated_config = config.model_copy(
+        update={
+            "enabled": enabled if result.returncode == 0 else config.enabled,
+            "updated_at": now,
+            "last_action": action,
+            "last_action_result": action_result,
+            "next_action": _schedule_next_action(project_name, installed=result.returncode == 0, enabled=enabled),
+        }
+    )
+    status = DeliveryRunnerScheduleStatus(
+        project=project_name,
+        task_name=config.task_name,
+        installed=result.returncode == 0,
+        enabled=updated_config.enabled,
+        last_status_check_at=now,
+        last_action=action,
+        last_action_result=action_result,
+        warnings=warnings,
+        next_action=updated_config.next_action,
+    )
+    config_path, status_path = write_delivery_runner_schedule_artifacts(updated_config, status, workspace_root=root)
+    return updated_config, status, config_path, status_path
+
+
+def _schedule_next_action(project_name: str, *, installed: bool | None, enabled: bool | None) -> str:
+    if installed is False:
+        return (
+            f"Install with devo delivery runner-schedule-install --project {project_name} "
+            '--approver "<name>" --interval-minutes 5 --confirm-install'
+        )
+    if enabled is False:
+        return f"Enable with devo delivery runner-schedule-enable --project {project_name} --confirm-enable"
+    if enabled is True:
+        return f"Check status with devo delivery runner-schedule-status --project {project_name}"
+    return f"Review scheduler status with devo delivery runner-schedule-status --project {project_name}"
 
 
 def _finish_runner_run(

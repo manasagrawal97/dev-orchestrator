@@ -812,6 +812,262 @@ def test_delivery_runner_watch_latest_works(tmp_path: Path, monkeypatch) -> None
     assert "Status: no_pending" in result.output
 
 
+def test_delivery_runner_schedule_plan_prints_without_installing(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-plan",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--interval-minutes",
+            "5",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Scheduled task: DevoTrustedRunner-sample" in result.output
+    assert "runner-watch --project sample --approver Manas --once --confirm-runner-watch" in result.output
+    assert not (workspace / "projects" / "sample" / "delivery" / "runner-schedule").exists()
+
+
+def test_delivery_runner_schedule_install_refuses_without_confirmation(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-install",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--interval-minutes",
+            "5",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "--confirm-install is required." in result.output
+
+
+def test_delivery_runner_schedule_install_dry_run_does_not_call_scheduler(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+
+    def fail_scheduler(_args: list[str]) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("scheduler should not be called for dry-run")
+
+    monkeypatch.setattr("devo.delivery._run_scheduler_command", fail_scheduler)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-install",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--interval-minutes",
+            "5",
+            "--dry-run",
+            "--confirm-install",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Scheduled trusted runner dry-run prepared." in result.output
+    schedule_dir = workspace / "projects" / "sample" / "delivery" / "runner-schedule"
+    config = json.loads((schedule_dir / "runner-schedule-config.json").read_text(encoding="utf-8"))
+    status = json.loads((schedule_dir / "runner-schedule-status.json").read_text(encoding="utf-8"))
+    wrapper = (schedule_dir / "runner-watch-sample.cmd").read_text(encoding="utf-8")
+    assert config["task_name"] == "DevoTrustedRunner-sample"
+    assert config["enabled"] is False
+    assert config["last_action"] == "install_dry_run"
+    assert status["installed"] is False
+    assert "delivery runner-watch --project sample --approver Manas --once --confirm-runner-watch" in wrapper
+
+
+def test_delivery_runner_schedule_install_writes_config_status_and_defaults_disabled(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    calls: list[list[str]] = []
+
+    import devo.delivery as delivery_module
+
+    monkeypatch.setattr(delivery_module.os, "name", "nt", raising=False)
+
+    def fake_scheduler(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "ok", "")
+
+    monkeypatch.setattr("devo.delivery._run_scheduler_command", fake_scheduler)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-install",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--interval-minutes",
+            "5",
+            "--confirm-install",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    schedule_dir = workspace / "projects" / "sample" / "delivery" / "runner-schedule"
+    config = json.loads((schedule_dir / "runner-schedule-config.json").read_text(encoding="utf-8"))
+    status = json.loads((schedule_dir / "runner-schedule-status.json").read_text(encoding="utf-8"))
+    assert config["enabled"] is False
+    assert config["last_action"] == "install"
+    assert status["installed"] is True
+    assert status["enabled"] is False
+    assert any("/Create" in call for call in calls)
+    assert any("/DISABLE" in call for call in calls)
+
+
+def test_delivery_runner_schedule_install_enable_flag_enables_task(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    calls: list[list[str]] = []
+
+    import devo.delivery as delivery_module
+
+    monkeypatch.setattr(delivery_module.os, "name", "nt", raising=False)
+
+    def fake_scheduler(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "ok", "")
+
+    monkeypatch.setattr("devo.delivery._run_scheduler_command", fake_scheduler)
+
+    result = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-install",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--interval-minutes",
+            "5",
+            "--enable",
+            "--confirm-install",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads(
+        (workspace / "projects" / "sample" / "delivery" / "runner-schedule" / "runner-schedule-config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert config["enabled"] is True
+    assert any("/ENABLE" in call for call in calls)
+
+
+def test_delivery_runner_schedule_status_handles_missing_schedule_gracefully(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["delivery", "runner-schedule-status", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Installed: False" in result.output
+    assert "Latest watch: none" in result.output
+
+
+def test_delivery_runner_schedule_confirmation_guards(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    commands = [
+        ["delivery", "runner-schedule-enable", "--project", "sample"],
+        ["delivery", "runner-schedule-disable", "--project", "sample"],
+        ["delivery", "runner-schedule-run-now", "--project", "sample"],
+        ["delivery", "runner-schedule-remove", "--project", "sample"],
+    ]
+    expected = ["--confirm-enable", "--confirm-disable", "--confirm-run-now", "--confirm-remove"]
+    for command, text in zip(commands, expected, strict=True):
+        result = runner.invoke(app, command, terminal_width=240)
+        assert result.exit_code != 0
+        assert f"{text} is required." in result.output
+
+
+def test_delivery_runner_schedule_remove_updates_status_safely(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    import devo.delivery as delivery_module
+
+    monkeypatch.setattr(delivery_module.os, "name", "nt", raising=False)
+
+    def fake_scheduler(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, "ok", "")
+
+    monkeypatch.setattr("devo.delivery._run_scheduler_command", fake_scheduler)
+    installed = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-install",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--confirm-install",
+        ],
+        terminal_width=240,
+    )
+    assert installed.exit_code == 0, installed.output
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-schedule-remove", "--project", "sample", "--confirm-remove"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    status = json.loads(
+        (workspace / "projects" / "sample" / "delivery" / "runner-schedule" / "runner-schedule-status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    config = json.loads(
+        (workspace / "projects" / "sample" / "delivery" / "runner-schedule" / "runner-schedule-config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status["last_action"] == "remove"
+    assert status["installed"] is False
+    assert config["enabled"] is False
+
+
+def test_delivery_check_blocks_runner_schedule_workspace_artifacts(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    repo = _repo(tmp_path)
+    (repo / "src.txt").write_text("source\n", encoding="utf-8")
+    schedule_artifact = repo / "workspace" / "projects" / "sample" / "delivery" / "runner-schedule" / "runner-watch.log"
+    schedule_artifact.parent.mkdir(parents=True)
+    schedule_artifact.write_text("log\n", encoding="utf-8")
+
+    check, _json_path, _markdown_path = run_delivery_readiness_check("sample")
+
+    assert check.readiness_status == "blocked"
+    assert "workspace/projects/sample/delivery/runner-schedule/runner-watch.log" in check.changed_files
+    assert "workspace/projects/sample/delivery/runner-schedule/runner-watch.log" in check.forbidden_changed_files
+    assert any("Forbidden delivery paths are changed" in blocker for blocker in check.blockers)
+
+
 def test_delivery_check_blocks_forbidden_staged_paths(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     repo = _repo(tmp_path)

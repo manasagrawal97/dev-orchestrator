@@ -64,9 +64,9 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 
 ### TASK-DEVO-127: Windows Scheduled/Background Trusted Runner
 
-- Goal: Design and add an explicit local scheduling path for the trusted runner after watch mode is proven.
+- Goal: Add an explicit local scheduling path for the trusted runner after watch mode is proven.
 - Why it matters: It lets Devo deliver approved safe requests from normal user context even when Codex/sandbox cannot commit.
-- Scope: Task Scheduler guidance or installer, disabled-by-default setup, status/disable commands, logs, project allowlist, and max runs per cycle.
+- Scope: Task Scheduler plan/install/status/enable/disable/run-now/remove commands, disabled-by-default setup, wrapper/log artifacts, and one request per trigger through `runner-watch --once`.
 - Not in scope: Always-on service, public network listener, UI delivery buttons, or automatic approval.
 - Safety rules: Explicit install/enable only, local user context only, clear logs, project/repo allowlists, bounded per-cycle work, and approval policy required.
 - Done criteria: Manas can intentionally install, inspect, and disable a trusted scheduled runner without triggering target project commands or unsafe delivery.
@@ -181,10 +181,11 @@ TASK-DEVO-126 starts with this command shape:
 .\.venv\Scripts\devo.exe delivery runner-watch --project DevOrchestrator --approver "Manas" --once --confirm-runner-watch
 ```
 
-Later, after the one-shot behavior is proven, TASK-DEVO-127 can design background scheduling:
+TASK-DEVO-127 builds background scheduling around the same one-shot behavior rather than adding continuous watch mode:
 
 ```powershell
-.\.venv\Scripts\devo.exe delivery runner-watch --project DevOrchestrator --approver "Manas" --interval-seconds 60
+.\.venv\Scripts\devo.exe delivery runner-schedule-plan --project DevOrchestrator --approver "Manas" --interval-minutes 5
+.\.venv\Scripts\devo.exe delivery runner-schedule-install --project DevOrchestrator --approver "Manas" --interval-minutes 5 --dry-run --confirm-install
 ```
 
 Expected behavior:
@@ -204,12 +205,12 @@ Watch mode does not implement queue execution, Codex execution, scheduling, UI c
 
 ## 6. Background/Scheduled Runner Design
 
-TASK-DEVO-127 should build on watch mode.
+TASK-DEVO-127 builds on watch mode.
 
 Preferred approach:
 
 ```text
-Windows Task Scheduler launches Devo runner-watch from normal user context.
+Windows Task Scheduler launches Devo runner-watch --once from normal user context.
 This avoids Codex sandbox .git restrictions.
 ```
 
@@ -217,10 +218,12 @@ Safety controls:
 
 - disabled by default
 - explicitly installed and enabled only by Manas
+- read-only plan/status before any install
+- dry-run install that writes only Devo schedule artifacts
 - clear status command
-- clear stop/disable command
-- log path
-- max runs per cycle
+- clear enable, disable, run-now, and remove commands
+- wrapper and log path under `workspace/projects/<project>/delivery/runner-schedule/`
+- one pending request per trigger
 - project allowlist
 - repo allowlist
 - approval policy required
@@ -228,6 +231,20 @@ Safety controls:
 - no arbitrary shell command execution
 
 The scheduled runner should be understandable, quiet, and reversible. It should not feel like a random hidden process with unclear authority.
+
+Implemented command shape:
+
+```powershell
+.\.venv\Scripts\devo.exe delivery runner-schedule-plan --project DevOrchestrator --approver "Manas" --interval-minutes 5
+.\.venv\Scripts\devo.exe delivery runner-schedule-install --project DevOrchestrator --approver "Manas" --interval-minutes 5 --confirm-install
+.\.venv\Scripts\devo.exe delivery runner-schedule-status --project DevOrchestrator
+.\.venv\Scripts\devo.exe delivery runner-schedule-enable --project DevOrchestrator --confirm-enable
+.\.venv\Scripts\devo.exe delivery runner-schedule-disable --project DevOrchestrator --confirm-disable
+.\.venv\Scripts\devo.exe delivery runner-schedule-run-now --project DevOrchestrator --confirm-run-now
+.\.venv\Scripts\devo.exe delivery runner-schedule-remove --project DevOrchestrator --confirm-remove
+```
+
+Real scheduled delivery remains a normal-Windows-user operation. Codex/sandbox can plan and dry-run the schedule, but Manas should decide whether to install and enable the live task.
 
 ## 7. Batch Approval Policy
 

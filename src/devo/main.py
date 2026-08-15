@@ -61,13 +61,21 @@ from .delivery import (
     DeliveryReport,
     DeliveryReportRefresh,
     DeliveryRunnerRequest,
+    DeliveryRunnerScheduleConfig,
+    DeliveryRunnerSchedulePlan,
+    DeliveryRunnerScheduleStatus,
     DeliveryRunnerRun,
     DeliveryRunnerWatch,
     approve_delivery_plan,
     build_delivery_latest_summary,
+    build_delivery_runner_schedule_plan,
     commit_delivery_report,
     create_delivery_plan,
     create_delivery_runner_request,
+    disable_delivery_runner_schedule,
+    enable_delivery_runner_schedule,
+    get_delivery_runner_schedule_status,
+    install_delivery_runner_schedule,
     list_delivery_checks,
     list_delivery_approvals,
     list_delivery_plans,
@@ -88,12 +96,14 @@ from .delivery import (
     propose_delivery_commit_message,
     push_delivery_report,
     refresh_delivery_report,
+    remove_delivery_runner_schedule,
     run_delivery_commit_diagnostics,
     reject_delivery_plan,
     request_delivery_approval,
     run_delivery_readiness_check,
     run_delivery_runner_request,
     run_delivery_runner_watch,
+    run_now_delivery_runner_schedule,
 )
 from .reports import (
     build_handoff_report,
@@ -2021,6 +2031,59 @@ def _print_delivery_runner_watch(watch: DeliveryRunnerWatch) -> None:
     console.print(f"Next action: {watch.next_action}", soft_wrap=True)
 
 
+def _print_delivery_runner_schedule_plan(plan: DeliveryRunnerSchedulePlan) -> None:
+    console.print(f"Project: {plan.project}")
+    console.print(f"Scheduled task: {plan.task_name}")
+    console.print(f"Repo path: {plan.repo_path}", soft_wrap=True)
+    console.print(f"Devo executable: {plan.devo_executable}", soft_wrap=True)
+    console.print(f"Working directory: {plan.working_directory}", soft_wrap=True)
+    console.print(f"Approver: {plan.approver}")
+    console.print(f"Interval minutes: {plan.interval_minutes}")
+    console.print(f"Enabled after install: {plan.enabled}")
+    console.print(f"Wrapper path: {plan.wrapper_path}", soft_wrap=True)
+    console.print(f"Log path: {plan.log_path}", soft_wrap=True)
+    console.print("Runner-watch command:")
+    console.print("  " + " ".join(plan.runner_watch_command), soft_wrap=True)
+    console.print("Scheduler create args:")
+    console.print("  " + " ".join(plan.scheduler_create_args), soft_wrap=True)
+    console.print("Next action:")
+    console.print(f"  {plan.next_action}", soft_wrap=True)
+
+
+def _print_delivery_runner_schedule_config(config: DeliveryRunnerScheduleConfig) -> None:
+    console.print("Schedule config:")
+    console.print(f"  Project: {config.project}")
+    console.print(f"  Task: {config.task_name}")
+    console.print(f"  Enabled: {config.enabled}")
+    console.print(f"  Interval: {config.interval_minutes} minutes")
+    console.print(f"  Wrapper: {config.wrapper_path}", soft_wrap=True)
+    console.print(f"  Log: {config.log_path}", soft_wrap=True)
+    console.print(f"  Last action: {config.last_action}")
+    console.print(f"  Last action result: {config.last_action_result}", soft_wrap=True)
+    console.print(f"  Next action: {config.next_action}", soft_wrap=True)
+
+
+def _print_delivery_runner_schedule_status(status: DeliveryRunnerScheduleStatus) -> None:
+    console.print(f"Project: {status.project}")
+    console.print(f"Task: {status.task_name or 'none'}")
+    console.print(f"Installed: {status.installed if status.installed is not None else 'unknown'}")
+    console.print(f"Enabled: {status.enabled if status.enabled is not None else 'unknown'}")
+    console.print(f"Last run: {status.last_run or 'unknown'}")
+    console.print(f"Next run: {status.next_run or 'unknown'}")
+    console.print(f"Last result: {status.last_result or 'unknown'}")
+    console.print(f"Latest watch: {status.latest_watch_id or 'none'} | {status.latest_watch_status or 'unknown'}")
+    console.print(f"Latest watch request: {status.latest_watch_request_id or 'none'}")
+    console.print(f"Latest watch commit: {status.latest_watch_commit_hash or 'none'}")
+    console.print(f"Latest watch pushed: {status.latest_watch_pushed if status.latest_watch_pushed is not None else 'unknown'}")
+    console.print("Warnings:")
+    if status.warnings:
+        for warning in status.warnings:
+            console.print(f"  {warning}", soft_wrap=True)
+    else:
+        console.print("  none")
+    console.print(f"Next action: {status.next_action}", soft_wrap=True)
+
+
 def _print_delivery_runner_latest(project_name: str, request: DeliveryRunnerRequest | None) -> None:
     console.print(f"Project: {project_name}")
     if not request:
@@ -2186,6 +2249,154 @@ def latest_delivery_runner_watch_command(
         console.print("Next action: No runner watch artifacts exist.")
         return
     _print_delivery_runner_watch(watches[0])
+
+
+@delivery_app.command("runner-schedule-plan")
+def plan_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    approver: str = typer.Option(..., "--approver", help="Approver name for runner-watch."),
+    interval_minutes: int = typer.Option(5, "--interval-minutes", help="Task Scheduler repeat interval in minutes."),
+    task_name: str | None = typer.Option(None, "--task-name", help="Optional Windows scheduled task name."),
+) -> None:
+    """Show a read-only scheduled trusted runner plan."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        plan = build_delivery_runner_schedule_plan(
+            resolved_project,
+            approver=approver,
+            interval_minutes=interval_minutes,
+            task_name=task_name,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--project") from exc
+    _print_delivery_runner_schedule_plan(plan)
+
+
+@delivery_app.command("runner-schedule-install")
+def install_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    approver: str = typer.Option(..., "--approver", help="Approver name for runner-watch."),
+    interval_minutes: int = typer.Option(5, "--interval-minutes", help="Task Scheduler repeat interval in minutes."),
+    task_name: str | None = typer.Option(None, "--task-name", help="Optional Windows scheduled task name."),
+    enable: bool = typer.Option(False, "--enable", help="Enable scheduled task after installation. Default is disabled."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Write artifacts and print scheduler command without executing it."),
+    confirm_install: bool = typer.Option(False, "--confirm-install", help="Required confirmation to install/update the scheduled task."),
+) -> None:
+    """Install or dry-run a Windows scheduled trusted runner."""
+    resolved_project = _resolve_project(project_name)
+    if not confirm_install:
+        console.print("--confirm-install is required.")
+        raise typer.Exit(1)
+    try:
+        config, status, config_path, status_path = install_delivery_runner_schedule(
+            resolved_project,
+            approver=approver,
+            interval_minutes=interval_minutes,
+            task_name=task_name,
+            enable=enable,
+            dry_run=dry_run,
+            confirm_install=confirm_install,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--confirm-install") from exc
+    console.print("Scheduled trusted runner installed." if not dry_run else "Scheduled trusted runner dry-run prepared.")
+    _print_delivery_runner_schedule_config(config)
+    _print_delivery_runner_schedule_status(status)
+    console.print(f"Config: {_named_path(config_path)}")
+    console.print(f"Status: {_named_path(status_path)}")
+    console.print("Next commands:")
+    console.print(f"  devo delivery runner-schedule-status --project {resolved_project}")
+    console.print(f"  devo delivery runner-schedule-enable --project {resolved_project} --confirm-enable")
+    console.print(f"  devo delivery runner-schedule-run-now --project {resolved_project} --confirm-run-now")
+    console.print(f"  devo delivery runner-schedule-disable --project {resolved_project} --confirm-disable")
+    console.print(f"  devo delivery runner-schedule-remove --project {resolved_project} --confirm-remove")
+
+
+@delivery_app.command("runner-schedule-status")
+def status_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show scheduled trusted runner status without modifying scheduler state."""
+    resolved_project = _resolve_project(project_name)
+    status = get_delivery_runner_schedule_status(resolved_project)
+    _print_delivery_runner_schedule_status(status)
+
+
+@delivery_app.command("runner-schedule-enable")
+def enable_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    confirm_enable: bool = typer.Option(False, "--confirm-enable", help="Required confirmation to enable the scheduled task."),
+) -> None:
+    """Enable an installed scheduled trusted runner."""
+    resolved_project = _resolve_project(project_name)
+    if not confirm_enable:
+        console.print("--confirm-enable is required.")
+        raise typer.Exit(1)
+    try:
+        config, status, config_path, status_path = enable_delivery_runner_schedule(resolved_project, confirm_enable=confirm_enable)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--confirm-enable") from exc
+    _print_delivery_runner_schedule_config(config)
+    _print_delivery_runner_schedule_status(status)
+    console.print(f"Config: {_named_path(config_path)}")
+    console.print(f"Status: {_named_path(status_path)}")
+
+
+@delivery_app.command("runner-schedule-disable")
+def disable_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    confirm_disable: bool = typer.Option(False, "--confirm-disable", help="Required confirmation to disable the scheduled task."),
+) -> None:
+    """Disable an installed scheduled trusted runner."""
+    resolved_project = _resolve_project(project_name)
+    if not confirm_disable:
+        console.print("--confirm-disable is required.")
+        raise typer.Exit(1)
+    try:
+        config, status, config_path, status_path = disable_delivery_runner_schedule(resolved_project, confirm_disable=confirm_disable)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--confirm-disable") from exc
+    _print_delivery_runner_schedule_config(config)
+    _print_delivery_runner_schedule_status(status)
+    console.print(f"Config: {_named_path(config_path)}")
+    console.print(f"Status: {_named_path(status_path)}")
+
+
+@delivery_app.command("runner-schedule-run-now")
+def run_now_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    confirm_run_now: bool = typer.Option(False, "--confirm-run-now", help="Required confirmation to trigger the scheduled task once."),
+) -> None:
+    """Trigger the installed scheduled task once without running delivery in this process."""
+    resolved_project = _resolve_project(project_name)
+    if not confirm_run_now:
+        console.print("--confirm-run-now is required.")
+        raise typer.Exit(1)
+    try:
+        status = run_now_delivery_runner_schedule(resolved_project, confirm_run_now=confirm_run_now)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--confirm-run-now") from exc
+    _print_delivery_runner_schedule_status(status)
+
+
+@delivery_app.command("runner-schedule-remove")
+def remove_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    confirm_remove: bool = typer.Option(False, "--confirm-remove", help="Required confirmation to remove the scheduled task."),
+) -> None:
+    """Remove an installed scheduled trusted runner while keeping Devo artifacts."""
+    resolved_project = _resolve_project(project_name)
+    if not confirm_remove:
+        console.print("--confirm-remove is required.")
+        raise typer.Exit(1)
+    try:
+        config, status, config_path, status_path = remove_delivery_runner_schedule(resolved_project, confirm_remove=confirm_remove)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--confirm-remove") from exc
+    _print_delivery_runner_schedule_config(config)
+    _print_delivery_runner_schedule_status(status)
+    console.print(f"Config: {_named_path(config_path)}")
+    console.print(f"Status: {_named_path(status_path)}")
 
 
 @delivery_app.command("check")

@@ -682,7 +682,33 @@ The preferred normal-PowerShell command is now:
 .\.venv\Scripts\devo.exe delivery runner-run --project <name> --request <requestId> --approver "Manas" --confirm-runner-delivery
 ```
 
-The runner still re-runs delivery check, verifies the changed-file snapshot, creates/approves delivery artifacts, prepares the report, runs commit-preview, guarded commit, push-preview, and guarded push. `runner-watch-latest` shows the latest watch artifact. Watch mode is not a scheduled task, daemon, service, UI control, or delivery-gate bypass; scheduled/background runner work is deferred to TASK-DEVO-127.
+The runner still re-runs delivery check, verifies the changed-file snapshot, creates/approves delivery artifacts, prepares the report, runs commit-preview, guarded commit, push-preview, and guarded push. `runner-watch-latest` shows the latest watch artifact. Watch mode is not a daemon, service, UI control, or delivery-gate bypass.
+
+To inspect scheduled/background delivery before enabling anything, use:
+
+```powershell
+.\.venv\Scripts\devo.exe delivery runner-schedule-plan --project <name> --approver "Manas" --interval-minutes 5
+.\.venv\Scripts\devo.exe delivery runner-schedule-install --project <name> --approver "Manas" --interval-minutes 5 --dry-run --confirm-install
+.\.venv\Scripts\devo.exe delivery runner-schedule-status --project <name>
+```
+
+The dry-run writes local Devo schedule artifacts only. A real install is explicit, disabled by default, and creates a Windows Task Scheduler entry that runs:
+
+```powershell
+.\.venv\Scripts\devo.exe delivery runner-watch --project <name> --approver "Manas" --once --confirm-runner-watch
+```
+
+Use these normal-PowerShell commands only when Manas is ready to manage the live local schedule:
+
+```powershell
+.\.venv\Scripts\devo.exe delivery runner-schedule-install --project <name> --approver "Manas" --interval-minutes 5 --confirm-install
+.\.venv\Scripts\devo.exe delivery runner-schedule-enable --project <name> --confirm-enable
+.\.venv\Scripts\devo.exe delivery runner-schedule-disable --project <name> --confirm-disable
+.\.venv\Scripts\devo.exe delivery runner-schedule-run-now --project <name> --confirm-run-now
+.\.venv\Scripts\devo.exe delivery runner-schedule-remove --project <name> --confirm-remove
+```
+
+Each scheduled trigger processes at most one pending request through the existing guarded runner path. It does not approve work, run Codex, run target validation, bypass delivery gates, or add UI commit/push controls.
 
 If a guarded commit fails for a transient Git issue such as `.git/index.lock` permission denial or a stale lock, Devo records the failure category and retryability on the delivery report and commit artifact. Guarded commit now checks index-lock write capability before staging; if the check fails, Devo blocks before `git add` and no target files should be staged by that attempt. Use `devo delivery report-refresh --project <name> --report <deliveryId> --note "<reason>"` to refresh the current readiness snapshot without reopening. If it reports reopening is allowed, use `devo delivery report-refresh --project <name> --report <deliveryId> --reopen --note "<reason>"`, then run `devo delivery commit-preview` again. Refresh/reopen does not stage, unstage, commit, push, validate, run Codex, or modify target repo files.
 
