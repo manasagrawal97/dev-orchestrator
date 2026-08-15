@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document tracks remaining Devo product work. The canonical definition of Phase 1 closure, remaining Phase 1 tasks, acceptance criteria, and Phase 2 boundary is `docs/phase-1-mvp-closure-plan.md`.
+This document tracks post-Phase-1 Devo product work. The Phase 1 MVP checkpoint is `docs/phase-1-mvp-checkpoint.md`; the closure criteria and Phase 2 boundary remain documented in `docs/phase-1-mvp-closure-plan.md`.
 
 Product name: Devo / DevOrchestrator.
 
@@ -185,8 +185,8 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 48. TASK-DEVO-121: Vision-to-batch intake polish - completed.
 49. TASK-DEVO-122: Phase 1 context and workflow efficiency audit - completed.
 50. TASK-DEVO-123: End-to-end Phase 1 dogfood on DevOrchestrator - completed.
-51. TASK-DEVO-124: Phase 1 MVP tag/checkpoint.
-52. Later polish: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+51. TASK-DEVO-124: Phase 1 MVP tag/checkpoint - completed.
+52. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 
@@ -218,9 +218,9 @@ The completion target for returning more focus to other projects is:
 - UI progress visibility
 - one dogfood end-to-end run
 
-That dogfood point has now been reached. Devo can be considered around 80-85% complete for personal use, with the next work focused on making the proven manual pipeline smoother and less surprising.
+That dogfood point has now been reached and recorded in the Phase 1 MVP checkpoint. Devo can be considered around 80-85% complete for personal use, with the next work focused on post-Phase-1 polish and carefully bounded Phase 2 planning.
 
-TASK-DEVO-121 added that smoother intake layer with `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt`. TASK-DEVO-122 then audited context size, artifact noise, operator repetition, and documentation overlap with a `watch` verdict. TASK-DEVO-123 dogfooded the current path and found no checkpoint blocker. The next remaining Phase 1 work is TASK-DEVO-124, the final checkpoint/tag task; do not add more features before it.
+TASK-DEVO-121 added that smoother intake layer with `devo project intake-status`, `intake-next`, `intake-template`, and `intake-prompt`. TASK-DEVO-122 then audited context size, artifact noise, operator repetition, and documentation overlap with a `watch` verdict. TASK-DEVO-123 dogfooded the current path and found no checkpoint blocker. TASK-DEVO-124 records the final checkpoint and recommends the `phase-1-mvp` tag after delivery.
 
 ## Decision Rules For Future Task Selection
 

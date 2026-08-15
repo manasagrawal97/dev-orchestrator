@@ -55,7 +55,9 @@ Phase 1 is not:
 - A system that bypasses human approval.
 - A system that commits or pushes without guarded delivery.
 
-## 5. Remaining Phase 1 Tasks
+## 5. Phase 1 Closure Tasks
+
+Phase 1 MVP is complete. The final checkpoint is recorded in `docs/phase-1-mvp-checkpoint.md`.
 
 ### TASK-DEVO-120: Operator Workflow Polish After Trusted Runner - Completed
 
@@ -124,6 +126,8 @@ Expected scope: Docs, release/checkpoint notes, tag guidance, current-state upda
 What not to touch: No new feature work, no Phase 2 agents, no UI action expansion.
 
 Done criteria: Phase 1 acceptance criteria are met, docs agree, the repo is clean, and the checkpoint is easy to recover from.
+
+Result: `docs/phase-1-mvp-checkpoint.md` marks Phase 1 MVP complete, records the proven runner-based delivery workflow, summarizes completed capabilities and evidence, identifies non-blocking limitations, and recommends the `phase-1-mvp` tag for Manas to create from normal PowerShell after delivery.
 
 ## 6. Phase 1 Acceptance Criteria
 
@@ -198,12 +202,12 @@ Current risks and open questions:
 - The UI is still mostly read-only.
 - Phase 2 AI integration could make the system more expensive or less predictable if added too early.
 
-## 11. Recommended Next Task
+## 11. Recommended Next Step
 
-Recommended next task:
+Recommended next step:
 
 ```text
-TASK-DEVO-122: Phase 1 context and workflow efficiency audit
+Deliver TASK-DEVO-124, then create the phase-1-mvp tag from normal PowerShell.
 ```
 
-Now that the delivery runner workflow and vision-to-batch intake path are easier to inspect and resume, the next value is checking whether Phase 1 has become too verbose, artifact-heavy, or repetitive before adding more intelligence.
+Phase 1 capability work should pause until the checkpoint commit is delivered. Post-checkpoint work should come from `docs/remaining-roadmap.md` and respect the Phase 2 boundary.

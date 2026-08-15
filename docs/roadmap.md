@@ -12,7 +12,7 @@ The near-term strategy is CLI-first and local-first:
 - avoid requiring direct OpenAI, Claude, Gemini, or local model API tokens for current development
 - keep manual/Codex mode supported even after future model adapters exist
 
-The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes older isolated task ordering and prioritizes the final workflow: project brief -> blueprint -> backlog -> batch -> execution queue -> Codex handoff -> validation/delivery/progress -> review/resume.
+Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The active post-Phase-1 roadmap is now `docs/remaining-roadmap.md`. It supersedes older isolated task ordering and prioritizes improvements around the proven workflow: project brief -> blueprint -> backlog -> batch -> execution queue -> Codex handoff -> validation/delivery/progress -> review/resume.
 
 ## Immediate Planned Tasks
 
@@ -20,7 +20,7 @@ The active remaining roadmap is now `docs/remaining-roadmap.md`. It supersedes o
 
 ## Updated Roadmap Phases
 
-### Phase 1: Planning Pipeline Foundation
+### Phase 1: Planning Pipeline Foundation - Complete
 
 Add durable Project Brief, Blueprint, Backlog/task, dependency, risk/lane mapping, Batch, and Progress models. This is the next foundation because Devo's final workflow starts with a user-approved brief and turns it into auditable planning artifacts.
 
@@ -47,6 +47,10 @@ Keep manual worker mode and Codex CLI handoff mode first-class. Design and add a
 ### Phase 6: Future Polish And Advanced Capabilities
 
 Add persistent read-model snapshots only if needed, better report viewing, better visuals/progress charts, backup page polish, packaging/start-stop improvements, notifications, mobile-friendly UI, and optional general planning chat.
+
+### Phase 1 MVP Checkpoint - Completed
+
+TASK-DEVO-124 records the Phase 1 MVP checkpoint in `docs/phase-1-mvp-checkpoint.md`. After that docs commit is delivered through the trusted runner and the repository is clean, Manas should create and push the `phase-1-mvp` tag from normal PowerShell.
 
 ## Readiness Target
 
