@@ -18,7 +18,7 @@ The pain points are:
 
 This makes Devo safe but not yet smooth.
 
-The current focus is Devo product maturity, not PersonalOS feature delivery. PersonalOS remains useful as a real-world validation target, but the product being improved now is Devo itself. The active remaining sequence is tracked in `docs/remaining-roadmap.md`.
+The current focus is Devo product maturity, not PersonalOS feature delivery. PersonalOS remains useful as a real-world validation target, but the product being improved now is Devo itself. Phase 1 closure is defined in `docs/phase-1-mvp-closure-plan.md`, and the active remaining sequence is tracked in `docs/remaining-roadmap.md`.
 
 ## Visual Roadmap
 

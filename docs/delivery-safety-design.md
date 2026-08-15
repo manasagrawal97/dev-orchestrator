@@ -29,6 +29,8 @@ Relevant Devo capabilities already exist:
 - TASK-DEVO-113 adds `devo delivery report-refresh` as the supported recovery path for retryable guarded commit failures. It refreshes the current readiness snapshot and can reopen a blocked report only when the previous commit failure is retryable, the linked plan and approval remain approved, no commit/push has already happened, and current readiness has no blockers.
 - TASK-DEVO-114 adds `devo delivery commit-diagnostics` for read-only investigation of guarded commit failures. It surfaces Git executable/version, `.git` and `.git/index` state, `.git/index.lock` presence, ACL/attribute summaries when feasible, current changed-file state, retryable failure metadata, likely causes, and safe next actions before any retry.
 - TASK-DEVO-115 documents the operating rule found by DEL-0001: run live guarded delivery commit/push from normal local PowerShell with `.\.venv\Scripts\devo.exe`; restricted Codex/sandbox contexts may fail to create `.git/index.lock`.
+- TASK-DEVO-118 adds the trusted local delivery runner so restricted contexts can create a runner request and Manas can run one normal PowerShell command that still uses all guarded delivery gates.
+- TASK-DEVO-119 defines Phase 1 closure in `docs/phase-1-mvp-closure-plan.md`; the runner is a Phase 1 operator workflow bridge, not Phase 2 autonomy.
 - Workspace artifacts under `workspace/` are intentionally runtime state and must not be committed.
 - UI risky actions remain deferred; current UI should show status and copyable commands first.
 

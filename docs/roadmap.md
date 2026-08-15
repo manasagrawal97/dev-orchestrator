@@ -235,6 +235,10 @@ Added `devo delivery latest --project <project>` as a read-only delivery status 
 
 Added `devo delivery runner-request`, `runner-list`, `runner-show`, and `runner-run`. The request command lets Codex/sandbox write a workspace-only delivery request with an expected changed-file snapshot and one normal PowerShell runner command. The runner command is explicit and confirmation-gated, reuses delivery check, plan, approval, report, commit-preview, guarded commit, push-preview, and guarded push, and blocks on snapshot drift, forbidden paths, secret-risk blockers, staged workspace artifacts, index-lock preflight failures, commit failures, or push failures. It reduces live delivery handoff friction without adding UI commit/push buttons, background services, webhooks, or safety bypasses.
 
+### TASK-DEVO-119 Phase 1 MVP Closure Plan - Completed
+
+Added `docs/phase-1-mvp-closure-plan.md` as the canonical Phase 1 closure definition. The plan summarizes completed capabilities, the proven runner-based delivery workflow, what Phase 1 is not, remaining closure tasks through TASK-DEVO-124, acceptance criteria, manual-intervention reduction, Phase 2 boundaries, audit concerns, risks, and the recommended next task.
+
 ### TASK-DEVO-074 Project Brief And Blueprint Planning - Completed
 
 Added the first planning pipeline artifacts: Project Brief and Blueprint. Devo can now create, show, and approve a brief from a local Markdown/text file, create a deterministic draft blueprint from that brief, show and approve the blueprint, expose planning status in ProjectOverview/read-only API responses, and show a read-only Planning card in the dashboard. This stores Devo workspace artifacts only and does not implement backlog/tasks/batches, direct AI/API calls, Codex CLI automation, or target repository mutation.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the current source of truth for remaining Devo product work after TASK-DEVO-073A. It reprioritizes future tasks around the final desired workflow instead of around isolated CLI or dashboard conveniences.
+This document tracks remaining Devo product work. The canonical definition of Phase 1 closure, remaining Phase 1 tasks, acceptance criteria, and Phase 2 boundary is `docs/phase-1-mvp-closure-plan.md`.
 
 Product name: Devo / DevOrchestrator.
 
@@ -49,6 +49,7 @@ Devo already has:
 - Delivery readiness checks before delivery plan/approval automation
 - Delivery plan and approval artifacts before commit/push automation
 - Delivery report, commit-message preparation, guarded CLI commit, guarded CLI push, isolated delivery dogfood, and read-only Delivery UI visibility
+- Delivery latest status and trusted local delivery runner for one-command normal-PowerShell delivery after Codex validation
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
@@ -179,7 +180,13 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 43. TASK-DEVO-116A: Delivery README/docs secret-risk false-positive reduction - completed.
 44. TASK-DEVO-117: Delivery latest status command - completed.
 45. TASK-DEVO-118: Trusted local delivery runner - completed.
-46. Later polish: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+46. TASK-DEVO-119: Phase 1 MVP closure plan - completed.
+47. TASK-DEVO-120: Operator workflow polish after trusted runner.
+48. TASK-DEVO-121: Vision-to-batch intake polish.
+49. TASK-DEVO-122: Phase 1 context and workflow efficiency audit.
+50. TASK-DEVO-123: End-to-end Phase 1 dogfood on DevOrchestrator.
+51. TASK-DEVO-124: Phase 1 MVP tag/checkpoint.
+52. Later polish: delivery read-model/UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

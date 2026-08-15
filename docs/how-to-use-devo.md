@@ -13,7 +13,7 @@ Devo does not implement code by itself. It does not call AI by itself. It does n
 - Devo runtime artifacts live in `workspace/` and should not be committed.
 - Devo workspace/context is protected by scheduled Google Drive backup.
 
-Longer term, Devo should work like a local software-development company operating system: the user discusses a project with ChatGPT, pastes the final brief into Devo, Devo creates blueprint/backlog/tasks, the user approves a batch, Codex executes approved tasks, and Devo tracks progress, validation, commits, reports, and resume points.
+Longer term, Devo should work like a local software-development company operating system: the user discusses a project with ChatGPT, pastes the final brief into Devo, Devo creates blueprint/backlog/tasks, the user approves a batch, Codex executes approved tasks, and Devo tracks progress, validation, commits, reports, and resume points. Phase 1 closure and the Phase 2 boundary are defined in `phase-1-mvp-closure-plan.md`.
 
 For the plain-language product model, read:
 
@@ -21,6 +21,7 @@ For the plain-language product model, read:
 - [Company-model vision](devo-company-model.md)
 - [Codex worker adapter design](codex-worker-adapter-design.md)
 - [Delivery safety design](delivery-safety-design.md)
+- [Phase 1 MVP closure plan](phase-1-mvp-closure-plan.md)
 - [Codex launcher setup runbook](runbooks/codex-launcher-setup.md)
 - [Real Codex supervised dry-run runbook](runbooks/real-codex-supervised-dry-run.md)
 - [Remaining roadmap](remaining-roadmap.md)
