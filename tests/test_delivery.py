@@ -809,6 +809,7 @@ def test_delivery_runner_watch_latest_works(tmp_path: Path, monkeypatch) -> None
 
     assert result.exit_code == 0, result.output
     assert "Runner watch: WATCH-" in result.output
+    assert result.output.count("Project: sample") == 1
     assert "Status: no_pending" in result.output
 
 

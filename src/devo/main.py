@@ -2390,8 +2390,8 @@ def latest_delivery_runner_watch_command(
     """Show the latest trusted runner watch artifact."""
     resolved_project = _resolve_project(project_name)
     watches = list_delivery_runner_watches(resolved_project)
-    console.print(f"Project: {resolved_project}")
     if not watches:
+        console.print(f"Project: {resolved_project}")
         console.print("Latest runner watch: none")
         console.print("Next action: No runner watch artifacts exist.")
         return
