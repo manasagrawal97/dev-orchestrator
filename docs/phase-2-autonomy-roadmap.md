@@ -129,6 +129,16 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Done criteria: one command can safely move a queue-worker run from no active run through `waiting_worker`, `waiting_review`, `waiting_validation`, `ready_for_delivery_request`, `delivery_requested`, and completed delivery observation while stopping at every evidence boundary.
 - Status: Completed. `queue-worker-step` is the preferred CLI assisted loop; lower-level queue-worker commands remain available for explicit inspection and recovery.
 
+### TASK-DEVO-134: Batch Continuation Loop For One Task At A Time
+
+- Goal: Add a bounded loop that repeats the one-step queue-worker behavior until the next safe stop condition.
+- Why it matters: It reduces operator command repetition across approved queue work without pretending Devo can autonomously do worker execution, validation, delivery, or review.
+- Scope: `devo project queue-worker-loop --project <project> --policy <POL-ID> --confirm-loop`, `--dry-run`, max-step bounds, optional run/message/note, safe stop reasons, evidence-boundary output, pending-delivery stops, and conservative post-delivery queue item completion through existing queue checks.
+- Not in scope: real Codex execution, AI/API calls, validation execution, runner-watch execution, background daemon changes, UI controls, parallel task execution, raw commit/push, or delivery safety bypasses.
+- Safety rules: reuse `queue-worker-step`, stop on missing worker report/review/validation, stop on pending trusted delivery, stop on paused/failed/cancelled/blocked states, stop on no eligible item or max steps, and treat unknown states as unsafe.
+- Done criteria: a single command can start the next approved item, stop at `waiting_worker`, continue through already-recorded evidence, create a trusted delivery request, observe completed trusted delivery, and then start at most the next eligible item before stopping again at `waiting_worker`.
+- Status: Completed. The loop is a one-task-at-a-time assisted operator command, not full autonomy.
+
 ### Future: UI Approval And Queue Controls
 
 - Goal: Add safe UI controls only after the CLI evidence and delivery handoff path stays comfortable.

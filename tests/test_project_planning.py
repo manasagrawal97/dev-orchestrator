@@ -1822,6 +1822,332 @@ def test_queue_worker_step_blocks_selected_item_outside_policy(tmp_path: Path, m
     assert "Selected queue item QI001 is no longer within approved policy scope" in result.output
 
 
+def test_queue_worker_loop_requires_confirmation_unless_dry_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    missing_confirm = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+    dry_run = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert missing_confirm.exit_code != 0
+    assert "requires --confirm-loop" in missing_confirm.output
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Mode: dry-run" in dry_run.output
+    assert "Stop reason: worker result missing" in dry_run.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+
+
+def test_queue_worker_loop_creates_waiting_worker_run_and_stops(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Steps attempted: 1" in result.output
+    assert "Stop reason: worker result missing" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+
+
+def test_queue_worker_loop_stops_at_waiting_worker_when_report_missing(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: worker result missing" in result.output
+    assert "Worker result/report not imported." in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+
+
+def test_queue_worker_loop_advances_one_gate_and_stops_for_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Steps attempted: 1" in result.output
+    assert "Stop reason: worker review missing" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_review"
+
+
+def test_queue_worker_loop_creates_delivery_request_and_stops(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    _record_worker_review(status="reviewed_passed")
+    _attach_validation(status="passed")
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('loop')\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--message",
+            "feat: loop delivery",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Steps attempted: 2" in result.output
+    assert "Stop reason: waiting for trusted runner" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert request is not None
+    assert run.status == "delivery_requested"
+    assert request.status == "requested"
+    assert request.expected_changed_files == ["src/feature.py"]
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+
+
+def test_queue_worker_loop_respects_max_steps(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    _continue_queue_worker_run()
+    _record_worker_review(status="reviewed_passed")
+    _continue_queue_worker_run()
+    _attach_validation(status="passed")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--max-steps", "1", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Steps attempted: 1" in result.output
+    assert "Stop reason: max steps reached" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "ready_for_delivery_request"
+
+
+def test_queue_worker_loop_blocks_unapproved_or_expired_policy(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001", request=False, approve=False)
+
+    draft = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert draft.exit_code != 0
+    assert "Stop reason: policy no longer valid" in draft.output
+    assert "Policy status is draft" in draft.output
+
+
+def test_queue_worker_loop_blocks_outside_policy_queue_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(policy.model_copy(update={"allowed_task_ids": ["T999"]}).model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("drifted policy\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Stop reason: policy no longer valid" in result.output or "Stop reason: selected queue item outside policy" in result.output
+    assert "Selected queue item QI001 is no longer within approved policy scope" in result.output
+
+
+def test_queue_worker_loop_stops_on_paused_failed_cancelled_and_blocked(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    paused = runner.invoke(app, ["project", "queue-worker-pause", "--project", "sample", "--run", "QWR-0001", "--reason", "operator"], terminal_width=240)
+    assert paused.exit_code == 0, paused.output
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: paused" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "paused"
+
+
+def test_queue_worker_loop_stops_on_failed_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    failed = runner.invoke(app, ["project", "queue-worker-fail", "--project", "sample", "--run", "QWR-0001", "--reason", "worker failed"], terminal_width=240)
+    assert failed.exit_code == 0, failed.output
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--run", "QWR-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Stop reason: failed" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "failed"
+
+
+def test_queue_worker_loop_stops_on_cancelled_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    cancelled = runner.invoke(
+        app,
+        ["project", "queue-worker-cancel", "--project", "sample", "--run", "QWR-0001", "--reason", "superseded", "--confirm-cancel"],
+        terminal_width=240,
+    )
+    assert cancelled.exit_code == 0, cancelled.output
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--run", "QWR-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: cancelled" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "cancelled"
+
+
+def test_queue_worker_loop_completes_delivered_run_then_starts_next_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+    created = runner.invoke(app, ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"], terminal_width=240)
+    assert created.exit_code == 0, created.output
+    _import_worker_report(tmp_path)
+    _record_worker_review(status="reviewed_passed")
+    _attach_validation(status="passed")
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('loop delivered')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--message", "feat: loop delivered", "--confirm-loop"],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery runner completed and pushed commit abc123."}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-0001",
+            runner_context="test",
+            commit_hash="abc123",
+            pushed=True,
+            push_remote="origin",
+            push_branch="main",
+            status="completed",
+            next_action="Trusted delivery runner completed and pushed commit abc123.",
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Step 1: marked queue-worker run completed" in result.output
+    assert "Step 2: created queue-worker run" in result.output
+    assert "Stop reason: worker result missing" in result.output
+    first = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    second = load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert first is not None and first.status == "completed"
+    assert second is not None and second.status == "waiting_worker"
+    assert second.selected_queue_item_id == "QI002"
+    assert queue is not None
+    first_item = next(entry for entry in queue.items if entry.item_id == "QI001")
+    second_item = next(entry for entry in queue.items if entry.item_id == "QI002")
+    assert first_item.status == "completed"
+    assert second_item.status == "pending"
+
+
+def test_queue_worker_loop_does_not_start_next_item_while_delivery_pending(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+    created = runner.invoke(app, ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"], terminal_width=240)
+    assert created.exit_code == 0, created.output
+    _import_worker_report(tmp_path)
+    _record_worker_review(status="reviewed_passed")
+    _attach_validation(status="passed")
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('pending')\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--message", "feat: pending", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: waiting for trusted runner" in result.output
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    second_item = next(entry for entry in queue.items if entry.item_id == "QI002")
+    assert second_item.status == "pending"
+
+
 def test_queue_worker_assisted_e2e_flow(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)

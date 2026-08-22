@@ -236,6 +236,8 @@ Prepare one policy-gated queue-worker step:
 ```powershell
 devo project queue-worker-step --project MyProject --policy POL-0001 --confirm-step
 devo project queue-worker-step --project MyProject --policy POL-0001 --dry-run
+devo project queue-worker-loop --project MyProject --policy POL-0001 --confirm-loop
+devo project queue-worker-loop --project MyProject --policy POL-0001 --dry-run
 devo project queue-worker-plan --project MyProject --policy POL-0001
 devo project queue-worker-run --project MyProject --policy POL-0001 --once --confirm-queue-worker
 devo project queue-worker-list --project MyProject
@@ -252,7 +254,7 @@ devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-ret
 devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted flow is now `queue-worker-step`, which performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. It prints the current status, action taken, missing evidence, blockers, warnings, and next action. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute runner-watch, complete queue items, stage, commit, push, or modify the target repository.
+Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted primitives are `queue-worker-step` and `queue-worker-loop`. `queue-worker-step` performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. `queue-worker-loop` repeats that one-step behavior until it reaches a safe stop condition: missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/cancelled/blocked state, no eligible item, or max steps. It can complete the delivered queue item only through existing queue completion checks, then it stops again for the next worker result. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute runner-watch, stage, commit, push, or modify target source directly.
 
 The assisted queue-worker flow is dogfooded in `docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md`.
 

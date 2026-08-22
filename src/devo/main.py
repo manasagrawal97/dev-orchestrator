@@ -138,6 +138,7 @@ from .project_planning import (
     CodexRunPlan,
     CodexWorkerReport,
     ExecutionPolicyCheckResult,
+    QueueWorkerLoopResult,
     QueueWorkerPlan,
     QueueWorkerRun,
     QueueWorkerStepResult,
@@ -210,6 +211,7 @@ from .project_planning import (
     load_project_batch,
     load_project_blueprint,
     load_project_brief,
+    loop_queue_worker_run,
     planning_artifact_paths,
     plan_queue_worker_run,
     pause_queue_worker_run,
@@ -826,6 +828,49 @@ def _print_queue_worker_step_result(result: QueueWorkerStepResult) -> None:
     console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
     console.print(
         "Safety: queue-worker-step performs at most one Devo state transition. It does not run real Codex, validation, runner-watch, commit, push, or queue completion.",
+        soft_wrap=True,
+    )
+
+
+def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
+    console.print(f"[bold]Queue worker loop: {result.project}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Policy: {result.policy_id}")
+    console.print(f"Mode: {'dry-run' if result.dry_run else 'execute'}")
+    console.print(f"Max steps: {result.max_steps}")
+    console.print(f"Steps attempted: {result.steps_attempted}")
+    console.print(f"Queue worker run: {result.run_id or 'none'}")
+    console.print("Steps:")
+    if not result.steps:
+        console.print("  - none")
+    for step in result.steps:
+        console.print(
+            f"  - Step {step.step_number}: {step.action_taken} | run={step.run_id or 'none'} "
+            f"item={step.selected_queue_item_id or 'none'} task={step.selected_task_id or 'none'} "
+            f"{step.previous_status or 'none'} -> {step.new_status or 'none'}",
+            soft_wrap=True,
+        )
+        if step.delivery_request_id:
+            console.print(f"    Delivery request: {step.delivery_request_id} | {step.delivery_request_status or 'none'}")
+        if step.missing_evidence:
+            console.print("    Missing evidence:")
+            for item in step.missing_evidence:
+                console.print(f"      - {item}", soft_wrap=True)
+        if step.blockers:
+            console.print("    Blockers:")
+            for blocker in step.blockers:
+                console.print(f"      - {blocker}", soft_wrap=True)
+    console.print(f"Stop reason: {result.stop_reason or 'none'}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Mutation occurred: {result.mutated}")
+    console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
+    console.print(
+        "Safety: queue-worker-loop runs one queue-worker step at a time and stops at evidence, delivery, policy, failure, or max-step boundaries. It does not run real Codex, validation, runner-watch, commit, push, or parallel work.",
         soft_wrap=True,
     )
 
@@ -4270,6 +4315,51 @@ def step_queue_worker_run_command(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_queue_worker_step_result(result)
     if result.blockers or result.new_status in {"blocked", "failed"}:
+        raise typer.Exit(1)
+
+
+@project_app.command("queue-worker-loop")
+def loop_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional queue worker run id. Defaults to latest active run for the policy."),
+    message: str = typer.Option("", "--message", help="Optional delivery request commit message when the run is delivery-ready."),
+    note: str = typer.Option("", "--note", help="Optional delivery request note when the run is delivery-ready."),
+    max_steps: int = typer.Option(10, "--max-steps", help="Maximum one-step transitions to attempt."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the loop without mutating workspace artifacts."),
+    stop_on_waiting_worker: bool = typer.Option(True, "--stop-on-waiting-worker/--no-stop-on-waiting-worker", help="Stop when a worker result is needed."),
+    stop_on_delivery_request: bool = typer.Option(True, "--stop-on-delivery-request/--no-stop-on-delivery-request", help="Stop after creating or observing a pending trusted delivery request."),
+    confirm_loop: bool = typer.Option(False, "--confirm-loop", help="Confirm bounded one-task-at-a-time queue-worker loop execution."),
+) -> None:
+    """Run bounded assisted queue-worker steps until the next safe stop condition."""
+    project_name = _resolve_project(project_name)
+    if not dry_run and not confirm_loop:
+        console.print("queue-worker-loop requires --confirm-loop unless --dry-run is used.")
+        raise typer.Exit(1)
+    try:
+        result = loop_queue_worker_run(
+            project_name,
+            policy_id,
+            run_id=run_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            dry_run=dry_run,
+            stop_on_waiting_worker=stop_on_waiting_worker,
+            stop_on_delivery_request=stop_on_delivery_request,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    _print_queue_worker_loop_result(result)
+    if result.blockers or result.stop_reason in {
+        "policy no longer valid",
+        "selected queue item outside policy",
+        "failed evidence",
+        "review did not pass",
+        "delivery request unsafe",
+        "blocked",
+        "failed",
+    }:
         raise typer.Exit(1)
 
 

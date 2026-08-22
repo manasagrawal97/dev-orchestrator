@@ -506,6 +506,41 @@ class QueueWorkerStepResult(BaseModel):
     mutated: bool = False
 
 
+class QueueWorkerLoopStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_number: int
+    run_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    previous_status: str | None = None
+    new_status: str | None = None
+    action_taken: str = "none"
+    delivery_request_id: str | None = None
+    delivery_request_status: str | None = None
+    missing_evidence: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class QueueWorkerLoopResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    run_id: str | None = None
+    dry_run: bool = False
+    max_steps: int = 10
+    steps_attempted: int = 0
+    steps: list[QueueWorkerLoopStep] = Field(default_factory=list)
+    stop_reason: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    mutated: bool = False
+
+
 class QueueWorkerRunIndexEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2506,6 +2541,127 @@ def step_queue_worker_run(
     if run.status in {"blocked", "handoff_ready"}:
         return _step_queue_worker_terminal(project_name, run, dry_run=dry_run, workspace_root=root)
     return _step_queue_worker_terminal(project_name, run, dry_run=dry_run, workspace_root=root)
+
+
+def loop_queue_worker_run(
+    project_name: str,
+    policy_id: str,
+    *,
+    run_id: str | None = None,
+    message: str = "",
+    note: str = "",
+    max_steps: int = 10,
+    dry_run: bool = False,
+    stop_on_waiting_worker: bool = True,
+    stop_on_delivery_request: bool = True,
+    workspace_root: Path | None = None,
+) -> QueueWorkerLoopResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_policy_id = _normalize_policy_id(policy_id)
+    if max_steps < 1:
+        msg = "--max-steps must be at least 1."
+        raise ValueError(msg)
+
+    steps: list[QueueWorkerLoopStep] = []
+    warnings: list[str] = []
+    blockers: list[str] = []
+    stop_reason = ""
+    next_action = ""
+    current_run_id = _normalize_queue_worker_run_id(run_id) if run_id else None
+    mutated = False
+
+    for step_number in range(1, max_steps + 1):
+        step = step_queue_worker_run(
+            project_name,
+            normalized_policy_id,
+            run_id=current_run_id,
+            message=message,
+            note=note,
+            dry_run=dry_run,
+            workspace_root=root,
+        )
+        steps.append(_loop_step_from_step_result(step_number, step))
+        warnings = _dedupe([*warnings, *step.warnings])
+        blockers = _dedupe([*blockers, *step.blockers])
+        mutated = mutated or step.mutated
+        current_run_id = step.run_id
+        next_action = step.next_action
+
+        if step.blockers:
+            stop_reason = _loop_stop_reason_from_blocked_step(step)
+            break
+        if step.new_status == "no_ready_item":
+            stop_reason = "no eligible queue item"
+            break
+        if step.new_status in {"blocked", "paused", "failed", "cancelled"}:
+            stop_reason = step.new_status or "unsafe state"
+            break
+        if step.new_status == "handoff_ready":
+            stop_reason = "handoff or worker run missing"
+            break
+        if step.new_status == "waiting_worker":
+            if stop_on_waiting_worker or any("Worker result/report not imported" in item for item in step.missing_evidence):
+                stop_reason = "worker result missing"
+                break
+        if step.new_status == "waiting_review" and any("Worker review not recorded" in item for item in step.missing_evidence):
+            stop_reason = "worker review missing"
+            break
+        if step.new_status == "waiting_validation" and any("Validation evidence not recorded" in item for item in step.missing_evidence):
+            stop_reason = "validation evidence missing"
+            break
+        if step.new_status == "delivery_requested":
+            if stop_on_delivery_request or not _loop_delivery_completed(step):
+                stop_reason = "waiting for trusted runner"
+                break
+        if step.new_status == "completed":
+            if step.previous_status == "delivery_requested":
+                completion_stop, completion_next, completion_warning, completion_mutated = _loop_complete_queue_item_after_delivery(
+                    project_name,
+                    step,
+                    dry_run=dry_run,
+                    workspace_root=root,
+                )
+                mutated = mutated or completion_mutated
+                if completion_warning:
+                    warnings = _dedupe([*warnings, completion_warning])
+                if completion_stop:
+                    stop_reason = completion_stop
+                    next_action = completion_next or step.next_action
+                    break
+                if current_run_id and run_id:
+                    stop_reason = "specified queue-worker run completed"
+                    next_action = step.next_action
+                    break
+                current_run_id = None
+                next_action = completion_next or f"Continue next eligible item: devo project queue-worker-loop --project {project_name} --policy {normalized_policy_id} --confirm-loop"
+                continue
+            stop_reason = "queue-worker run already completed"
+            break
+        if step.new_status not in {"ready_for_delivery_request"}:
+            stop_reason = f"unknown or unsafe state: {step.new_status or 'unknown'}"
+            break
+    else:
+        stop_reason = "max steps reached"
+
+    if not steps:
+        next_action = f"Run queue-worker-loop again with --policy {normalized_policy_id}."
+    elif not next_action:
+        next_action = steps[-1].next_action
+    return QueueWorkerLoopResult(
+        project=project_name,
+        policy_id=normalized_policy_id,
+        run_id=current_run_id or (steps[-1].run_id if steps else None),
+        dry_run=dry_run,
+        max_steps=max_steps,
+        steps_attempted=len(steps),
+        steps=steps,
+        stop_reason=stop_reason or "stopped",
+        warnings=warnings,
+        blockers=blockers,
+        next_action=next_action,
+        mutated=mutated,
+    )
 
 
 def fail_queue_worker_run(
@@ -6505,6 +6661,90 @@ def _select_queue_worker_step_run(
     return None
 
 
+def _loop_step_from_step_result(step_number: int, result: QueueWorkerStepResult) -> QueueWorkerLoopStep:
+    return QueueWorkerLoopStep(
+        step_number=step_number,
+        run_id=result.run_id,
+        selected_queue_item_id=result.selected_queue_item_id,
+        selected_task_id=result.selected_task_id,
+        previous_status=result.previous_status,
+        new_status=result.new_status,
+        action_taken=result.action_taken,
+        delivery_request_id=result.delivery_request_id,
+        delivery_request_status=result.delivery_request_status,
+        missing_evidence=list(result.missing_evidence),
+        warnings=list(result.warnings),
+        blockers=list(result.blockers),
+        next_action=result.next_action,
+    )
+
+
+def _loop_stop_reason_from_blocked_step(step: QueueWorkerStepResult) -> str:
+    text = " ".join(step.blockers).lower()
+    if "policy" in text:
+        return "policy no longer valid"
+    if "selected queue item" in text or "outside" in text or "scope" in text:
+        return "selected queue item outside policy"
+    if "worker report says failed" in text or "validation evidence failed" in text:
+        return "failed evidence"
+    if "review status" in text:
+        return "review did not pass"
+    if "delivery" in text:
+        return "delivery request unsafe"
+    return "blocked"
+
+
+def _loop_delivery_completed(step: QueueWorkerStepResult) -> bool:
+    return step.delivery_request_status == "completed" and step.new_status == "completed"
+
+
+def _loop_complete_queue_item_after_delivery(
+    project_name: str,
+    step: QueueWorkerStepResult,
+    *,
+    dry_run: bool,
+    workspace_root: Path,
+) -> tuple[str, str, str, bool]:
+    if not step.run_id or not step.selected_queue_item_id:
+        return (
+            "queue item completion skipped",
+            "Review the completed queue-worker run manually; run or selected queue item was not recorded.",
+            "Trusted delivery completed, but queue item completion was skipped because run/item id was missing.",
+            False,
+        )
+    run = load_queue_worker_run(project_name, step.run_id, workspace_root=workspace_root)
+    if not run or not run.queue_id:
+        return (
+            "queue item completion skipped",
+            "Review the completed queue-worker run manually; queue id was not recorded.",
+            "Trusted delivery completed, but queue item completion was skipped because queue id was missing.",
+            False,
+        )
+    if dry_run:
+        return (
+            "would complete queue item after trusted delivery",
+            f"Would complete queue item {step.selected_queue_item_id}, then rerun queue-worker-loop for the next eligible item.",
+            "",
+            False,
+        )
+    try:
+        complete_queue_item(
+            project_name,
+            run.queue_id,
+            step.selected_queue_item_id,
+            f"Trusted delivery completed for queue-worker run {step.run_id}; delivery request {step.delivery_request_id or 'unknown'}.",
+            workspace_root=workspace_root,
+        )
+    except ValueError as exc:
+        return (
+            "queue item completion blocked",
+            f"Review queue completion manually: {exc}",
+            f"Trusted delivery completed, but queue item completion was blocked: {exc}",
+            False,
+        )
+    return "", f"Queue item {step.selected_queue_item_id} completed; next eligible item can be started if policy permits.", "", True
+
+
 def _step_result_from_run(
     project_name: str,
     run: QueueWorkerRun,
@@ -6725,6 +6965,9 @@ def _step_queue_worker_delivery_requested(
         from .delivery import load_delivery_runner_run
 
         runner_run = load_delivery_runner_run(project_name, run.delivery_request_id, workspace_root=workspace_root)
+    allowed_waiting_statuses = {None, "requested"}
+    if evidence.delivery_request_exists and evidence.delivery_request_status not in {*allowed_waiting_statuses, "completed"}:
+        blockers.append(f"Linked delivery request status is unsafe: {evidence.delivery_request_status}.")
     delivery_succeeded = bool(evidence.delivery_completed and runner_run and runner_run.status == "completed" and runner_run.pushed)
     if evidence.delivery_completed and not delivery_succeeded:
         blockers.append("Linked delivery request is completed, but no pushed trusted runner run was found.")

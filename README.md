@@ -241,6 +241,8 @@ Prepare one policy-gated queue worker step:
 ```powershell
 devo project queue-worker-step --project MyProject --policy POL-0001 --confirm-step
 devo project queue-worker-step --project MyProject --policy POL-0001 --dry-run
+devo project queue-worker-loop --project MyProject --policy POL-0001 --confirm-loop
+devo project queue-worker-loop --project MyProject --policy POL-0001 --dry-run
 devo project queue-worker-plan --project MyProject --policy POL-0001
 devo project queue-worker-run --project MyProject --policy POL-0001 --once --confirm-queue-worker
 devo project queue-worker-list --project MyProject
@@ -257,7 +259,7 @@ devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-ret
 devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The assisted one-step path is `queue-worker-step`: it creates one queue-worker run if no active run exists for the approved policy, advances only one evidence gate at a time, creates a trusted delivery runner request when the run is ready, and later observes trusted runner completion without running runner-watch itself. The lower-level commands remain available for explicit inspection and recovery. These commands do not run real Codex, call AI APIs, run validation, execute runner-watch, complete queue items, stage, commit, push, or modify target projects.
+Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The assisted one-step path is `queue-worker-step`: it creates one queue-worker run if no active run exists for the approved policy, advances only one evidence gate at a time, creates a trusted delivery runner request when the run is ready, and later observes trusted runner completion without running runner-watch itself. `queue-worker-loop` repeatedly invokes that one-step behavior until the next safe stop condition, such as missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/blocked state, no eligible item, or max steps. It can complete a queue item only after trusted delivery is completed and the existing queue completion checks pass, then it stops again at the next `waiting_worker` boundary. The lower-level commands remain available for explicit inspection and recovery. These commands do not run real Codex, call AI APIs, run validation, execute runner-watch, stage, commit, push, or modify target project source directly.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md).
 
