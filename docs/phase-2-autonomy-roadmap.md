@@ -139,6 +139,15 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Done criteria: a single command can start the next approved item, stop at `waiting_worker`, continue through already-recorded evidence, create a trusted delivery request, observe completed trusted delivery, and then start at most the next eligible item before stopping again at `waiting_worker`.
 - Status: Completed. The loop is a one-task-at-a-time assisted operator command, not full autonomy.
 
+### TASK-DEVO-135: Queue-Worker Evidence Intake
+
+- Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.
+- Why it matters: The loop was safe but still required operators to remember lower-level worker report/review commands between stops.
+- Scope: `devo project queue-worker-record-worker-result`, `queue-worker-record-review`, `queue-worker-record-validation`, clearer next actions, and clearer draft/unapproved policy output.
+- Not in scope: real Codex execution, AI/API calls, validation execution, automatic review, runner-watch execution, commit, push, UI controls, background daemons, parallel work, or autonomous multi-task execution.
+- Safety rules: record commands only write workspace evidence for an existing queue-worker run and require `--confirm-record`; the loop remains responsible for state transitions.
+- Status: Completed. Evidence intake is now explicit and easier to pair with `queue-worker-loop`.
+
 ### Future: UI Approval And Queue Controls
 
 - Goal: Add safe UI controls only after the CLI evidence and delivery handoff path stays comfortable.

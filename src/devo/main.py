@@ -138,6 +138,7 @@ from .project_planning import (
     CodexRunPlan,
     CodexWorkerReport,
     ExecutionPolicyCheckResult,
+    QueueWorkerEvidenceRecordResult,
     QueueWorkerLoopResult,
     QueueWorkerPlan,
     QueueWorkerRun,
@@ -227,6 +228,9 @@ from .project_planning import (
     request_queue_worker_delivery,
     review_project_batch,
     record_codex_worker_review,
+    record_queue_worker_review,
+    record_queue_worker_validation,
+    record_queue_worker_worker_result,
     resume_execution_queue,
     resume_queue_worker_run,
     suggest_project_batch,
@@ -875,17 +879,63 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
     )
 
 
+def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecordResult) -> None:
+    console.print(f"[bold]Queue worker evidence recorded: {result.run_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Queue worker run: {result.run_id}")
+    console.print(f"Current status: {result.run_status}")
+    console.print(f"Evidence type: {result.evidence_type}")
+    console.print(f"Evidence status: {result.evidence_status}")
+    console.print(f"Summary: {result.summary}", soft_wrap=True)
+    console.print(f"Artifact path: {result.artifact_path or 'none'}", soft_wrap=True)
+    console.print("Commands run:")
+    for command in result.commands_run or ["none"]:
+        console.print(f"  - {command}", soft_wrap=True)
+    console.print("Files changed:")
+    for file_path in result.files_changed or ["none"]:
+        console.print(f"  - {file_path}", soft_wrap=True)
+    console.print(f"Action taken: {result.action_taken}")
+    console.print("New evidence state:")
+    console.print(f"  Worker report status: {result.evidence.worker_report_status or 'none'}")
+    console.print(f"  Review status: {result.evidence.worker_review_status or 'none'}")
+    console.print(f"  Validation status: {result.evidence.validation_status or 'none'}")
+    console.print(f"  Validation passed: {result.evidence.validation_passed}")
+    console.print(f"  Delivery request exists: {result.evidence.delivery_request_exists}")
+    console.print(f"Record JSON: {_named_path(Path(result.record_json_path)) if result.record_json_path else 'none'}")
+    console.print(f"Record Markdown: {_named_path(Path(result.record_markdown_path)) if result.record_markdown_path else 'none'}")
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(
+        "Safety: this command records workspace evidence only. It does not run Codex, validation, review, runner-watch, commit, push, or delivery.",
+        soft_wrap=True,
+    )
+
+
 def _queue_worker_next_action_text(run: QueueWorkerRun, evidence, blockers: list[str]) -> str:
     if run.next_action and not blockers:
         return run.next_action
     if blockers:
         return "Resolve blockers before continuing this queue-worker run."
     if not evidence.worker_report_imported:
-        return f"Import worker report for {run.selected_worker_run_id or '<workerRunId>'}."
+        return (
+            f"Record worker result evidence: devo project queue-worker-record-worker-result --project {run.project} "
+            f"--run {run.run_id} --status completed --summary \"<summary>\" --confirm-record"
+        )
     if not evidence.worker_review_passed:
-        return f"Review worker run {run.selected_worker_run_id or '<workerRunId>'}."
+        return (
+            f"Record review evidence: devo project queue-worker-record-review --project {run.project} "
+            f"--run {run.run_id} --status passed --summary \"<summary>\" --confirm-record"
+        )
     if not evidence.validation_passed:
-        return f"Record passing validation evidence for {run.selected_worker_run_id or '<workerRunId>'}."
+        return (
+            f"Record validation evidence: devo project queue-worker-record-validation --project {run.project} "
+            f"--run {run.run_id} --status passed --summary \"<summary>\" --confirm-record"
+        )
     if not evidence.delivery_request_exists:
         return f"Create delivery request: devo project queue-worker-request-delivery --project {run.project} --run {run.run_id} --confirm-delivery-request"
     return "Inspect trusted runner delivery status."
@@ -4013,9 +4063,14 @@ def list_execution_policies_command(
         console.print("[yellow]No execution policies recorded.[/yellow]")
         console.print(f"Suggested next command: devo project execution-policy-create --project {project_name} --batch <batchId> --title \"<title>\"")
         return
+    approved_count = sum(1 for policy in policies if policy.status == "approved")
+    if approved_count == 0:
+        console.print("[yellow]No approved execution policies found. Queue-worker step/loop requires an approved policy.[/yellow]")
+        console.print(f"Suggested next command: devo project execution-policy-request --project {project_name} --policy <POL-ID>")
     for policy in policies:
+        approval_label = "APPROVED" if policy.status == "approved" else f"NOT_APPROVED({policy.status})"
         console.print(
-            f"{policy.policy_id} | {policy.status} | batch={policy.batch_id} | queue={policy.queue_id or 'none'} | "
+            f"{policy.policy_id} | {approval_label} | status={policy.status} | batch={policy.batch_id} | queue={policy.queue_id or 'none'} | "
             f"tasks={len(policy.allowed_task_ids)} | auto_delivery={policy.auto_delivery_allowed} auto_push={policy.auto_push_allowed} | {policy.title}",
             soft_wrap=True,
         )
@@ -4162,6 +4217,105 @@ def evidence_queue_worker_run_command(
         console.print(f"Suggested next command: devo project queue-worker-list --project {project_name}")
         return
     _print_queue_worker_evidence(run)
+
+
+@project_app.command("queue-worker-record-worker-result")
+def record_queue_worker_worker_result_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    status: str = typer.Option(..., "--status", help="Worker result status: completed, failed, blocked, usage_limit."),
+    summary: str = typer.Option(..., "--summary", help="Evidence summary."),
+    artifact: str | None = typer.Option(None, "--artifact", help="Optional supporting artifact path to record as evidence."),
+    commands_run: str | None = typer.Option(None, "--commands-run", help="Optional comma-separated commands reported by the worker/operator."),
+    files_changed: str | None = typer.Option(None, "--files-changed", help="Optional comma-separated changed files."),
+    note: str | None = typer.Option(None, "--note", help="Optional note."),
+    confirm_record: bool = typer.Option(False, "--confirm-record", help="Confirm workspace-only evidence recording."),
+) -> None:
+    """Record worker-result evidence for a queue-worker run without advancing state."""
+    project_name = _resolve_project(project_name)
+    if not confirm_record:
+        console.print("queue-worker-record-worker-result requires --confirm-record.")
+        raise typer.Exit(1)
+    try:
+        result = record_queue_worker_worker_result(
+            project_name,
+            run_id,
+            status=status,
+            summary=summary,
+            artifact_path=artifact,
+            commands_run=commands_run,
+            files_changed=files_changed,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_evidence_record_result(result)
+
+
+@project_app.command("queue-worker-record-review")
+def record_queue_worker_review_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    status: str = typer.Option(..., "--status", help="Review status: passed, needs_changes, rejected, blocked."),
+    summary: str = typer.Option(..., "--summary", help="Review summary."),
+    artifact: str | None = typer.Option(None, "--artifact", help="Optional supporting artifact path to record as evidence."),
+    commands_run: str | None = typer.Option(None, "--commands-run", help="Optional comma-separated commands reported during review."),
+    files_changed: str | None = typer.Option(None, "--files-changed", help="Optional comma-separated reviewed files."),
+    note: str | None = typer.Option(None, "--note", help="Optional note."),
+    confirm_record: bool = typer.Option(False, "--confirm-record", help="Confirm workspace-only evidence recording."),
+) -> None:
+    """Record review evidence for a queue-worker run without advancing state."""
+    project_name = _resolve_project(project_name)
+    if not confirm_record:
+        console.print("queue-worker-record-review requires --confirm-record.")
+        raise typer.Exit(1)
+    try:
+        result = record_queue_worker_review(
+            project_name,
+            run_id,
+            status=status,
+            summary=summary,
+            artifact_path=artifact,
+            commands_run=commands_run,
+            files_changed=files_changed,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_evidence_record_result(result)
+
+
+@project_app.command("queue-worker-record-validation")
+def record_queue_worker_validation_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    status: str = typer.Option(..., "--status", help="Validation status: passed, failed, blocked, not_run."),
+    summary: str = typer.Option(..., "--summary", help="Validation summary."),
+    artifact: str | None = typer.Option(None, "--artifact", help="Optional supporting artifact path to record as evidence."),
+    commands_run: str | None = typer.Option(None, "--commands-run", help="Optional comma-separated validation commands reported."),
+    files_changed: str | None = typer.Option(None, "--files-changed", help="Optional comma-separated files covered by validation."),
+    note: str | None = typer.Option(None, "--note", help="Optional note."),
+    confirm_record: bool = typer.Option(False, "--confirm-record", help="Confirm workspace-only evidence recording."),
+) -> None:
+    """Record validation evidence for a queue-worker run without creating delivery."""
+    project_name = _resolve_project(project_name)
+    if not confirm_record:
+        console.print("queue-worker-record-validation requires --confirm-record.")
+        raise typer.Exit(1)
+    try:
+        result = record_queue_worker_validation(
+            project_name,
+            run_id,
+            status=status,
+            summary=summary,
+            artifact_path=artifact,
+            commands_run=commands_run,
+            files_changed=files_changed,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_evidence_record_result(result)
 
 
 @project_app.command("queue-worker-continue")

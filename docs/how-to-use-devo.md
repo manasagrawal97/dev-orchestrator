@@ -245,6 +245,9 @@ devo project queue-worker-show --project MyProject --run QWR-0001
 devo project queue-worker-latest --project MyProject
 devo project queue-worker-status --project MyProject
 devo project queue-worker-evidence --project MyProject --run QWR-0001
+devo project queue-worker-record-worker-result --project MyProject --run QWR-0001 --status completed --summary "Implemented requested change." --confirm-record
+devo project queue-worker-record-review --project MyProject --run QWR-0001 --status passed --summary "Review passed." --confirm-record
+devo project queue-worker-record-validation --project MyProject --run QWR-0001 --status passed --summary "Validation passed." --commands-run "pytest ..." --confirm-record
 devo project queue-worker-continue --project MyProject --run QWR-0001 --confirm-continue
 devo project queue-worker-request-delivery --project MyProject --run QWR-0001 --confirm-delivery-request
 devo project queue-worker-pause --project MyProject --run QWR-0001 --reason "operator review"
@@ -254,7 +257,7 @@ devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-ret
 devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted primitives are `queue-worker-step` and `queue-worker-loop`. `queue-worker-step` performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. `queue-worker-loop` repeats that one-step behavior until it reaches a safe stop condition: missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/cancelled/blocked state, no eligible item, or max steps. It can complete the delivered queue item only through existing queue completion checks, then it stops again for the next worker result. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute runner-watch, stage, commit, push, or modify target source directly.
+Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted primitives are `queue-worker-step` and `queue-worker-loop`. `queue-worker-step` performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. `queue-worker-loop` repeats that one-step behavior until it reaches a safe stop condition: missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/cancelled/blocked state, no eligible item, or max steps. `queue-worker-record-worker-result`, `queue-worker-record-review`, and `queue-worker-record-validation` are the manual evidence intake commands that feed the loop between those stops. They write workspace evidence and print the next loop command; they do not advance state by themselves. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute review, execute runner-watch, stage, commit, push, or modify target source directly.
 
 The assisted queue-worker flow is dogfooded in `docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md`.
 

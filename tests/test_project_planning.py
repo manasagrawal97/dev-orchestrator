@@ -25,6 +25,8 @@ from devo.project_planning import (
     list_queue_worker_runs,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_report,
+    load_codex_worker_review,
     load_codex_worker_run,
     list_project_batches,
     load_execution_queue,
@@ -1306,7 +1308,7 @@ def test_queue_worker_status_shows_waiting_worker_missing_evidence(tmp_path: Pat
     assert "Status: waiting_worker" in result.output
     assert "Worker result/report not imported." in result.output
     assert "Worker review not recorded." not in result.output
-    assert "report-import --project sample --run WR001" in result.output
+    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
 
 
 def test_queue_worker_pause_records_paused_state_and_reason(tmp_path: Path, monkeypatch) -> None:
@@ -1448,6 +1450,369 @@ def test_queue_worker_evidence_shows_missing_report_without_mutating_target(tmp_
     assert "Worker result/report not imported." in result.output
     assert "evidence inspection is read-only" in result.output
     assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_record_commands_require_confirmation(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    worker = runner.invoke(
+        app,
+        ["project", "queue-worker-record-worker-result", "--project", "sample", "--run", "QWR-0001", "--status", "completed", "--summary", "Done."],
+        terminal_width=240,
+    )
+    review = runner.invoke(
+        app,
+        ["project", "queue-worker-record-review", "--project", "sample", "--run", "QWR-0001", "--status", "passed", "--summary", "Reviewed."],
+        terminal_width=240,
+    )
+    validation = runner.invoke(
+        app,
+        ["project", "queue-worker-record-validation", "--project", "sample", "--run", "QWR-0001", "--status", "passed", "--summary", "Validated."],
+        terminal_width=240,
+    )
+
+    assert worker.exit_code != 0
+    assert "queue-worker-record-worker-result requires --confirm-record" in worker.output
+    assert review.exit_code != 0
+    assert "queue-worker-record-review requires --confirm-record" in review.output
+    assert validation.exit_code != 0
+    assert "queue-worker-record-validation requires --confirm-record" in validation.output
+
+
+def test_queue_worker_record_worker_result_writes_completed_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+    artifact = tmp_path / "worker-note.md"
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-worker-result",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "completed",
+            "--summary",
+            "Implemented requested change.",
+            "--commands-run",
+            "pytest tests/test_project_planning.py",
+            "--files-changed",
+            "src/devo/main.py,tests/test_project_planning.py",
+            "--artifact",
+            str(artifact),
+            "--note",
+            "Manual worker evidence.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Action taken: recorded worker result evidence" in result.output
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    assert report.status_reported_by_worker == "completed"
+    assert report.commands_run == ["pytest tests/test_project_planning.py"]
+    assert report.changed_files == ["src/devo/main.py", "tests/test_project_planning.py"]
+    assert f"Artifact: {artifact}" in report.notes
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    _continue_queue_worker_run()
+
+    review = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Review passed.",
+            "--files-changed",
+            "src/feature.py",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    _continue_queue_worker_run()
+    validation = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-validation",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Focused validation passed.",
+            "--commands-run",
+            "pytest tests/test_sample.py",
+            "--artifact",
+            "workspace/reports/validation.md",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+
+    assert review.exit_code == 0, review.output
+    assert "Evidence status: passed" in review.output
+    assert validation.exit_code == 0, validation.output
+    worker_review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert worker_review is not None
+    assert worker_review.review_status == "reviewed_passed"
+    assert worker_review.validation_evidence.validation_status == "passed"
+    assert worker_review.validation_evidence.commands_reported == ["pytest tests/test_sample.py"]
+    assert "workspace/reports/validation.md" in worker_review.validation_evidence.evidence_paths
+
+
+def test_queue_worker_record_commands_reject_unknown_missing_and_unsafe_states(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    unknown = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-worker-result",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "mystery",
+            "--summary",
+            "Unknown.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    missing = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-worker-result",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-9999",
+            "--status",
+            "completed",
+            "--summary",
+            "Missing.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    _import_worker_report(tmp_path)
+    _continue_queue_worker_run()
+    wrong_state = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-worker-result",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "completed",
+            "--summary",
+            "Too late.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    mismatched = run.model_copy(update={"project": "other"})
+    json_path, _markdown_path = queue_worker_run_artifact_paths("sample", "QWR-0001", workspace_root=workspace)
+    json_path.write_text(mismatched.model_dump_json(indent=2), encoding="utf-8")
+    project_mismatch = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Mismatch.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+
+    assert unknown.exit_code != 0
+    assert "Invalid worker result status" in unknown.output
+    assert missing.exit_code != 0
+    assert "Queue worker run not found" in missing.output
+    assert wrong_state.exit_code != 0
+    assert "Cannot record successful worker_result evidence" in wrong_state.output
+    assert project_mismatch.exit_code != 0
+    assert "project mismatch" in project_mismatch.output
+
+
+def test_queue_worker_record_failed_blocked_statuses_are_not_success(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-worker-result",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "blocked",
+            "--summary",
+            "Blocked by missing approval.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    loop = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    assert report.status_reported_by_worker == "blocked"
+    assert loop.exit_code != 0
+    assert "Worker report says blocked." in loop.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "paused"
+
+
+def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+
+    worker = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-worker-result",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "completed",
+            "--summary",
+            "Implemented requested change.",
+            "--files-changed",
+            "src/feature.py",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    waiting_review = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+    review = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Review passed.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    waiting_validation = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+    validation = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-validation",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Validation passed.",
+            "--commands-run",
+            "pytest",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    (project_path / "src").mkdir(exist_ok=True)
+    (project_path / "src" / "feature.py").write_text("print('recorded')\n", encoding="utf-8")
+    delivery = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--message",
+            "feat: recorded evidence",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert worker.exit_code == 0, worker.output
+    assert waiting_review.exit_code == 0, waiting_review.output
+    assert "Stop reason: worker review missing" in waiting_review.output
+    assert review.exit_code == 0, review.output
+    assert waiting_validation.exit_code == 0, waiting_validation.output
+    assert "Stop reason: validation evidence missing" in waiting_validation.output
+    assert validation.exit_code == 0, validation.output
+    assert delivery.exit_code == 0, delivery.output
+    assert "created delivery runner request REQ-0001" in delivery.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "delivery_requested"
 
 
 def test_queue_worker_continue_requires_confirmation(tmp_path: Path, monkeypatch) -> None:

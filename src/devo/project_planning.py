@@ -541,6 +541,27 @@ class QueueWorkerLoopResult(BaseModel):
     mutated: bool = False
 
 
+class QueueWorkerEvidenceRecordResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    run_id: str
+    run_status: str
+    evidence_type: str
+    evidence_status: str
+    summary: str
+    action_taken: str
+    artifact_path: str | None = None
+    record_json_path: str | None = None
+    record_markdown_path: str | None = None
+    commands_run: list[str] = Field(default_factory=list)
+    files_changed: list[str] = Field(default_factory=list)
+    evidence: QueueWorkerEvidenceSummary = Field(default_factory=QueueWorkerEvidenceSummary)
+    next_action: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+
+
 class QueueWorkerRunIndexEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2012,7 +2033,10 @@ def check_execution_policy(
     warnings: list[str] = []
     now = datetime.now(UTC)
     if policy.status != "approved":
-        blockers.append(f"Policy status is {policy.status}; approved is required.")
+        if policy.status == "draft":
+            blockers.append("Policy status is draft (not approved yet); approved is required before queue-worker execution.")
+        else:
+            blockers.append(f"Policy status is {policy.status}; approved is required.")
     if policy.expires_at and policy.expires_at <= now:
         blockers.append(f"Policy expired at {policy.expires_at.isoformat()}.")
     batch = load_project_batch(project_name, policy.batch_id, workspace_root=root)
@@ -2049,7 +2073,7 @@ def check_execution_policy(
     if not policy.forbidden_file_patterns:
         warnings.append("No forbidden file patterns recorded.")
     usable = not blockers
-    next_action = "TASK-DEVO-129 autonomous queue worker loop can use this approved policy." if usable else "Resolve blockers before autonomous execution."
+    next_action = "Queue-worker step/loop can use this approved policy." if usable else "Resolve blockers before queue-worker execution."
     return ExecutionPolicyCheckResult(
         project=project_name,
         policy_id=policy.policy_id,
@@ -2329,6 +2353,261 @@ def summarize_queue_worker_evidence(
         missing_evidence=missing,
         blockers=blockers,
         warnings=warnings,
+    )
+
+
+def record_queue_worker_worker_result(
+    project_name: str,
+    run_id: str,
+    *,
+    status: str,
+    summary: str,
+    artifact_path: str | None = None,
+    commands_run: str | None = None,
+    files_changed: str | None = None,
+    note: str | None = None,
+    workspace_root: Path | None = None,
+) -> QueueWorkerEvidenceRecordResult:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    normalized_status = status.strip().lower()
+    if normalized_status not in {"completed", "failed", "blocked", "usage_limit"}:
+        msg = f"Invalid worker result status: {status}"
+        raise ValueError(msg)
+    _require_queue_worker_record_status(run, "worker_result", normalized_status, {"waiting_worker"}, {"failed", "blocked", "usage_limit"})
+    worker_run = _require_queue_worker_linked_worker(project_name, run, root)
+    cleaned_summary = _require_nonempty_summary(summary)
+    commands = _clean_string_list([commands_run] if commands_run else [])
+    changed_files = _clean_string_list([files_changed] if files_changed else [])
+    notes = _record_notes(note=note, artifact_path=artifact_path)
+    report = CodexWorkerReport(
+        project=project_name,
+        worker_run_id=worker_run.worker_run_id,
+        source_handoff_id=worker_run.source_handoff_id,
+        source_queue_id=worker_run.source_queue_id,
+        source_queue_item_id=worker_run.source_queue_item_id,
+        source_task_id=worker_run.source_task_id,
+        status_reported_by_worker=normalized_status,
+        summary=cleaned_summary,
+        changed_files=changed_files,
+        validation_attempted=bool(commands),
+        commands_run=commands,
+        blockers=[cleaned_summary] if normalized_status in {"failed", "blocked"} else [],
+        notes=notes,
+        reported_at=datetime.now(UTC),
+    )
+    paths = worker_artifact_paths(project_name, workspace_root=root)
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    report_json, report_markdown = worker_report_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    _write_model(report_json, report)
+    report_markdown.write_text(render_codex_worker_report_markdown(report), encoding="utf-8")
+    mapped_status = _worker_status_from_report_status(normalized_status)
+    now = datetime.now(UTC)
+    metadata = WorkerReportMetadata(
+        report_status="present",
+        reported_changed_files=changed_files,
+        reported_validation=[],
+        safety_warnings=["Worker result was recorded manually; Devo did not run Codex or verify the work."],
+        reviewer_notes=["Queue-worker record command wrote this worker result evidence."],
+        imported_at=now,
+    )
+    updated_worker = worker_run.model_copy(
+        update={
+            "status": mapped_status,
+            "report_path": str(report_markdown),
+            "report": metadata,
+            "updated_at": now,
+            "completed_at": now if mapped_status in {"completed", "failed"} else worker_run.completed_at,
+            "status_note": f"Queue-worker worker result recorded as {normalized_status}.",
+            "next_action": _worker_report_next_action(project_name, worker_run.worker_run_id, normalized_status),
+        }
+    )
+    _write_worker_run(project_name, updated_worker, workspace_root=root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    return QueueWorkerEvidenceRecordResult(
+        project=project_name,
+        run_id=run.run_id,
+        run_status=run.status,
+        evidence_type="worker_result",
+        evidence_status=normalized_status,
+        summary=cleaned_summary,
+        action_taken="recorded worker result evidence",
+        artifact_path=_clean_optional_path(artifact_path),
+        record_json_path=str(report_json),
+        record_markdown_path=str(report_markdown),
+        commands_run=commands,
+        files_changed=changed_files,
+        evidence=evidence,
+        next_action=f"Run queue-worker-loop to advance to review: devo project queue-worker-loop --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-loop",
+        warnings=evidence.warnings,
+        blockers=evidence.blockers,
+    )
+
+
+def record_queue_worker_review(
+    project_name: str,
+    run_id: str,
+    *,
+    status: str,
+    summary: str,
+    artifact_path: str | None = None,
+    commands_run: str | None = None,
+    files_changed: str | None = None,
+    note: str | None = None,
+    workspace_root: Path | None = None,
+) -> QueueWorkerEvidenceRecordResult:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    normalized_status = status.strip().lower()
+    status_map = {
+        "passed": "reviewed_passed",
+        "needs_changes": "reviewed_needs_changes",
+        "rejected": "rejected",
+        "blocked": "reviewed_needs_changes",
+    }
+    if normalized_status not in status_map:
+        msg = f"Invalid review status: {status}"
+        raise ValueError(msg)
+    _require_queue_worker_record_status(run, "review", normalized_status, {"waiting_review"}, {"needs_changes", "rejected", "blocked"})
+    worker_run = _require_queue_worker_linked_worker(project_name, run, root)
+    cleaned_summary = _require_nonempty_summary(summary)
+    commands = _clean_string_list([commands_run] if commands_run else [])
+    changed_files = _clean_string_list([files_changed] if files_changed else [])
+    review, _json_path, _markdown_path = create_codex_worker_review_template(project_name, worker_run.worker_run_id, workspace_root=root)
+    now = datetime.now(UTC)
+    notes = _record_notes(note=note, artifact_path=artifact_path)
+    safety_review = [*review.safety_review]
+    if commands:
+        safety_review.append("Commands were reported manually; Devo did not execute or verify them.")
+    if normalized_status == "blocked":
+        safety_review.append("Review status recorded as blocked by queue-worker evidence intake.")
+    updated_review = review.model_copy(
+        update={
+            "review_status": status_map[normalized_status],
+            "reviewer": "queue-worker-record-review",
+            "decision_note": " ".join([cleaned_summary, *notes]).strip(),
+            "changed_files_review": [*review.changed_files_review, *[f"Reviewed changed file: {path}" for path in changed_files]],
+            "safety_review": safety_review,
+            "updated_at": now,
+            "next_action": _worker_review_next_action(project_name, worker_run, status_map[normalized_status]),
+        }
+    )
+    updated_review, review_json, review_markdown = _write_worker_review(project_name, updated_review, workspace_root=root)
+    updated_worker = worker_run.model_copy(
+        update={
+            "status_note": f"Queue-worker review evidence recorded as {normalized_status}.",
+            "updated_at": now,
+            "next_action": updated_review.next_action,
+        }
+    )
+    _write_worker_run(project_name, updated_worker, workspace_root=root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    return QueueWorkerEvidenceRecordResult(
+        project=project_name,
+        run_id=run.run_id,
+        run_status=run.status,
+        evidence_type="review",
+        evidence_status=normalized_status,
+        summary=cleaned_summary,
+        action_taken="recorded review evidence",
+        artifact_path=_clean_optional_path(artifact_path),
+        record_json_path=str(review_json),
+        record_markdown_path=str(review_markdown),
+        commands_run=commands,
+        files_changed=changed_files,
+        evidence=evidence,
+        next_action=f"Run queue-worker-loop to advance to validation: devo project queue-worker-loop --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-loop",
+        warnings=evidence.warnings,
+        blockers=evidence.blockers,
+    )
+
+
+def record_queue_worker_validation(
+    project_name: str,
+    run_id: str,
+    *,
+    status: str,
+    summary: str,
+    artifact_path: str | None = None,
+    commands_run: str | None = None,
+    files_changed: str | None = None,
+    note: str | None = None,
+    workspace_root: Path | None = None,
+) -> QueueWorkerEvidenceRecordResult:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    normalized_status = status.strip().lower()
+    status_map = {
+        "passed": "passed",
+        "failed": "failed",
+        "blocked": "partial",
+        "not_run": "not_provided",
+    }
+    if normalized_status not in status_map:
+        msg = f"Invalid validation status: {status}"
+        raise ValueError(msg)
+    _require_queue_worker_record_status(run, "validation", normalized_status, {"waiting_validation"}, {"failed", "blocked", "not_run"})
+    worker_run = _require_queue_worker_linked_worker(project_name, run, root)
+    review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root)
+    if not review:
+        msg = "Worker review evidence must be recorded before validation evidence."
+        raise ValueError(msg)
+    cleaned_summary = _require_nonempty_summary(summary)
+    commands = _clean_string_list([commands_run] if commands_run else [])
+    changed_files = _clean_string_list([files_changed] if files_changed else [])
+    evidence_paths = list(review.validation_evidence.evidence_paths)
+    cleaned_artifact = _clean_optional_path(artifact_path)
+    if cleaned_artifact and cleaned_artifact not in evidence_paths:
+        evidence_paths.append(cleaned_artifact)
+    warnings = [*review.validation_evidence.warnings, "Validation evidence was recorded manually; Devo did not run validation automatically."]
+    if normalized_status == "blocked":
+        warnings.append("Validation was recorded as blocked.")
+    if normalized_status == "not_run":
+        warnings.append("Validation was not run; this is not passing evidence.")
+    validation_evidence = review.validation_evidence.model_copy(
+        update={
+            "validation_status": status_map[normalized_status],
+            "commands_reported": _dedupe([*review.validation_evidence.commands_reported, *commands]),
+            "validation_summary": " ".join([cleaned_summary, *_record_notes(note=note, artifact_path=None)]).strip(),
+            "evidence_paths": evidence_paths,
+            "warnings": _dedupe(warnings),
+        }
+    )
+    updated_review = review.model_copy(
+        update={
+            "validation_evidence": validation_evidence,
+            "changed_files_review": _dedupe([*review.changed_files_review, *[f"Validation changed file: {path}" for path in changed_files]]),
+            "updated_at": datetime.now(UTC),
+            "next_action": _worker_review_next_action(project_name, worker_run, review.review_status),
+        }
+    )
+    updated_review, review_json, review_markdown = _write_worker_review(project_name, updated_review, workspace_root=root)
+    updated_worker = worker_run.model_copy(
+        update={
+            "status_note": f"Queue-worker validation evidence recorded as {normalized_status}.",
+            "updated_at": datetime.now(UTC),
+            "next_action": updated_review.next_action,
+        }
+    )
+    _write_worker_run(project_name, updated_worker, workspace_root=root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    return QueueWorkerEvidenceRecordResult(
+        project=project_name,
+        run_id=run.run_id,
+        run_status=run.status,
+        evidence_type="validation",
+        evidence_status=normalized_status,
+        summary=cleaned_summary,
+        action_taken="recorded validation evidence",
+        artifact_path=cleaned_artifact,
+        record_json_path=str(review_json),
+        record_markdown_path=str(review_markdown),
+        commands_run=commands,
+        files_changed=changed_files,
+        evidence=evidence,
+        next_action=f"Run queue-worker-loop to prepare delivery: devo project queue-worker-loop --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-loop",
+        warnings=evidence.warnings,
+        blockers=evidence.blockers,
     )
 
 
@@ -6643,7 +6922,76 @@ def _require_queue_worker_run(project_name: str, run_id: str, workspace_root: Pa
     if not run:
         msg = f"Queue worker run not found: {run_id}"
         raise ValueError(msg)
+    if run.project != project_name:
+        msg = f"Queue worker run project mismatch: expected {project_name}, got {run.project}."
+        raise ValueError(msg)
     return run
+
+
+def _require_queue_worker_linked_worker(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> WorkerRun:
+    if not run.selected_worker_run_id:
+        msg = f"Queue worker run {run.run_id} has no linked worker run."
+        raise ValueError(msg)
+    worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=workspace_root)
+    if not worker_run:
+        msg = f"Linked worker run not found: {run.selected_worker_run_id}"
+        raise ValueError(msg)
+    if worker_run.project != project_name:
+        msg = f"Linked worker run project mismatch: expected {project_name}, got {worker_run.project}."
+        raise ValueError(msg)
+    if worker_run.source_queue_item_id and run.selected_queue_item_id and worker_run.source_queue_item_id != run.selected_queue_item_id:
+        msg = (
+            f"Linked worker run queue item mismatch: expected {run.selected_queue_item_id}, "
+            f"got {worker_run.source_queue_item_id}."
+        )
+        raise ValueError(msg)
+    return worker_run
+
+
+def _require_queue_worker_record_status(
+    run: QueueWorkerRun,
+    evidence_type: str,
+    evidence_status: str,
+    expected_success_statuses: set[str],
+    safe_non_success_statuses: set[str],
+) -> None:
+    if evidence_status in safe_non_success_statuses:
+        if run.status in {"completed", "cancelled"}:
+            msg = f"Cannot record {evidence_type} evidence for terminal queue-worker run status {run.status}."
+            raise ValueError(msg)
+        return
+    if run.status not in expected_success_statuses:
+        msg = (
+            f"Cannot record successful {evidence_type} evidence while queue-worker run status is {run.status}; "
+            f"expected one of: {', '.join(sorted(expected_success_statuses))}."
+        )
+        raise ValueError(msg)
+
+
+def _require_nonempty_summary(summary: str) -> str:
+    cleaned = summary.strip()
+    if not cleaned:
+        msg = "Summary must not be empty."
+        raise ValueError(msg)
+    return cleaned
+
+
+def _clean_optional_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    cleaned = path.strip()
+    return cleaned or None
+
+
+def _record_notes(*, note: str | None, artifact_path: str | None) -> list[str]:
+    notes: list[str] = []
+    cleaned_artifact = _clean_optional_path(artifact_path)
+    if cleaned_artifact:
+        notes.append(f"Artifact: {cleaned_artifact}")
+    cleaned_note = note.strip() if note else ""
+    if cleaned_note:
+        notes.append(f"Note: {cleaned_note}")
+    return notes
 
 
 def _select_queue_worker_step_run(
@@ -7138,13 +7486,19 @@ def _queue_worker_next_action_for_run(project_name: str, run: QueueWorkerRun, ev
         return f"Create a worker run from the handoff: devo worker codex run-create --project {project_name} --handoff {run.selected_handoff_id}"
     if not evidence.worker_report_imported:
         return (
-            f"Import a worker report after Codex/manual work: devo worker codex report-import --project {project_name} "
-            f"--run {run.selected_worker_run_id} --file <filledReportFile>"
+            f"Record worker result evidence after manual/Codex work: devo project queue-worker-record-worker-result --project {project_name} "
+            f"--run {run.run_id} --status completed --summary \"<summary>\" --confirm-record"
         )
     if not evidence.worker_review_exists:
-        return f"Create worker review evidence: devo worker codex review-template --project {project_name} --run {run.selected_worker_run_id}"
+        return (
+            f"Record review evidence: devo project queue-worker-record-review --project {project_name} "
+            f"--run {run.run_id} --status passed --summary \"<summary>\" --confirm-record"
+        )
     if not evidence.validation_passed:
-        return f"Record passing validation evidence before delivery for worker run {run.selected_worker_run_id}."
+        return (
+            f"Record validation evidence before delivery: devo project queue-worker-record-validation --project {project_name} "
+            f"--run {run.run_id} --status passed --summary \"<summary>\" --confirm-record"
+        )
     if not evidence.delivery_request_exists:
         return (
             f"Create a trusted delivery runner request: devo project queue-worker-request-delivery --project {project_name} "

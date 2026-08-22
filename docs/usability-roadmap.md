@@ -61,6 +61,8 @@ TASK-DEVO-132 dogfoods that bridge end to end in a temp project and finds that t
 
 TASK-DEVO-133 and TASK-DEVO-134 reduce that friction with `queue-worker-step` and `queue-worker-loop`. The step command performs one safe queue-worker transition; the loop command repeats those one-task-at-a-time transitions until it reaches missing worker/review/validation evidence, pending trusted delivery, policy drift, terminal state, no eligible item, or max steps. This is still assisted operation, not full autonomy: Devo does not run real Codex, execute validation, run trusted delivery, commit, push, or parallelize tasks from the loop.
 
+TASK-DEVO-135 adds the evidence intake layer for that loop: `queue-worker-record-worker-result`, `queue-worker-record-review`, and `queue-worker-record-validation` write manual workspace evidence and tell the operator to run the loop again. These commands reduce artifact plumbing without running worker, review, validation, runner-watch, commit, or push steps automatically.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
