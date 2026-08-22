@@ -99,6 +99,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: Automatic risky retries, ACL fixes, arbitrary shell recovery, or ignoring failed validation.
 - Safety rules: Stop on failures, preserve evidence, require explicit continuation when risk changes, and avoid losing the current queue item.
 - Done criteria: A paused queue can explain what happened, what is safe to retry, and what command or review is needed next.
+- Status: Completed as lifecycle control for queue-worker run artifacts. `devo project queue-worker-status`, `queue-worker-pause`, `queue-worker-resume --confirm-resume`, `queue-worker-fail`, `queue-worker-retry --confirm-retry`, and `queue-worker-cancel --confirm-cancel` now make pause reason, missing evidence, retry linkage, policy/item rechecks, and next safe command explicit. This still does not run real Codex, validation, delivery runner requests, queue completion, commit, or push.
 
 ### TASK-DEVO-131: UI Approval And Queue Controls
 

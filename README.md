@@ -244,9 +244,15 @@ devo project queue-worker-run --project MyProject --policy POL-0001 --once --con
 devo project queue-worker-list --project MyProject
 devo project queue-worker-show --project MyProject --run QWR-0001
 devo project queue-worker-latest --project MyProject
+devo project queue-worker-status --project MyProject
+devo project queue-worker-pause --project MyProject --run QWR-0001 --reason "operator review"
+devo project queue-worker-resume --project MyProject --run QWR-0001 --confirm-resume
+devo project queue-worker-fail --project MyProject --run QWR-0001 --reason "worker output unclear"
+devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-retry
+devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 loop checks the approved policy, selects at most one eligible pending/running queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted Codex worker run record, records what happened, and pauses at `waiting_worker` or a blocker state. It does not run real Codex, call AI APIs, run validation, create delivery runner requests, complete queue items, stage, commit, push, or modify target projects.
+Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 loop checks the approved policy, selects at most one eligible pending/running queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted Codex worker run record, records what happened, and pauses at `waiting_worker` or a blocker state. Lifecycle commands now make the latest state, pause reason, missing worker/review/validation/delivery evidence, retry link, and next safe command explicit. They do not run real Codex, call AI APIs, run validation, create delivery runner requests, complete queue items, stage, commit, push, or modify target projects.
 
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
 

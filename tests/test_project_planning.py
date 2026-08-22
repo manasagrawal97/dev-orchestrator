@@ -1277,6 +1277,155 @@ def test_queue_worker_list_show_latest_work(tmp_path: Path, monkeypatch) -> None
     assert "Queue worker run: QWR-0001" in latest.output
 
 
+def test_queue_worker_status_handles_no_runs_without_mutating_target(tmp_path: Path, monkeypatch) -> None:
+    _workspace_path, project_path = _workspace(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "queue-worker-status", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest run: none" in result.output
+    assert "queue-worker-plan --project sample --policy <POL-ID>" in result.output
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_status_shows_waiting_worker_missing_evidence(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+
+    result = runner.invoke(app, ["project", "queue-worker-status", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "Latest run: QWR-0001" in result.output
+    assert "Status: waiting_worker" in result.output
+    assert "Worker result/report not imported." in result.output
+    assert "Worker review not recorded." not in result.output
+    assert "report-import --project sample --run WR001" in result.output
+
+
+def test_queue_worker_pause_records_paused_state_and_reason(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-pause", "--project", "sample", "--run", "QWR-0001", "--reason", "operator review"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "paused"
+    assert run.pause_reason == "operator review"
+    assert run.paused_at is not None
+    assert "queue-worker-resume --project sample --run QWR-0001 --confirm-resume" in run.next_action
+
+
+def test_queue_worker_resume_requires_confirmation_and_rechecks_policy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+    runner.invoke(app, ["project", "queue-worker-pause", "--project", "sample", "--run", "QWR-0001", "--reason", "pause"])
+
+    missing_confirm = runner.invoke(app, ["project", "queue-worker-resume", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    assert missing_confirm.exit_code != 0
+    assert "requires --confirm-resume" in missing_confirm.output
+
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    stale = policy.model_copy(update={"status": "draft"})
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(stale.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("draft test policy\n", encoding="utf-8")
+
+    resumed = runner.invoke(
+        app,
+        ["project", "queue-worker-resume", "--project", "sample", "--run", "QWR-0001", "--confirm-resume"],
+        terminal_width=240,
+    )
+
+    assert resumed.exit_code != 0
+    assert "Status: blocked" in resumed.output
+    assert "Policy status is draft" in resumed.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "blocked"
+
+
+def test_queue_worker_fail_records_failed_state_and_reason(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-fail", "--project", "sample", "--run", "QWR-0001", "--reason", "worker output unclear"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "failed"
+    assert run.failure_reason == "worker output unclear"
+    assert run.failed_at is not None
+    assert "queue-worker-retry --project sample --run QWR-0001 --confirm-retry" in run.next_action
+
+
+def test_queue_worker_retry_requires_confirmation_and_creates_linked_attempt(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+    runner.invoke(app, ["project", "queue-worker-fail", "--project", "sample", "--run", "QWR-0001", "--reason", "retry test"])
+
+    missing_confirm = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    assert missing_confirm.exit_code != 0
+    assert "requires --confirm-retry" in missing_confirm.output
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    retry = load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace)
+    original = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert retry is not None
+    assert original is not None
+    assert original.status == "failed"
+    assert retry.retry_of == "QWR-0001"
+    assert retry.selected_queue_item_id == "QI001"
+    assert retry.selected_worker_run_id is None
+    assert "run-create --project sample --handoff H001" in retry.next_action
+
+
+def test_queue_worker_retry_blocks_when_selected_item_no_longer_valid(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+    runner.invoke(app, ["project", "queue-worker-fail", "--project", "sample", "--run", "QWR-0001", "--reason", "retry test"])
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    stale = queue.model_copy(update={"items": [queue.items[0].model_copy(update={"status": "completed"}), queue.items[1]]})
+    json_path, markdown_path = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    json_path.write_text(stale.model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("stale queue\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "item status is completed" in result.output
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+
+
 def test_queue_worker_plan_read_only_does_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
     _workspace_path, project_path = _workspace(tmp_path, monkeypatch)
     _create_execution_policy(tmp_path, allowed_task="T001")

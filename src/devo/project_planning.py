@@ -54,7 +54,21 @@ ALLOWED_BATCH_REVIEW_STATUSES = {"not_reviewed", "reviewed", "needs_changes"}
 ALLOWED_QUEUE_STATUSES = {"draft", "ready", "running", "paused_usage_limit", "paused_failure", "waiting_review", "completed", "cancelled", "superseded"}
 ALLOWED_QUEUE_ITEM_STATUSES = {"pending", "running", "waiting_review", "paused", "blocked", "failed", "completed", "skipped", "superseded"}
 ALLOWED_EXECUTION_POLICY_STATUSES = {"draft", "requested", "approved", "rejected", "expired", "cancelled", "completed"}
-ALLOWED_QUEUE_WORKER_RUN_STATUSES = {"no_policy", "blocked", "no_ready_item", "handoff_ready", "waiting_worker", "failed"}
+ALLOWED_QUEUE_WORKER_RUN_STATUSES = {
+    "no_policy",
+    "blocked",
+    "no_ready_item",
+    "handoff_ready",
+    "waiting_worker",
+    "waiting_review",
+    "waiting_validation",
+    "ready_for_delivery_request",
+    "delivery_requested",
+    "completed",
+    "paused",
+    "failed",
+    "cancelled",
+}
 PAUSED_QUEUE_STATUSES = {"paused_usage_limit", "paused_failure", "waiting_review"}
 ALLOWED_HANDOFF_STATUSES = {"draft", "used", "superseded"}
 ALLOWED_HANDOFF_TYPES = {"task", "batch", "queue_next"}
@@ -410,6 +424,54 @@ class QueueWorkerRun(BaseModel):
     policy_check_summary: str = ""
     selection_reason: str = ""
     pause_reason: str = ""
+    failure_reason: str = ""
+    cancel_reason: str = ""
+    retry_of: str | None = None
+    paused_at: datetime | None = None
+    resumed_at: datetime | None = None
+    failed_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    next_action: str = ""
+
+
+class QueueWorkerEvidenceSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    handoff_exists: bool = False
+    worker_run_exists: bool = False
+    worker_report_imported: bool = False
+    worker_review_exists: bool = False
+    worker_review_passed: bool = False
+    validation_evidence_exists: bool = False
+    validation_passed: bool = False
+    delivery_request_exists: bool = False
+    delivery_completed: bool = False
+    missing_evidence: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QueueWorkerStatusReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    has_runs: bool = False
+    run_id: str | None = None
+    policy_id: str | None = None
+    queue_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    selected_handoff_id: str | None = None
+    selected_worker_run_id: str | None = None
+    status: str = "no_runs"
+    pause_reason: str = ""
+    failure_reason: str = ""
+    retry_of: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    evidence: QueueWorkerEvidenceSummary = Field(default_factory=QueueWorkerEvidenceSummary)
     next_action: str = ""
 
 
@@ -1671,7 +1733,7 @@ def list_queue_worker_runs(project_name: str, workspace_root: Path | None = None
             runs.append(QueueWorkerRun.model_validate_json(path.read_text(encoding="utf-8")))
         except (ValueError, ValidationError):
             continue
-    return sorted(runs, key=lambda run: run.started_at, reverse=True)
+    return sorted(runs, key=lambda run: run.updated_at, reverse=True)
 
 
 def load_queue_worker_run(project_name: str, run_id: str, workspace_root: Path | None = None) -> QueueWorkerRun | None:
@@ -2046,6 +2108,7 @@ def run_queue_worker_once(project_name: str, policy_id: str, *, approver: str | 
         selected_task_id=plan.selected_task_id,
         status=plan.status,
         started_at=now,
+        updated_at=now,
         approver=approver.strip() if approver and approver.strip() else None,
         steps_run=["loaded execution policy", "checked policy", "selected eligible queue item"],
         blockers=list(plan.blockers),
@@ -2076,6 +2139,275 @@ def run_queue_worker_once(project_name: str, policy_id: str, *, approver: str | 
             "steps_run": steps,
             "pause_reason": "waiting_worker",
             "next_action": f"Use devo worker codex run-show --project {project_name} --run {worker_run.worker_run_id}, then give the generated handoff to Codex and import/review the result before queue completion.",
+        }
+    )
+    return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def get_queue_worker_status_report(project_name: str, workspace_root: Path | None = None) -> QueueWorkerStatusReport:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    runs = list_queue_worker_runs(project_name, workspace_root=root)
+    if not runs:
+        return QueueWorkerStatusReport(
+            project=project_name,
+            next_action=f"Plan a queue worker run: devo project queue-worker-plan --project {project_name} --policy <POL-ID>",
+        )
+    run = runs[0]
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    blockers = [*run.blockers, *evidence.blockers]
+    warnings = [*run.warnings, *evidence.warnings]
+    return QueueWorkerStatusReport(
+        project=project_name,
+        has_runs=True,
+        run_id=run.run_id,
+        policy_id=run.policy_id,
+        queue_id=run.queue_id,
+        selected_queue_item_id=run.selected_queue_item_id,
+        selected_task_id=run.selected_task_id,
+        selected_handoff_id=run.selected_handoff_id,
+        selected_worker_run_id=run.selected_worker_run_id,
+        status=run.status,
+        pause_reason=run.pause_reason,
+        failure_reason=run.failure_reason,
+        retry_of=run.retry_of,
+        blockers=blockers,
+        warnings=warnings,
+        missing_evidence=evidence.missing_evidence,
+        evidence=evidence,
+        next_action=_queue_worker_next_action_for_status(project_name, run, run.status, evidence, blockers),
+    )
+
+
+def summarize_queue_worker_evidence(
+    project_name: str,
+    run: QueueWorkerRun,
+    workspace_root: Path | None = None,
+) -> QueueWorkerEvidenceSummary:
+    root = workspace_root or get_workspace_root()
+    missing: list[str] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    handoff = load_codex_handoff(project_name, run.selected_handoff_id, workspace_root=root) if run.selected_handoff_id else None
+    worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+    report = load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+    review = load_codex_worker_review(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+
+    handoff_exists = handoff is not None
+    worker_run_exists = worker_run is not None
+    worker_report_imported = report is not None
+    worker_review_exists = review is not None
+    worker_review_passed = bool(review and review.review_status == "reviewed_passed")
+    validation_status = review.validation_evidence.validation_status if review else "not_provided"
+    validation_evidence_exists = validation_status != "not_provided"
+    validation_passed = validation_status == "passed"
+    delivery_request_exists = run.status in {"delivery_requested", "completed"}
+    delivery_completed = run.status == "completed"
+
+    if not run.selected_handoff_id:
+        missing.append("Handoff not recorded.")
+    elif not handoff_exists:
+        blockers.append(f"Linked handoff is missing: {run.selected_handoff_id}.")
+    if not run.selected_worker_run_id:
+        missing.append("Worker run not recorded.")
+    elif not worker_run_exists:
+        blockers.append(f"Linked worker run is missing: {run.selected_worker_run_id}.")
+    if worker_run_exists and not worker_report_imported:
+        missing.append("Worker result/report not imported.")
+    if report and report.status_reported_by_worker in {"usage_limit", "blocked", "failed", "needs_approval"}:
+        blockers.append(f"Worker report says {report.status_reported_by_worker}.")
+    if worker_report_imported and not worker_review_exists:
+        missing.append("Worker review not recorded.")
+    if review and review.review_status in {"reviewed_needs_changes", "rejected"}:
+        blockers.append(f"Worker review status is {review.review_status}.")
+    if review and not validation_evidence_exists:
+        missing.append("Validation evidence not recorded.")
+    if review and validation_status == "failed":
+        blockers.append("Validation evidence failed.")
+    elif review and validation_evidence_exists and not validation_passed:
+        warnings.append(f"Validation evidence status is {validation_status}.")
+    if not delivery_request_exists:
+        missing.append("Delivery request not created.")
+    elif not delivery_completed:
+        missing.append("Delivery not completed.")
+
+    return QueueWorkerEvidenceSummary(
+        handoff_exists=handoff_exists,
+        worker_run_exists=worker_run_exists,
+        worker_report_imported=worker_report_imported,
+        worker_review_exists=worker_review_exists,
+        worker_review_passed=worker_review_passed,
+        validation_evidence_exists=validation_evidence_exists,
+        validation_passed=validation_passed,
+        delivery_request_exists=delivery_request_exists,
+        delivery_completed=delivery_completed,
+        missing_evidence=missing,
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+
+def pause_queue_worker_run(
+    project_name: str,
+    run_id: str,
+    reason: str,
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status in {"completed", "cancelled"}:
+        msg = f"Cannot pause queue worker run in terminal status {run.status}."
+        raise ValueError(msg)
+    cleaned_reason = reason.strip()
+    if not cleaned_reason:
+        msg = "Pause reason is required."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    updated = run.model_copy(
+        update={
+            "status": "paused",
+            "pause_reason": cleaned_reason,
+            "paused_at": now,
+            "updated_at": now,
+            "steps_run": [*run.steps_run, f"paused: {cleaned_reason}"],
+            "next_action": f"Resume when safe: devo project queue-worker-resume --project {project_name} --run {run.run_id} --confirm-resume",
+        }
+    )
+    return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def resume_queue_worker_run(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status not in {"paused", "waiting_worker", "handoff_ready", "waiting_review", "waiting_validation"}:
+        msg = f"Queue worker run status is not resumable: {run.status}"
+        raise ValueError(msg)
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(project_name, run, root)
+    now = datetime.now(UTC)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    blockers = [*policy_blockers, *evidence.blockers]
+    warnings = [*policy_warnings, *evidence.warnings]
+    status = "blocked" if blockers else _queue_worker_status_from_evidence(run, evidence)
+    updated = run.model_copy(
+        update={
+            "status": status,
+            "blockers": blockers,
+            "warnings": warnings,
+            "policy_check_summary": policy_summary or run.policy_check_summary,
+            "resumed_at": now,
+            "updated_at": now,
+            "steps_run": [*run.steps_run, "resume requested; policy and selected queue item rechecked"],
+            "next_action": _queue_worker_next_action_for_status(project_name, run, status, evidence, blockers),
+        }
+    )
+    return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def fail_queue_worker_run(
+    project_name: str,
+    run_id: str,
+    reason: str,
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status in {"completed", "cancelled"}:
+        msg = f"Cannot fail queue worker run in terminal status {run.status}."
+        raise ValueError(msg)
+    cleaned_reason = reason.strip()
+    if not cleaned_reason:
+        msg = "Failure reason is required."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    updated = run.model_copy(
+        update={
+            "status": "failed",
+            "failure_reason": cleaned_reason,
+            "failed_at": now,
+            "updated_at": now,
+            "steps_run": [*run.steps_run, f"failed: {cleaned_reason}"],
+            "next_action": f"Inspect evidence, then retry only if safe: devo project queue-worker-retry --project {project_name} --run {run.run_id} --confirm-retry",
+        }
+    )
+    return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def retry_queue_worker_run(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    previous = _require_queue_worker_run(project_name, run_id, root)
+    if previous.status in {"completed", "cancelled"}:
+        msg = f"Cannot retry queue worker run in terminal status {previous.status}."
+        raise ValueError(msg)
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(project_name, previous, root)
+    if policy_blockers:
+        msg = "; ".join(policy_blockers)
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    handoff = load_codex_handoff(project_name, previous.selected_handoff_id, workspace_root=root) if previous.selected_handoff_id else None
+    status = "waiting_worker" if handoff else "handoff_ready"
+    next_action = (
+        f"Create a fresh worker run from the handoff: devo worker codex run-create --project {project_name} --handoff {handoff.handoff_id}"
+        if handoff
+        else f"Create a fresh queue handoff: devo project handoff-next --project {project_name} --queue {previous.queue_id or '<queueId>'}"
+    )
+    retry = QueueWorkerRun(
+        project=project_name,
+        run_id=_next_queue_worker_run_id(project_name, workspace_root=root),
+        policy_id=previous.policy_id,
+        batch_id=previous.batch_id,
+        queue_id=previous.queue_id,
+        selected_queue_item_id=previous.selected_queue_item_id,
+        selected_task_id=previous.selected_task_id,
+        selected_handoff_id=handoff.handoff_id if handoff else None,
+        selected_worker_run_id=None,
+        status=status,
+        started_at=now,
+        updated_at=now,
+        approver=previous.approver,
+        retry_of=previous.run_id,
+        steps_run=[f"retry of queue worker run {previous.run_id}", "policy and selected queue item rechecked"],
+        warnings=policy_warnings,
+        policy_check_summary=policy_summary or previous.policy_check_summary,
+        selection_reason=previous.selection_reason,
+        pause_reason=status,
+        next_action=next_action,
+    )
+    return _write_queue_worker_run(project_name, retry, workspace_root=root)
+
+
+def cancel_queue_worker_run(
+    project_name: str,
+    run_id: str,
+    reason: str,
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status in {"completed", "cancelled"}:
+        msg = f"Cannot cancel queue worker run in terminal status {run.status}."
+        raise ValueError(msg)
+    cleaned_reason = reason.strip()
+    if not cleaned_reason:
+        msg = "Cancel reason is required."
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    updated = run.model_copy(
+        update={
+            "status": "cancelled",
+            "cancel_reason": cleaned_reason,
+            "cancelled_at": now,
+            "updated_at": now,
+            "steps_run": [*run.steps_run, f"cancelled: {cleaned_reason}"],
+            "next_action": "No action needed for this cancelled queue-worker run.",
         }
     )
     return _write_queue_worker_run(project_name, updated, workspace_root=root)
@@ -4376,8 +4708,12 @@ def render_queue_worker_run_markdown(run: QueueWorkerRun) -> str:
         f"- Status: `{run.status}`",
         f"- Started: `{run.started_at.isoformat()}`",
         f"- Completed: `{run.completed_at.isoformat() if run.completed_at else 'none'}`",
+        f"- Updated: `{run.updated_at.isoformat()}`",
         f"- Approver: `{run.approver or 'none'}`",
+        f"- Retry of: `{run.retry_of or 'none'}`",
         f"- Pause reason: `{run.pause_reason or 'none'}`",
+        f"- Failure reason: `{run.failure_reason or 'none'}`",
+        f"- Cancel reason: `{run.cancel_reason or 'none'}`",
         "",
         "## Policy Check",
         "",
@@ -5136,7 +5472,7 @@ def _write_queue_worker_run_index(project_name: str, workspace_root: Path | None
             selected_worker_run_id=run.selected_worker_run_id,
             status=run.status,
             path=str(queue_worker_run_artifact_paths(project_name, run.run_id, workspace_root=root)[0]),
-            updated_at=run.completed_at or run.started_at,
+            updated_at=run.updated_at,
         )
         for run in runs
     ]
@@ -5942,6 +6278,105 @@ def _require_execution_policy(project_name: str, policy_id: str, workspace_root:
         msg = f"Execution policy not found: {policy_id}"
         raise ValueError(msg)
     return policy
+
+
+def _require_queue_worker_run(project_name: str, run_id: str, workspace_root: Path) -> QueueWorkerRun:
+    run = load_queue_worker_run(project_name, run_id, workspace_root=workspace_root)
+    if not run:
+        msg = f"Queue worker run not found: {run_id}"
+        raise ValueError(msg)
+    return run
+
+
+def _queue_worker_recheck_selected_run(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> tuple[list[str], list[str], str]:
+    blockers: list[str] = []
+    warnings: list[str] = []
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=workspace_root)
+    if not policy:
+        return [f"Execution policy not found: {run.policy_id}"], warnings, "Policy missing."
+    policy_check = check_execution_policy(project_name, policy.policy_id, workspace_root=workspace_root)
+    blockers.extend(policy_check.blockers)
+    warnings.extend(policy_check.warnings)
+    policy_summary = f"usable={policy_check.usable}; status={policy_check.status}; blockers={len(policy_check.blockers)}; warnings={len(policy_check.warnings)}"
+    if not run.queue_id:
+        blockers.append("Queue worker run has no queue id.")
+        return blockers, warnings, policy_summary
+    queue = load_execution_queue(project_name, run.queue_id, workspace_root=workspace_root)
+    if not queue:
+        blockers.append(f"Referenced queue not found: {run.queue_id}.")
+        return blockers, warnings, policy_summary
+    if not run.selected_queue_item_id:
+        blockers.append("Queue worker run has no selected queue item.")
+        return blockers, warnings, policy_summary
+    item = _find_queue_item(queue.items, run.selected_queue_item_id)
+    if not item:
+        blockers.append(f"Selected queue item not found: {run.selected_queue_item_id}.")
+        return blockers, warnings, policy_summary
+    allowed_tasks = {_normalize_task_id(task_id) for task_id in policy.allowed_task_ids}
+    allowed_items = {_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids}
+    reason = _queue_worker_item_skip_reason(project_name, policy, item, allowed_tasks, allowed_items, workspace_root=workspace_root)
+    if reason:
+        blockers.append(f"Selected queue item {item.item_id} is no longer within approved policy scope: {reason}.")
+    return blockers, warnings, policy_summary
+
+
+def _queue_worker_status_from_evidence(run: QueueWorkerRun, evidence: QueueWorkerEvidenceSummary) -> str:
+    if evidence.blockers:
+        if any("failed" in blocker.lower() or "rejected" in blocker.lower() for blocker in evidence.blockers):
+            return "failed"
+        return "blocked"
+    if not evidence.handoff_exists:
+        return "handoff_ready"
+    if not evidence.worker_run_exists or not evidence.worker_report_imported:
+        return "waiting_worker"
+    if not evidence.worker_review_exists:
+        return "waiting_review"
+    if not evidence.validation_passed:
+        return "waiting_validation"
+    if run.status in {"delivery_requested", "completed"}:
+        return run.status
+    return "ready_for_delivery_request"
+
+
+def _queue_worker_next_action_for_status(
+    project_name: str,
+    run: QueueWorkerRun,
+    status: str,
+    evidence: QueueWorkerEvidenceSummary,
+    blockers: list[str],
+) -> str:
+    if status == "completed":
+        return "No action needed; queue-worker run is completed."
+    if status == "cancelled":
+        return "No action needed for this cancelled queue-worker run."
+    if status == "paused":
+        return f"Resume when safe: devo project queue-worker-resume --project {project_name} --run {run.run_id} --confirm-resume"
+    if status == "failed":
+        return f"Inspect evidence, then retry only if safe: devo project queue-worker-retry --project {project_name} --run {run.run_id} --confirm-retry"
+    if status == "blocked" or blockers:
+        return "Resolve blockers, then retry or resume the queue-worker run."
+    return _queue_worker_next_action_for_run(project_name, run, evidence)
+
+
+def _queue_worker_next_action_for_run(project_name: str, run: QueueWorkerRun, evidence: QueueWorkerEvidenceSummary) -> str:
+    if not evidence.handoff_exists:
+        return f"Create or inspect the queue handoff: devo project handoff-next --project {project_name} --queue {run.queue_id or '<queueId>'}"
+    if not evidence.worker_run_exists:
+        return f"Create a worker run from the handoff: devo worker codex run-create --project {project_name} --handoff {run.selected_handoff_id}"
+    if not evidence.worker_report_imported:
+        return (
+            f"Import a worker report after Codex/manual work: devo worker codex report-import --project {project_name} "
+            f"--run {run.selected_worker_run_id} --file <filledReportFile>"
+        )
+    if not evidence.worker_review_exists:
+        return f"Create worker review evidence: devo worker codex review-template --project {project_name} --run {run.selected_worker_run_id}"
+    if not evidence.validation_passed:
+        return f"Record passing validation evidence before delivery for worker run {run.selected_worker_run_id}."
+    if not evidence.delivery_request_exists:
+        return "Create a trusted delivery runner request only after reviewed validation evidence is complete."
+    if not evidence.delivery_completed:
+        return "Wait for or inspect the trusted delivery runner result."
+    return "No action needed."
 
 
 def _validate_positive_limit(label: str, value: int) -> None:
