@@ -63,6 +63,8 @@ TASK-DEVO-133 and TASK-DEVO-134 reduce that friction with `queue-worker-step` an
 
 TASK-DEVO-135 adds the evidence intake layer for that loop: `queue-worker-record-worker-result`, `queue-worker-record-review`, and `queue-worker-record-validation` write manual workspace evidence and tell the operator to run the loop again. These commands reduce artifact plumbing without running worker, review, validation, runner-watch, commit, or push steps automatically.
 
+TASK-DEVO-136 dogfoods that loop plus evidence intake against a three-task sandbox batch. The result is partial readiness: the first task reached trusted delivery request creation, and the loop safely refused to continue after the temp trusted runner push failed. Before broader 3-5 task assisted use, the next polish should focus on clearer stop reasons, assisted wording, and reliable temp delivery setup.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

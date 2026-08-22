@@ -148,6 +148,12 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Safety rules: record commands only write workspace evidence for an existing queue-worker run and require `--confirm-record`; the loop remains responsible for state transitions.
 - Status: Completed. Evidence intake is now explicit and easier to pair with `queue-worker-loop`.
 
+### TASK-DEVO-136: Live Three-Task Assisted Dogfood
+
+- Goal: Try the current assisted queue-worker flow against a real temp/sandbox three-task batch.
+- Result: Partial. Item 1 reached worker-result, review, validation, and trusted delivery request creation. The temp trusted runner commit succeeded, but guarded push failed with a Windows/Git shell permission error, so the loop correctly refused to continue to item 2.
+- Follow-up: polish confusing stop/next-action text and document or improve temp trusted delivery setup before broader 3-5 task use.
+
 ### Future: UI Approval And Queue Controls
 
 - Goal: Add safe UI controls only after the CLI evidence and delivery handoff path stays comfortable.
