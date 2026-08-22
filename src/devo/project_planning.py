@@ -485,6 +485,27 @@ class QueueWorkerStatusReport(BaseModel):
     next_action: str = ""
 
 
+class QueueWorkerStepResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    run_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    previous_status: str | None = None
+    new_status: str | None = None
+    action_taken: str = "none"
+    dry_run: bool = False
+    delivery_request_id: str | None = None
+    delivery_request_status: str | None = None
+    missing_evidence: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    mutated: bool = False
+
+
 class QueueWorkerRunIndexEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2439,6 +2460,52 @@ def request_queue_worker_delivery(
     )
     updated_run, run_json, run_markdown = _write_queue_worker_run(project_name, updated, workspace_root=root)
     return updated_run, request, run_json, run_markdown, request_json, request_markdown
+
+
+def step_queue_worker_run(
+    project_name: str,
+    policy_id: str,
+    *,
+    run_id: str | None = None,
+    message: str = "",
+    note: str = "",
+    dry_run: bool = False,
+    workspace_root: Path | None = None,
+) -> QueueWorkerStepResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_policy_id = _normalize_policy_id(policy_id)
+    run = _select_queue_worker_step_run(project_name, normalized_policy_id, run_id, root)
+    if not run:
+        return _step_queue_worker_create_run(project_name, normalized_policy_id, dry_run=dry_run, workspace_root=root)
+    if run.policy_id != normalized_policy_id:
+        return QueueWorkerStepResult(
+            project=project_name,
+            policy_id=normalized_policy_id,
+            run_id=run.run_id,
+            previous_status=run.status,
+            new_status=run.status,
+            action_taken="blocked",
+            dry_run=dry_run,
+            blockers=[f"Queue worker run {run.run_id} uses policy {run.policy_id}, not requested policy {normalized_policy_id}."],
+            next_action=f"Retry with --policy {run.policy_id} or choose a run that belongs to {normalized_policy_id}.",
+        )
+    if run.status == "ready_for_delivery_request":
+        return _step_queue_worker_request_delivery(
+            project_name,
+            run,
+            message=message,
+            note=note,
+            dry_run=dry_run,
+            workspace_root=root,
+        )
+    if run.status == "delivery_requested":
+        return _step_queue_worker_delivery_requested(project_name, run, dry_run=dry_run, workspace_root=root)
+    if run.status in {"waiting_worker", "waiting_review", "waiting_validation"}:
+        return _step_queue_worker_continue(project_name, run, dry_run=dry_run, workspace_root=root)
+    if run.status in {"blocked", "handoff_ready"}:
+        return _step_queue_worker_terminal(project_name, run, dry_run=dry_run, workspace_root=root)
+    return _step_queue_worker_terminal(project_name, run, dry_run=dry_run, workspace_root=root)
 
 
 def fail_queue_worker_run(
@@ -6421,6 +6488,324 @@ def _require_queue_worker_run(project_name: str, run_id: str, workspace_root: Pa
         msg = f"Queue worker run not found: {run_id}"
         raise ValueError(msg)
     return run
+
+
+def _select_queue_worker_step_run(
+    project_name: str,
+    policy_id: str,
+    run_id: str | None,
+    workspace_root: Path,
+) -> QueueWorkerRun | None:
+    if run_id:
+        return _require_queue_worker_run(project_name, run_id, workspace_root)
+    terminal_statuses = {"completed", "cancelled", "failed"}
+    for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
+        if run.policy_id == policy_id and run.status not in terminal_statuses:
+            return run
+    return None
+
+
+def _step_result_from_run(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    previous_status: str | None,
+    action_taken: str,
+    dry_run: bool,
+    evidence: QueueWorkerEvidenceSummary | None = None,
+    blockers: list[str] | None = None,
+    warnings: list[str] | None = None,
+    next_action: str | None = None,
+    mutated: bool = False,
+) -> QueueWorkerStepResult:
+    evidence = evidence or summarize_queue_worker_evidence(project_name, run)
+    merged_blockers = _dedupe([*(blockers or []), *run.blockers, *evidence.blockers])
+    merged_warnings = _dedupe([*(warnings or []), *run.warnings, *evidence.warnings])
+    return QueueWorkerStepResult(
+        project=project_name,
+        policy_id=run.policy_id,
+        run_id=run.run_id,
+        selected_queue_item_id=run.selected_queue_item_id,
+        selected_task_id=run.selected_task_id,
+        previous_status=previous_status,
+        new_status=run.status,
+        action_taken=action_taken,
+        dry_run=dry_run,
+        delivery_request_id=run.delivery_request_id or evidence.delivery_request_id,
+        delivery_request_status=run.delivery_request_status or evidence.delivery_request_status,
+        missing_evidence=evidence.missing_evidence,
+        blockers=merged_blockers,
+        warnings=merged_warnings,
+        next_action=next_action or run.next_action or _queue_worker_next_action_for_status(project_name, run, run.status, evidence, merged_blockers),
+        mutated=mutated,
+    )
+
+
+def _step_queue_worker_create_run(
+    project_name: str,
+    policy_id: str,
+    *,
+    dry_run: bool,
+    workspace_root: Path,
+) -> QueueWorkerStepResult:
+    plan = plan_queue_worker_run(project_name, policy_id, workspace_root=workspace_root)
+    if dry_run:
+        action = "would create queue-worker run" if plan.usable else "blocked"
+        return QueueWorkerStepResult(
+            project=project_name,
+            policy_id=plan.policy_id,
+            selected_queue_item_id=plan.selected_queue_item_id,
+            selected_task_id=plan.selected_task_id,
+            previous_status=None,
+            new_status=plan.status,
+            action_taken=action,
+            dry_run=True,
+            blockers=list(plan.blockers),
+            warnings=list(plan.warnings),
+            next_action=plan.next_action,
+            mutated=False,
+        )
+    run, _json_path, _markdown_path = run_queue_worker_once(project_name, policy_id, workspace_root=workspace_root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    return _step_result_from_run(
+        project_name,
+        run,
+        previous_status=None,
+        action_taken="created queue-worker run",
+        dry_run=False,
+        evidence=evidence,
+        mutated=True,
+    )
+
+
+def _step_queue_worker_continue(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    dry_run: bool,
+    workspace_root: Path,
+) -> QueueWorkerStepResult:
+    previous_status = run.status
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(project_name, run, workspace_root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    blockers = _dedupe([*policy_blockers, *evidence.blockers])
+    warnings = _dedupe([*policy_warnings, *evidence.warnings])
+    if blockers:
+        new_status = _queue_worker_blocked_status_from_evidence(evidence)
+        action = "would pause/fail on blockers" if dry_run else "paused/failed on blockers"
+        if dry_run:
+            preview = run.model_copy(
+                update={
+                    "status": new_status,
+                    "blockers": blockers,
+                    "warnings": warnings,
+                    "policy_check_summary": policy_summary or run.policy_check_summary,
+                    "next_action": _queue_worker_next_action_for_status(project_name, run, new_status, evidence, blockers),
+                }
+            )
+            return _step_result_from_run(
+                project_name,
+                preview,
+                previous_status=previous_status,
+                action_taken=action,
+                dry_run=True,
+                evidence=evidence,
+                mutated=False,
+            )
+    if dry_run:
+        new_status = _queue_worker_status_from_evidence(run, evidence) if not blockers else _queue_worker_blocked_status_from_evidence(evidence)
+        action = "would advance evidence gate" if new_status != previous_status else "would wait for missing evidence"
+        preview = run.model_copy(
+            update={
+                "status": new_status,
+                "blockers": blockers,
+                "warnings": warnings,
+                "policy_check_summary": policy_summary or run.policy_check_summary,
+                "next_action": _queue_worker_next_action_for_status(project_name, run, new_status, evidence, blockers),
+            }
+        )
+        return _step_result_from_run(
+            project_name,
+            preview,
+            previous_status=previous_status,
+            action_taken=action,
+            dry_run=True,
+            evidence=evidence,
+            mutated=False,
+        )
+    updated, _json_path, _markdown_path = continue_queue_worker_run(project_name, run.run_id, workspace_root=workspace_root)
+    updated_evidence = summarize_queue_worker_evidence(project_name, updated, workspace_root=workspace_root)
+    action = "advanced evidence gate" if updated.status != previous_status else "waiting for missing evidence"
+    if updated.status in {"paused", "failed", "blocked"}:
+        action = "paused/failed on blockers"
+    return _step_result_from_run(
+        project_name,
+        updated,
+        previous_status=previous_status,
+        action_taken=action,
+        dry_run=False,
+        evidence=updated_evidence,
+        mutated=True,
+    )
+
+
+def _step_queue_worker_request_delivery(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    message: str,
+    note: str,
+    dry_run: bool,
+    workspace_root: Path,
+) -> QueueWorkerStepResult:
+    previous_status = run.status
+    policy_blockers, policy_warnings, _policy_summary = _queue_worker_recheck_selected_run(project_name, run, workspace_root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    blockers = _dedupe([*policy_blockers, *evidence.blockers])
+    warnings = _dedupe([*policy_warnings, *evidence.warnings])
+    if evidence.worker_report_status != "completed":
+        blockers.append(f"Worker result is not complete: {evidence.worker_report_status or 'missing'}.")
+    if not evidence.worker_review_passed:
+        blockers.append(f"Worker review has not passed: {evidence.worker_review_status or 'missing'}.")
+    if not evidence.validation_passed:
+        blockers.append(f"Validation evidence has not passed: {evidence.validation_status or 'missing'}.")
+    blockers = _dedupe(blockers)
+    if dry_run or blockers:
+        action = "would create delivery runner request" if not blockers else "blocked"
+        return _step_result_from_run(
+            project_name,
+            run,
+            previous_status=previous_status,
+            action_taken=action,
+            dry_run=dry_run,
+            evidence=evidence,
+            blockers=blockers,
+            warnings=warnings,
+            next_action=(
+                f"Create a trusted delivery runner request: devo project queue-worker-step --project {project_name} "
+                f"--policy {run.policy_id} --run {run.run_id} --confirm-step"
+                if not blockers
+                else "Resolve blockers before creating a delivery runner request."
+            ),
+            mutated=False,
+        )
+    updated, request, _run_json, _run_markdown, _request_json, _request_markdown = request_queue_worker_delivery(
+        project_name,
+        run.run_id,
+        message=message,
+        note=note,
+        workspace_root=workspace_root,
+    )
+    updated_evidence = summarize_queue_worker_evidence(project_name, updated, workspace_root=workspace_root)
+    return _step_result_from_run(
+        project_name,
+        updated,
+        previous_status=previous_status,
+        action_taken=f"created delivery runner request {request.request_id}",
+        dry_run=False,
+        evidence=updated_evidence,
+        mutated=True,
+    )
+
+
+def _step_queue_worker_delivery_requested(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    dry_run: bool,
+    workspace_root: Path,
+) -> QueueWorkerStepResult:
+    previous_status = run.status
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(project_name, run, workspace_root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    blockers = _dedupe([*policy_blockers, *evidence.blockers])
+    warnings = _dedupe([*policy_warnings, *evidence.warnings])
+    runner_run = None
+    if run.delivery_request_id:
+        from .delivery import load_delivery_runner_run
+
+        runner_run = load_delivery_runner_run(project_name, run.delivery_request_id, workspace_root=workspace_root)
+    delivery_succeeded = bool(evidence.delivery_completed and runner_run and runner_run.status == "completed" and runner_run.pushed)
+    if evidence.delivery_completed and not delivery_succeeded:
+        blockers.append("Linked delivery request is completed, but no pushed trusted runner run was found.")
+    blockers = _dedupe(blockers)
+    if blockers:
+        return _step_result_from_run(
+            project_name,
+            run,
+            previous_status=previous_status,
+            action_taken="blocked",
+            dry_run=dry_run,
+            evidence=evidence,
+            blockers=blockers,
+            warnings=warnings,
+            next_action="Review the linked trusted delivery runner request/run before continuing.",
+            mutated=False,
+        )
+    if not delivery_succeeded:
+        return _step_result_from_run(
+            project_name,
+            run,
+            previous_status=previous_status,
+            action_taken="waiting for trusted runner delivery",
+            dry_run=dry_run,
+            evidence=evidence,
+            warnings=warnings,
+            next_action="Wait for trusted runner delivery; this command does not run runner-watch, commit, or push.",
+            mutated=False,
+        )
+    updated = run.model_copy(
+        update={
+            "status": "completed",
+            "completed_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+            "delivery_request_status": evidence.delivery_request_status,
+            "warnings": warnings,
+            "policy_check_summary": policy_summary or run.policy_check_summary,
+            "steps_run": [*run.steps_run, f"trusted delivery completed: {run.delivery_request_id}"],
+            "next_action": "No action needed; trusted delivery completed. Queue item completion remains an explicit operator step if needed.",
+        }
+    )
+    if dry_run:
+        return _step_result_from_run(
+            project_name,
+            updated,
+            previous_status=previous_status,
+            action_taken="would mark queue-worker run completed after trusted delivery",
+            dry_run=True,
+            evidence=evidence,
+            mutated=False,
+        )
+    saved, _json_path, _markdown_path = _write_queue_worker_run(project_name, updated, workspace_root=workspace_root)
+    return _step_result_from_run(
+        project_name,
+        saved,
+        previous_status=previous_status,
+        action_taken="marked queue-worker run completed after trusted delivery",
+        dry_run=False,
+        evidence=evidence,
+        mutated=True,
+    )
+
+
+def _step_queue_worker_terminal(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    dry_run: bool,
+    workspace_root: Path,
+) -> QueueWorkerStepResult:
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    return _step_result_from_run(
+        project_name,
+        run,
+        previous_status=run.status,
+        action_taken="no action for terminal or paused state",
+        dry_run=dry_run,
+        evidence=evidence,
+        next_action=_queue_worker_next_action_for_status(project_name, run, run.status, evidence, [*run.blockers, *evidence.blockers]),
+        mutated=False,
+    )
 
 
 def _queue_worker_recheck_selected_run(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> tuple[list[str], list[str], str]:

@@ -119,9 +119,19 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, AI/API calls, live PersonalOS work, UI controls, runner-watch execution, queue completion, commit, push, daemon behavior, or multi-task automation.
 - Status: Completed. See `docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md`; the dogfood proved the path works and identified command-count/operator-order friction.
 
-### TASK-DEVO-133: UI Approval And Queue Controls
+### TASK-DEVO-133: One-Task Assisted Queue-Worker Step
 
-- Goal: Add safe UI controls only after the CLI evidence and delivery handoff path is dogfooded.
+- Goal: Reduce queue-worker operator command count without adding autonomous multi-task execution.
+- Why it matters: TASK-DEVO-132 proved the path works, but the operator still had to remember the exact sequence across worker report, review, validation, delivery request, and trusted runner completion.
+- Scope: `devo project queue-worker-step --project <project> --policy <POL-ID> --confirm-step`, `--dry-run`, optional run/message/note targeting, one safe transition per invocation, compact status output, evidence-gate checks, delivery-request creation, and trusted-delivery completion observation.
+- Not in scope: real Codex execution, AI/API calls, validation execution, runner-watch execution, queue completion, UI controls, daemon behavior, commit, push, or multi-task loops.
+- Safety rules: exactly one transition per call, approved policy required, policy/item drift blocks, missing evidence waits, failed/unknown evidence pauses or fails, delivery request creation uses trusted runner request artifacts only, and completed delivery requires a completed/pushed trusted runner run.
+- Done criteria: one command can safely move a queue-worker run from no active run through `waiting_worker`, `waiting_review`, `waiting_validation`, `ready_for_delivery_request`, `delivery_requested`, and completed delivery observation while stopping at every evidence boundary.
+- Status: Completed. `queue-worker-step` is the preferred CLI assisted loop; lower-level queue-worker commands remain available for explicit inspection and recovery.
+
+### Future: UI Approval And Queue Controls
+
+- Goal: Add safe UI controls only after the CLI evidence and delivery handoff path stays comfortable.
 - Why it matters: UI can reduce friction, but only if it calls Devo safety flows instead of bypassing them.
 - Scope: View queue, view runner requests, approve batch policy, pause queue, resume queue, cancel pending request, view logs, view blockers, and view summaries.
 - Not in scope: Raw commit buttons, raw push buttons, arbitrary shell command buttons, UI bypass of delivery safety, or direct `.git` writes.

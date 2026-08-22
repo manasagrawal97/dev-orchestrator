@@ -234,6 +234,8 @@ Policy approval is not blanket permission for arbitrary changes. It is permissio
 Prepare one policy-gated queue-worker step:
 
 ```powershell
+devo project queue-worker-step --project MyProject --policy POL-0001 --confirm-step
+devo project queue-worker-step --project MyProject --policy POL-0001 --dry-run
 devo project queue-worker-plan --project MyProject --policy POL-0001
 devo project queue-worker-run --project MyProject --policy POL-0001 --once --confirm-queue-worker
 devo project queue-worker-list --project MyProject
@@ -250,7 +252,7 @@ devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-ret
 devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 worker loop is deliberately limited: it checks the approved execution policy, chooses at most one eligible queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted worker run record, and then pauses for the human/Codex worker. Continuation is evidence-gated: a completed worker report advances to review, a passed review advances to validation, passed validation makes the run ready for delivery request, and `queue-worker-request-delivery` writes a trusted runner request. These commands show missing worker report, review, validation, and delivery evidence; pause/resume/fail/retry/cancel runs; and recheck policy/item bounds before continuation. They do not run real Codex, run validation, execute runner-watch, complete queue items, stage, commit, push, or modify the target repository.
+Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted flow is now `queue-worker-step`, which performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. It prints the current status, action taken, missing evidence, blockers, warnings, and next action. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute runner-watch, complete queue items, stage, commit, push, or modify the target repository.
 
 The assisted queue-worker flow is dogfooded in `docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md`.
 

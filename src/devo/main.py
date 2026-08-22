@@ -140,6 +140,7 @@ from .project_planning import (
     ExecutionPolicyCheckResult,
     QueueWorkerPlan,
     QueueWorkerRun,
+    QueueWorkerStepResult,
     QueueWorkerStatusReport,
     QueueItemCompletionReadiness,
     WorkerReview,
@@ -228,6 +229,7 @@ from .project_planning import (
     resume_queue_worker_run,
     suggest_project_batch,
     start_execution_queue,
+    step_queue_worker_run,
     run_queue_worker_once,
     retry_queue_worker_run,
     fail_queue_worker_run,
@@ -796,6 +798,36 @@ def _print_queue_worker_evidence(run: QueueWorkerRun) -> None:
         console.print(f"  - {blocker}", soft_wrap=True)
     console.print(f"Next action: {_queue_worker_next_action_text(run, evidence, blockers)}", soft_wrap=True)
     console.print("Safety: evidence inspection is read-only and does not execute Codex, validation, delivery, commit, or push.")
+
+
+def _print_queue_worker_step_result(result: QueueWorkerStepResult) -> None:
+    console.print(f"[bold]Queue worker step: {result.project}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Policy: {result.policy_id}")
+    console.print(f"Queue worker run: {result.run_id or 'none'}")
+    console.print(f"Selected item: {result.selected_queue_item_id or 'none'}")
+    console.print(f"Selected task: {result.selected_task_id or 'none'}")
+    console.print(f"Current status: {result.previous_status or 'none'}")
+    console.print(f"Action taken: {result.action_taken}")
+    console.print(f"New status: {result.new_status or 'none'}")
+    console.print(f"Dry run: {result.dry_run}")
+    console.print(f"Mutation occurred: {result.mutated}")
+    console.print(f"Delivery request: {result.delivery_request_id or 'none'}")
+    console.print(f"Delivery request status: {result.delivery_request_status or 'none'}")
+    console.print("Missing evidence:")
+    for item in result.missing_evidence or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
+    console.print(
+        "Safety: queue-worker-step performs at most one Devo state transition. It does not run real Codex, validation, runner-watch, commit, push, or queue completion.",
+        soft_wrap=True,
+    )
 
 
 def _queue_worker_next_action_text(run: QueueWorkerRun, evidence, blockers: list[str]) -> str:
@@ -4208,6 +4240,37 @@ def request_delivery_queue_worker_run_command(
     console.print(f"Runner request JSON: {_named_path(request_json)}")
     console.print(f"Runner request Markdown: {_named_path(request_markdown)}")
     console.print("No runner-watch, guarded commit, guarded push, or queue completion was run.")
+
+
+@project_app.command("queue-worker-step")
+def step_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional queue worker run id. Defaults to latest active run for the policy."),
+    message: str = typer.Option("", "--message", help="Optional delivery request commit message when the run is delivery-ready."),
+    note: str = typer.Option("", "--note", help="Optional delivery request note when the run is delivery-ready."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the one safe next step without mutating workspace artifacts."),
+    confirm_step: bool = typer.Option(False, "--confirm-step", help="Confirm one queue-worker state step."),
+) -> None:
+    """Run exactly one safe assisted queue-worker state step without executing Codex or delivery."""
+    project_name = _resolve_project(project_name)
+    if not dry_run and not confirm_step:
+        console.print("queue-worker-step requires --confirm-step unless --dry-run is used.")
+        raise typer.Exit(1)
+    try:
+        result = step_queue_worker_run(
+            project_name,
+            policy_id,
+            run_id=run_id,
+            message=message,
+            note=note,
+            dry_run=dry_run,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_step_result(result)
+    if result.blockers or result.new_status in {"blocked", "failed"}:
+        raise typer.Exit(1)
 
 
 @project_app.command("queue-worker-cancel")

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from devo.delivery import load_delivery_runner_request
+from devo.delivery import DeliveryRunnerRun, load_delivery_runner_request, write_delivery_runner_request, write_delivery_runner_run
 from devo.main import app
 from devo.project_planning import (
     BacklogTask,
@@ -1597,6 +1597,229 @@ def test_queue_worker_request_delivery_creates_runner_request_without_commit_or_
     assert request.expected_changed_files == ["src/feature.py"]
     assert _git(project_path, "status", "--short", capture=True).stdout == "?? src/\n"
     assert _git(project_path, "log", "--oneline", "-n", "1", capture=True).stdout.strip().endswith("initial")
+
+
+def test_queue_worker_step_requires_confirmation_unless_dry_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    missing_confirm = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+    dry_run = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert missing_confirm.exit_code != 0
+    assert "requires --confirm-step" in missing_confirm.output
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Action taken: would create queue-worker run" in dry_run.output
+    assert "Mutation occurred: False" in dry_run.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+
+
+def test_queue_worker_step_blocks_unapproved_policy(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001", request=False, approve=False)
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Policy status is draft" in result.output
+    assert "Action taken: blocked" in result.output
+
+
+def test_queue_worker_step_creates_waiting_worker_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Action taken: created queue-worker run" in result.output
+    assert "New status: waiting_worker" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+
+
+def test_queue_worker_step_waits_for_missing_worker_report(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Action taken: waiting for missing evidence" in result.output
+    assert "Worker result/report not imported." in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+
+
+def test_queue_worker_step_advances_evidence_gates_and_creates_delivery_request(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+
+    waiting_review = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+    _record_worker_review(status="reviewed_passed")
+    waiting_validation = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+    _attach_validation(status="passed")
+    ready = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('step')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-step",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--message",
+            "feat: queue worker step",
+            "--note",
+            "TASK-DEVO-133 test request.",
+            "--confirm-step",
+        ],
+        terminal_width=240,
+    )
+
+    assert waiting_review.exit_code == 0, waiting_review.output
+    assert "New status: waiting_review" in waiting_review.output
+    assert waiting_validation.exit_code == 0, waiting_validation.output
+    assert "New status: waiting_validation" in waiting_validation.output
+    assert ready.exit_code == 0, ready.output
+    assert "New status: ready_for_delivery_request" in ready.output
+    assert requested.exit_code == 0, requested.output
+    assert "Action taken: created delivery runner request REQ-0001" in requested.output
+    assert "New status: delivery_requested" in requested.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert request is not None
+    assert run.status == "delivery_requested"
+    assert request.status == "requested"
+    assert request.expected_changed_files == ["src/feature.py"]
+    assert _git(project_path, "log", "--oneline", "-n", "1", capture=True).stdout.strip().endswith("initial")
+
+
+def test_queue_worker_step_delivery_requested_marks_completed_after_trusted_runner(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_ready_queue_worker_run(tmp_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('delivered')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-request-delivery",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--message",
+            "feat: delivered",
+            "--confirm-delivery-request",
+        ],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery runner completed and pushed commit abc123."}),
+        workspace_root=workspace,
+    )
+    runner_run = DeliveryRunnerRun(
+        project="sample",
+        request_id="REQ-0001",
+        run_id="RUN-0001",
+        runner_context="test",
+        commit_hash="abc123",
+        pushed=True,
+        push_remote="origin",
+        push_branch="main",
+        status="completed",
+        next_action="Trusted delivery runner completed and pushed commit abc123.",
+    )
+    write_delivery_runner_run(runner_run, workspace_root=workspace)
+
+    dry_run = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--dry-run"],
+        terminal_width=240,
+    )
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Action taken: would mark queue-worker run completed" in dry_run.output
+    assert result.exit_code == 0, result.output
+    assert "Action taken: marked queue-worker run completed" in result.output
+    assert "New status: completed" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "completed"
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    item = next(entry for entry in queue.items if entry.item_id == "QI001")
+    assert item.status != "completed"
+
+
+def test_queue_worker_step_blocks_selected_item_outside_policy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    json_path, markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(policy.model_copy(update={"allowed_task_ids": ["T999"]}).model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("drifted policy\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Selected queue item QI001 is no longer within approved policy scope" in result.output
 
 
 def test_queue_worker_assisted_e2e_flow(tmp_path: Path, monkeypatch) -> None:
