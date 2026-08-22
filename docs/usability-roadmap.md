@@ -67,6 +67,8 @@ TASK-DEVO-136 dogfoods that loop plus evidence intake against a three-task sandb
 
 TASK-DEVO-137 completes that small polish: `queue-worker-loop` now points directly to the evidence intake commands at worker/review/validation boundaries, non-passing validation evidence gets an explicit stop reason, execution policy wording avoids implying full autonomy, and runner-watch/latest-request output explains when an older `no_pending` watch predates a newer requested runner item.
 
+TASK-DEVO-138 proves the polished loop against a disposable repo with a real local bare remote. It reaches trusted runner delivery, observes completion, starts the next queue item, and records remaining friction around queue-state wording and scheduled runner status clarity.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

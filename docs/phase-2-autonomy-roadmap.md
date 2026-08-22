@@ -146,6 +146,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, AI/API calls, UI controls, background daemon changes, runner-watch execution from queue-worker-loop, parallel work, or delivery safety bypasses.
 - Status: Completed. See `docs/dogfood/task-devo-137-queue-worker-friction-polish.md`.
 
+### TASK-DEVO-138: Polished Assisted Dogfood With Known-Good Delivery
+
+- Goal: Prove the polished assisted queue-worker loop against a disposable project with a real local bare remote and trusted runner delivery.
+- Result: Completed. Item 1 moved from worker evidence through review, validation, trusted delivery request, trusted runner delivery, and completion observation. The loop then selected item 2 and stopped safely at `waiting_worker`.
+- Follow-up: clarify queue-state completion wording and scheduled runner status when schedule artifacts say enabled but Windows installation is absent.
+- Status: Completed. See `docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md`.
+
 ### TASK-DEVO-135: Queue-Worker Evidence Intake
 
 - Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.
@@ -443,6 +450,8 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-126 Trusted runner watch mode.
+Recommended next task: TASK-DEVO-139 queue-state and scheduled runner status clarity.
+
+It should clarify the remaining operator-facing ambiguity found in TASK-DEVO-138 before adding UI approval/queue controls or retrying real Codex worker execution.
 
 It removes the remaining manual `runner-run` command and is the smallest practical step toward zero manual delivery. It also respects the key Phase 2 architecture decision: delivery happens from trusted local Windows user context, while Codex/sandbox prepares bounded requests and evidence.

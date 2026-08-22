@@ -47,6 +47,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [UI MVP specification](docs/ui-mvp-spec.md)
 - [TASK-DEVO-085 planning pipeline dogfood report](docs/dogfood/devo-pipeline-dogfood-085.md)
 - [TASK-DEVO-110 guarded delivery dogfood report](docs/dogfood/devo-delivery-dogfood-110.md)
+- [TASK-DEVO-138 polished assisted dogfood report](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -264,7 +265,7 @@ devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "su
 
 Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The assisted one-step path is `queue-worker-step`: it creates one queue-worker run if no active run exists for the approved policy, advances only one evidence gate at a time, creates a trusted delivery runner request when the run is ready, and later observes trusted runner completion without running runner-watch itself. `queue-worker-loop` repeatedly invokes that one-step behavior until the next safe stop condition, such as missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/blocked state, no eligible item, or max steps. The record commands provide the manual evidence intake bridge: after a human/Codex worker finishes, record worker result, review, and validation evidence, then run `queue-worker-loop` again to advance through the gates. It can complete a queue item only after trusted delivery is completed and the existing queue completion checks pass, then it stops again at the next `waiting_worker` boundary. The lower-level commands remain available for explicit inspection and recovery. These commands do not run real Codex, call AI APIs, run validation, execute review, execute runner-watch, stage, commit, push, or modify target project source directly.
 
-The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), and the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md).
+The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
 

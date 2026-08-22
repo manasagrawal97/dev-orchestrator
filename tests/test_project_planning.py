@@ -1904,6 +1904,51 @@ def test_queue_worker_loop_reports_nonpassing_validation_status_clearly(
     assert run.delivery_request_id is None
 
 
+def test_queue_worker_loop_reports_provided_validation_status_clearly(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+    review = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Review passed.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert review.exit_code == 0, review.output
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: validation evidence is not passing" in result.output
+    assert "Validation status: provided" in result.output
+    assert "unknown or unsafe state" not in result.output
+    assert "queue-worker-record-validation --project sample --run QWR-0001" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_validation"
+    assert run.delivery_request_id is None
+
+
 def test_queue_worker_continue_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)

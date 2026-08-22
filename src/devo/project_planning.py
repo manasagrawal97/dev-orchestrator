@@ -7066,7 +7066,7 @@ def _validation_nonpassing_status_from_loop_step(step: QueueWorkerStepResult) ->
         return "blocked"
     if "validation was not run" in text:
         return "not_run"
-    for status in ("blocked", "not_run"):
+    for status in ("blocked", "not_run", "provided"):
         if f"validation evidence status is {status}" in text:
             return status
     if "validation evidence status is partial" in text:
