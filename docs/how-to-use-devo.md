@@ -240,6 +240,9 @@ devo project queue-worker-list --project MyProject
 devo project queue-worker-show --project MyProject --run QWR-0001
 devo project queue-worker-latest --project MyProject
 devo project queue-worker-status --project MyProject
+devo project queue-worker-evidence --project MyProject --run QWR-0001
+devo project queue-worker-continue --project MyProject --run QWR-0001 --confirm-continue
+devo project queue-worker-request-delivery --project MyProject --run QWR-0001 --confirm-delivery-request
 devo project queue-worker-pause --project MyProject --run QWR-0001 --reason "operator review"
 devo project queue-worker-resume --project MyProject --run QWR-0001 --confirm-resume
 devo project queue-worker-fail --project MyProject --run QWR-0001 --reason "worker output unclear"
@@ -247,7 +250,7 @@ devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-ret
 devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 worker loop is deliberately limited: it checks the approved execution policy, chooses at most one eligible queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted worker run record, and then pauses for the human/Codex worker. Lifecycle commands show missing worker report, review, validation, and delivery evidence; pause/resume/fail/retry/cancel runs; and recheck policy/item bounds before continuation. They do not run real Codex, run validation, create delivery runner requests, complete queue items, stage, commit, push, or modify the target repository.
+Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 worker loop is deliberately limited: it checks the approved execution policy, chooses at most one eligible queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted worker run record, and then pauses for the human/Codex worker. Continuation is evidence-gated: a completed worker report advances to review, a passed review advances to validation, passed validation makes the run ready for delivery request, and `queue-worker-request-delivery` writes a trusted runner request. These commands show missing worker report, review, validation, and delivery evidence; pause/resume/fail/retry/cancel runs; and recheck policy/item bounds before continuation. They do not run real Codex, run validation, execute runner-watch, complete queue items, stage, commit, push, or modify the target repository.
 
 ## Codex Handoff Prompts
 

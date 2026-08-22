@@ -195,6 +195,8 @@ class ProjectOverview(BaseModel):
     latest_queue_worker_run_selected_item: str | None = None
     latest_queue_worker_run_selected_task: str | None = None
     latest_queue_worker_run_worker_run_id: str | None = None
+    latest_queue_worker_run_delivery_request_id: str | None = None
+    latest_queue_worker_run_delivery_request_status: str | None = None
     latest_queue_worker_run_next_action: str | None = None
     handoff_count: int = 0
     latest_handoff_id: str | None = None
@@ -411,6 +413,12 @@ def build_project_overview_with_timing(
             ),
             latest_queue_worker_run_worker_run_id=(
                 str(planning["latest_queue_worker_run_worker_run_id"]) if planning["latest_queue_worker_run_worker_run_id"] else None
+            ),
+            latest_queue_worker_run_delivery_request_id=(
+                str(planning["latest_queue_worker_run_delivery_request_id"]) if planning["latest_queue_worker_run_delivery_request_id"] else None
+            ),
+            latest_queue_worker_run_delivery_request_status=(
+                str(planning["latest_queue_worker_run_delivery_request_status"]) if planning["latest_queue_worker_run_delivery_request_status"] else None
             ),
             latest_queue_worker_run_next_action=(
                 str(planning["latest_queue_worker_run_next_action"]) if planning["latest_queue_worker_run_next_action"] else None
@@ -729,6 +737,8 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
             "latest_queue_worker_run_selected_item": None,
             "latest_queue_worker_run_selected_task": None,
             "latest_queue_worker_run_worker_run_id": None,
+            "latest_queue_worker_run_delivery_request_id": None,
+            "latest_queue_worker_run_delivery_request_status": None,
             "latest_queue_worker_run_next_action": f"Review queue worker artifacts: {exc}",
             "handoff_count": 0,
             "latest_handoff_id": None,
@@ -880,6 +890,8 @@ def _planning_summary(project_name: str, workspace_root: Path) -> dict[str, obje
         "latest_queue_worker_run_selected_item": latest_queue_worker_run.selected_queue_item_id if latest_queue_worker_run else None,
         "latest_queue_worker_run_selected_task": latest_queue_worker_run.selected_task_id if latest_queue_worker_run else None,
         "latest_queue_worker_run_worker_run_id": latest_queue_worker_run.selected_worker_run_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_delivery_request_id": latest_queue_worker_run.delivery_request_id if latest_queue_worker_run else None,
+        "latest_queue_worker_run_delivery_request_status": latest_queue_worker_run.delivery_request_status if latest_queue_worker_run else None,
         "latest_queue_worker_run_next_action": latest_queue_worker_run.next_action if latest_queue_worker_run else None,
         "handoff_count": len(handoffs),
         "latest_handoff_id": latest_handoff.handoff_id if latest_handoff else None,

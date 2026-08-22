@@ -427,6 +427,9 @@ class QueueWorkerRun(BaseModel):
     failure_reason: str = ""
     cancel_reason: str = ""
     retry_of: str | None = None
+    delivery_request_id: str | None = None
+    delivery_request_status: str | None = None
+    delivery_requested_at: datetime | None = None
     paused_at: datetime | None = None
     resumed_at: datetime | None = None
     failed_at: datetime | None = None
@@ -445,6 +448,11 @@ class QueueWorkerEvidenceSummary(BaseModel):
     worker_review_passed: bool = False
     validation_evidence_exists: bool = False
     validation_passed: bool = False
+    worker_report_status: str | None = None
+    worker_review_status: str | None = None
+    validation_status: str | None = None
+    delivery_request_id: str | None = None
+    delivery_request_status: str | None = None
     delivery_request_exists: bool = False
     delivery_completed: bool = False
     missing_evidence: list[str] = Field(default_factory=list)
@@ -468,6 +476,8 @@ class QueueWorkerStatusReport(BaseModel):
     pause_reason: str = ""
     failure_reason: str = ""
     retry_of: str | None = None
+    delivery_request_id: str | None = None
+    delivery_request_status: str | None = None
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
@@ -2171,6 +2181,8 @@ def get_queue_worker_status_report(project_name: str, workspace_root: Path | Non
         pause_reason=run.pause_reason,
         failure_reason=run.failure_reason,
         retry_of=run.retry_of,
+        delivery_request_id=run.delivery_request_id,
+        delivery_request_status=run.delivery_request_status,
         blockers=blockers,
         warnings=warnings,
         missing_evidence=evidence.missing_evidence,
@@ -2193,6 +2205,11 @@ def summarize_queue_worker_evidence(
     worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
     report = load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
     review = load_codex_worker_review(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+    delivery_request = None
+    if run.delivery_request_id:
+        from .delivery import load_delivery_runner_request
+
+        delivery_request = load_delivery_runner_request(project_name, run.delivery_request_id, workspace_root=root)
 
     handoff_exists = handoff is not None
     worker_run_exists = worker_run is not None
@@ -2202,8 +2219,9 @@ def summarize_queue_worker_evidence(
     validation_status = review.validation_evidence.validation_status if review else "not_provided"
     validation_evidence_exists = validation_status != "not_provided"
     validation_passed = validation_status == "passed"
-    delivery_request_exists = run.status in {"delivery_requested", "completed"}
-    delivery_completed = run.status == "completed"
+    delivery_request_exists = delivery_request is not None
+    delivery_status = delivery_request.status if delivery_request else run.delivery_request_status
+    delivery_completed = delivery_status == "completed"
 
     if not run.selected_handoff_id:
         missing.append("Handoff not recorded.")
@@ -2215,8 +2233,11 @@ def summarize_queue_worker_evidence(
         blockers.append(f"Linked worker run is missing: {run.selected_worker_run_id}.")
     if worker_run_exists and not worker_report_imported:
         missing.append("Worker result/report not imported.")
-    if report and report.status_reported_by_worker in {"usage_limit", "blocked", "failed", "needs_approval"}:
-        blockers.append(f"Worker report says {report.status_reported_by_worker}.")
+    if report and report.status_reported_by_worker != "completed":
+        if report.status_reported_by_worker in {"usage_limit", "blocked", "failed", "needs_approval"}:
+            blockers.append(f"Worker report says {report.status_reported_by_worker}.")
+        else:
+            blockers.append(f"Worker report status is not complete: {report.status_reported_by_worker}.")
     if worker_report_imported and not worker_review_exists:
         missing.append("Worker review not recorded.")
     if review and review.review_status in {"reviewed_needs_changes", "rejected"}:
@@ -2227,6 +2248,8 @@ def summarize_queue_worker_evidence(
         blockers.append("Validation evidence failed.")
     elif review and validation_evidence_exists and not validation_passed:
         warnings.append(f"Validation evidence status is {validation_status}.")
+    if run.delivery_request_id and not delivery_request_exists:
+        blockers.append(f"Linked delivery runner request is missing: {run.delivery_request_id}.")
     if not delivery_request_exists:
         missing.append("Delivery request not created.")
     elif not delivery_completed:
@@ -2240,6 +2263,11 @@ def summarize_queue_worker_evidence(
         worker_review_passed=worker_review_passed,
         validation_evidence_exists=validation_evidence_exists,
         validation_passed=validation_passed,
+        worker_report_status=report.status_reported_by_worker if report else None,
+        worker_review_status=review.review_status if review else None,
+        validation_status=validation_status if review else None,
+        delivery_request_id=delivery_request.request_id if delivery_request else run.delivery_request_id,
+        delivery_request_status=delivery_status,
         delivery_request_exists=delivery_request_exists,
         delivery_completed=delivery_completed,
         missing_evidence=missing,
@@ -2306,6 +2334,111 @@ def resume_queue_worker_run(
         }
     )
     return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def continue_queue_worker_run(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status not in {"waiting_worker", "waiting_review", "waiting_validation", "ready_for_delivery_request", "delivery_requested"}:
+        msg = f"Queue worker run status is not continuable: {run.status}"
+        raise ValueError(msg)
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(project_name, run, root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    now = datetime.now(UTC)
+    blockers = [*policy_blockers, *evidence.blockers]
+    warnings = [*policy_warnings, *evidence.warnings]
+    update: dict[str, object] = {
+        "blockers": blockers,
+        "warnings": warnings,
+        "policy_check_summary": policy_summary or run.policy_check_summary,
+        "updated_at": now,
+        "steps_run": [*run.steps_run, "continue requested; evidence and policy rechecked"],
+    }
+    if blockers:
+        status = _queue_worker_blocked_status_from_evidence(evidence)
+        update.update(
+            {
+                "status": status,
+                "failure_reason": _summary_text(blockers) if status == "failed" else run.failure_reason,
+                "pause_reason": _summary_text(blockers) if status == "paused" else run.pause_reason,
+                "next_action": _queue_worker_next_action_for_status(project_name, run, status, evidence, blockers),
+            }
+        )
+        return _write_queue_worker_run(project_name, run.model_copy(update=update), workspace_root=root)
+
+    status = _queue_worker_status_from_evidence(run, evidence)
+    update.update(
+        {
+            "status": status,
+            "next_action": _queue_worker_next_action_for_status(project_name, run, status, evidence, blockers),
+        }
+    )
+    return _write_queue_worker_run(project_name, run.model_copy(update=update), workspace_root=root)
+
+
+def request_queue_worker_delivery(
+    project_name: str,
+    run_id: str,
+    message: str = "",
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[QueueWorkerRun, object, Path, Path, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status != "ready_for_delivery_request":
+        msg = f"Queue worker run must be ready_for_delivery_request before delivery request; got {run.status}."
+        raise ValueError(msg)
+    if run.delivery_request_id:
+        msg = f"Queue worker run already links delivery runner request {run.delivery_request_id}."
+        raise ValueError(msg)
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(project_name, run, root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    blockers = [*policy_blockers, *evidence.blockers]
+    if not evidence.worker_report_imported:
+        blockers.append("Worker result/report not imported.")
+    if evidence.worker_report_status != "completed":
+        blockers.append(f"Worker result is not complete: {evidence.worker_report_status or 'missing'}.")
+    if not evidence.worker_review_passed:
+        blockers.append(f"Worker review has not passed: {evidence.worker_review_status or 'missing'}.")
+    if not evidence.validation_passed:
+        blockers.append(f"Validation evidence has not passed: {evidence.validation_status or 'missing'}.")
+    if blockers:
+        msg = "Queue worker delivery request blocked: " + _summary_text(_dedupe(blockers))
+        raise ValueError(msg)
+    policy = _require_execution_policy(project_name, run.policy_id, root)
+    warnings = [*policy_warnings]
+    if not policy.auto_delivery_allowed:
+        warnings.append("Policy auto_delivery is false; explicit queue-worker-request-delivery confirmation is being used.")
+    commit_message = message.strip() or _default_queue_worker_commit_message(project_name, run, root)
+    request_note = note.strip() or f"Queue worker run {run.run_id} delivery request."
+    from .delivery import create_delivery_runner_request
+
+    request, request_json, request_markdown = create_delivery_runner_request(
+        project_name,
+        commit_message,
+        request_note,
+        workspace_root=root,
+    )
+    now = datetime.now(UTC)
+    updated = run.model_copy(
+        update={
+            "status": "delivery_requested",
+            "delivery_request_id": request.request_id,
+            "delivery_request_status": request.status,
+            "delivery_requested_at": now,
+            "updated_at": now,
+            "warnings": _dedupe([*run.warnings, *warnings, *request.warnings]),
+            "policy_check_summary": policy_summary or run.policy_check_summary,
+            "steps_run": [*run.steps_run, f"delivery runner request created: {request.request_id}"],
+            "next_action": request.next_action,
+        }
+    )
+    updated_run, run_json, run_markdown = _write_queue_worker_run(project_name, updated, workspace_root=root)
+    return updated_run, request, run_json, run_markdown, request_json, request_markdown
 
 
 def fail_queue_worker_run(
@@ -4711,6 +4844,8 @@ def render_queue_worker_run_markdown(run: QueueWorkerRun) -> str:
         f"- Updated: `{run.updated_at.isoformat()}`",
         f"- Approver: `{run.approver or 'none'}`",
         f"- Retry of: `{run.retry_of or 'none'}`",
+        f"- Delivery request id: `{run.delivery_request_id or 'none'}`",
+        f"- Delivery request status: `{run.delivery_request_status or 'none'}`",
         f"- Pause reason: `{run.pause_reason or 'none'}`",
         f"- Failure reason: `{run.failure_reason or 'none'}`",
         f"- Cancel reason: `{run.cancel_reason or 'none'}`",
@@ -6338,6 +6473,16 @@ def _queue_worker_status_from_evidence(run: QueueWorkerRun, evidence: QueueWorke
     return "ready_for_delivery_request"
 
 
+def _queue_worker_blocked_status_from_evidence(evidence: QueueWorkerEvidenceSummary) -> str:
+    if evidence.worker_report_status == "failed" or evidence.validation_status == "failed":
+        return "failed"
+    if evidence.worker_report_status in {"usage_limit", "blocked", "needs_approval", "partial"}:
+        return "paused"
+    if evidence.worker_review_status in {"reviewed_needs_changes", "rejected"}:
+        return "paused"
+    return "blocked"
+
+
 def _queue_worker_next_action_for_status(
     project_name: str,
     run: QueueWorkerRun,
@@ -6373,10 +6518,45 @@ def _queue_worker_next_action_for_run(project_name: str, run: QueueWorkerRun, ev
     if not evidence.validation_passed:
         return f"Record passing validation evidence before delivery for worker run {run.selected_worker_run_id}."
     if not evidence.delivery_request_exists:
-        return "Create a trusted delivery runner request only after reviewed validation evidence is complete."
+        return (
+            f"Create a trusted delivery runner request: devo project queue-worker-request-delivery --project {project_name} "
+            f"--run {run.run_id} --confirm-delivery-request"
+        )
     if not evidence.delivery_completed:
         return "Wait for or inspect the trusted delivery runner result."
     return "No action needed."
+
+
+def _default_queue_worker_commit_message(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> str:
+    task_title = ""
+    if run.selected_task_id:
+        task = _try_get_backlog_task(project_name, run.selected_task_id, workspace_root=workspace_root)
+        task_title = task.title if task else ""
+    if task_title:
+        return f"feat: complete {task_title[:60].strip()}"
+    if run.selected_task_id:
+        return f"feat: complete {run.selected_task_id}"
+    if run.selected_queue_item_id:
+        return f"feat: complete {run.selected_queue_item_id}"
+    return f"feat: complete queue worker run {run.run_id}"
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _summary_text(items: list[str]) -> str:
+    if not items:
+        return "none"
+    if len(items) == 1:
+        return items[0]
+    return "; ".join(items)
 
 
 def _validate_positive_limit(label: str, value: int) -> None:

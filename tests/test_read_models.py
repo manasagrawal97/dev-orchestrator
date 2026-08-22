@@ -197,6 +197,8 @@ def test_json_output_is_valid_for_selected_commands(tmp_path: Path, monkeypatch)
     assert "latest_queue_worker_run_id" in overview_data
     assert "latest_queue_worker_run_status" in overview_data
     assert "latest_queue_worker_run_worker_run_id" in overview_data
+    assert "latest_queue_worker_run_delivery_request_id" in overview_data
+    assert "latest_queue_worker_run_delivery_request_status" in overview_data
     assert "handoff_count" in overview_data
     assert "handoff_next_action" in overview_data
     assert "worker_run_count" in overview_data
@@ -310,6 +312,8 @@ def test_project_overview_includes_queue_worker_run_summary(tmp_path: Path, monk
     assert overview.latest_queue_worker_run_selected_item == "QI001"
     assert overview.latest_queue_worker_run_selected_task == "T001"
     assert overview.latest_queue_worker_run_worker_run_id == "WR001"
+    assert overview.latest_queue_worker_run_delivery_request_id is None
+    assert overview.latest_queue_worker_run_delivery_request_status is None
     assert overview.latest_queue_worker_run_next_action is not None
     assert "run-show" in overview.latest_queue_worker_run_next_action
 

@@ -101,16 +101,26 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Done criteria: A paused queue can explain what happened, what is safe to retry, and what command or review is needed next.
 - Status: Completed as lifecycle control for queue-worker run artifacts. `devo project queue-worker-status`, `queue-worker-pause`, `queue-worker-resume --confirm-resume`, `queue-worker-fail`, `queue-worker-retry --confirm-retry`, and `queue-worker-cancel --confirm-cancel` now make pause reason, missing evidence, retry linkage, policy/item rechecks, and next safe command explicit. This still does not run real Codex, validation, delivery runner requests, queue completion, commit, or push.
 
-### TASK-DEVO-131: UI Approval And Queue Controls
+### TASK-DEVO-131: Worker-Result Continuation And Delivery-Request Handoff
 
-- Goal: Add safe UI controls only after the autonomy foundation exists.
+- Goal: Connect queue-worker runs to imported worker result evidence, review evidence, validation evidence, and trusted delivery runner requests.
+- Why it matters: Queue-worker runs need a clear post-worker continuation path before any broader batch automation or UI controls are safe.
+- Scope: `queue-worker-evidence`, `queue-worker-continue --confirm-continue`, `queue-worker-request-delivery --confirm-delivery-request`, evidence summaries, delivery request links, and read-model visibility for the latest queue-worker delivery request.
+- Not in scope: real Codex execution, AI/API calls, validation execution, runner-watch execution, queue completion, guarded commit/push, UI controls, or multi-task automation.
+- Safety rules: advance only through completed worker report, passed review, and passed validation evidence; create a trusted runner request rather than running delivery; stop on policy/scope drift or failed/partial worker evidence.
+- Done criteria: A queue-worker run can move from `waiting_worker` to `waiting_review`, `waiting_validation`, `ready_for_delivery_request`, and `delivery_requested` while preserving review and delivery safety.
+- Status: Completed. Devo now has read-only evidence inspection, explicit continuation, delivery request creation through the existing trusted runner request flow, and queue-worker/read-model fields that show linked delivery request id/status.
+
+### TASK-DEVO-132: UI Approval And Queue Controls
+
+- Goal: Add safe UI controls only after the CLI evidence and delivery handoff path is dogfooded.
 - Why it matters: UI can reduce friction, but only if it calls Devo safety flows instead of bypassing them.
 - Scope: View queue, view runner requests, approve batch policy, pause queue, resume queue, cancel pending request, view logs, view blockers, and view summaries.
 - Not in scope: Raw commit buttons, raw push buttons, arbitrary shell command buttons, UI bypass of delivery safety, or direct `.git` writes.
 - Safety rules: UI actions must go through Devo approval/policy commands and leave artifacts.
 - Done criteria: UI can manage approved Devo workflow states without introducing new dangerous action paths.
 
-### TASK-DEVO-132: Progress/Read-Model Cleanup
+### TASK-DEVO-133: Progress/Read-Model Cleanup
 
 - Goal: Make progress and current-state summaries reflect delivered work, planning state, queue state, and delivery state more accurately.
 - Why it matters: Phase 1 left some planning-oriented summaries that can look blocked even after successful delivery.
@@ -119,7 +129,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Safety rules: Read-only summaries must not mutate target repos or workspace approvals.
 - Done criteria: `project progress`, intake/status, UI cards, and activity summaries agree on useful next actions.
 
-### TASK-DEVO-133: Workspace Artifact Compaction/Indexing
+### TASK-DEVO-134: Workspace Artifact Compaction/Indexing
 
 - Goal: Reduce artifact noise while preserving auditability.
 - Why it matters: Phase 1 created many useful artifacts, but navigation is getting heavy.
@@ -128,7 +138,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Safety rules: Never remove audit artifacts without explicit approval and documented retention policy.
 - Done criteria: Operators can find the current relevant artifacts without hand-browsing many folders.
 
-### TASK-DEVO-134: Docs Consolidation
+### TASK-DEVO-135: Docs Consolidation
 
 - Goal: Reduce overlapping docs after Phase 1.
 - Why it matters: The docs are valuable but increasingly duplicated.
@@ -137,7 +147,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Safety rules: Preserve delivery safety, runner, and worker runbooks.
 - Done criteria: A new operator can find current workflow guidance quickly without reading the whole history.
 
-### TASK-DEVO-135: Phase 2 AI-Agent Worker-Brain Design
+### TASK-DEVO-136: Phase 2 AI-Agent Worker-Brain Design
 
 - Goal: Design how future AI brains attach to Devo's existing role contracts.
 - Why it matters: Devo should add agents by extending contracts, not by bypassing state and approvals.

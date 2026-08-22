@@ -156,6 +156,7 @@ from .project_planning import (
     build_project_intake_status,
     check_execution_policy,
     cancel_queue_worker_run,
+    continue_queue_worker_run,
     create_batch_execution_policy,
     create_project_batch,
     create_project_backlog,
@@ -220,6 +221,7 @@ from .project_planning import (
     reject_execution_policy,
     request_execution_policy,
     request_batch_approval,
+    request_queue_worker_delivery,
     review_project_batch,
     record_codex_worker_review,
     resume_execution_queue,
@@ -229,6 +231,7 @@ from .project_planning import (
     run_queue_worker_once,
     retry_queue_worker_run,
     fail_queue_worker_run,
+    summarize_queue_worker_evidence,
     run_codex_worker_preflight,
     update_codex_worker_run_status,
     validate_refined_backlog_file,
@@ -690,6 +693,8 @@ def _print_queue_worker_run(run: QueueWorkerRun, json_path: Path | None = None, 
     console.print(f"Worker run: {run.selected_worker_run_id or 'none'}")
     console.print(f"Mode: {run.mode}")
     console.print(f"Retry of: {run.retry_of or 'none'}")
+    console.print(f"Delivery request: {run.delivery_request_id or 'none'}")
+    console.print(f"Delivery request status: {run.delivery_request_status or 'none'}")
     console.print(f"Pause reason: {run.pause_reason or 'none'}")
     console.print(f"Failure reason: {run.failure_reason or 'none'}", soft_wrap=True)
     console.print(f"Cancel reason: {run.cancel_reason or 'none'}", soft_wrap=True)
@@ -731,6 +736,8 @@ def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
     console.print(f"Handoff: {report.selected_handoff_id or 'none'}")
     console.print(f"Worker run: {report.selected_worker_run_id or 'none'}")
     console.print(f"Retry of: {report.retry_of or 'none'}")
+    console.print(f"Delivery request: {report.delivery_request_id or 'none'}")
+    console.print(f"Delivery request status: {report.delivery_request_status or 'none'}")
     console.print(f"Pause reason: {report.pause_reason or 'none'}", soft_wrap=True)
     console.print(f"Failure reason: {report.failure_reason or 'none'}", soft_wrap=True)
     console.print("Missing evidence:")
@@ -746,14 +753,65 @@ def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
     console.print(f"  Handoff exists: {report.evidence.handoff_exists}")
     console.print(f"  Worker run exists: {report.evidence.worker_run_exists}")
     console.print(f"  Worker report imported: {report.evidence.worker_report_imported}")
+    console.print(f"  Worker report status: {report.evidence.worker_report_status or 'none'}")
     console.print(f"  Worker review passed: {report.evidence.worker_review_passed}")
+    console.print(f"  Worker review status: {report.evidence.worker_review_status or 'none'}")
     console.print(f"  Validation passed: {report.evidence.validation_passed}")
+    console.print(f"  Validation status: {report.evidence.validation_status or 'none'}")
+    console.print(f"  Delivery request exists: {report.evidence.delivery_request_exists}")
     console.print(f"  Delivery completed: {report.evidence.delivery_completed}")
     console.print(f"Next action: {report.next_action}", soft_wrap=True)
     console.print(
         "Safety: queue worker continuation manages state and next actions only. It does not execute Codex automatically, complete tasks without evidence, or deliver without trusted runner flow.",
         soft_wrap=True,
     )
+
+
+def _print_queue_worker_evidence(run: QueueWorkerRun) -> None:
+    evidence = summarize_queue_worker_evidence(run.project, run)
+    blockers = [*run.blockers, *evidence.blockers]
+    console.print(f"[bold]Queue worker evidence: {run.run_id}[/bold]")
+    console.print(f"Project: {run.project}")
+    console.print(f"Status: {run.status}")
+    console.print(f"Policy: {run.policy_id}")
+    console.print(f"Queue: {run.queue_id or 'none'}")
+    console.print(f"Selected item: {run.selected_queue_item_id or 'none'}")
+    console.print(f"Selected task: {run.selected_task_id or 'none'}")
+    console.print(f"Handoff exists: {evidence.handoff_exists}")
+    console.print(f"Worker run exists: {evidence.worker_run_exists}")
+    console.print(f"Worker report exists: {evidence.worker_report_imported}")
+    console.print(f"Worker report status: {evidence.worker_report_status or 'none'}")
+    console.print(f"Review exists: {evidence.worker_review_exists}")
+    console.print(f"Review status: {evidence.worker_review_status or 'none'}")
+    console.print(f"Validation evidence exists: {evidence.validation_evidence_exists}")
+    console.print(f"Validation status: {evidence.validation_status or 'none'}")
+    console.print(f"Delivery request exists: {evidence.delivery_request_exists}")
+    console.print(f"Delivery request: {evidence.delivery_request_id or 'none'}")
+    console.print(f"Delivery status: {evidence.delivery_request_status or 'none'}")
+    console.print("Missing evidence:")
+    for item in evidence.missing_evidence or ["none"]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {_queue_worker_next_action_text(run, evidence, blockers)}", soft_wrap=True)
+    console.print("Safety: evidence inspection is read-only and does not execute Codex, validation, delivery, commit, or push.")
+
+
+def _queue_worker_next_action_text(run: QueueWorkerRun, evidence, blockers: list[str]) -> str:
+    if run.next_action and not blockers:
+        return run.next_action
+    if blockers:
+        return "Resolve blockers before continuing this queue-worker run."
+    if not evidence.worker_report_imported:
+        return f"Import worker report for {run.selected_worker_run_id or '<workerRunId>'}."
+    if not evidence.worker_review_passed:
+        return f"Review worker run {run.selected_worker_run_id or '<workerRunId>'}."
+    if not evidence.validation_passed:
+        return f"Record passing validation evidence for {run.selected_worker_run_id or '<workerRunId>'}."
+    if not evidence.delivery_request_exists:
+        return f"Create delivery request: devo project queue-worker-request-delivery --project {run.project} --run {run.run_id} --confirm-delivery-request"
+    return "Inspect trusted runner delivery status."
 
 
 def _print_project_progress(progress: ProjectProgress) -> None:
@@ -4014,6 +4072,42 @@ def status_queue_worker_run_command(
         raise typer.Exit(1)
 
 
+@project_app.command("queue-worker-evidence")
+def evidence_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+) -> None:
+    """Show linked worker/review/validation/delivery evidence for one queue-worker run."""
+    project_name = _resolve_project(project_name)
+    run = load_queue_worker_run(project_name, run_id)
+    if not run:
+        console.print(f"[yellow]Queue worker run not found: {run_id}[/yellow]")
+        console.print(f"Suggested next command: devo project queue-worker-list --project {project_name}")
+        return
+    _print_queue_worker_evidence(run)
+
+
+@project_app.command("queue-worker-continue")
+def continue_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    confirm_continue: bool = typer.Option(False, "--confirm-continue", help="Confirm queue-worker continuation/recheck."),
+) -> None:
+    """Advance a queue-worker run to the next safe evidence gate without executing Codex."""
+    project_name = _resolve_project(project_name)
+    if not confirm_continue:
+        console.print("queue-worker-continue requires --confirm-continue.")
+        raise typer.Exit(1)
+    try:
+        run, json_path, markdown_path = continue_queue_worker_run(project_name, run_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_run(run, json_path=json_path, markdown_path=markdown_path)
+    console.print("No real Codex CLI, validation command, delivery runner, commit, push, or queue completion was run.")
+    if run.blockers or run.status in {"blocked", "failed", "paused"}:
+        raise typer.Exit(1)
+
+
 @project_app.command("queue-worker-pause")
 def pause_queue_worker_run_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -4084,6 +4178,36 @@ def retry_queue_worker_run_command(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_queue_worker_run(run, json_path=json_path, markdown_path=markdown_path)
     console.print("No real Codex CLI was executed. No queue item completion, delivery request, commit, or push was run.")
+
+
+@project_app.command("queue-worker-request-delivery")
+def request_delivery_queue_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    message: str = typer.Option("", "--message", help="Optional intended commit message."),
+    note: str = typer.Option("", "--note", help="Optional delivery request note."),
+    confirm_delivery_request: bool = typer.Option(False, "--confirm-delivery-request", help="Confirm trusted runner request creation."),
+) -> None:
+    """Create a trusted delivery runner request from complete queue-worker evidence."""
+    project_name = _resolve_project(project_name)
+    if not confirm_delivery_request:
+        console.print("queue-worker-request-delivery requires --confirm-delivery-request.")
+        raise typer.Exit(1)
+    try:
+        run, request, run_json, run_markdown, request_json, request_markdown = request_queue_worker_delivery(
+            project_name,
+            run_id,
+            message=message,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_run(run, json_path=run_json, markdown_path=run_markdown)
+    console.print(f"Runner request: {request.request_id}")
+    console.print(f"Runner request status: {request.status}")
+    console.print(f"Runner request JSON: {_named_path(request_json)}")
+    console.print(f"Runner request Markdown: {_named_path(request_markdown)}")
+    console.print("No runner-watch, guarded commit, guarded push, or queue completion was run.")
 
 
 @project_app.command("queue-worker-cancel")

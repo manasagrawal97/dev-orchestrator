@@ -396,6 +396,8 @@ def test_project_queue_worker_run_endpoints_return_json(tmp_path: Path, monkeypa
     assert run.status_code == 200
     assert run.json()["selected_queue_item_id"] == "QI001"
     assert run.json()["selected_worker_run_id"] == "WR001"
+    assert run.json()["delivery_request_id"] is None
+    assert run.json()["delivery_request_status"] is None
     assert run.json()["blockers"] == []
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "queue_worker_run_not_found"
