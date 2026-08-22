@@ -51,6 +51,7 @@ Devo already has:
 - Delivery report, commit-message preparation, guarded CLI commit, guarded CLI push, isolated delivery dogfood, and read-only Delivery UI visibility
 - Delivery latest status and trusted local delivery runner for one-command normal-PowerShell delivery after Codex validation
 - Policy-gated queue-worker loop v1 for preparing one approved queue item, pausing at handoff/worker readiness, continuing through worker report/review/validation evidence, and creating trusted delivery runner requests safely
+- Queue-worker dogfood friction polish for evidence-intake next actions, non-passing validation wording, assisted-policy wording, temp dogfood remote guidance, and runner-watch/latest-request diagnostics
 - Read-only UI Planning Intake page
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages

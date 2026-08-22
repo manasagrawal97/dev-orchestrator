@@ -222,7 +222,7 @@ devo project queue-resume --project MyProject --queue Q001
 
 Queue artifacts are stored under `workspace/projects/<project>/planning/queues/` as `queue-<queue_id>.json`, `queue-<queue_id>.md`, and `queue-index.json`. The execution queue is state tracking only. It does not run Codex, run validation, run Git commands, commit, push, or modify target project source.
 
-Create a bounded batch execution policy for future autonomous queue work:
+Create a bounded batch execution policy for assisted queue work:
 
 ```powershell
 devo project execution-policy-create --project MyProject --batch B001 --queue Q001 --title "Small approved batch"
@@ -264,7 +264,7 @@ devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "su
 
 Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The assisted one-step path is `queue-worker-step`: it creates one queue-worker run if no active run exists for the approved policy, advances only one evidence gate at a time, creates a trusted delivery runner request when the run is ready, and later observes trusted runner completion without running runner-watch itself. `queue-worker-loop` repeatedly invokes that one-step behavior until the next safe stop condition, such as missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/blocked state, no eligible item, or max steps. The record commands provide the manual evidence intake bridge: after a human/Codex worker finishes, record worker result, review, and validation evidence, then run `queue-worker-loop` again to advance through the gates. It can complete a queue item only after trusted delivery is completed and the existing queue completion checks pass, then it stops again at the next `waiting_worker` boundary. The lower-level commands remain available for explicit inspection and recovery. These commands do not run real Codex, call AI APIs, run validation, execute review, execute runner-watch, stage, commit, push, or modify target project source directly.
 
-The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md) and the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md).
+The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), and the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md).
 
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
 

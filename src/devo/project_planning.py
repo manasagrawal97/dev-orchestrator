@@ -1974,7 +1974,7 @@ def approve_execution_policy(
             "decision_note": note.strip() or policy.decision_note,
             "updated_at": now,
             "notes": notes,
-            "next_action": "TASK-DEVO-129 autonomous queue worker loop can use this approved policy.",
+            "next_action": "Approved assisted queue policy can be used by queue-worker step/loop.",
         }
     )
     return _write_execution_policy(project_name, updated, workspace_root=root)
@@ -2069,7 +2069,7 @@ def check_execution_policy(
     if policy.auto_push_allowed and not policy.auto_delivery_allowed:
         blockers.append("auto_push_allowed requires auto_delivery_allowed.")
     if not policy.validation_commands:
-        warnings.append("No validation commands recorded; future autonomous execution should pause for explicit validation guidance.")
+        warnings.append("No validation commands recorded; assisted queue execution should pause for explicit validation guidance.")
     if not policy.forbidden_file_patterns:
         warnings.append("No forbidden file patterns recorded.")
     usable = not blockers
@@ -2302,6 +2302,8 @@ def summarize_queue_worker_evidence(
     delivery_request_exists = delivery_request is not None
     delivery_status = delivery_request.status if delivery_request else run.delivery_request_status
     delivery_completed = delivery_status == "completed"
+    if review:
+        warnings.extend(review.validation_evidence.warnings)
 
     if not run.selected_handoff_id:
         missing.append("Handoff not recorded.")
@@ -2869,6 +2871,9 @@ def loop_queue_worker_run(
 
         if step.blockers:
             stop_reason = _loop_stop_reason_from_blocked_step(step)
+            validation_status = _validation_nonpassing_status_from_loop_step(step)
+            if validation_status:
+                next_action = _validation_nonpassing_next_action(validation_status, current_run_id, project_name)
             break
         if step.new_status == "no_ready_item":
             stop_reason = "no eligible queue item"
@@ -2882,13 +2887,22 @@ def loop_queue_worker_run(
         if step.new_status == "waiting_worker":
             if stop_on_waiting_worker or any("Worker result/report not imported" in item for item in step.missing_evidence):
                 stop_reason = "worker result missing"
+                next_action = _queue_worker_record_worker_result_next_action(project_name, current_run_id)
                 break
         if step.new_status == "waiting_review" and any("Worker review not recorded" in item for item in step.missing_evidence):
             stop_reason = "worker review missing"
+            next_action = _queue_worker_record_review_next_action(project_name, current_run_id)
             break
-        if step.new_status == "waiting_validation" and any("Validation evidence not recorded" in item for item in step.missing_evidence):
-            stop_reason = "validation evidence missing"
-            break
+        if step.new_status == "waiting_validation":
+            validation_status = _validation_nonpassing_status_from_loop_step(step)
+            if validation_status:
+                stop_reason = "validation evidence is not passing"
+                next_action = _validation_nonpassing_next_action(validation_status, current_run_id, project_name)
+                break
+            if any("Validation evidence not recorded" in item for item in step.missing_evidence):
+                stop_reason = "validation evidence missing"
+                next_action = _queue_worker_record_validation_next_action(project_name, current_run_id)
+                break
         if step.new_status == "delivery_requested":
             if stop_on_delivery_request or not _loop_delivery_completed(step):
                 stop_reason = "waiting for trusted runner"
@@ -7033,13 +7047,62 @@ def _loop_stop_reason_from_blocked_step(step: QueueWorkerStepResult) -> str:
         return "policy no longer valid"
     if "selected queue item" in text or "outside" in text or "scope" in text:
         return "selected queue item outside policy"
-    if "worker report says failed" in text or "validation evidence failed" in text:
+    if "validation evidence failed" in text:
+        return "validation evidence is not passing"
+    if "worker report says failed" in text:
         return "failed evidence"
     if "review status" in text:
         return "review did not pass"
     if "delivery" in text:
         return "delivery request unsafe"
     return "blocked"
+
+
+def _validation_nonpassing_status_from_loop_step(step: QueueWorkerStepResult) -> str | None:
+    text = " ".join([*step.blockers, *step.warnings]).lower()
+    if "validation evidence failed" in text or "validation evidence status is failed" in text:
+        return "failed"
+    if "validation was recorded as blocked" in text:
+        return "blocked"
+    if "validation was not run" in text:
+        return "not_run"
+    for status in ("blocked", "not_run"):
+        if f"validation evidence status is {status}" in text:
+            return status
+    if "validation evidence status is partial" in text:
+        return "partial"
+    return None
+
+
+def _validation_nonpassing_next_action(validation_status: str, run_id: str | None, project_name: str) -> str:
+    return (
+        f"Validation status: {validation_status}. Fix validation issue, record new validation evidence, or retry/pause the queue-worker run. "
+        f"Record evidence: {_queue_worker_record_validation_next_action(project_name, run_id)}"
+    )
+
+
+def _queue_worker_record_worker_result_next_action(project_name: str, run_id: str | None) -> str:
+    run_fragment = run_id or "<QWR-ID>"
+    return (
+        f"devo project queue-worker-record-worker-result --project {project_name} --run {run_fragment} "
+        "--status completed --summary \"<summary>\" --confirm-record"
+    )
+
+
+def _queue_worker_record_review_next_action(project_name: str, run_id: str | None) -> str:
+    run_fragment = run_id or "<QWR-ID>"
+    return (
+        f"devo project queue-worker-record-review --project {project_name} --run {run_fragment} "
+        "--status passed --summary \"<summary>\" --confirm-record"
+    )
+
+
+def _queue_worker_record_validation_next_action(project_name: str, run_id: str | None) -> str:
+    run_fragment = run_id or "<QWR-ID>"
+    return (
+        f"devo project queue-worker-record-validation --project {project_name} --run {run_fragment} "
+        "--status passed --summary \"<summary>\" --confirm-record"
+    )
 
 
 def _loop_delivery_completed(step: QueueWorkerStepResult) -> bool:

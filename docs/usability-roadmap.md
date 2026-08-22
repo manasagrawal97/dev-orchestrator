@@ -65,6 +65,8 @@ TASK-DEVO-135 adds the evidence intake layer for that loop: `queue-worker-record
 
 TASK-DEVO-136 dogfoods that loop plus evidence intake against a three-task sandbox batch. The result is partial readiness: the first task reached trusted delivery request creation, and the loop safely refused to continue after the temp trusted runner push failed. Before broader 3-5 task assisted use, the next polish should focus on clearer stop reasons, assisted wording, and reliable temp delivery setup.
 
+TASK-DEVO-137 completes that small polish: `queue-worker-loop` now points directly to the evidence intake commands at worker/review/validation boundaries, non-passing validation evidence gets an explicit stop reason, execution policy wording avoids implying full autonomy, and runner-watch/latest-request output explains when an older `no_pending` watch predates a newer requested runner item.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

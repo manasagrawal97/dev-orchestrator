@@ -984,11 +984,14 @@ def test_execution_policy_request_approve_reject_list_show_and_check(tmp_path: P
     assert policy is not None
     assert policy.status == "approved"
     assert policy.approver == "Manas"
-    assert "TASK-DEVO-129" in policy.next_action
+    assert "Approved assisted queue policy" in policy.next_action
+    assert "autonomous" not in policy.next_action.lower()
     assert listed.exit_code == 0, listed.output
     assert "POL-0001" in listed.output
     assert shown.exit_code == 0, shown.output
     assert "Approval policy" in shown.output
+    assert "autonomous" not in approved.output.lower()
+    assert "autonomous" not in shown.output.lower()
     assert checked.exit_code == 0, checked.output
     assert "Usable: True" in checked.output
 
@@ -1807,12 +1810,98 @@ def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatc
     assert review.exit_code == 0, review.output
     assert waiting_validation.exit_code == 0, waiting_validation.output
     assert "Stop reason: validation evidence missing" in waiting_validation.output
+    assert "queue-worker-record-validation --project sample --run QWR-0001" in waiting_validation.output
     assert validation.exit_code == 0, validation.output
     assert delivery.exit_code == 0, delivery.output
     assert "created delivery runner request REQ-0001" in delivery.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
     assert run is not None
     assert run.status == "delivery_requested"
+
+
+@pytest.mark.parametrize(
+    ("validation_status", "expected_exit", "expected_run_status"),
+    [
+        ("failed", 1, "failed"),
+        ("blocked", 0, "waiting_validation"),
+        ("not_run", 0, "waiting_validation"),
+    ],
+)
+def test_queue_worker_loop_reports_nonpassing_validation_status_clearly(
+    tmp_path: Path,
+    monkeypatch,
+    validation_status: str,
+    expected_exit: int,
+    expected_run_status: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path)
+    waiting_review = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+    review = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Review passed.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    waiting_validation = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+    validation = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-validation",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            validation_status,
+            "--summary",
+            f"Validation status {validation_status}.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert waiting_review.exit_code == 0, waiting_review.output
+    assert review.exit_code == 0, review.output
+    assert waiting_validation.exit_code == 0, waiting_validation.output
+    assert validation.exit_code == 0, validation.output
+    assert result.exit_code == expected_exit, result.output
+    assert "Stop reason: validation evidence is not passing" in result.output
+    assert f"Validation status: {validation_status}" in result.output
+    assert "unknown or unsafe state" not in result.output
+    assert "queue-worker-record-validation --project sample --run QWR-0001" in result.output
+    assert "created delivery runner request" not in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == expected_run_status
+    assert run.delivery_request_id is None
 
 
 def test_queue_worker_continue_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
@@ -2223,6 +2312,7 @@ def test_queue_worker_loop_creates_waiting_worker_run_and_stops(tmp_path: Path, 
     assert result.exit_code == 0, result.output
     assert "Steps attempted: 1" in result.output
     assert "Stop reason: worker result missing" in result.output
+    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
     assert run is not None
     assert run.status == "waiting_worker"
@@ -2260,6 +2350,7 @@ def test_queue_worker_loop_advances_one_gate_and_stops_for_review(tmp_path: Path
     assert result.exit_code == 0, result.output
     assert "Steps attempted: 1" in result.output
     assert "Stop reason: worker review missing" in result.output
+    assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
     assert run is not None
     assert run.status == "waiting_review"

@@ -813,6 +813,35 @@ def test_delivery_runner_watch_latest_works(tmp_path: Path, monkeypatch) -> None
     assert "Status: no_pending" in result.output
 
 
+def test_delivery_runner_watch_latest_explains_newer_pending_request_after_no_pending_watch(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-watch",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--once",
+            "--confirm-runner-watch",
+        ],
+        terminal_width=240,
+    )
+    (repo / "changed-after-watch.txt").write_text("new request\n", encoding="utf-8")
+    request, _json_path, _markdown_path = create_delivery_runner_request("sample", "docs: newer request", "", workspace_root=workspace)
+
+    result = runner.invoke(app, ["delivery", "runner-watch-latest", "--project", "sample"], terminal_width=240)
+
+    assert request.status == "requested"
+    assert result.exit_code == 0, result.output
+    assert "Status: no_pending" in result.output
+    assert "latest runner request is newer than this no-pending watch" in result.output
+    assert "Latest requested item: REQ-0001" in result.output
+    assert "delivery runner-run --project sample --request REQ-0001" in result.output
+
+
 def test_delivery_runner_schedule_plan_prints_without_installing(tmp_path: Path, monkeypatch) -> None:
     workspace, _repo = _workspace(tmp_path, monkeypatch)
 

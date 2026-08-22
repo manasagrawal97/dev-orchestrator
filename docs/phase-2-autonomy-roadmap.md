@@ -139,6 +139,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Done criteria: a single command can start the next approved item, stop at `waiting_worker`, continue through already-recorded evidence, create a trusted delivery request, observe completed trusted delivery, and then start at most the next eligible item before stopping again at `waiting_worker`.
 - Status: Completed. The loop is a one-task-at-a-time assisted operator command, not full autonomy.
 
+### TASK-DEVO-137: Queue-Worker Dogfood Friction Polish
+
+- Goal: Polish the operator friction found in the TASK-DEVO-136 live three-task sandbox dogfood.
+- Scope: clearer queue-worker-loop next actions, explicit non-passing validation evidence wording, assisted-policy wording, temp dogfood remote guidance, and runner-watch/latest-request diagnostics.
+- Not in scope: real Codex execution, AI/API calls, UI controls, background daemon changes, runner-watch execution from queue-worker-loop, parallel work, or delivery safety bypasses.
+- Status: Completed. See `docs/dogfood/task-devo-137-queue-worker-friction-polish.md`.
+
 ### TASK-DEVO-135: Queue-Worker Evidence Intake
 
 - Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.

@@ -172,3 +172,9 @@ TASK-DEVO-137 should polish the queue-worker dogfood friction found here:
 - replace remaining `autonomous` wording with `assisted`
 - make the first loop next action point to the evidence intake command
 - document or improve temp-project trusted delivery setup before another multi-item dogfood
+
+## Follow-Up Notes From TASK-DEVO-137
+
+Temporary dogfood repositories that exercise trusted delivery should use a valid disposable remote when push behavior is in scope. A local bare remote is fine, but it must be initialized and reachable from the same shell context used by the trusted runner. If a temp push fails, treat it as a real safety stop and inspect the runner artifact before continuing the queue.
+
+`runner-watch-latest` reports the latest watch artifact, while `runner-latest` reports the latest runner request. If the latest watch says `no_pending` but `runner-latest` shows a newer requested item, run `runner-watch` again or use the precise `runner-run --request <REQ-ID>` fallback. Do not bypass Devo delivery with manual Git commands during dogfood.

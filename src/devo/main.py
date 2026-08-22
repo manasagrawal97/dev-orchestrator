@@ -2631,7 +2631,28 @@ def latest_delivery_runner_watch_command(
         console.print("Latest runner watch: none")
         console.print("Next action: No runner watch artifacts exist.")
         return
-    _print_delivery_runner_watch(watches[0])
+    latest_watch = watches[0]
+    _print_delivery_runner_watch(latest_watch)
+    requests = list_delivery_runner_requests(resolved_project)
+    if requests:
+        latest_request = requests[0]
+        if (
+            latest_watch.status == "no_pending"
+            and latest_request.status == "requested"
+            and latest_watch.completed_at
+            and latest_request.created_at > latest_watch.completed_at
+        ):
+            console.print(
+                "Note: latest runner request is newer than this no-pending watch; run runner-watch again or use runner-run with the request id.",
+                soft_wrap=True,
+            )
+            console.print(f"Latest requested item: {latest_request.request_id}")
+            console.print("Direct fallback command:", style="bold")
+            console.print(
+                f"devo delivery runner-run --project {resolved_project} --request {latest_request.request_id} "
+                "--approver \"Manas\" --confirm-runner-delivery",
+                soft_wrap=True,
+            )
 
 
 @delivery_app.command("runner-schedule-plan")
@@ -4028,7 +4049,7 @@ def approve_execution_policy_command(
         raise typer.BadParameter(str(exc), param_hint="--policy") from exc
     console.print(f"[green]Execution policy approved[/green] {project_name}")
     _print_execution_policy(policy, json_path=json_path, markdown_path=markdown_path)
-    console.print("No autonomous worker was started. No delivery request was created.")
+    console.print("No assisted queue worker was started. No delivery request was created.")
 
 
 @project_app.command("execution-policy-reject")
@@ -4099,7 +4120,7 @@ def check_execution_policy_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     policy_id: str = typer.Option(..., "--policy", help="Execution policy id."),
 ) -> None:
-    """Check whether an approved execution policy is usable for future autonomous work."""
+    """Check whether an approved execution policy is usable for assisted queue execution."""
     project_name = _resolve_project(project_name)
     result = check_execution_policy(project_name, policy_id)
     _print_execution_policy_check(result)

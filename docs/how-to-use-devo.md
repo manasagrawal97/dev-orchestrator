@@ -259,7 +259,19 @@ devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "su
 
 Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted primitives are `queue-worker-step` and `queue-worker-loop`. `queue-worker-step` performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. `queue-worker-loop` repeats that one-step behavior until it reaches a safe stop condition: missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/cancelled/blocked state, no eligible item, or max steps. `queue-worker-record-worker-result`, `queue-worker-record-review`, and `queue-worker-record-validation` are the manual evidence intake commands that feed the loop between those stops. They write workspace evidence and print the next loop command; they do not advance state by themselves. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute review, execute runner-watch, stage, commit, push, or modify target source directly.
 
-The assisted queue-worker flow is dogfooded in `docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md`, with the live three-task sandbox attempt recorded in `docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md`.
+The assisted queue-worker flow is dogfooded in `docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md`, with the live three-task sandbox attempt recorded in `docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md` and the follow-up friction polish recorded in `docs/dogfood/task-devo-137-queue-worker-friction-polish.md`.
+
+### Temporary Dogfood Repos
+
+When testing trusted delivery on a disposable project, create a real local Git setup instead of treating push as optional:
+
+- initialize the temp target repository normally
+- add a valid disposable local bare remote before testing delivery push
+- treat a failed temp push as a real delivery safety stop
+- use `devo delivery runner-latest --project <project>` to confirm whether a request is still `requested`
+- if `runner-watch-latest` shows an older `no_pending` watch while `runner-latest` shows a requested item, run `runner-watch` again or use the precise `runner-run --request <REQ-ID>` fallback
+
+Do not bypass Devo delivery with manual `git add`, `git commit`, or `git push` during dogfood.
 
 ## Codex Handoff Prompts
 
