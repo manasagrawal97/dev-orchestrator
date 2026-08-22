@@ -1670,6 +1670,14 @@ def test_queue_worker_assisted_e2e_flow(tmp_path: Path, monkeypatch) -> None:
     assert run.delivery_request_id == "REQ-0001"
     assert request.status == "requested"
     assert request.expected_changed_files == ["src/feature.py"]
+    shown = runner.invoke(app, ["project", "queue-worker-show", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    latest = runner.invoke(app, ["project", "queue-worker-latest", "--project", "sample"], terminal_width=240)
+    status = runner.invoke(app, ["project", "queue-worker-status", "--project", "sample"], terminal_width=240)
+    evidence = runner.invoke(app, ["project", "queue-worker-evidence", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    for result in (shown, latest, status, evidence):
+        assert result.exit_code == 0, result.output
+        assert "REQ-0001" in result.output
+        assert "requested" in result.output
     assert _git(project_path, "log", "--oneline", "-n", "1", capture=True).stdout.strip().endswith("initial")
 
 

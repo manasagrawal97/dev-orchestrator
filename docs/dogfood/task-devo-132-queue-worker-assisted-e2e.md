@@ -13,6 +13,7 @@ git status --short --branch
 git log --oneline -n 5
 .\.venv\Scripts\devo.exe delivery runner-latest --project DevOrchestrator
 .\.venv\Scripts\python -m pytest -q tests/test_project_planning.py -k "queue_worker_assisted_e2e_flow" --basetemp=E:\DevOrchestrator\pt-132-e2e
+.\.venv\Scripts\python -m pytest -q tests/test_project_planning.py tests/test_read_models.py tests/test_api.py --basetemp=E:\DevOrchestrator\pt-132-focused
 ```
 
 The dedicated dogfood test is:
@@ -36,6 +37,16 @@ All dogfood workflow artifacts were created under pytest temporary workspace/pro
 
 No workspace artifacts from the live DevOrchestrator workspace were staged or committed.
 
+## Evidence Used
+
+The sandbox dogfood used simulated but structured evidence:
+
+- imported `CodexWorkerReport` with `status_reported_by_worker=completed`
+- recorded worker review with `review_status=reviewed_passed`
+- attached validation evidence with `validation_status=passed`
+- created one temp-repo changed file, `src/feature.py`, so the trusted delivery request had a real changed-file snapshot
+- verified `queue-worker-show`, `queue-worker-latest`, `queue-worker-status`, and `queue-worker-evidence` showed the linked delivery request id/status after handoff
+
 ## State Transitions Observed
 
 The temp-project dogfood observed the intended queue-worker assisted path:
@@ -58,6 +69,8 @@ approved policy
 ```
 
 The trusted delivery runner request was created with status `requested` and expected changed files limited to the temp repo's `src/feature.py`. The temp repo still had only its initial commit, proving that the dogfood did not commit or push.
+
+The live DevOrchestrator documentation/test delivery for this dogfood was handed to the trusted runner as `REQ-0018`. The scheduled trusted runner later completed it as commit `229ffa4937a9fc16fd152a0fec43400f5cdc6320` and pushed it to `origin/main`.
 
 ## What Worked
 
