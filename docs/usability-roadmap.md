@@ -57,6 +57,8 @@ TASK-DEVO-074 starts that layer with deterministic Project Brief and Blueprint a
 
 TASK-DEVO-131 adds the next CLI usability bridge: evidence inspection, explicit queue-worker continuation through worker report/review/validation gates, and trusted delivery runner request creation without running Codex, validation, queue completion, commit, or push.
 
+TASK-DEVO-132 dogfoods that bridge end to end in a temp project and finds that the core safety path works, while the remaining friction is the number and ordering of operator commands.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

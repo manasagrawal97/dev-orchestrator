@@ -17,7 +17,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 ## Immediate Planned Tasks
 
 - TASK-DEVO-131: worker-result continuation and delivery-request handoff - completed
-- Next: continue Phase 2 CLI dogfood, then add UI approval and queue controls only after the CLI path stays comfortable
+- TASK-DEVO-132: queue-worker assisted end-to-end dogfood - completed
+- Next: queue-worker operator ergonomics polish, then UI approval and queue controls only after the CLI path stays comfortable
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
@@ -56,7 +57,7 @@ TASK-DEVO-124 records the Phase 1 MVP checkpoint in `docs/phase-1-mvp-checkpoint
 
 ### Phase 2 Autonomy Roadmap - Active
 
-TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. TASK-DEVO-126 adds one-shot trusted runner watch mode. TASK-DEVO-127 adds scheduled/background trusted runner management with read-only planning/status, dry-run install, disabled-by-default real installation, and explicit enable/disable/run-now/remove confirmations. TASK-DEVO-128 adds bounded batch execution policies as approval contracts for future queue work. TASK-DEVO-129 adds the first policy-gated queue worker loop, limited to one item and pausing at handoff/worker readiness. TASK-DEVO-130 adds queue-worker lifecycle controls for status, pause, resume, fail, retry, cancel, missing evidence, and policy/item rechecks without adding real Codex automation or delivery bypasses. TASK-DEVO-131 adds evidence-gated queue-worker continuation plus trusted delivery runner request creation after completed worker report, passed review, and passed validation evidence. Phase 2 should continue with CLI dogfood and carefully gated UI controls, not direct AI-agent workers or sandbox commit/push.
+TASK-DEVO-125 adds `docs/phase-2-autonomy-roadmap.md`. TASK-DEVO-126 adds one-shot trusted runner watch mode. TASK-DEVO-127 adds scheduled/background trusted runner management with read-only planning/status, dry-run install, disabled-by-default real installation, and explicit enable/disable/run-now/remove confirmations. TASK-DEVO-128 adds bounded batch execution policies as approval contracts for future queue work. TASK-DEVO-129 adds the first policy-gated queue worker loop, limited to one item and pausing at handoff/worker readiness. TASK-DEVO-130 adds queue-worker lifecycle controls for status, pause, resume, fail, retry, cancel, missing evidence, and policy/item rechecks without adding real Codex automation or delivery bypasses. TASK-DEVO-131 adds evidence-gated queue-worker continuation plus trusted delivery runner request creation after completed worker report, passed review, and passed validation evidence. TASK-DEVO-132 dogfoods that assisted path in a temp project and shows the next gap is command/order ergonomics, not delivery safety. Phase 2 should continue with CLI dogfood and carefully gated UI controls, not direct AI-agent workers or sandbox commit/push.
 
 ## Readiness Target
 

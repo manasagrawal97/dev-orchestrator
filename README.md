@@ -257,6 +257,8 @@ devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "su
 
 Queue-worker run artifacts are stored under `workspace/projects/<project>/planning/queue-worker-runs/`. The v1 loop checks the approved policy, selects at most one eligible pending/running queue item, creates or reuses the Codex handoff, creates or reuses a manual/assisted Codex worker run record, records what happened, and pauses at `waiting_worker` or a blocker state. Continuation remains evidence-gated: a completed worker report moves the run to review, a passed review moves it to validation, passed validation makes it ready for a trusted delivery runner request, and `queue-worker-request-delivery` writes that request without running it. These commands do not run real Codex, call AI APIs, run validation, execute runner-watch, complete queue items, stage, commit, push, or modify target projects.
 
+The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md).
+
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:
 
 ```powershell

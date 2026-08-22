@@ -1599,6 +1599,80 @@ def test_queue_worker_request_delivery_creates_runner_request_without_commit_or_
     assert _git(project_path, "log", "--oneline", "-n", "1", capture=True).stdout.strip().endswith("initial")
 
 
+def test_queue_worker_assisted_e2e_flow(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+
+    _create_queue_worker_run(tmp_path)
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+
+    _import_worker_report(tmp_path)
+    waiting_review = runner.invoke(
+        app,
+        ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"],
+        terminal_width=240,
+    )
+    assert waiting_review.exit_code == 0, waiting_review.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_review"
+
+    _record_worker_review(status="reviewed_passed")
+    waiting_validation = runner.invoke(
+        app,
+        ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"],
+        terminal_width=240,
+    )
+    assert waiting_validation.exit_code == 0, waiting_validation.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_validation"
+
+    _attach_validation(status="passed")
+    ready = runner.invoke(
+        app,
+        ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"],
+        terminal_width=240,
+    )
+    assert ready.exit_code == 0, ready.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "ready_for_delivery_request"
+
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('assisted dogfood')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-request-delivery",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--message",
+            "feat: assisted queue worker dogfood",
+            "--note",
+            "TASK-DEVO-132 sandbox dogfood.",
+            "--confirm-delivery-request",
+        ],
+        terminal_width=240,
+    )
+
+    assert requested.exit_code == 0, requested.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert request is not None
+    assert run.status == "delivery_requested"
+    assert run.delivery_request_id == "REQ-0001"
+    assert request.status == "requested"
+    assert request.expected_changed_files == ["src/feature.py"]
+    assert _git(project_path, "log", "--oneline", "-n", "1", capture=True).stdout.strip().endswith("initial")
+
+
 def test_queue_worker_plan_read_only_does_not_mutate_target_repo(tmp_path: Path, monkeypatch) -> None:
     _workspace_path, project_path = _workspace(tmp_path, monkeypatch)
     _create_execution_policy(tmp_path, allowed_task="T001")
