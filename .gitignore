@@ -8,6 +8,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Explicit pytest basetemp folders created at repo root
+/pt-*/
+
 # Virtual environments
 .venv/
 venv/

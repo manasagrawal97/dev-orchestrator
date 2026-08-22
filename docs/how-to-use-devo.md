@@ -782,3 +782,9 @@ Do not stage or commit generated runtime artifacts unless a task explicitly says
 - backup folders
 - restore-test folders
 - target project files outside the approved task scope
+
+Use explicit pytest basetemp folders such as `--basetemp=E:\DevOrchestrator\pt-<task>-full` during validation. Root `pt-*` folders are generated temp output and ignored by Git, but trusted delivery should proceed only after leftover generated folders are removed when possible:
+
+```powershell
+Remove-Item -Recurse -Force .\pt-* -ErrorAction SilentlyContinue
+```

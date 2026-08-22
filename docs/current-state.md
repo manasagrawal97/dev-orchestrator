@@ -39,6 +39,7 @@ The working loop is:
 ## Latest State
 
 - Latest completed implementation task: TASK-DEVO-130 Queue worker continuation, pause/resume, and failure handling
+- Latest small reliability task: TASK-DEVO-130A ignores root pytest `pt-*` temp folders and documents cleanup before trusted delivery.
 - Latest docs/design task: TASK-DEVO-125 Phase 2 autonomy roadmap and trusted execution model
 - Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-099 first real Codex supervised dry-run report
