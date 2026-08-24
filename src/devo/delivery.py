@@ -605,6 +605,11 @@ class DeliveryRunnerScheduleStatus(BaseModel):
     last_action: str = "status"
     last_action_result: str = "not_checked"
     health: str = "unknown"
+    process_user: str | None = None
+    working_directory: str | None = None
+    task_query_source: str = "unknown"
+    task_query_result: str | None = None
+    environment_note: str | None = None
     warnings: list[str] = Field(default_factory=list)
     repair_commands: list[str] = Field(default_factory=list)
     next_action: str
@@ -2116,6 +2121,7 @@ def install_delivery_runner_schedule(
         last_action=config.last_action,
         last_action_result=action_result,
         health=health,
+        **_schedule_environment_context(task_query_source="install", task_query_result=action_result),
         warnings=warnings,
         repair_commands=repair_commands,
         next_action=config.next_action,
@@ -2182,6 +2188,11 @@ def get_delivery_runner_schedule_status(
             latest_watch_pushed=latest_watch.pushed if latest_watch else None,
             last_action_result="missing_config",
             health=health,
+            **_schedule_environment_context(
+                task_query_source="config",
+                task_query_result="missing_config",
+                environment_note="No scheduled runner config exists for this project.",
+            ),
             repair_commands=repair_commands,
             next_action=(
                 f"Plan or install scheduled runner: devo delivery runner-schedule-plan --project {project_name} "
@@ -2195,16 +2206,28 @@ def get_delivery_runner_schedule_status(
     next_run: str | None = None
     last_result: str | None = None
     action_result = config.last_action_result
+    task_query_source = "unknown"
+    environment_note: str | None = None
     if os.name != "nt":
         warnings.append("Windows Task Scheduler status is unavailable on non-Windows systems.")
         installed = None
+        task_query_source = "unsupported_platform"
+        environment_note = "This process is not running on Windows, so it cannot query Windows scheduled tasks."
     else:
+        task_query_source = "schtasks.exe"
         result = _run_scheduler_command(["schtasks.exe", "/Query", "/TN", config.task_name, "/FO", "LIST", "/V"])
         if result.returncode != 0:
             installed = False
             if config.enabled:
                 enabled = False
                 warnings.append("Schedule metadata says enabled, but the Windows scheduled task is missing.")
+                warnings.append("Possible cause: scheduled task is missing, or this process cannot see Windows scheduled tasks.")
+                environment_note = (
+                    "Task lookup could not confirm the scheduled task. Verify from normal PowerShell before reinstalling; "
+                    "Codex/sandbox may have restricted scheduled-task visibility."
+                )
+            else:
+                environment_note = "Task lookup could not confirm the scheduled task."
             action_result = result.stderr.strip() or result.stdout.strip() or "scheduled task not found"
         else:
             installed = True
@@ -2233,6 +2256,11 @@ def get_delivery_runner_schedule_status(
         last_action="status",
         last_action_result=action_result,
         health=health,
+        **_schedule_environment_context(
+            task_query_source=task_query_source,
+            task_query_result=action_result,
+            environment_note=environment_note,
+        ),
         warnings=warnings,
         repair_commands=repair_commands,
         next_action=_schedule_next_action(project_name, installed=installed, enabled=enabled),
@@ -2289,6 +2317,7 @@ def run_now_delivery_runner_schedule(
         last_action="run_now",
         last_action_result=action_result,
         health=health,
+        **_schedule_environment_context(task_query_source="schtasks.exe", task_query_result=action_result),
         warnings=[] if result.returncode == 0 else [action_result],
         repair_commands=repair_commands,
         next_action=(
@@ -2346,6 +2375,7 @@ def remove_delivery_runner_schedule(
         last_action="remove",
         last_action_result=action_result,
         health=health,
+        **_schedule_environment_context(task_query_source="schtasks.exe", task_query_result=action_result),
         warnings=warnings,
         repair_commands=repair_commands,
         next_action=updated_config.next_action,
@@ -3322,6 +3352,7 @@ def _change_runner_schedule_state(
         last_action=action,
         last_action_result=action_result,
         health=health,
+        **_schedule_environment_context(task_query_source="schtasks.exe", task_query_result=action_result),
         warnings=warnings,
         repair_commands=repair_commands,
         next_action=updated_config.next_action,
@@ -3369,6 +3400,21 @@ def _schedule_repair_commands(project_name: str, *, health: str) -> list[str]:
     if health == "disabled":
         return [enable, status]
     return []
+
+
+def _schedule_environment_context(
+    *,
+    task_query_source: str,
+    task_query_result: str | None,
+    environment_note: str | None = None,
+) -> dict[str, str | None]:
+    return {
+        "process_user": getpass.getuser(),
+        "working_directory": str(Path.cwd()),
+        "task_query_source": task_query_source,
+        "task_query_result": task_query_result,
+        "environment_note": environment_note,
+    }
 
 
 def _finish_runner_run(

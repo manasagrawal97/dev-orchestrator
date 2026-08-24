@@ -71,6 +71,8 @@ TASK-DEVO-138 proves the polished loop against a disposable repo with a real loc
 
 TASK-DEVO-139 resolves the scheduled runner status part: `runner-schedule-status` and `runner-schedule-doctor` now classify scheduler health, detect enabled-metadata/task-missing drift, print repair commands, and keep direct trusted runner delivery as the safe fallback.
 
+TASK-DEVO-139A adds environment context to that output so a restricted Codex/sandbox process can report drift without implying the normal PowerShell scheduler must be reinstalled. Normal PowerShell health evidence is the deciding signal before TASK-DEVO-140.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

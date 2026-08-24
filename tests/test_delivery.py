@@ -1064,6 +1064,8 @@ def test_delivery_runner_schedule_status_reports_healthy_when_installed_and_enab
     assert "Installed: True" in result.output
     assert "Enabled: True" in result.output
     assert "Health: healthy" in result.output
+    assert "Task query source: schtasks.exe" in result.output
+    assert "Environment note: none" in result.output
     assert "Repair commands:" not in result.output
 
 
@@ -1141,6 +1143,16 @@ def test_delivery_runner_schedule_status_reports_drift_when_enabled_metadata_tas
     assert "Enabled: False" in result.output
     assert "Health: drift" in result.output
     assert "metadata says enabled" in result.output
+    assert "Possible cause: scheduled task is missing, or this process cannot see Windows scheduled tasks." in result.output
+    assert "Process user:" in result.output
+    assert "Working directory:" in result.output
+    assert "Task query source: schtasks.exe" in result.output
+    assert "Task query result: ERROR: The system cannot find the file specified." in result.output
+    assert "Codex/sandbox may have restricted scheduled-task visibility" in result.output
+    assert "Normal PowerShell verification:" in result.output
+    assert "runner-schedule-status --project sample" in result.output
+    assert "runner-schedule-doctor --project sample" in result.output
+    assert "do not reinstall repeatedly" in result.output
     assert "runner-schedule-install --project sample" in result.output
     assert "runner-schedule-enable --project sample --confirm-enable" in result.output
 
@@ -1193,6 +1205,47 @@ def test_delivery_runner_schedule_doctor_reports_health_read_only(tmp_path: Path
     assert "Health: not_installed" in result.output
     assert "Read-only: no scheduler changes were made." in result.output
     assert "Doctor result: scheduled task is not installed." in result.output
+    assert after == before
+
+
+def test_delivery_runner_schedule_doctor_reports_drift_environment_guidance(tmp_path: Path, monkeypatch) -> None:
+    workspace, _repo = _workspace(tmp_path, monkeypatch)
+    import devo.delivery as delivery_module
+
+    monkeypatch.setattr(delivery_module.os, "name", "nt", raising=False)
+    installed = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-schedule-install",
+            "--project",
+            "sample",
+            "--approver",
+            "Manas",
+            "--enable",
+            "--dry-run",
+            "--confirm-install",
+        ],
+        terminal_width=240,
+    )
+    assert installed.exit_code == 0, installed.output
+    before = sorted(path.relative_to(workspace).as_posix() for path in workspace.rglob("*") if path.is_file())
+
+    def fake_scheduler(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 1, "", "ERROR: Access is denied.")
+
+    monkeypatch.setattr("devo.delivery._run_scheduler_command", fake_scheduler)
+
+    result = runner.invoke(app, ["delivery", "runner-schedule-doctor", "--project", "sample"], terminal_width=240)
+
+    after = sorted(path.relative_to(workspace).as_posix() for path in workspace.rglob("*") if path.is_file())
+    assert result.exit_code == 0, result.output
+    assert "Runner schedule doctor" in result.output
+    assert "Health: drift" in result.output
+    assert "Task query result: ERROR: Access is denied." in result.output
+    assert "Verify from normal PowerShell before reinstalling" in result.output
+    assert "Normal PowerShell verification:" in result.output
+    assert "Doctor result: scheduler metadata drift detected" in result.output
     assert after == before
 
 

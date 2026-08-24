@@ -769,7 +769,7 @@ Use these normal-PowerShell commands only when Manas is ready to manage the live
 .\.venv\Scripts\devo.exe delivery runner-schedule-remove --project <name> --confirm-remove
 ```
 
-`runner-schedule-status` prints a scheduler health value: `healthy`, `disabled`, `not_installed`, `drift`, or `unknown`. `drift` means Devo's saved metadata says the runner is enabled, but the Windows scheduled task is missing. In `drift` or `not_installed` states, install and enable the schedule from normal PowerShell before relying on auto-delivery. If the schedule is unhealthy, direct trusted runner delivery remains safe:
+`runner-schedule-status` prints a scheduler health value: `healthy`, `disabled`, `not_installed`, `drift`, or `unknown`. `drift` means Devo's saved metadata says the runner is enabled, but the current process cannot confirm the Windows scheduled task. The task may be missing, or the current process may not be able to see Windows scheduled tasks. Verify from normal PowerShell before reinstalling repeatedly. If normal PowerShell reports healthy while Codex/sandbox reports drift, treat it as environment visibility mismatch and use direct trusted runner delivery as fallback when needed:
 
 ```powershell
 .\.venv\Scripts\devo.exe delivery runner-run --project <name> --request <REQ-ID> --approver "Manas" --confirm-runner-delivery

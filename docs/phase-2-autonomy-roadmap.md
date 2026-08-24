@@ -160,6 +160,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, AI/API calls, UI controls, daemon changes beyond existing schedule commands, direct commit/push, or delivery safety bypasses.
 - Status: Completed. See `docs/dogfood/task-devo-139-scheduled-runner-health.md`.
 
+### TASK-DEVO-139A: Scheduler Health Environment Context
+
+- Goal: Clarify when scheduler drift is a real missing task versus a restricted process visibility mismatch.
+- Scope: print process user, working directory, task query source/result, environment note, and normal-PowerShell verification guidance for drift.
+- Not in scope: scheduler reinstall, approved queue auto-run, real Codex execution, UI controls, or delivery safety changes.
+- Status: Completed. See `docs/dogfood/task-devo-139a-scheduler-environment-context.md`.
+
 ### TASK-DEVO-135: Queue-Worker Evidence Intake
 
 - Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.
@@ -459,6 +466,6 @@ Do not start with API/model integration. First make the trusted executor and que
 
 Recommended next task: TASK-DEVO-140 approved queue auto-run v1.
 
-Start it only after scheduled runner health is `healthy`, or with direct trusted `runner-run` accepted as the delivery fallback for the dogfood.
+Start it only after normal PowerShell reports scheduled runner health as `healthy`, or with direct trusted `runner-run` accepted as the delivery fallback for the dogfood. If Codex/sandbox reports drift while normal PowerShell is healthy, record that as environment visibility mismatch instead of reinstalling repeatedly.
 
 It removes the remaining manual `runner-run` command and is the smallest practical step toward zero manual delivery. It also respects the key Phase 2 architecture decision: delivery happens from trusted local Windows user context, while Codex/sandbox prepares bounded requests and evidence.

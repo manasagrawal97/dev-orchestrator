@@ -2455,6 +2455,11 @@ def _print_delivery_runner_schedule_status(status: DeliveryRunnerScheduleStatus)
     console.print(f"Last run: {status.last_run or 'unknown'}")
     console.print(f"Next run: {status.next_run or 'unknown'}")
     console.print(f"Last result: {status.last_result or 'unknown'}")
+    console.print(f"Process user: {status.process_user or 'unknown'}")
+    console.print(f"Working directory: {status.working_directory or 'unknown'}", soft_wrap=True)
+    console.print(f"Task query source: {status.task_query_source}")
+    console.print(f"Task query result: {status.task_query_result or 'unknown'}", soft_wrap=True)
+    console.print(f"Environment note: {status.environment_note or 'none'}", soft_wrap=True)
     console.print(f"Latest watch: {status.latest_watch_id or 'none'} | {status.latest_watch_status or 'unknown'}")
     console.print(f"Latest watch request: {status.latest_watch_request_id or 'none'}")
     console.print(f"Latest watch commit: {status.latest_watch_commit_hash or 'none'}")
@@ -2466,6 +2471,15 @@ def _print_delivery_runner_schedule_status(status: DeliveryRunnerScheduleStatus)
     else:
         console.print("  none")
     if status.repair_commands:
+        if status.health == "drift":
+            console.print("Normal PowerShell verification:")
+            console.print(f"  .\\.venv\\Scripts\\devo.exe delivery runner-schedule-status --project {status.project}")
+            console.print(f"  .\\.venv\\Scripts\\devo.exe delivery runner-schedule-doctor --project {status.project}")
+            console.print(
+                "  If normal PowerShell is healthy, treat this as an environment visibility mismatch and do not reinstall repeatedly.",
+                soft_wrap=True,
+            )
+            console.print("  If normal PowerShell is also unhealthy, repair with install + enable.")
         console.print("Repair commands:")
         for command in status.repair_commands:
             console.print(f"  {command}", soft_wrap=True)
