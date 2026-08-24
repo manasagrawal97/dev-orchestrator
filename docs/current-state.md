@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed dogfood task: TASK-DEVO-132 Queue-worker assisted end-to-end dogfood
+- Latest completed dogfood task: TASK-DEVO-143 Approved queue auto-run 3-task assisted dogfood
 - Latest queue-worker ergonomics task: TASK-DEVO-135 Queue-worker evidence intake and policy usability hardening
 - Latest completed implementation task: TASK-DEVO-131 Queue worker evidence continuation and delivery-request handoff
 - Latest small reliability task: TASK-DEVO-130A ignores root pytest `pt-*` temp folders and documents cleanup before trusted delivery.
@@ -169,6 +169,7 @@ The working loop is:
 - TASK-DEVO-140 adds `devo project approved-queue-run --project <project> --policy <POL-ID> --confirm-auto-run`. The command previews policy readiness first, requires explicit confirmation for mutation, supports `--dry-run`, checks trusted runner scheduler health by default, and wraps the existing one-task queue-worker loop without running real Codex, validation, runner-watch, commit, push, or parallel work. See `docs/dogfood/task-devo-140-approved-queue-auto-run-v1.md`.
 - TASK-DEVO-141 adds queue-worker evidence schema v1 for worker result, review, and validation records. Evidence records now store evidence id, queue-worker run, queue item/task, evidence type/status, summary, changed files, commands run, artifact path, risks, recommended next action, note, timestamp, and recorder while keeping older evidence artifacts readable. See `docs/dogfood/task-devo-141-worker-result-evidence-schema-v1.md`.
 - TASK-DEVO-142 adds a lightweight queue-worker handoff checklist v1. `queue-worker-handoff-show` prints objective, allowed/forbidden scope, relevant files, acceptance criteria, required tests, expected worker result fields, risk notes, and the worker-result evidence command before implementation starts. See `docs/dogfood/task-devo-142-lightweight-handoff-checklist-v1.md`.
+- TASK-DEVO-143 dogfoods `approved-queue-run`, the handoff checklist, worker/review/validation evidence intake, trusted runner delivery, and next-item startup across three disposable queued tasks. See `docs/dogfood/task-devo-143-approved-queue-run-dogfood.md`. The dogfood also found a future recovery-polish gap: if a trusted runner commit succeeds but push fails, Devo needs a clearer push-only resume path.
 
 ## Readiness Estimate
 

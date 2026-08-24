@@ -211,3 +211,9 @@ Deliver TASK-DEVO-124, then create the phase-1-mvp tag from normal PowerShell.
 ```
 
 Phase 1 capability work should pause until the checkpoint commit is delivered. Post-checkpoint work should come from `docs/remaining-roadmap.md` and respect the Phase 2 boundary.
+
+## 12. Post-Checkpoint Dogfood Note
+
+TASK-DEVO-143 later exercised the approved queue automation path across three disposable queued tasks. The report in `docs/dogfood/task-devo-143-approved-queue-run-dogfood.md` confirms that `approved-queue-run`, the handoff checklist, structured evidence intake, trusted runner delivery, delivery completion detection, and next-item startup are usable for small low-risk assisted batches.
+
+The main remaining friction is command count and partial delivery recovery after a runner commit succeeds but push fails. Those are post-checkpoint polish items, not Phase 1 blockers.
