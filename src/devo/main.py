@@ -139,6 +139,7 @@ from .project_planning import (
     CodexWorkerReport,
     ExecutionPolicyCheckResult,
     QueueWorkerEvidenceRecordResult,
+    QueueWorkerHandoffChecklist,
     QueueWorkerLoopResult,
     QueueWorkerPlan,
     QueueWorkerRun,
@@ -184,6 +185,7 @@ from .project_planning import (
     get_backlog_task,
     get_codex_queue_worker_status,
     get_codex_worker_flow_summary,
+    get_queue_worker_handoff_checklist,
     get_queue_worker_status_report,
     get_queue_item_completion_readiness,
     get_queue_next_item,
@@ -721,11 +723,51 @@ def _print_queue_worker_run(run: QueueWorkerRun, json_path: Path | None = None, 
         console.print("Skipped items:")
         for item in run.skipped_queue_item_summaries:
             console.print(f"  - {item}", soft_wrap=True)
+    if run.handoff_checklist:
+        _print_queue_worker_handoff_checklist(run.handoff_checklist, project_name=run.project, run_id=run.run_id)
+    else:
+        console.print(f"Handoff checklist: devo project queue-worker-handoff-show --project {run.project} --run {run.run_id}")
     console.print(f"Next action: {run.next_action}", soft_wrap=True)
     if json_path:
         console.print(f"JSON: {_named_path(json_path)}")
     if markdown_path:
         console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+def _print_queue_worker_handoff_checklist(
+    checklist: QueueWorkerHandoffChecklist,
+    *,
+    project_name: str,
+    run_id: str,
+) -> None:
+    console.print("[bold]Handoff checklist[/bold]")
+    console.print(f"Objective: {checklist.objective}", soft_wrap=True)
+    console.print("Allowed scope:")
+    for item in checklist.allowed_scope or ["Not specified in current task/policy."]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Forbidden scope:")
+    for item in checklist.forbidden_scope or ["Not specified in current task/policy."]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Relevant files:")
+    for item in checklist.relevant_files or ["Not specified in current task/policy."]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Acceptance criteria:")
+    for item in checklist.acceptance_criteria or ["Not specified in current task/policy."]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Required tests:")
+    for item in checklist.required_tests or ["Record validation evidence after implementation."]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Expected worker result:")
+    for item in checklist.expected_worker_result_format:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print("Risk notes:")
+    for item in checklist.risk_notes or ["Not specified in current task/policy."]:
+        console.print(f"  - {item}", soft_wrap=True)
+    console.print(f"Next action: {checklist.next_action}", soft_wrap=True)
+    console.print(
+        f"Record command: .\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {project_name} --run {run_id} --status completed --summary \"...\" --files-changed \"...\" --commands-run \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+        soft_wrap=True,
+    )
 
 
 def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
@@ -4299,6 +4341,23 @@ def latest_queue_worker_run_command(
         console.print(f"Suggested next command: devo project queue-worker-plan --project {project_name} --policy <POL-ID>")
         return
     _print_queue_worker_run(runs[0])
+
+
+@project_app.command("queue-worker-handoff-show")
+def show_queue_worker_handoff_checklist_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+) -> None:
+    """Show the lightweight handoff checklist for one queue-worker run."""
+    project_name = _resolve_project(project_name)
+    try:
+        checklist = get_queue_worker_handoff_checklist(project_name, run_id)
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        console.print(f"Suggested next command: devo project queue-worker-list --project {project_name}")
+        raise typer.Exit(1) from exc
+    _print_queue_worker_handoff_checklist(checklist, project_name=project_name, run_id=run_id)
+    console.print("Read-only: no target project files, worker execution, validation, delivery, commit, or push was run.")
 
 
 @project_app.command("queue-worker-status")

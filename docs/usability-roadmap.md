@@ -77,6 +77,8 @@ TASK-DEVO-140 adds `devo project approved-queue-run` as the first approved queue
 
 TASK-DEVO-141 makes the evidence intake layer more uniform: worker result, review, and validation records now share evidence id, queue-worker run, queue item/task, status, summary, files, commands, risks, recommended next action, artifact path, note, timestamp, and recorder fields. Older evidence remains readable, but missing or unknown status is never treated as success. AI reel-inspired ideas such as ECC comparison, voice/Jarvis/gesture controls, broad parallel workers, and least-privilege role permissions remain future spikes only.
 
+TASK-DEVO-142 adds the lightweight handoff checklist at the worker boundary. `queue-worker-handoff-show` gives the operator objective, scope, relevant files, acceptance criteria, required tests, expected worker-result evidence fields, risk notes, and the next evidence command before implementation starts. It is not a full role contract system and does not run real Codex, validation, delivery, or queue completion.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

@@ -399,6 +399,20 @@ class QueueWorkerPlan(BaseModel):
     next_action: str = ""
 
 
+class QueueWorkerHandoffChecklist(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    objective: str = "Not specified in current task/policy."
+    allowed_scope: list[str] = Field(default_factory=list)
+    forbidden_scope: list[str] = Field(default_factory=list)
+    relevant_files: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    required_tests: list[str] = Field(default_factory=list)
+    expected_worker_result_format: list[str] = Field(default_factory=list)
+    risk_notes: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
 class QueueWorkerRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -421,6 +435,7 @@ class QueueWorkerRun(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     skipped_queue_item_summaries: list[str] = Field(default_factory=list)
+    handoff_checklist: QueueWorkerHandoffChecklist | None = None
     policy_check_summary: str = ""
     selection_reason: str = ""
     pause_reason: str = ""
@@ -2253,10 +2268,107 @@ def run_queue_worker_once(project_name: str, policy_id: str, *, approver: str | 
             "selected_worker_run_id": worker_run.worker_run_id,
             "steps_run": steps,
             "pause_reason": "waiting_worker",
-            "next_action": f"Use devo worker codex run-show --project {project_name} --run {worker_run.worker_run_id}, then give the generated handoff to Codex and import/review the result before queue completion.",
+            "next_action": f"Review the handoff checklist: devo project queue-worker-handoff-show --project {project_name} --run {run.run_id}",
         }
     )
+    updated = updated.model_copy(update={"handoff_checklist": build_queue_worker_handoff_checklist(project_name, updated, workspace_root=root)})
     return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def get_queue_worker_handoff_checklist(
+    project_name: str,
+    run_id: str,
+    workspace_root: Path | None = None,
+) -> QueueWorkerHandoffChecklist:
+    root = workspace_root or get_workspace_root()
+    run = _require_queue_worker_run(project_name, run_id, root)
+    return build_queue_worker_handoff_checklist(project_name, run, workspace_root=root)
+
+
+def build_queue_worker_handoff_checklist(
+    project_name: str,
+    run: QueueWorkerRun,
+    workspace_root: Path | None = None,
+) -> QueueWorkerHandoffChecklist:
+    root = workspace_root or get_workspace_root()
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=root) if run.policy_id else None
+    queue = load_execution_queue(project_name, run.queue_id, workspace_root=root) if run.queue_id else None
+    queue_item = _find_queue_item(queue.items, run.selected_queue_item_id) if queue and run.selected_queue_item_id else None
+    task = _try_get_backlog_task(project_name, run.selected_task_id, root) if run.selected_task_id else None
+
+    fallback = "Not specified in current task/policy."
+    objective = fallback
+    if queue_item:
+        objective = f"{queue_item.task_id}: {queue_item.title}"
+    elif task:
+        objective = f"{task.id}: {task.title}"
+    elif run.selected_task_id:
+        objective = run.selected_task_id
+
+    allowed_scope = _dedupe(
+        [
+            *(task.allowed_scope if task else []),
+            *([f"Allowed file pattern: {pattern}" for pattern in policy.allowed_file_patterns] if policy else []),
+            *([f"Only queue item {queue_item.item_id} / task {queue_item.task_id}."] if queue_item else []),
+        ]
+    ) or [fallback]
+    forbidden_scope = _dedupe(
+        [
+            *(task.forbidden_scope if task else []),
+            *([f"Forbidden file pattern: {pattern}" for pattern in policy.forbidden_file_patterns] if policy else []),
+            "Do not run real Codex CLI automatically.",
+            "Do not call AI/model APIs.",
+            "Do not bypass worker, review, validation, or trusted delivery gates.",
+            "Do not commit or push from worker execution.",
+        ]
+    ) or [fallback]
+    relevant_files = _dedupe([*(policy.allowed_file_patterns if policy else []), *(task.allowed_scope if task else [])]) or [fallback]
+    acceptance_criteria = _dedupe(
+        [
+            *(queue_item.acceptance_criteria if queue_item else []),
+            *(task.acceptance_criteria if task else []),
+        ]
+    ) or [fallback]
+    required_tests = _dedupe(
+        [
+            *([f"Registered validation command: {command}" for command in policy.validation_commands] if policy else []),
+            *(queue_item.validation_expectations if queue_item else []),
+            *(task.validation_expectations if task else []),
+        ]
+    ) or ["Record validation evidence after implementation."]
+    risk_notes = _dedupe(
+        [
+            *([f"Policy risk level: {policy.risk_level}"] if policy and policy.risk_level else []),
+            *(policy.notes if policy else []),
+            *(task.notes if task else []),
+        ]
+    )
+    expected_worker_result_format = [
+        "status: completed, failed, blocked, or usage_limit",
+        "summary",
+        "changed files",
+        "commands/tests run",
+        "risks",
+        "recommended next action",
+        "artifact path if any",
+        "recorded by",
+        "timestamp",
+    ]
+    return QueueWorkerHandoffChecklist(
+        objective=objective,
+        allowed_scope=allowed_scope,
+        forbidden_scope=forbidden_scope,
+        relevant_files=relevant_files,
+        acceptance_criteria=acceptance_criteria,
+        required_tests=required_tests,
+        expected_worker_result_format=expected_worker_result_format,
+        risk_notes=risk_notes,
+        next_action=(
+            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {project_name} "
+            f"--run {run.run_id} --status completed --summary \"...\" --files-changed \"...\" "
+            "--commands-run \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record"
+        ),
+    )
 
 
 def get_queue_worker_status_report(project_name: str, workspace_root: Path | None = None) -> QueueWorkerStatusReport:
@@ -5470,6 +5582,7 @@ def render_queue_worker_run_markdown(run: QueueWorkerRun) -> str:
     _append_list_section(lines, "Blockers", run.blockers)
     _append_list_section(lines, "Warnings", run.warnings)
     _append_list_section(lines, "Skipped Queue Items", run.skipped_queue_item_summaries)
+    _append_queue_worker_handoff_checklist_section(lines, run.handoff_checklist)
     lines.extend(
         [
             "## Next Action",
@@ -7676,7 +7789,8 @@ def _queue_worker_next_action_for_run(project_name: str, run: QueueWorkerRun, ev
         return f"Create a worker run from the handoff: devo worker codex run-create --project {project_name} --handoff {run.selected_handoff_id}"
     if not evidence.worker_report_imported:
         return (
-            f"Record worker result evidence after manual/Codex work: devo project queue-worker-record-worker-result --project {project_name} "
+            f"Review the handoff checklist first: devo project queue-worker-handoff-show --project {project_name} --run {run.run_id}. "
+            f"Then record worker result evidence after manual/Codex work: devo project queue-worker-record-worker-result --project {project_name} "
             f"--run {run.run_id} --status completed --summary \"<summary>\" --confirm-record"
         )
     if not evidence.worker_review_exists:
@@ -9039,6 +9153,22 @@ def _append_list_section(lines: list[str], title: str, values: list[str]) -> Non
     else:
         lines.append("No items recorded.")
     lines.append("")
+
+
+def _append_queue_worker_handoff_checklist_section(lines: list[str], checklist: QueueWorkerHandoffChecklist | None) -> None:
+    lines.extend(["## Handoff Checklist", ""])
+    if not checklist:
+        lines.extend(["No lightweight handoff checklist recorded.", ""])
+        return
+    lines.extend(["### Objective", "", checklist.objective or "Not specified in current task/policy.", ""])
+    _append_list_section(lines, "Allowed Scope", checklist.allowed_scope)
+    _append_list_section(lines, "Forbidden Scope", checklist.forbidden_scope)
+    _append_list_section(lines, "Relevant Files", checklist.relevant_files)
+    _append_list_section(lines, "Acceptance Criteria", checklist.acceptance_criteria)
+    _append_list_section(lines, "Required Tests", checklist.required_tests)
+    _append_list_section(lines, "Expected Worker Result", checklist.expected_worker_result_format)
+    _append_list_section(lines, "Risk Notes", checklist.risk_notes)
+    lines.extend(["### Next Action", "", checklist.next_action or "Record worker result evidence after implementation.", ""])
 
 
 def _append_queue_worker_evidence_record_section(

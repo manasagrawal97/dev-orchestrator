@@ -315,7 +315,7 @@ def test_project_overview_includes_queue_worker_run_summary(tmp_path: Path, monk
     assert overview.latest_queue_worker_run_delivery_request_id is None
     assert overview.latest_queue_worker_run_delivery_request_status is None
     assert overview.latest_queue_worker_run_next_action is not None
-    assert "run-show" in overview.latest_queue_worker_run_next_action
+    assert "queue-worker-handoff-show" in overview.latest_queue_worker_run_next_action
 
 
 def test_project_overview_includes_worker_run_summary(tmp_path: Path, monkeypatch) -> None:

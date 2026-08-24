@@ -182,6 +182,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, AI/API calls, validation execution, parallel workers, ECC integration, voice/Jarvis/gesture controls, least-privilege role permissions, or broader autonomous multi-task execution.
 - Status: Completed. Existing evidence intake commands now store schema v1 records while older artifacts remain readable and non-success statuses remain non-advancing.
 
+### TASK-DEVO-142: Lightweight Handoff Checklist V1
+
+- Goal: Make the worker boundary clearer before manual/Codex-assisted implementation starts.
+- Scope: derive objective, allowed scope, forbidden scope, relevant files, acceptance criteria, required tests, expected worker result fields, risk notes, and next evidence command from existing queue, task, and policy artifacts.
+- Not in scope: real Codex-worker execution, a full agent-role contract system, least-privilege role permissions, AI/API calls, parallel workers, or delivery safety bypasses.
+- Status: Completed. `queue-worker-handoff-show` is a read-only checklist view, and queue-worker run/show output exposes the same lightweight checklist.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -486,8 +493,8 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-140 approved queue auto-run v1.
+Recommended next task: TASK-DEVO-143 live 3-5 task assisted queue dogfood.
 
 Start it only after normal PowerShell reports scheduled runner health as `healthy`, or with direct trusted `runner-run` accepted as the delivery fallback for the dogfood. If Codex/sandbox reports drift while normal PowerShell is healthy, record that as environment visibility mismatch instead of reinstalling repeatedly.
 
-It removes the remaining manual `runner-run` command and is the smallest practical step toward zero manual delivery. It also respects the key Phase 2 architecture decision: delivery happens from trusted local Windows user context, while Codex/sandbox prepares bounded requests and evidence.
+It should prove the current approved queue -> checklist -> evidence schema -> review -> validation -> trusted delivery loop over a small multi-item batch before broader queue/UI controls.

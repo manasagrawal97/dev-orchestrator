@@ -29,6 +29,7 @@ from devo.project_planning import (
     list_batch_approvals,
     list_execution_queues,
     list_queue_worker_runs,
+    get_queue_worker_handoff_checklist,
     load_batch_approval,
     load_codex_handoff,
     load_codex_worker_report,
@@ -1203,7 +1204,74 @@ def test_queue_worker_run_creates_artifacts_handoff_and_worker_without_completin
     queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
     assert queue is not None
     assert queue.items[0].status == "pending"
+    assert queue_worker_run.handoff_checklist is not None
+    assert queue_worker_run.handoff_checklist.objective == "T001: Planning Foundation"
+    assert "src/**" in queue_worker_run.handoff_checklist.relevant_files
+    assert "status: completed, failed, blocked, or usage_limit" in queue_worker_run.handoff_checklist.expected_worker_result_format
+    assert "queue-worker-handoff-show --project sample --run QWR-0001" in result.output
+    assert "Expected worker result:" in result.output
+    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
     assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_handoff_show_prints_checklist_without_mutating_target(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(app, ["project", "queue-worker-handoff-show", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    checklist = get_queue_worker_handoff_checklist("sample", "QWR-0001", workspace_root=workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "Handoff checklist" in result.output
+    assert "Objective: T001: Planning Foundation" in result.output
+    assert "Allowed scope:" in result.output
+    assert "Allowed file pattern: src/**" in result.output
+    assert "Forbidden scope:" in result.output
+    assert "Forbidden file pattern: .env" in result.output
+    assert "Acceptance criteria:" in result.output
+    assert "Required tests:" in result.output
+    assert "Registered validation command: pytest" in result.output
+    assert "Expected worker result:" in result.output
+    assert "recommended next action" in result.output
+    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
+    assert "Policy risk level: medium" in checklist.risk_notes
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_handoff_show_uses_fallbacks_for_missing_fields(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    queue.items[0] = queue.items[0].model_copy(update={"acceptance_criteria": [], "validation_expectations": []})
+    queue_json_path, _queue_markdown_path = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json_path.write_text(queue.model_dump_json(indent=2), encoding="utf-8")
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    stripped_policy = policy.model_copy(update={"allowed_file_patterns": [], "forbidden_file_patterns": [], "validation_commands": []})
+    policy_json_path, _policy_markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    policy_json_path.write_text(stripped_policy.model_dump_json(indent=2), encoding="utf-8")
+    runner.invoke(app, ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"])
+
+    result = runner.invoke(app, ["project", "queue-worker-handoff-show", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    checklist = get_queue_worker_handoff_checklist("sample", "QWR-0001", workspace_root=workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "Not specified in current task/policy." in result.output
+    assert checklist.acceptance_criteria == ["Not specified in current task/policy."]
+    assert checklist.required_tests == ["Record validation evidence after implementation."]
+
+
+def test_queue_worker_handoff_show_refuses_missing_run(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["project", "queue-worker-handoff-show", "--project", "sample", "--run", "QWR-9999"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Queue worker run not found: QWR-9999" in result.output
+    assert "queue-worker-list --project sample" in result.output
 
 
 def test_queue_worker_run_selects_next_allowed_item_and_processes_only_one(tmp_path: Path, monkeypatch) -> None:
