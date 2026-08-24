@@ -25,7 +25,7 @@
 
 DevOrchestrator is a deterministic local control plane. It records project context, run state, task lifecycle state, policy decisions, approvals, validation command metadata, validation run evidence, and recovery information in the local `workspace/` folder. It does not call AI models, execute implementation, or bypass Codex/OpenAI/OS/GitHub security policy. Registered validation commands run only through Devo's safety gates, disabled-command handling, and explicit approval checks when required.
 
-For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/codex-worker-adapter-design.md`, `docs/delivery-safety-design.md`, `docs/phase-1-mvp-closure-plan.md`, `docs/phase-1-mvp-checkpoint.md`, `docs/phase-2-autonomy-roadmap.md`, `docs/phase-1-context-workflow-efficiency-audit.md`, `docs/runbooks/codex-launcher-setup.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
+For a plain-language overview of the intended product shape, read `docs/devo-vision.md`, `docs/devo-company-model.md`, `docs/architecture/codex-worker-launch-integration-design.md`, `docs/codex-worker-adapter-design.md`, `docs/delivery-safety-design.md`, `docs/phase-1-mvp-closure-plan.md`, `docs/phase-1-mvp-checkpoint.md`, `docs/phase-2-autonomy-roadmap.md`, `docs/phase-1-context-workflow-efficiency-audit.md`, `docs/runbooks/codex-launcher-setup.md`, `docs/runbooks/real-codex-supervised-dry-run.md`, `docs/remaining-roadmap.md`, `docs/current-capabilities.md`, `docs/agent-workflow.md`, `docs/usability-roadmap.md`, and `docs/personal-os-operating-model.md`.
 
 Current strategic priority: improve Devo itself as a CLI-first, local-first product. PersonalOS is lower priority as a product target and should mainly be used as a real-world validation project for Devo workflows.
 
@@ -39,12 +39,13 @@ The working loop is:
 ## Latest State
 
 - Latest completed dogfood task: TASK-DEVO-143 Approved queue auto-run 3-task assisted dogfood
+- Latest design task: TASK-DEVO-145 Codex worker launch/integration design
 - Latest assisted queue polish task: TASK-DEVO-144 push-only runner recovery, approved queue continuation, evidence wording, and flow-summary defaults
 - Latest queue-worker ergonomics task: TASK-DEVO-135 Queue-worker evidence intake and policy usability hardening
 - Latest completed implementation task: TASK-DEVO-131 Queue worker evidence continuation and delivery-request handoff
 - Latest small reliability task: TASK-DEVO-130A ignores root pytest `pt-*` temp folders and documents cleanup before trusted delivery.
 - Latest docs/design task: TASK-DEVO-125 Phase 2 autonomy roadmap and trusted execution model
-- Latest design task: TASK-DEVO-087 Codex CLI worker adapter design
+- Latest early worker-adapter design task: TASK-DEVO-087 Codex CLI worker adapter design
 - Latest docs task: TASK-DEVO-099 first real Codex supervised dry-run report
 - Latest completed workspace setup: TASK-030A approved DevOrchestrator itself as a Devo project
 - Latest completed dogfood run: TASK-DEVO-123 end-to-end Phase 1 dogfood on DevOrchestrator
@@ -52,7 +53,7 @@ The working loop is:
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Phase 1 MVP status: complete after TASK-DEVO-124 and checkpointed with the `phase-1-mvp` tag.
 - Active focus: Phase 2 autonomy. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas using `delivery runner-watch --once --confirm-runner-watch`, the precise `delivery runner-run --request ...` fallback, or an explicitly installed local scheduled runner.
-- Next recommended task: dogfood the polished assisted queue flow again before adding UI approval/queue controls.
+- Next recommended task: TASK-DEVO-146 Codex worker prepare/prompt-file mode v1.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -172,6 +173,7 @@ The working loop is:
 - TASK-DEVO-142 adds a lightweight queue-worker handoff checklist v1. `queue-worker-handoff-show` prints objective, allowed/forbidden scope, relevant files, acceptance criteria, required tests, expected worker result fields, risk notes, and the worker-result evidence command before implementation starts. See `docs/dogfood/task-devo-142-lightweight-handoff-checklist-v1.md`.
 - TASK-DEVO-143 dogfoods `approved-queue-run`, the handoff checklist, worker/review/validation evidence intake, trusted runner delivery, and next-item startup across three disposable queued tasks. See `docs/dogfood/task-devo-143-approved-queue-run-dogfood.md`. The dogfood also found a future recovery-polish gap: if a trusted runner commit succeeds but push fails, Devo needs a clearer push-only resume path.
 - TASK-DEVO-144 closes that recovery-polish gap with `devo delivery runner-recover-push`, adds `approved-queue-run --continue-next`, improves validation evidence wording, and lets `worker codex flow-summary` / `project flow-summary` default to the uniquely latest queue. See `docs/dogfood/task-devo-144-assisted-queue-recovery-and-flow-polish.md`.
+- TASK-DEVO-145 adds `docs/architecture/codex-worker-launch-integration-design.md` and `docs/dogfood/task-devo-145-codex-worker-launch-integration-design.md`. It is design-only and recommends prompt-file assisted Codex worker preparation before direct Codex CLI subprocess execution.
 
 ## Readiness Estimate
 

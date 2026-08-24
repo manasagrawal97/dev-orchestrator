@@ -311,6 +311,8 @@ devo project flow-summary --project MyProject
 
 `prepare-next` creates or reuses the queue handoff, creates a linked worker run, creates a run plan, and runs preflight. It stops before approval and execution. `queue-status` shows the linked worker/run-plan/execution/report/review state and the next safe CLI command without mutating anything. If the queue is already completed, it defaults to the most recently completed queue item so evidence is still visible. Use `--item` to inspect a specific item. `flow-summary` is the shorter read-only operator view for queue, handoff, worker, plan, report, review, completion readiness, and the next 1-3 commands. When `--queue` is omitted, Devo uses the uniquely latest queue or asks for `--queue <QUEUE-ID>` if that would be ambiguous.
 
+The next worker-launch direction is documented in `docs/architecture/codex-worker-launch-integration-design.md`. The recommended sequence is prompt-file assisted mode first, result ingestion second, and direct Codex CLI subprocess execution only after those contracts are proven. Worker completion remains separate from review, validation, and trusted runner delivery.
+
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 
 ```powershell

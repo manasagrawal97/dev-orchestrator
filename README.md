@@ -22,7 +22,7 @@ The current strategy is CLI-first and local-first:
 - Manual/Codex mode must remain supported even after future model adapters exist.
 - Dashboard/UI work stays read-only for now; the CLI remains the execution and recovery path.
 
-The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred. Phase 1 MVP is complete and recorded in [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md). Active focus now moves to the [Phase 2 autonomy roadmap](docs/phase-2-autonomy-roadmap.md), starting with trusted local runner watch mode.
+The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred. Phase 1 MVP is complete and recorded in [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md). Active focus now moves through the [Phase 2 autonomy roadmap](docs/phase-2-autonomy-roadmap.md). The next Codex-worker step is design-first; [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md) recommends prompt-file assisted mode before direct Codex CLI subprocess execution.
 
 ## Project Memory
 
@@ -31,6 +31,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Current state](docs/current-state.md)
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
+- [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md)
 - [Codex worker adapter design](docs/codex-worker-adapter-design.md)
 - [Delivery safety design](docs/delivery-safety-design.md)
 - [Phase 1 MVP closure plan](docs/phase-1-mvp-closure-plan.md)
@@ -49,6 +50,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-110 guarded delivery dogfood report](docs/dogfood/devo-delivery-dogfood-110.md)
 - [TASK-DEVO-138 polished assisted dogfood report](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md)
 - [TASK-DEVO-144 assisted queue recovery and flow polish](docs/dogfood/task-devo-144-assisted-queue-recovery-and-flow-polish.md)
+- [TASK-DEVO-145 Codex worker launch design report](docs/dogfood/task-devo-145-codex-worker-launch-integration-design.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)

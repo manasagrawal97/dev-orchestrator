@@ -81,6 +81,8 @@ TASK-DEVO-142 adds the lightweight handoff checklist at the worker boundary. `qu
 
 TASK-DEVO-143 dogfoods the approved queue path across three disposable delivered tasks. TASK-DEVO-144 then closes the main usability gaps found there: push-only recovery when trusted runner commit succeeds but push fails, `approved-queue-run --continue-next` for a specified completed run, clearer validation evidence next actions, and `flow-summary` defaulting to a uniquely latest queue when safe.
 
+TASK-DEVO-145 keeps the next worker-launch step design-only. It recommends prompt-file assisted Codex worker preparation as the first safer bridge before direct Codex CLI subprocess execution.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

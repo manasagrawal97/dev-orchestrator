@@ -196,6 +196,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, validation execution automation, UI approval/build/test/commit/push controls, parallel workers, AI/API calls, or delivery safety bypasses.
 - Status: Completed. `devo delivery runner-recover-push` handles the narrow push-only recovery case, `approved-queue-run --continue-next` starts at most one next eligible item after a specified run completes, and `worker codex flow-summary` / `project flow-summary` can use the uniquely latest queue when `--queue` is omitted.
 
+### TASK-DEVO-145: Codex Worker Launch Integration Design
+
+- Goal: Design the next Codex worker launch/integration layer before implementing new execution behavior.
+- Scope: document manual handoff, prompt-file assisted, and future direct Codex CLI subprocess modes; define worker input packages, output contracts, safety preflight checks, runtime guardrails, failure states, ingestion flow, validation/review separation, and trusted-runner-only delivery.
+- Not in scope: real Codex execution, AI/API calls, voice/Jarvis/gesture/clap controls, ECC adoption, broad parallel workers, least-privilege implementation, UI delivery controls, direct commit/push, or full autonomous multitask execution.
+- Status: Completed as a design-only task. The recommended next step is TASK-DEVO-146: implement prompt-file assisted worker preparation first, then add result ingestion before any direct subprocess retry.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -500,8 +507,8 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-145 dogfood the polished assisted queue recovery/continuation flow.
+Recommended next task: TASK-DEVO-146 Codex worker prepare/prompt-file mode v1.
 
-Start it only after normal PowerShell reports scheduled runner health as `healthy`, or with direct trusted `runner-run` accepted as the delivery fallback for the dogfood. If Codex/sandbox reports drift while normal PowerShell is healthy, record that as environment visibility mismatch instead of reinstalling repeatedly.
+Start with prompt-file assisted worker preparation and explicit operator handoff. Keep direct Codex CLI subprocess execution behind later readiness checks and fake-executable tests until the input/output contract is proven.
 
-It should prove the current approved queue -> checklist -> evidence schema -> review -> validation -> trusted delivery loop over a small multi-item batch before broader queue/UI controls.
+It should produce a safe worker input package from the current queue/handoff/checklist state without running Codex, validation, delivery, commit, push, or AI/API calls.
