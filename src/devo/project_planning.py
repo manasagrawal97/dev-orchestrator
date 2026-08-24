@@ -546,6 +546,7 @@ class QueueWorkerEvidenceRecordResult(BaseModel):
 
     project: str
     run_id: str
+    evidence_record: QueueWorkerEvidenceRecord | None = None
     run_status: str
     evidence_type: str
     evidence_status: str
@@ -809,6 +810,27 @@ class WorkerReportMetadata(BaseModel):
     imported_at: datetime | None = None
 
 
+class QueueWorkerEvidenceRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    project: str
+    queue_worker_run_id: str
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    evidence_type: str
+    status: str
+    summary: str
+    changed_files: list[str] = Field(default_factory=list)
+    commands_run: list[str] = Field(default_factory=list)
+    artifact_path: str | None = None
+    risks: list[str] = Field(default_factory=list)
+    recommended_next_action: str = ""
+    note: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    recorded_by: str | None = None
+
+
 class CodexWorkerReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -831,6 +853,7 @@ class CodexWorkerReport(BaseModel):
     blockers: list[str] = Field(default_factory=list)
     follow_up_needed: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    evidence_record: QueueWorkerEvidenceRecord | None = None
     reported_at: datetime | None = None
 
 
@@ -852,6 +875,7 @@ class ValidationEvidence(BaseModel):
     validation_summary: str = ""
     evidence_paths: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    evidence_record: QueueWorkerEvidenceRecord | None = None
 
 
 class WorkerReview(BaseModel):
@@ -870,6 +894,7 @@ class WorkerReview(BaseModel):
     reviewer: str | None = None
     decision_note: str = ""
     validation_evidence: ValidationEvidence = Field(default_factory=ValidationEvidence)
+    evidence_record: QueueWorkerEvidenceRecord | None = None
     changed_files_review: list[str] = Field(default_factory=list)
     safety_review: list[str] = Field(default_factory=list)
     acceptance_criteria_review: list[str] = Field(default_factory=list)
@@ -2367,6 +2392,9 @@ def record_queue_worker_worker_result(
     artifact_path: str | None = None,
     commands_run: str | None = None,
     files_changed: str | None = None,
+    risks: str | None = None,
+    recommended_next_action: str | None = None,
+    recorded_by: str | None = None,
     note: str | None = None,
     workspace_root: Path | None = None,
 ) -> QueueWorkerEvidenceRecordResult:
@@ -2381,7 +2409,22 @@ def record_queue_worker_worker_result(
     cleaned_summary = _require_nonempty_summary(summary)
     commands = _clean_string_list([commands_run] if commands_run else [])
     changed_files = _clean_string_list([files_changed] if files_changed else [])
+    risk_items = _clean_string_list([risks] if risks else [])
     notes = _record_notes(note=note, artifact_path=artifact_path)
+    evidence_record = _build_queue_worker_evidence_record(
+        project_name,
+        run,
+        evidence_type="worker_result",
+        status=normalized_status,
+        summary=cleaned_summary,
+        changed_files=changed_files,
+        commands_run=commands,
+        artifact_path=artifact_path,
+        risks=risk_items,
+        recommended_next_action=recommended_next_action,
+        note=note,
+        recorded_by=recorded_by,
+    )
     report = CodexWorkerReport(
         project=project_name,
         worker_run_id=worker_run.worker_run_id,
@@ -2396,6 +2439,7 @@ def record_queue_worker_worker_result(
         commands_run=commands,
         blockers=[cleaned_summary] if normalized_status in {"failed", "blocked"} else [],
         notes=notes,
+        evidence_record=evidence_record,
         reported_at=datetime.now(UTC),
     )
     paths = worker_artifact_paths(project_name, workspace_root=root)
@@ -2429,6 +2473,7 @@ def record_queue_worker_worker_result(
     return QueueWorkerEvidenceRecordResult(
         project=project_name,
         run_id=run.run_id,
+        evidence_record=evidence_record,
         run_status=run.status,
         evidence_type="worker_result",
         evidence_status=normalized_status,
@@ -2455,6 +2500,9 @@ def record_queue_worker_review(
     artifact_path: str | None = None,
     commands_run: str | None = None,
     files_changed: str | None = None,
+    risks: str | None = None,
+    recommended_next_action: str | None = None,
+    recorded_by: str | None = None,
     note: str | None = None,
     workspace_root: Path | None = None,
 ) -> QueueWorkerEvidenceRecordResult:
@@ -2475,9 +2523,24 @@ def record_queue_worker_review(
     cleaned_summary = _require_nonempty_summary(summary)
     commands = _clean_string_list([commands_run] if commands_run else [])
     changed_files = _clean_string_list([files_changed] if files_changed else [])
+    risk_items = _clean_string_list([risks] if risks else [])
     review, _json_path, _markdown_path = create_codex_worker_review_template(project_name, worker_run.worker_run_id, workspace_root=root)
     now = datetime.now(UTC)
     notes = _record_notes(note=note, artifact_path=artifact_path)
+    evidence_record = _build_queue_worker_evidence_record(
+        project_name,
+        run,
+        evidence_type="review",
+        status=normalized_status,
+        summary=cleaned_summary,
+        changed_files=changed_files,
+        commands_run=commands,
+        artifact_path=artifact_path,
+        risks=risk_items,
+        recommended_next_action=recommended_next_action,
+        note=note,
+        recorded_by=recorded_by,
+    )
     safety_review = [*review.safety_review]
     if commands:
         safety_review.append("Commands were reported manually; Devo did not execute or verify them.")
@@ -2488,6 +2551,7 @@ def record_queue_worker_review(
             "review_status": status_map[normalized_status],
             "reviewer": "queue-worker-record-review",
             "decision_note": " ".join([cleaned_summary, *notes]).strip(),
+            "evidence_record": evidence_record,
             "changed_files_review": [*review.changed_files_review, *[f"Reviewed changed file: {path}" for path in changed_files]],
             "safety_review": safety_review,
             "updated_at": now,
@@ -2507,6 +2571,7 @@ def record_queue_worker_review(
     return QueueWorkerEvidenceRecordResult(
         project=project_name,
         run_id=run.run_id,
+        evidence_record=evidence_record,
         run_status=run.status,
         evidence_type="review",
         evidence_status=normalized_status,
@@ -2533,6 +2598,9 @@ def record_queue_worker_validation(
     artifact_path: str | None = None,
     commands_run: str | None = None,
     files_changed: str | None = None,
+    risks: str | None = None,
+    recommended_next_action: str | None = None,
+    recorded_by: str | None = None,
     note: str | None = None,
     workspace_root: Path | None = None,
 ) -> QueueWorkerEvidenceRecordResult:
@@ -2544,11 +2612,12 @@ def record_queue_worker_validation(
         "failed": "failed",
         "blocked": "partial",
         "not_run": "not_provided",
+        "provided": "provided",
     }
     if normalized_status not in status_map:
         msg = f"Invalid validation status: {status}"
         raise ValueError(msg)
-    _require_queue_worker_record_status(run, "validation", normalized_status, {"waiting_validation"}, {"failed", "blocked", "not_run"})
+    _require_queue_worker_record_status(run, "validation", normalized_status, {"waiting_validation"}, {"failed", "blocked", "not_run", "provided"})
     worker_run = _require_queue_worker_linked_worker(project_name, run, root)
     review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=root)
     if not review:
@@ -2557,6 +2626,7 @@ def record_queue_worker_validation(
     cleaned_summary = _require_nonempty_summary(summary)
     commands = _clean_string_list([commands_run] if commands_run else [])
     changed_files = _clean_string_list([files_changed] if files_changed else [])
+    risk_items = _clean_string_list([risks] if risks else [])
     evidence_paths = list(review.validation_evidence.evidence_paths)
     cleaned_artifact = _clean_optional_path(artifact_path)
     if cleaned_artifact and cleaned_artifact not in evidence_paths:
@@ -2566,6 +2636,22 @@ def record_queue_worker_validation(
         warnings.append("Validation was recorded as blocked.")
     if normalized_status == "not_run":
         warnings.append("Validation was not run; this is not passing evidence.")
+    if normalized_status == "provided":
+        warnings.append("Validation was provided but not marked passed; this is not passing evidence.")
+    evidence_record = _build_queue_worker_evidence_record(
+        project_name,
+        run,
+        evidence_type="validation",
+        status=normalized_status,
+        summary=cleaned_summary,
+        changed_files=changed_files,
+        commands_run=commands,
+        artifact_path=artifact_path,
+        risks=risk_items,
+        recommended_next_action=recommended_next_action,
+        note=note,
+        recorded_by=recorded_by,
+    )
     validation_evidence = review.validation_evidence.model_copy(
         update={
             "validation_status": status_map[normalized_status],
@@ -2573,6 +2659,7 @@ def record_queue_worker_validation(
             "validation_summary": " ".join([cleaned_summary, *_record_notes(note=note, artifact_path=None)]).strip(),
             "evidence_paths": evidence_paths,
             "warnings": _dedupe(warnings),
+            "evidence_record": evidence_record,
         }
     )
     updated_review = review.model_copy(
@@ -2596,6 +2683,7 @@ def record_queue_worker_validation(
     return QueueWorkerEvidenceRecordResult(
         project=project_name,
         run_id=run.run_id,
+        evidence_record=evidence_record,
         run_status=run.status,
         evidence_type="validation",
         evidence_status=normalized_status,
@@ -5012,6 +5100,7 @@ def render_codex_worker_report_markdown(report: CodexWorkerReport, validation: W
     _append_list_section(lines, "Blockers", report.blockers)
     _append_list_section(lines, "Follow-Up Needed", report.follow_up_needed)
     _append_list_section(lines, "Notes", report.notes)
+    _append_queue_worker_evidence_record_section(lines, report.evidence_record)
     if validation:
         _append_list_section(lines, "Import Warnings", validation.warnings)
     lines.extend(
@@ -5055,6 +5144,8 @@ def render_codex_worker_review_markdown(review: WorkerReview) -> str:
     _append_list_section(lines, "Tests Reported", review.validation_evidence.tests_reported)
     _append_list_section(lines, "Evidence Paths", review.validation_evidence.evidence_paths)
     _append_list_section(lines, "Validation Warnings", review.validation_evidence.warnings)
+    _append_queue_worker_evidence_record_section(lines, review.evidence_record, title="Review Evidence Record")
+    _append_queue_worker_evidence_record_section(lines, review.validation_evidence.evidence_record, title="Validation Evidence Record")
     _append_list_section(lines, "Acceptance Criteria Review", review.acceptance_criteria_review)
     _append_list_section(lines, "Changed Files Review", review.changed_files_review)
     _append_list_section(lines, "Safety Review", review.safety_review)
@@ -6940,6 +7031,42 @@ def _require_queue_worker_run(project_name: str, run_id: str, workspace_root: Pa
         msg = f"Queue worker run project mismatch: expected {project_name}, got {run.project}."
         raise ValueError(msg)
     return run
+
+
+def _build_queue_worker_evidence_record(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    evidence_type: str,
+    status: str,
+    summary: str,
+    changed_files: list[str],
+    commands_run: list[str],
+    artifact_path: str | None,
+    risks: list[str],
+    recommended_next_action: str | None,
+    note: str | None,
+    recorded_by: str | None,
+) -> QueueWorkerEvidenceRecord:
+    normalized_type = evidence_type.strip().lower()
+    normalized_status = status.strip().lower()
+    return QueueWorkerEvidenceRecord(
+        evidence_id=f"{run.run_id}-{normalized_type}".replace("_", "-").lower(),
+        project=project_name,
+        queue_worker_run_id=run.run_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        evidence_type=normalized_type,
+        status=normalized_status,
+        summary=summary.strip(),
+        changed_files=list(changed_files),
+        commands_run=list(commands_run),
+        artifact_path=_clean_optional_path(artifact_path),
+        risks=list(risks),
+        recommended_next_action=(recommended_next_action or "").strip(),
+        note=(note or "").strip(),
+        recorded_by=(recorded_by or "").strip() or None,
+    )
 
 
 def _require_queue_worker_linked_worker(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> WorkerRun:
@@ -8912,6 +9039,51 @@ def _append_list_section(lines: list[str], title: str, values: list[str]) -> Non
     else:
         lines.append("No items recorded.")
     lines.append("")
+
+
+def _append_queue_worker_evidence_record_section(
+    lines: list[str],
+    record: QueueWorkerEvidenceRecord | None,
+    *,
+    title: str = "Queue Worker Evidence Record",
+) -> None:
+    lines.extend([f"## {title}", ""])
+    if not record:
+        lines.extend(["No structured queue-worker evidence record stored.", ""])
+        return
+    lines.extend(
+        [
+            f"- Evidence id: `{record.evidence_id}`",
+            f"- Evidence type: `{record.evidence_type}`",
+            f"- Status: `{record.status}`",
+            f"- Queue-worker run: `{record.queue_worker_run_id}`",
+            f"- Queue item: `{record.queue_item_id or 'none'}`",
+            f"- Task: `{record.task_id or 'none'}`",
+            f"- Artifact path: `{record.artifact_path or 'none'}`",
+            f"- Recorded by: `{record.recorded_by or 'none'}`",
+            f"- Created at: `{record.created_at.isoformat()}`",
+            "",
+            "### Summary",
+            "",
+            record.summary or "No summary recorded.",
+            "",
+        ]
+    )
+    _append_list_section(lines, "Evidence Changed Files", record.changed_files)
+    _append_list_section(lines, "Evidence Commands Run", record.commands_run)
+    _append_list_section(lines, "Evidence Risks", record.risks)
+    lines.extend(
+        [
+            "### Recommended Next Action",
+            "",
+            record.recommended_next_action or "No recommendation recorded.",
+            "",
+            "### Note",
+            "",
+            record.note or "No note recorded.",
+            "",
+        ]
+    )
 
 
 def _append_preflight_section(lines: list[str], checks: list[CodexPreflightCheck]) -> None:

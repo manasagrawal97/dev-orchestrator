@@ -175,6 +175,20 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Safety rules: preview policy readiness before execution, require explicit confirmation for mutation, stop on unapproved/expired/out-of-scope policy, stop on missing worker/review/validation evidence, stop on non-passing validation, stop on delivery requested or failed delivery, stop on terminal/unknown states, and require healthy scheduler evidence by default before executing mutating queue continuation.
 - Status: Completed as a v1 wrapper around the existing one-task-at-a-time queue-worker loop. `--no-require-scheduler-healthy` exists for explicit operator fallback when normal PowerShell health evidence is trusted but the current restricted process cannot see the scheduler.
 
+### TASK-DEVO-141: Worker Result Evidence Schema V1
+
+- Goal: Make worker, review, and validation evidence deterministic enough for `approved-queue-run` to consume safely.
+- Scope: shared evidence record fields for evidence id, queue-worker run, queue item/task, type/status, summary, changed files, commands run, artifact path, risks, recommended next action, note, timestamp, and recorder.
+- Not in scope: real Codex execution, AI/API calls, validation execution, parallel workers, ECC integration, voice/Jarvis/gesture controls, least-privilege role permissions, or broader autonomous multi-task execution.
+- Status: Completed. Existing evidence intake commands now store schema v1 records while older artifacts remain readable and non-success statuses remain non-advancing.
+
+### Future Spikes
+
+- Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
+- Evaluate small controlled parallel read-only review workers later; do not add "300 agents" or parallel editing agents now.
+- Consider least-privilege role permissions after real worker roles exist.
+- Keep Devo text-driven for now; no current plan for voice, Jarvis, hand gesture, or clap-triggered operation.
+
 ### TASK-DEVO-135: Queue-Worker Evidence Intake
 
 - Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.

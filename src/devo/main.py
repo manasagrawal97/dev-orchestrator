@@ -924,6 +924,11 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
     console.print(f"Current status: {result.run_status}")
     console.print(f"Evidence type: {result.evidence_type}")
     console.print(f"Evidence status: {result.evidence_status}")
+    if result.evidence_record:
+        console.print(f"Evidence id: {result.evidence_record.evidence_id}")
+        console.print(f"Queue item: {result.evidence_record.queue_item_id or 'none'}")
+        console.print(f"Task: {result.evidence_record.task_id or 'none'}")
+        console.print(f"Recorded by: {result.evidence_record.recorded_by or 'none'}")
     console.print(f"Summary: {result.summary}", soft_wrap=True)
     console.print(f"Artifact path: {result.artifact_path or 'none'}", soft_wrap=True)
     console.print("Commands run:")
@@ -932,6 +937,10 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
     console.print("Files changed:")
     for file_path in result.files_changed or ["none"]:
         console.print(f"  - {file_path}", soft_wrap=True)
+    console.print("Risks:")
+    for risk in (result.evidence_record.risks if result.evidence_record else []) or ["none"]:
+        console.print(f"  - {risk}", soft_wrap=True)
+    console.print(f"Recommended next action: {result.evidence_record.recommended_next_action if result.evidence_record and result.evidence_record.recommended_next_action else 'none'}", soft_wrap=True)
     console.print(f"Action taken: {result.action_taken}")
     console.print("New evidence state:")
     console.print(f"  Worker report status: {result.evidence.worker_report_status or 'none'}")
@@ -4328,6 +4337,9 @@ def record_queue_worker_worker_result_command(
     artifact: str | None = typer.Option(None, "--artifact", help="Optional supporting artifact path to record as evidence."),
     commands_run: str | None = typer.Option(None, "--commands-run", help="Optional comma-separated commands reported by the worker/operator."),
     files_changed: str | None = typer.Option(None, "--files-changed", help="Optional comma-separated changed files."),
+    risks: str | None = typer.Option(None, "--risks", help="Optional comma-separated risk notes for this evidence."),
+    recommended_next_action: str | None = typer.Option(None, "--recommended-next-action", help="Optional evidence-specific recommended next action."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording this evidence."),
     note: str | None = typer.Option(None, "--note", help="Optional note."),
     confirm_record: bool = typer.Option(False, "--confirm-record", help="Confirm workspace-only evidence recording."),
 ) -> None:
@@ -4345,6 +4357,9 @@ def record_queue_worker_worker_result_command(
             artifact_path=artifact,
             commands_run=commands_run,
             files_changed=files_changed,
+            risks=risks,
+            recommended_next_action=recommended_next_action,
+            recorded_by=recorded_by,
             note=note,
         )
     except ValueError as exc:
@@ -4361,6 +4376,9 @@ def record_queue_worker_review_command(
     artifact: str | None = typer.Option(None, "--artifact", help="Optional supporting artifact path to record as evidence."),
     commands_run: str | None = typer.Option(None, "--commands-run", help="Optional comma-separated commands reported during review."),
     files_changed: str | None = typer.Option(None, "--files-changed", help="Optional comma-separated reviewed files."),
+    risks: str | None = typer.Option(None, "--risks", help="Optional comma-separated risk notes for this evidence."),
+    recommended_next_action: str | None = typer.Option(None, "--recommended-next-action", help="Optional evidence-specific recommended next action."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording this evidence."),
     note: str | None = typer.Option(None, "--note", help="Optional note."),
     confirm_record: bool = typer.Option(False, "--confirm-record", help="Confirm workspace-only evidence recording."),
 ) -> None:
@@ -4378,6 +4396,9 @@ def record_queue_worker_review_command(
             artifact_path=artifact,
             commands_run=commands_run,
             files_changed=files_changed,
+            risks=risks,
+            recommended_next_action=recommended_next_action,
+            recorded_by=recorded_by,
             note=note,
         )
     except ValueError as exc:
@@ -4389,11 +4410,14 @@ def record_queue_worker_review_command(
 def record_queue_worker_validation_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
-    status: str = typer.Option(..., "--status", help="Validation status: passed, failed, blocked, not_run."),
+    status: str = typer.Option(..., "--status", help="Validation status: passed, failed, blocked, not_run, provided."),
     summary: str = typer.Option(..., "--summary", help="Validation summary."),
     artifact: str | None = typer.Option(None, "--artifact", help="Optional supporting artifact path to record as evidence."),
     commands_run: str | None = typer.Option(None, "--commands-run", help="Optional comma-separated validation commands reported."),
     files_changed: str | None = typer.Option(None, "--files-changed", help="Optional comma-separated files covered by validation."),
+    risks: str | None = typer.Option(None, "--risks", help="Optional comma-separated risk notes for this evidence."),
+    recommended_next_action: str | None = typer.Option(None, "--recommended-next-action", help="Optional evidence-specific recommended next action."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording this evidence."),
     note: str | None = typer.Option(None, "--note", help="Optional note."),
     confirm_record: bool = typer.Option(False, "--confirm-record", help="Confirm workspace-only evidence recording."),
 ) -> None:
@@ -4411,6 +4435,9 @@ def record_queue_worker_validation_command(
             artifact_path=artifact,
             commands_run=commands_run,
             files_changed=files_changed,
+            risks=risks,
+            recommended_next_action=recommended_next_action,
+            recorded_by=recorded_by,
             note=note,
         )
     except ValueError as exc:

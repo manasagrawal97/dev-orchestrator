@@ -1514,6 +1514,12 @@ def test_queue_worker_record_worker_result_writes_completed_evidence(tmp_path: P
             "src/devo/main.py,tests/test_project_planning.py",
             "--artifact",
             str(artifact),
+            "--risks",
+            "manual evidence,review needed",
+            "--recommended-next-action",
+            "Record review evidence next.",
+            "--recorded-by",
+            "Manas",
             "--note",
             "Manual worker evidence.",
             "--confirm-record",
@@ -1529,6 +1535,17 @@ def test_queue_worker_record_worker_result_writes_completed_evidence(tmp_path: P
     assert report.commands_run == ["pytest tests/test_project_planning.py"]
     assert report.changed_files == ["src/devo/main.py", "tests/test_project_planning.py"]
     assert f"Artifact: {artifact}" in report.notes
+    assert report.evidence_record is not None
+    assert report.evidence_record.evidence_id == "qwr-0001-worker-result"
+    assert report.evidence_record.evidence_type == "worker_result"
+    assert report.evidence_record.status == "completed"
+    assert report.evidence_record.queue_item_id == "QI001"
+    assert report.evidence_record.task_id == "T001"
+    assert report.evidence_record.risks == ["manual evidence", "review needed"]
+    assert report.evidence_record.recommended_next_action == "Record review evidence next."
+    assert report.evidence_record.recorded_by == "Manas"
+    assert "Evidence id: qwr-0001-worker-result" in result.output
+    assert "Record review evidence next." in result.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
     assert run is not None
     assert run.status == "waiting_worker"
@@ -1556,6 +1573,12 @@ def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path
             "Review passed.",
             "--files-changed",
             "src/feature.py",
+            "--risks",
+            "none identified",
+            "--recommended-next-action",
+            "Record validation evidence.",
+            "--recorded-by",
+            "Reviewer",
             "--confirm-record",
         ],
         terminal_width=240,
@@ -1578,6 +1601,12 @@ def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path
             "pytest tests/test_sample.py",
             "--artifact",
             "workspace/reports/validation.md",
+            "--risks",
+            "manual validation evidence",
+            "--recommended-next-action",
+            "Prepare trusted delivery.",
+            "--recorded-by",
+            "Validator",
             "--confirm-record",
         ],
         terminal_width=240,
@@ -1589,9 +1618,21 @@ def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path
     worker_review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
     assert worker_review is not None
     assert worker_review.review_status == "reviewed_passed"
+    assert worker_review.evidence_record is not None
+    assert worker_review.evidence_record.evidence_type == "review"
+    assert worker_review.evidence_record.status == "passed"
+    assert worker_review.evidence_record.risks == ["none identified"]
+    assert worker_review.evidence_record.recommended_next_action == "Record validation evidence."
+    assert worker_review.evidence_record.recorded_by == "Reviewer"
     assert worker_review.validation_evidence.validation_status == "passed"
     assert worker_review.validation_evidence.commands_reported == ["pytest tests/test_sample.py"]
     assert "workspace/reports/validation.md" in worker_review.validation_evidence.evidence_paths
+    assert worker_review.validation_evidence.evidence_record is not None
+    assert worker_review.validation_evidence.evidence_record.evidence_type == "validation"
+    assert worker_review.validation_evidence.evidence_record.status == "passed"
+    assert worker_review.validation_evidence.evidence_record.risks == ["manual validation evidence"]
+    assert worker_review.validation_evidence.evidence_record.recommended_next_action == "Prepare trusted delivery."
+    assert worker_review.validation_evidence.evidence_record.recorded_by == "Validator"
 
 
 def test_queue_worker_record_commands_reject_unknown_missing_and_unsafe_states(tmp_path: Path, monkeypatch) -> None:
@@ -1831,6 +1872,7 @@ def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatc
         ("failed", 1, "failed"),
         ("blocked", 0, "waiting_validation"),
         ("not_run", 0, "waiting_validation"),
+        ("provided", 0, "waiting_validation"),
     ],
 )
 def test_queue_worker_loop_reports_nonpassing_validation_status_clearly(

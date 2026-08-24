@@ -75,6 +75,8 @@ TASK-DEVO-139A adds environment context to that output so a restricted Codex/san
 
 TASK-DEVO-140 adds `devo project approved-queue-run` as the first approved queue auto-run wrapper. It reduces repeated operator commands by previewing policy readiness, checking scheduler health, and then reusing the one-task queue-worker loop until the next safe stop. It still does not run real Codex, validation, runner-watch, commit, push, UI controls, ECC, or parallel autonomous execution.
 
+TASK-DEVO-141 makes the evidence intake layer more uniform: worker result, review, and validation records now share evidence id, queue-worker run, queue item/task, status, summary, files, commands, risks, recommended next action, artifact path, note, timestamp, and recorder fields. Older evidence remains readable, but missing or unknown status is never treated as success. AI reel-inspired ideas such as ECC comparison, voice/Jarvis/gesture controls, broad parallel workers, and least-privilege role permissions remain future spikes only.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
