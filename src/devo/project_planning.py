@@ -2792,6 +2792,15 @@ def record_queue_worker_validation(
     )
     _write_worker_run(project_name, updated_worker, workspace_root=root)
     evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    if normalized_status == "passed":
+        next_action = (
+            f"Validation passed. Run approved-queue-run to create delivery request: devo project approved-queue-run "
+            f"--project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-auto-run"
+        )
+    else:
+        next_action = (
+            f"Validation status is {normalized_status}. Resolve validation evidence before delivery, then record passing validation evidence."
+        )
     return QueueWorkerEvidenceRecordResult(
         project=project_name,
         run_id=run.run_id,
@@ -2807,7 +2816,7 @@ def record_queue_worker_validation(
         commands_run=commands,
         files_changed=changed_files,
         evidence=evidence,
-        next_action=f"Run queue-worker-loop to prepare delivery: devo project queue-worker-loop --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-loop",
+        next_action=next_action,
         warnings=evidence.warnings,
         blockers=evidence.blockers,
     )
@@ -3124,7 +3133,10 @@ def loop_queue_worker_run(
                     break
                 if current_run_id and run_id:
                     stop_reason = "specified queue-worker run completed"
-                    next_action = step.next_action
+                    next_action = (
+                        f"Start next eligible item: devo project approved-queue-run --project {project_name} "
+                        f"--policy {normalized_policy_id} --confirm-auto-run"
+                    )
                     break
                 current_run_id = None
                 next_action = completion_next or f"Continue next eligible item: devo project queue-worker-loop --project {project_name} --policy {normalized_policy_id} --confirm-loop"
@@ -7316,7 +7328,7 @@ def _validation_nonpassing_status_from_loop_step(step: QueueWorkerStepResult) ->
 
 def _validation_nonpassing_next_action(validation_status: str, run_id: str | None, project_name: str) -> str:
     return (
-        f"Validation status: {validation_status}. Fix validation issue, record new validation evidence, or retry/pause the queue-worker run. "
+        f"Validation status: {validation_status}. Resolve validation evidence before delivery, record passing validation evidence, or retry/pause the queue-worker run. "
         f"Record evidence: {_queue_worker_record_validation_next_action(project_name, run_id)}"
     )
 

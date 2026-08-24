@@ -79,6 +79,8 @@ TASK-DEVO-141 makes the evidence intake layer more uniform: worker result, revie
 
 TASK-DEVO-142 adds the lightweight handoff checklist at the worker boundary. `queue-worker-handoff-show` gives the operator objective, scope, relevant files, acceptance criteria, required tests, expected worker-result evidence fields, risk notes, and the next evidence command before implementation starts. It is not a full role contract system and does not run real Codex, validation, delivery, or queue completion.
 
+TASK-DEVO-143 dogfoods the approved queue path across three disposable delivered tasks. TASK-DEVO-144 then closes the main usability gaps found there: push-only recovery when trusted runner commit succeeds but push fails, `approved-queue-run --continue-next` for a specified completed run, clearer validation evidence next actions, and `flow-summary` defaulting to a uniquely latest queue when safe.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

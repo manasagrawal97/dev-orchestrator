@@ -1701,6 +1701,9 @@ def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path
     assert worker_review.validation_evidence.evidence_record.risks == ["manual validation evidence"]
     assert worker_review.validation_evidence.evidence_record.recommended_next_action == "Prepare trusted delivery."
     assert worker_review.validation_evidence.evidence_record.recorded_by == "Validator"
+    assert "Supporting artifact: workspace/reports/validation.md" in validation.output
+    assert "Validation evidence artifact JSON:" in validation.output
+    assert "Validation passed. Run approved-queue-run to create delivery request" in validation.output
 
 
 def test_queue_worker_record_commands_reject_unknown_missing_and_unsafe_states(tmp_path: Path, monkeypatch) -> None:
@@ -2736,6 +2739,89 @@ def test_queue_worker_loop_completes_delivered_run_then_starts_next_item(tmp_pat
     second_item = next(entry for entry in queue.items if entry.item_id == "QI002")
     assert first_item.status == "completed"
     assert second_item.status == "pending"
+
+
+def test_approved_queue_run_continue_next_starts_next_item_after_specified_completion(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+
+    def healthy_scheduler(project_name: str) -> DeliveryRunnerScheduleStatus:
+        return DeliveryRunnerScheduleStatus(
+            project=project_name,
+            installed=True,
+            enabled=True,
+            health="healthy",
+            task_query_source="schtasks.exe",
+            task_query_result="status_ok",
+            next_action="No action needed.",
+        )
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", healthy_scheduler)
+
+    created = runner.invoke(app, ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"], terminal_width=240)
+    assert created.exit_code == 0, created.output
+    _import_worker_report(tmp_path)
+    _record_worker_review(status="reviewed_passed")
+    _attach_validation(status="passed")
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('loop delivered')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--message", "feat: loop delivered", "--confirm-loop"],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery runner completed and pushed commit abc123."}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-0001",
+            runner_context="test",
+            commit_hash="abc123",
+            pushed=True,
+            push_remote="origin",
+            push_branch="main",
+            status="completed",
+            next_action="Trusted delivery runner completed and pushed commit abc123.",
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "approved-queue-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--continue-next",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: specified queue-worker run completed" in result.output
+    assert "Start next eligible item: devo project approved-queue-run --project sample --policy POL-0001 --confirm-auto-run" in result.output
+    assert "Continue-next" in result.output
+    assert "Specified run completed safely; starting one next eligible queue item." in result.output
+    assert "Step 1: created queue-worker run" in result.output
+    first = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    second = load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace)
+    assert first is not None and first.status == "completed"
+    assert second is not None and second.status == "waiting_worker"
+    assert second.selected_queue_item_id == "QI002"
 
 
 def test_queue_worker_loop_does_not_start_next_item_while_delivery_pending(tmp_path: Path, monkeypatch) -> None:

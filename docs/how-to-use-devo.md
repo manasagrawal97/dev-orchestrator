@@ -253,6 +253,7 @@ devo project queue-worker-record-review --project MyProject --run QWR-0001 --sta
 devo project queue-worker-record-validation --project MyProject --run QWR-0001 --status passed --summary "Validation passed." --commands-run "pytest ..." --confirm-record
 devo project queue-worker-continue --project MyProject --run QWR-0001 --confirm-continue
 devo project queue-worker-request-delivery --project MyProject --run QWR-0001 --confirm-delivery-request
+devo project approved-queue-run --project MyProject --policy POL-0001 --run QWR-0001 --continue-next --confirm-auto-run
 devo project queue-worker-pause --project MyProject --run QWR-0001 --reason "operator review"
 devo project queue-worker-resume --project MyProject --run QWR-0001 --confirm-resume
 devo project queue-worker-fail --project MyProject --run QWR-0001 --reason "worker output unclear"
@@ -260,7 +261,7 @@ devo project queue-worker-retry --project MyProject --run QWR-0001 --confirm-ret
 devo project queue-worker-cancel --project MyProject --run QWR-0001 --reason "superseded" --confirm-cancel
 ```
 
-Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted primitives are `queue-worker-step`, `queue-worker-loop`, and `approved-queue-run`. `queue-worker-step` performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. `queue-worker-loop` repeats that one-step behavior until it reaches a safe stop condition: missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/cancelled/blocked state, no eligible item, or max steps. `approved-queue-run` wraps the loop for approved policies: it previews policy readiness before execution, requires `--confirm-auto-run` unless `--dry-run` is used, checks trusted runner scheduler health by default, and prints scheduler repair/direct-runner fallback guidance when health is not confirmed. If Codex/sandbox reports scheduler drift but normal PowerShell reports the scheduled runner healthy, treat that as an environment visibility mismatch and continue only under explicit operator direction. `queue-worker-record-worker-result`, `queue-worker-record-review`, and `queue-worker-record-validation` are the manual evidence intake commands that feed the loop between those stops. They write workspace evidence and print the next loop command; they do not advance state by themselves. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute review, execute runner-watch, stage, commit, push, or modify target source directly.
+Queue-worker run artifacts live under `workspace/projects/<project>/planning/queue-worker-runs/`. The preferred assisted primitives are `queue-worker-step`, `queue-worker-loop`, and `approved-queue-run`. `queue-worker-step` performs exactly one safe state transition: create one run for an approved policy, wait for worker evidence, advance review/validation gates, create a trusted runner request, or observe completed trusted delivery. `queue-worker-loop` repeats that one-step behavior until it reaches a safe stop condition: missing worker report, missing review, missing validation, pending trusted delivery, paused/failed/cancelled/blocked state, no eligible item, or max steps. `approved-queue-run` wraps the loop for approved policies: it previews policy readiness before execution, requires `--confirm-auto-run` unless `--dry-run` is used, checks trusted runner scheduler health by default, and prints scheduler repair/direct-runner fallback guidance when health is not confirmed. `--continue-next` can start one next eligible item after a specified run completes safely, then stops at the next normal boundary. If Codex/sandbox reports scheduler drift but normal PowerShell reports the scheduled runner healthy, treat that as an environment visibility mismatch and continue only under explicit operator direction. `queue-worker-record-worker-result`, `queue-worker-record-review`, and `queue-worker-record-validation` are the manual evidence intake commands that feed the loop between those stops. They write workspace evidence and print the next `approved-queue-run` command after passing validation; they do not advance state by themselves. The explicit lower-level commands remain available for inspection and recovery. They do not run real Codex, run validation, execute review, execute runner-watch, stage, commit, push, or modify target source directly.
 
 Those record commands now write queue-worker evidence schema v1 records into the existing worker report/review artifacts. Optional `--risks`, `--recommended-next-action`, and `--recorded-by` fields make the evidence easier to review without changing the safety gates. Older artifacts remain readable; unknown or non-success statuses are never treated as successful evidence.
 
@@ -304,9 +305,20 @@ devo worker codex prepare-next --project MyProject --queue Q001
 devo worker codex queue-status --project MyProject --queue Q001
 devo worker codex queue-status --project MyProject --queue Q001 --item QI001
 devo worker codex flow-summary --project MyProject --queue Q001
+devo worker codex flow-summary --project MyProject
+devo project flow-summary --project MyProject
 ```
 
-`prepare-next` creates or reuses the queue handoff, creates a linked worker run, creates a run plan, and runs preflight. It stops before approval and execution. `queue-status` shows the linked worker/run-plan/execution/report/review state and the next safe CLI command without mutating anything. If the queue is already completed, it defaults to the most recently completed queue item so evidence is still visible. Use `--item` to inspect a specific item. `flow-summary` is the shorter read-only operator view for queue, handoff, worker, plan, report, review, completion readiness, and the next 1-3 commands.
+`prepare-next` creates or reuses the queue handoff, creates a linked worker run, creates a run plan, and runs preflight. It stops before approval and execution. `queue-status` shows the linked worker/run-plan/execution/report/review state and the next safe CLI command without mutating anything. If the queue is already completed, it defaults to the most recently completed queue item so evidence is still visible. Use `--item` to inspect a specific item. `flow-summary` is the shorter read-only operator view for queue, handoff, worker, plan, report, review, completion readiness, and the next 1-3 commands. When `--queue` is omitted, Devo uses the uniquely latest queue or asks for `--queue <QUEUE-ID>` if that would be ambiguous.
+
+If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
+
+```powershell
+devo delivery runner-recover-push --project MyProject --request REQ-0001 --dry-run
+devo delivery runner-recover-push --project MyProject --request REQ-0001 --approver "Manas" --confirm-runner-push
+```
+
+Push recovery requires a clean tree and current `HEAD` matching the recorded delivery commit. It does not stage, commit, validate, run Codex, or bypass the existing delivery gates.
 
 Track a manual Codex worker attempt from an existing handoff:
 

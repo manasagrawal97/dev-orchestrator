@@ -2584,6 +2584,148 @@ def run_delivery_runner_request(
         return _finish_runner_run(project_name, request, run, "failed", blockers, warnings, steps, root)
 
 
+def recover_delivery_runner_push(
+    project_name: str,
+    request_id: str,
+    *,
+    approver: str | None = None,
+    confirm_runner_push: bool = False,
+    dry_run: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[DeliveryRunnerRun, Path | None, Path | None]:
+    root = workspace_root or get_workspace_root()
+    if not dry_run and not confirm_runner_push:
+        msg = "--confirm-runner-push is required unless --dry-run is used."
+        raise ValueError(msg)
+    request = load_delivery_runner_request(project_name, request_id, workspace_root=root)
+    if not request:
+        msg = f"Delivery runner request not found: {request_id}"
+        raise ValueError(msg)
+    if request.status == "completed":
+        msg = f"Delivery runner request {request_id} is already completed."
+        raise ValueError(msg)
+
+    run = _new_runner_run(project_name, request)
+    run.runner_context = "devo delivery runner-recover-push"
+    steps = ["loaded runner request for push recovery"]
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    registration = load_registered_project(project_name, workspace_root=root)
+    repo_path = Path(request.target_repo_path)
+    if repo_path.resolve() != registration.path.resolve():
+        blockers.append(f"Request target repo path no longer matches project registration: {repo_path} != {registration.path}")
+    if not repo_path.exists():
+        blockers.append(f"Target repository path does not exist: {repo_path}")
+    latest_run = load_delivery_runner_run(project_name, request.request_id, workspace_root=root)
+    if not latest_run:
+        blockers.append(f"No runner run found for request {request_id}.")
+    delivery_id = latest_run.delivery_report_id if latest_run else None
+    if not delivery_id:
+        blockers.append("Runner request has no delivery report id to recover.")
+    report = load_delivery_report(project_name, delivery_id, workspace_root=root) if delivery_id else None
+    commit_result = load_delivery_commit_result(project_name, delivery_id, workspace_root=root) if delivery_id else None
+    push_result = load_delivery_push_result(project_name, delivery_id, workspace_root=root) if delivery_id else None
+
+    if not report:
+        blockers.append(f"Delivery report not found for request {request_id}.")
+    if not commit_result or commit_result.status != "committed" or not commit_result.commit_hash:
+        blockers.append("Runner request does not have a successful guarded commit result.")
+    if report and not report.commit_hash:
+        blockers.append("Delivery report has no recorded commit hash.")
+    if report and commit_result and report.commit_hash and commit_result.commit_hash and report.commit_hash != commit_result.commit_hash:
+        blockers.append("Delivery report commit hash does not match commit result hash.")
+    if push_result and push_result.pushed:
+        blockers.append(f"Delivery report {delivery_id} is already pushed.")
+
+    status = get_git_repository_status(project_name, workspace_root=root)
+    steps.append("checked git status")
+    if status.staged_files:
+        blockers.append("Working tree has staged changes; push recovery requires no staged files.")
+    if status.unstaged_files or status.untracked_files:
+        blockers.append("Working tree is dirty; push recovery requires a clean working tree.")
+    if not status.current_branch:
+        blockers.append("Current Git branch could not be determined.")
+    if not status.upstream_branch:
+        blockers.append("No upstream branch was detected.")
+    expected_branch = report.branch if report else None
+    if expected_branch and status.current_branch and expected_branch != status.current_branch:
+        blockers.append(f"Current branch {status.current_branch} does not match delivery branch {expected_branch}.")
+
+    recorded_commit = report.commit_hash if report else commit_result.commit_hash if commit_result else None
+    if repo_path.exists():
+        head_result = _run_git(repo_path, ["rev-parse", "HEAD"])
+        current_head = head_result.stdout.strip() if head_result.returncode == 0 else ""
+        if head_result.returncode != 0:
+            blockers.append("Current HEAD could not be determined.")
+        elif recorded_commit and current_head != recorded_commit:
+            blockers.append(f"Current HEAD {current_head} does not match recorded delivery commit {recorded_commit}.")
+        run.commit_hash = recorded_commit or current_head or None
+
+    if blockers:
+        if dry_run:
+            run.status = "blocked"
+            run.completed_at = datetime.now(UTC)
+            run.delivery_report_id = delivery_id
+            run.blockers = _dedupe(blockers)
+            run.warnings = _dedupe(warnings)
+            run.steps_run = _dedupe(steps)
+            run.next_action = "Resolve push recovery blockers before retrying."
+            return run, None, None
+        return _finish_runner_run(project_name, request, run, "blocked", blockers, warnings, steps, root)
+
+    run.delivery_report_id = delivery_id
+    run.delivery_check_id = latest_run.delivery_check_id if latest_run else None
+    run.delivery_plan_id = latest_run.delivery_plan_id if latest_run else None
+    push_remote = report.push_remote or _default_push_remote(report.remote) if report else None
+    push_branch = report.push_branch or report.branch if report else None
+    run.push_remote = push_remote
+    run.push_branch = push_branch
+    steps.append("safety checks passed")
+
+    if dry_run:
+        run.status = "dry_run"
+        run.completed_at = datetime.now(UTC)
+        run.warnings = _dedupe(warnings)
+        run.steps_run = _dedupe([*steps, "dry-run: guarded push not run"])
+        run.next_action = _runner_recover_push_command(project_name, request_id)
+        return run, None, None
+
+    completed = _run_git(repo_path, ["push", push_remote or "", push_branch or ""])
+    steps.append("guarded push recovery")
+    push = DeliveryPush(
+        project=project_name,
+        delivery_id=delivery_id or "unknown",
+        source_delivery_report_id=delivery_id or "unknown",
+        source_commit_hash=recorded_commit,
+        target_repo_path=str(repo_path),
+        branch=report.branch if report else None,
+        remote=report.remote if report else None,
+        push_remote=push_remote,
+        push_branch=push_branch,
+        push_status="pushed" if completed.returncode == 0 else "failed",
+        pushed=completed.returncode == 0,
+        pushed_at=datetime.now(UTC) if completed.returncode == 0 else None,
+        push_exit_code=completed.returncode,
+        push_stdout=completed.stdout.strip(),
+        push_stderr=completed.stderr.strip(),
+        warnings=warnings,
+        next_action=(
+            f"Runner push recovery completed for {request_id}."
+            if completed.returncode == 0
+            else "Review the git push failure before retrying runner push recovery."
+        ),
+    )
+    write_delivery_push_result(push, workspace_root=root)
+    run.pushed = push.pushed
+    if push.pushed:
+        _mark_delivery_report_pushed(project_name, delivery_id or "unknown", push, workspace_root=root)
+        return _finish_runner_run(project_name, request, run, "completed", blockers, warnings, steps, root)
+    blockers.append(push.push_stderr or push.push_stdout or "Guarded push recovery failed.")
+    _mark_delivery_report_push_failed(project_name, delivery_id or "unknown", _summary_text(blockers), workspace_root=root)
+    return _finish_runner_run(project_name, request, run, "failed", blockers, warnings, steps, root)
+
+
 def build_delivery_latest_summary(project_name: str, workspace_root: Path | None = None) -> DeliveryLatestSummary:
     root = workspace_root or get_workspace_root()
     registration = load_registered_project(project_name, workspace_root=root)
@@ -3458,6 +3600,8 @@ def _runner_next_action(
 ) -> str:
     if status == "completed" and pushed:
         return f"Trusted delivery runner completed and pushed commit {commit_hash or 'unknown'}."
+    if commit_hash and not pushed and status in {"blocked", "failed"}:
+        return _runner_recover_push_command(project_name, request_id)
     if blockers:
         return "Resolve runner blockers before creating a new runner request: " + _summary_text(blockers)
     return _runner_run_command(project_name, request_id)
@@ -3481,6 +3625,8 @@ def _runner_latest_next_action(
         return f"Runner delivery completed; no runner action needed for {request.request_id}."
     if request.status == "completed":
         return f"Runner request {request.request_id} is completed; no runner action needed."
+    if latest_run and latest_run.status in {"blocked", "failed"} and latest_run.commit_hash and not latest_run.pushed:
+        return _runner_recover_push_command(project_name, request.request_id)
     if latest_run and latest_run.status in {"blocked", "failed"}:
         return (
             f"Review {request.request_id} with devo delivery runner-show --project {project_name} "
@@ -3495,6 +3641,13 @@ def _runner_run_command(project_name: str, request_id: str) -> str:
     return (
         f'.\\.venv\\Scripts\\devo.exe delivery runner-run --project {project_name} --request {request_id} '
         '--approver "Manas" --confirm-runner-delivery'
+    )
+
+
+def _runner_recover_push_command(project_name: str, request_id: str) -> str:
+    return (
+        f'.\\.venv\\Scripts\\devo.exe delivery runner-recover-push --project {project_name} --request {request_id} '
+        '--approver "Manas" --confirm-runner-push'
     )
 
 

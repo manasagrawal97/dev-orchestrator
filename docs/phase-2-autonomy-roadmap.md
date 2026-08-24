@@ -189,6 +189,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex-worker execution, a full agent-role contract system, least-privilege role permissions, AI/API calls, parallel workers, or delivery safety bypasses.
 - Status: Completed. `queue-worker-handoff-show` is a read-only checklist view, and queue-worker run/show output exposes the same lightweight checklist.
 
+### TASK-DEVO-144: Assisted Queue Recovery And Flow Polish
+
+- Goal: Close the main friction found in TASK-DEVO-143 before broader assisted queue dogfood.
+- Scope: push-only trusted runner recovery after successful guarded commit/failed push, `approved-queue-run --continue-next`, clearer validation evidence wording, and latest/default flow-summary behavior.
+- Not in scope: real Codex execution, validation execution automation, UI approval/build/test/commit/push controls, parallel workers, AI/API calls, or delivery safety bypasses.
+- Status: Completed. `devo delivery runner-recover-push` handles the narrow push-only recovery case, `approved-queue-run --continue-next` starts at most one next eligible item after a specified run completes, and `worker codex flow-summary` / `project flow-summary` can use the uniquely latest queue when `--queue` is omitted.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -493,7 +500,7 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-143 live 3-5 task assisted queue dogfood.
+Recommended next task: TASK-DEVO-145 dogfood the polished assisted queue recovery/continuation flow.
 
 Start it only after normal PowerShell reports scheduled runner health as `healthy`, or with direct trusted `runner-run` accepted as the delivery fallback for the dogfood. If Codex/sandbox reports drift while normal PowerShell is healthy, record that as environment visibility mismatch instead of reinstalling repeatedly.
 

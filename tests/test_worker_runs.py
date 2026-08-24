@@ -18,6 +18,7 @@ from devo.project_planning import (
     load_codex_handoff,
     load_codex_worker_run,
     load_execution_queue,
+    queue_artifact_paths,
     get_backlog_task,
     load_codex_run_plan_index,
     load_worker_run_index,
@@ -141,7 +142,42 @@ def test_codex_queue_status_command_shows_linked_worker_and_plan(tmp_path: Path,
     assert "run-plan-approve --project sample --plan RP001" in result.output
     assert summary.exit_code == 0, summary.output
     assert "Codex worker flow summary: Q001" in summary.output
+    assert "Queue source: explicit" in summary.output
     assert "run-plan-approve --project sample --plan RP001" in summary.output
+
+
+def test_codex_flow_summary_defaults_to_unique_latest_queue(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_started_queue(tmp_path)
+    _add_fake_codex_to_path(tmp_path, monkeypatch)
+    runner.invoke(app, ["worker", "codex", "prepare-next", "--project", "sample", "--queue", "Q001"])
+
+    worker_summary = runner.invoke(app, ["worker", "codex", "flow-summary", "--project", "sample"], terminal_width=240)
+    project_summary = runner.invoke(app, ["project", "flow-summary", "--project", "sample"], terminal_width=240)
+
+    assert worker_summary.exit_code == 0, worker_summary.output
+    assert "Codex worker flow summary: Q001" in worker_summary.output
+    assert "Queue source: latest" in worker_summary.output
+    assert project_summary.exit_code == 0, project_summary.output
+    assert "Codex worker flow summary: Q001" in project_summary.output
+    assert "Queue source: latest" in project_summary.output
+
+
+def test_codex_flow_summary_blocks_ambiguous_latest_queue(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_started_queue(tmp_path)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    duplicate = queue.model_copy(update={"queue_id": "Q002"})
+    duplicate_json, duplicate_markdown = queue_artifact_paths("sample", "Q002", workspace_root=workspace)
+    duplicate_json.parent.mkdir(parents=True, exist_ok=True)
+    duplicate_json.write_text(duplicate.model_dump_json(indent=2), encoding="utf-8")
+    duplicate_markdown.write_text("# Queue Q002\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["worker", "codex", "flow-summary", "--project", "sample"], terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Could not determine latest queue. Re-run with --queue <QUEUE-ID>." in result.output
 
 
 def test_worker_run_create_rejects_unknown_handoff(tmp_path: Path, monkeypatch) -> None:

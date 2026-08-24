@@ -100,6 +100,7 @@ from .delivery import (
     run_delivery_commit_diagnostics,
     reject_delivery_plan,
     request_delivery_approval,
+    recover_delivery_runner_push,
     run_delivery_readiness_check,
     run_delivery_runner_request,
     run_delivery_runner_watch,
@@ -972,7 +973,7 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
         console.print(f"Task: {result.evidence_record.task_id or 'none'}")
         console.print(f"Recorded by: {result.evidence_record.recorded_by or 'none'}")
     console.print(f"Summary: {result.summary}", soft_wrap=True)
-    console.print(f"Artifact path: {result.artifact_path or 'none'}", soft_wrap=True)
+    console.print(f"Supporting artifact: {result.artifact_path or 'none'}", soft_wrap=True)
     console.print("Commands run:")
     for command in result.commands_run or ["none"]:
         console.print(f"  - {command}", soft_wrap=True)
@@ -990,8 +991,9 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
     console.print(f"  Validation status: {result.evidence.validation_status or 'none'}")
     console.print(f"  Validation passed: {result.evidence.validation_passed}")
     console.print(f"  Delivery request exists: {result.evidence.delivery_request_exists}")
-    console.print(f"Record JSON: {_named_path(Path(result.record_json_path)) if result.record_json_path else 'none'}")
-    console.print(f"Record Markdown: {_named_path(Path(result.record_markdown_path)) if result.record_markdown_path else 'none'}")
+    label = "Validation evidence artifact" if result.evidence_type == "validation" else "Evidence artifact"
+    console.print(f"{label} JSON: {_named_path(Path(result.record_json_path)) if result.record_json_path else 'none'}")
+    console.print(f"{label} Markdown: {_named_path(Path(result.record_markdown_path)) if result.record_markdown_path else 'none'}")
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
     console.print("Warnings:")
     for warning in result.warnings or ["none"]:
@@ -1443,9 +1445,10 @@ def _print_codex_queue_worker_status(status: CodexQueueWorkerStatus) -> None:
     console.print("Safety: queue worker status is read-only. Queue item completion remains explicit.")
 
 
-def _print_codex_worker_flow_summary(summary: CodexWorkerFlowSummary) -> None:
+def _print_codex_worker_flow_summary(summary: CodexWorkerFlowSummary, *, queue_source: str = "explicit") -> None:
     console.print(f"[bold]Codex worker flow summary: {summary.queue_id}[/bold]")
     console.print(f"Project: {summary.project}")
+    console.print(f"Queue source: {queue_source}")
     console.print(f"Queue: {summary.queue_id} | status={summary.queue_status}")
     console.print(f"Item: {summary.selected_item_id or 'none'} | status={summary.selected_item_status or 'none'}")
     console.print(f"Handoff: {summary.source_handoff_id or 'none'}")
@@ -1466,6 +1469,21 @@ def _print_codex_worker_flow_summary(summary: CodexWorkerFlowSummary) -> None:
     for command in summary.next_commands or ["none"]:
         console.print(f"  {command}", soft_wrap=True)
     console.print("Safety: flow-summary is read-only. It does not run Codex, validate, commit, push, or complete queue/task state.")
+
+
+def _resolve_flow_summary_queue(project_name: str, queue_id: str | None) -> tuple[str, str]:
+    if queue_id:
+        return queue_id, "explicit"
+    queues = list_execution_queues(project_name)
+    if not queues:
+        msg = f"No execution queues found for project {project_name}. Re-run with --queue <QUEUE-ID> after creating a queue."
+        raise ValueError(msg)
+    latest_updated_at = queues[0].updated_at
+    latest = [queue for queue in queues if queue.updated_at == latest_updated_at]
+    if len(latest) != 1:
+        msg = "Could not determine latest queue. Re-run with --queue <QUEUE-ID>."
+        raise ValueError(msg)
+    return latest[0].queue_id, "latest"
 
 
 def _print_json_model(model: object) -> None:
@@ -2697,6 +2715,34 @@ def run_delivery_runner_request_command(
     _print_delivery_runner_run(run)
     console.print(f"JSON: {_named_path(json_path)}")
     console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+@delivery_app.command("runner-recover-push")
+def recover_delivery_runner_push_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    request_id: str = typer.Option(..., "--request", help="Runner request ID."),
+    approver: str | None = typer.Option(None, "--approver", help="Approver name recorded for push recovery."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview push-only recovery safety checks without mutating."),
+    confirm_runner_push: bool = typer.Option(False, "--confirm-runner-push", help="Required confirmation to run guarded push-only recovery."),
+) -> None:
+    """Recover a runner delivery where guarded commit succeeded but push failed."""
+    resolved_project = _resolve_project(project_name)
+    try:
+        run, json_path, markdown_path = recover_delivery_runner_push(
+            resolved_project,
+            request_id,
+            approver=approver,
+            dry_run=dry_run,
+            confirm_runner_push=confirm_runner_push,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--request") from exc
+    _print_delivery_runner_run(run)
+    if dry_run:
+        console.print("Dry run: no push was run and no runner artifacts were written.")
+        return
+    console.print(f"JSON: {_named_path(json_path) if json_path else 'none'}")
+    console.print(f"Markdown: {_named_path(markdown_path) if markdown_path else 'none'}")
 
 
 @delivery_app.command("runner-watch")
@@ -4717,6 +4763,7 @@ def approved_queue_run_command(
         "--require-scheduler-healthy/--no-require-scheduler-healthy",
         help="Require a healthy trusted delivery runner schedule before executing mutations.",
     ),
+    continue_next: bool = typer.Option(False, "--continue-next", help="After a specified run completes safely, start one next eligible queue item."),
     confirm_auto_run: bool = typer.Option(False, "--confirm-auto-run", help="Confirm bounded approved queue auto-run execution."),
 ) -> None:
     """Advance approved queue work one safe gate at a time until the next stop condition."""
@@ -4794,6 +4841,41 @@ def approved_queue_run_command(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--policy") from exc
     _print_queue_worker_loop_result(result)
+    if (
+        continue_next
+        and run_id
+        and not result.blockers
+        and result.stop_reason == "specified queue-worker run completed"
+        and not dry_run
+    ):
+        console.print("[bold]Continue-next[/bold]")
+        console.print("Specified run completed safely; starting one next eligible queue item.")
+        try:
+            next_result = loop_queue_worker_run(
+                project_name,
+                policy_id,
+                run_id=None,
+                message=message,
+                note=note,
+                max_steps=1,
+                dry_run=False,
+                stop_on_waiting_worker=True,
+                stop_on_delivery_request=True,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+        _print_queue_worker_loop_result(next_result)
+        if next_result.blockers or next_result.stop_reason in {
+            "policy no longer valid",
+            "selected queue item outside policy",
+            "failed evidence",
+            "review did not pass",
+            "delivery request unsafe",
+            "blocked",
+            "failed",
+            "validation evidence is not passing",
+        }:
+            raise typer.Exit(1)
     if result.blockers or result.stop_reason in {
         "policy no longer valid",
         "selected queue item outside policy",
@@ -5509,16 +5591,35 @@ def codex_queue_worker_status_command(
 @worker_codex_app.command("flow-summary")
 def codex_worker_flow_summary_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
-    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    queue_id: str | None = typer.Option(None, "--queue", help="Execution queue id. Defaults to uniquely latest queue when omitted."),
     item_id: str | None = typer.Option(None, "--item", help="Optional queue item id to inspect instead of current/recent item."),
 ) -> None:
     """Show a compact read-only supervised worker flow summary for one queue."""
     project_name = _resolve_project(project_name)
     try:
-        summary = get_codex_worker_flow_summary(project_name, queue_id, item_id=item_id)
+        resolved_queue_id, queue_source = _resolve_flow_summary_queue(project_name, queue_id)
+        summary = get_codex_worker_flow_summary(project_name, resolved_queue_id, item_id=item_id)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--queue") from exc
-    _print_codex_worker_flow_summary(summary)
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    _print_codex_worker_flow_summary(summary, queue_source=queue_source)
+
+
+@project_app.command("flow-summary")
+def project_flow_summary_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    queue_id: str | None = typer.Option(None, "--queue", help="Execution queue id. Defaults to uniquely latest queue when omitted."),
+    item_id: str | None = typer.Option(None, "--item", help="Optional queue item id to inspect instead of current/recent item."),
+) -> None:
+    """Show a compact read-only supervised worker flow summary for the latest/current queue."""
+    project_name = _resolve_project(project_name)
+    try:
+        resolved_queue_id, queue_source = _resolve_flow_summary_queue(project_name, queue_id)
+        summary = get_codex_worker_flow_summary(project_name, resolved_queue_id, item_id=item_id)
+    except ValueError as exc:
+        console.print(str(exc))
+        raise typer.Exit(1) from exc
+    _print_codex_worker_flow_summary(summary, queue_source=queue_source)
 
 
 @worker_codex_app.command("preflight")

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 from typer.testing import CliRunner
 
 from devo.api import create_app
@@ -26,6 +27,7 @@ from devo.delivery import (
     push_delivery_report,
     request_delivery_approval,
     refresh_delivery_report,
+    recover_delivery_runner_push,
     run_delivery_runner_watch,
     run_delivery_commit_diagnostics,
     run_delivery_readiness_check,
@@ -569,6 +571,277 @@ def test_delivery_runner_run_does_not_push_if_commit_fails(tmp_path: Path, monke
     assert run.status == "failed"
     assert push_called is False
     assert run.pushed is False
+
+
+def test_delivery_runner_recover_push_completes_committed_failed_push(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    import devo.delivery as delivery_module
+
+    real_run_git = delivery_module._run_git
+
+    def fail_push_once(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["push"]:
+            return subprocess.CompletedProcess(args, 1, "", "push failed")
+        return real_run_git(repo_path, args)
+
+    monkeypatch.setattr("devo.delivery._run_git", fail_push_once)
+    failed = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+    assert failed.exit_code == 0, failed.output
+    failed_run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert failed_run is not None
+    assert failed_run.status == "failed"
+    assert failed_run.commit_hash
+    assert failed_run.pushed is False
+    assert _git(repo, "status", "--short", capture=True).stdout.strip() == ""
+
+    latest = runner.invoke(app, ["delivery", "runner-latest", "--project", "sample"], terminal_width=240)
+    assert latest.exit_code == 0, latest.output
+    assert "runner-recover-push --project sample --request REQ-0001" in latest.output
+
+    monkeypatch.setattr("devo.delivery._run_git", real_run_git)
+    recovered = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-recover-push",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-push",
+        ],
+        terminal_width=240,
+    )
+
+    assert recovered.exit_code == 0, recovered.output
+    assert "Status: completed" in recovered.output
+    assert "Pushed: True" in recovered.output
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    report = load_delivery_report("sample", "DEL-0001", workspace_root=workspace)
+    assert run is not None
+    assert request is not None
+    assert report is not None
+    assert run.status == "completed"
+    assert request.status == "completed"
+    assert report.pushed is True
+    remote_ref = _git(repo, "ls-remote", "origin", "refs/heads/main", capture=True).stdout
+    assert failed_run.commit_hash in remote_ref
+
+
+def test_delivery_runner_recover_push_dry_run_does_not_mutate(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    import devo.delivery as delivery_module
+
+    real_run_git = delivery_module._run_git
+
+    def fail_push(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["push"]:
+            return subprocess.CompletedProcess(args, 1, "", "push failed")
+        return real_run_git(repo_path, args)
+
+    monkeypatch.setattr("devo.delivery._run_git", fail_push)
+    runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+    before = (workspace / "projects" / "sample" / "delivery" / "runner-requests" / "runner-run-req-0001.json").read_text(encoding="utf-8")
+
+    dry_run = runner.invoke(
+        app,
+        ["delivery", "runner-recover-push", "--project", "sample", "--request", "REQ-0001", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Status: dry_run" in dry_run.output
+    assert "Dry run: no push was run and no runner artifacts were written." in dry_run.output
+    after = (workspace / "projects" / "sample" / "delivery" / "runner-requests" / "runner-run-req-0001.json").read_text(encoding="utf-8")
+    assert after == before
+
+
+def test_delivery_runner_recover_push_blocks_dirty_tree(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    import devo.delivery as delivery_module
+
+    real_run_git = delivery_module._run_git
+
+    def fail_push(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["push"]:
+            return subprocess.CompletedProcess(args, 1, "", "push failed")
+        return real_run_git(repo_path, args)
+
+    monkeypatch.setattr("devo.delivery._run_git", fail_push)
+    runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+    monkeypatch.setattr("devo.delivery._run_git", real_run_git)
+
+    (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    dirty = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-recover-push",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-push",
+        ],
+        terminal_width=240,
+    )
+    assert dirty.exit_code == 0, dirty.output
+    assert "Working tree is dirty" in dirty.output
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace).status == "requested"
+
+
+def test_delivery_runner_recover_push_blocks_head_mismatch(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+    import devo.delivery as delivery_module
+
+    real_run_git = delivery_module._run_git
+
+    def fail_push(repo_path: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[:1] == ["push"]:
+            return subprocess.CompletedProcess(args, 1, "", "push failed")
+        return real_run_git(repo_path, args)
+
+    monkeypatch.setattr("devo.delivery._run_git", fail_push)
+    runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+    monkeypatch.setattr("devo.delivery._run_git", real_run_git)
+
+    (repo / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+    _git(repo, "add", "dirty.txt")
+    _git(repo, "commit", "-m", "different head")
+    mismatch = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-recover-push",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-push",
+        ],
+        terminal_width=240,
+    )
+    assert mismatch.exit_code == 0, mismatch.output
+    run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert run is not None
+    assert any("does not match recorded delivery commit" in blocker for blocker in run.blockers)
+
+
+def test_delivery_runner_recover_push_blocks_completed_and_missing_commit_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"], terminal_width=240)
+
+    completed = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-run",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0001",
+            "--approver",
+            "Manas",
+            "--confirm-runner-delivery",
+        ],
+        terminal_width=240,
+    )
+    assert completed.exit_code == 0, completed.output
+    with pytest.raises(ValueError, match="already completed"):
+        recover_delivery_runner_push("sample", "REQ-0001", confirm_runner_push=True, workspace_root=workspace)
+
+    (repo / "another.txt").write_text("another\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: another"], terminal_width=240)
+    missing_commit = runner.invoke(
+        app,
+        [
+            "delivery",
+            "runner-recover-push",
+            "--project",
+            "sample",
+            "--request",
+            "REQ-0002",
+            "--approver",
+            "Manas",
+            "--confirm-runner-push",
+        ],
+        terminal_width=240,
+    )
+    assert missing_commit.exit_code == 0, missing_commit.output
+    assert "No runner run found for request REQ-0002." in missing_commit.output
+    assert load_delivery_runner_request("sample", "REQ-0002", workspace_root=workspace).status == "requested"
 
 
 def test_delivery_runner_watch_refuses_without_confirmation(tmp_path: Path, monkeypatch) -> None:
