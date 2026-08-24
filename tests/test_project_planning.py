@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from devo.delivery import DeliveryRunnerRun, load_delivery_runner_request, write_delivery_runner_request, write_delivery_runner_run
+from devo.delivery import (
+    DeliveryRunnerRun,
+    DeliveryRunnerScheduleStatus,
+    load_delivery_runner_request,
+    write_delivery_runner_request,
+    write_delivery_runner_run,
+)
 from devo.main import app
 from devo.project_planning import (
     BacklogTask,
@@ -2647,6 +2653,158 @@ def test_queue_worker_loop_does_not_start_next_item_while_delivery_pending(tmp_p
     assert queue is not None
     second_item = next(entry for entry in queue.items if entry.item_id == "QI002")
     assert second_item.status == "pending"
+
+
+def test_approved_queue_run_requires_confirmation_unless_dry_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    missing_confirm = runner.invoke(
+        app,
+        ["project", "approved-queue-run", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+    dry_run = runner.invoke(
+        app,
+        ["project", "approved-queue-run", "--project", "sample", "--policy", "POL-0001", "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert missing_confirm.exit_code != 0
+    assert "requires --confirm-auto-run" in missing_confirm.output
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Approved queue auto-run: sample" in dry_run.output
+    assert "Mode: dry-run" in dry_run.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+
+
+def test_approved_queue_run_blocks_unapproved_policy_before_scheduler_gate(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001", request=False, approve=False)
+
+    def fail_if_called(project_name: str) -> DeliveryRunnerScheduleStatus:
+        raise AssertionError("scheduler should not be checked when policy preview blocks")
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", fail_if_called)
+
+    result = runner.invoke(
+        app,
+        ["project", "approved-queue-run", "--project", "sample", "--policy", "POL-0001", "--confirm-auto-run"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Preview blocked before scheduler/execution." in result.output
+    assert "Stop reason: policy no longer valid" in result.output
+    assert "Policy status is draft" in result.output
+
+
+def test_approved_queue_run_blocks_unhealthy_scheduler_before_mutation(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    def unhealthy_scheduler(project_name: str) -> DeliveryRunnerScheduleStatus:
+        return DeliveryRunnerScheduleStatus(
+            project=project_name,
+            installed=False,
+            enabled=False,
+            health="drift",
+            task_query_source="schtasks.exe",
+            task_query_result="ERROR: missing task",
+            environment_note="Codex/sandbox may have restricted scheduled-task visibility.",
+            warnings=["Schedule metadata says enabled, but the Windows scheduled task is missing."],
+            repair_commands=[f"devo delivery runner-schedule-install --project {project_name} --approver \"<name>\" --enable --confirm-install"],
+            next_action="Verify scheduler from normal PowerShell before reinstalling.",
+        )
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", unhealthy_scheduler)
+
+    result = runner.invoke(
+        app,
+        ["project", "approved-queue-run", "--project", "sample", "--policy", "POL-0001", "--confirm-auto-run"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Trusted runner scheduler gate" in result.output
+    assert "Health: drift" in result.output
+    assert "Stop reason: trusted runner scheduler is not healthy." in result.output
+    assert "runner-watch --project sample" in result.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+
+
+def test_approved_queue_run_executes_existing_loop_when_scheduler_healthy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    def healthy_scheduler(project_name: str) -> DeliveryRunnerScheduleStatus:
+        return DeliveryRunnerScheduleStatus(
+            project=project_name,
+            installed=True,
+            enabled=True,
+            health="healthy",
+            task_query_source="schtasks.exe",
+            task_query_result="status_ok",
+            next_action="No action needed.",
+        )
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", healthy_scheduler)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "approved-queue-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--max-cycles",
+            "1",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Approved queue auto-run: sample" in result.output
+    assert "Health: healthy" in result.output
+    assert "Steps attempted: 1" in result.output
+    assert "Stop reason: worker result missing" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+
+
+def test_approved_queue_run_can_skip_scheduler_gate_explicitly(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    def fail_if_called(project_name: str) -> DeliveryRunnerScheduleStatus:
+        raise AssertionError("scheduler should be skipped")
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", fail_if_called)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "approved-queue-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--max-cycles",
+            "1",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy." in result.output
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace) is not None
 
 
 def test_queue_worker_assisted_e2e_flow(tmp_path: Path, monkeypatch) -> None:

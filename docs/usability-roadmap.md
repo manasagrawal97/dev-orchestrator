@@ -73,6 +73,8 @@ TASK-DEVO-139 resolves the scheduled runner status part: `runner-schedule-status
 
 TASK-DEVO-139A adds environment context to that output so a restricted Codex/sandbox process can report drift without implying the normal PowerShell scheduler must be reinstalled. Normal PowerShell health evidence is the deciding signal before TASK-DEVO-140.
 
+TASK-DEVO-140 adds `devo project approved-queue-run` as the first approved queue auto-run wrapper. It reduces repeated operator commands by previewing policy readiness, checking scheduler health, and then reusing the one-task queue-worker loop until the next safe stop. It still does not run real Codex, validation, runner-watch, commit, push, UI controls, ECC, or parallel autonomous execution.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

@@ -167,6 +167,14 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: scheduler reinstall, approved queue auto-run, real Codex execution, UI controls, or delivery safety changes.
 - Status: Completed. See `docs/dogfood/task-devo-139a-scheduler-environment-context.md`.
 
+### TASK-DEVO-140: Approved Queue Auto-Run V1
+
+- Goal: Add one command that continues an approved queue as far as current evidence safely allows.
+- Scope: `devo project approved-queue-run --project <project> --policy <POL-ID> --confirm-auto-run`, `--dry-run`, optional `--run`, `--max-cycles`, `--message`, `--note`, and scheduler health gating through the existing trusted runner schedule status.
+- Not in scope: real Codex execution, validation execution, runner-watch execution, commit, push, background daemon changes, parallel execution, UI controls, AI/API calls, ECC integration, or delivery safety bypasses.
+- Safety rules: preview policy readiness before execution, require explicit confirmation for mutation, stop on unapproved/expired/out-of-scope policy, stop on missing worker/review/validation evidence, stop on non-passing validation, stop on delivery requested or failed delivery, stop on terminal/unknown states, and require healthy scheduler evidence by default before executing mutating queue continuation.
+- Status: Completed as a v1 wrapper around the existing one-task-at-a-time queue-worker loop. `--no-require-scheduler-healthy` exists for explicit operator fallback when normal PowerShell health evidence is trusted but the current restricted process cannot see the scheduler.
+
 ### TASK-DEVO-135: Queue-Worker Evidence Intake
 
 - Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.

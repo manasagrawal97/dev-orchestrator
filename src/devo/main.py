@@ -879,6 +879,44 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
     )
 
 
+def _print_approved_queue_run_header(
+    *,
+    project_name: str,
+    policy_id: str,
+    run_id: str | None,
+    max_cycles: int,
+    dry_run: bool,
+    require_scheduler_healthy: bool,
+) -> None:
+    console.print(f"[bold]Approved queue auto-run: {project_name}[/bold]")
+    console.print(f"Project: {project_name}")
+    console.print(f"Policy: {policy_id}")
+    console.print(f"Queue worker run: {run_id or 'auto-select'}")
+    console.print(f"Mode: {'dry-run' if dry_run else 'execute'}")
+    console.print(f"Max cycles: {max_cycles}")
+    console.print(f"Scheduler health required: {require_scheduler_healthy}")
+
+
+def _print_approved_queue_run_scheduler_gate(status: DeliveryRunnerScheduleStatus, *, blocked: bool) -> None:
+    console.print("[bold]Trusted runner scheduler gate[/bold]")
+    console.print(f"Health: {status.health}")
+    console.print(f"Installed: {status.installed if status.installed is not None else 'unknown'}")
+    console.print(f"Enabled: {status.enabled if status.enabled is not None else 'unknown'}")
+    console.print(f"Latest watch: {status.latest_watch_id or 'none'} | {status.latest_watch_status or 'unknown'}")
+    console.print(f"Task query result: {status.task_query_result or 'unknown'}", soft_wrap=True)
+    console.print(f"Environment note: {status.environment_note or 'none'}", soft_wrap=True)
+    if blocked:
+        console.print("Stop reason: trusted runner scheduler is not healthy.", soft_wrap=True)
+        console.print("Safe next actions:")
+        console.print(f"  - Check scheduler: devo delivery runner-schedule-doctor --project {status.project}")
+        for command in status.repair_commands:
+            console.print(f"  - Repair if confirmed unhealthy: {command}", soft_wrap=True)
+        console.print(
+            f"  - Direct fallback after operator approval: devo delivery runner-watch --project {status.project} --approver \"Manas\" --once --confirm-runner-watch",
+            soft_wrap=True,
+        )
+
+
 def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecordResult) -> None:
     console.print(f"[bold]Queue worker evidence recorded: {result.run_id}[/bold]")
     console.print(f"Project: {result.project}")
@@ -4575,6 +4613,110 @@ def loop_queue_worker_run_command(
         "delivery request unsafe",
         "blocked",
         "failed",
+    }:
+        raise typer.Exit(1)
+
+
+@project_app.command("approved-queue-run")
+def approved_queue_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Approved execution policy id."),
+    run_id: str | None = typer.Option(None, "--run", help="Optional queue worker run id. Defaults to latest active run for the policy."),
+    message: str = typer.Option("", "--message", help="Optional delivery request commit message when a run is delivery-ready."),
+    note: str = typer.Option("", "--note", help="Optional delivery request note when a run is delivery-ready."),
+    max_cycles: int = typer.Option(10, "--max-cycles", help="Maximum one-step queue-worker cycles to attempt."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the approved auto-run without mutating workspace artifacts."),
+    require_scheduler_healthy: bool = typer.Option(
+        True,
+        "--require-scheduler-healthy/--no-require-scheduler-healthy",
+        help="Require a healthy trusted delivery runner schedule before executing mutations.",
+    ),
+    confirm_auto_run: bool = typer.Option(False, "--confirm-auto-run", help="Confirm bounded approved queue auto-run execution."),
+) -> None:
+    """Advance approved queue work one safe gate at a time until the next stop condition."""
+    project_name = _resolve_project(project_name)
+    _print_approved_queue_run_header(
+        project_name=project_name,
+        policy_id=policy_id,
+        run_id=run_id,
+        max_cycles=max_cycles,
+        dry_run=dry_run,
+        require_scheduler_healthy=require_scheduler_healthy,
+    )
+    if max_cycles < 1:
+        raise typer.BadParameter("--max-cycles must be at least 1.", param_hint="--max-cycles")
+    if not dry_run and not confirm_auto_run:
+        console.print("approved-queue-run requires --confirm-auto-run unless --dry-run is used.")
+        raise typer.Exit(1)
+
+    try:
+        preview = loop_queue_worker_run(
+            project_name,
+            policy_id,
+            run_id=run_id,
+            message=message,
+            note=note,
+            max_steps=1,
+            dry_run=True,
+            stop_on_waiting_worker=True,
+            stop_on_delivery_request=True,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+
+    if dry_run:
+        if require_scheduler_healthy:
+            scheduler_status = get_delivery_runner_schedule_status(project_name)
+            _print_approved_queue_run_scheduler_gate(scheduler_status, blocked=False)
+        else:
+            console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
+        _print_queue_worker_loop_result(preview)
+        if preview.blockers:
+            raise typer.Exit(1)
+        return
+
+    if preview.blockers:
+        console.print("Preview blocked before scheduler/execution.")
+        _print_queue_worker_loop_result(preview)
+        raise typer.Exit(1)
+
+    if require_scheduler_healthy:
+        scheduler_status = get_delivery_runner_schedule_status(project_name)
+        blocked_by_scheduler = scheduler_status.health != "healthy"
+        _print_approved_queue_run_scheduler_gate(scheduler_status, blocked=blocked_by_scheduler)
+        if blocked_by_scheduler:
+            console.print(
+                "Safety: no queue-worker mutation, validation, runner-watch, commit, or push was run because scheduler health was not confirmed.",
+                soft_wrap=True,
+            )
+            raise typer.Exit(1)
+    else:
+        console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
+
+    try:
+        result = loop_queue_worker_run(
+            project_name,
+            policy_id,
+            run_id=run_id,
+            message=message,
+            note=note,
+            max_steps=max_cycles,
+            dry_run=False,
+            stop_on_waiting_worker=True,
+            stop_on_delivery_request=True,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    _print_queue_worker_loop_result(result)
+    if result.blockers or result.stop_reason in {
+        "policy no longer valid",
+        "selected queue item outside policy",
+        "failed evidence",
+        "review did not pass",
+        "delivery request unsafe",
+        "blocked",
+        "failed",
+        "validation evidence is not passing",
     }:
         raise typer.Exit(1)
 
