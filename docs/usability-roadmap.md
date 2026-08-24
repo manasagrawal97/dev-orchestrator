@@ -69,6 +69,8 @@ TASK-DEVO-137 completes that small polish: `queue-worker-loop` now points direct
 
 TASK-DEVO-138 proves the polished loop against a disposable repo with a real local bare remote. It reaches trusted runner delivery, observes completion, starts the next queue item, and records remaining friction around queue-state wording and scheduled runner status clarity.
 
+TASK-DEVO-139 resolves the scheduled runner status part: `runner-schedule-status` and `runner-schedule-doctor` now classify scheduler health, detect enabled-metadata/task-missing drift, print repair commands, and keep direct trusted runner delivery as the safe fallback.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

@@ -2451,6 +2451,7 @@ def _print_delivery_runner_schedule_status(status: DeliveryRunnerScheduleStatus)
     console.print(f"Task: {status.task_name or 'none'}")
     console.print(f"Installed: {status.installed if status.installed is not None else 'unknown'}")
     console.print(f"Enabled: {status.enabled if status.enabled is not None else 'unknown'}")
+    console.print(f"Health: {status.health}")
     console.print(f"Last run: {status.last_run or 'unknown'}")
     console.print(f"Next run: {status.next_run or 'unknown'}")
     console.print(f"Last result: {status.last_result or 'unknown'}")
@@ -2464,6 +2465,10 @@ def _print_delivery_runner_schedule_status(status: DeliveryRunnerScheduleStatus)
             console.print(f"  {warning}", soft_wrap=True)
     else:
         console.print("  none")
+    if status.repair_commands:
+        console.print("Repair commands:")
+        for command in status.repair_commands:
+            console.print(f"  {command}", soft_wrap=True)
     console.print(f"Next action: {status.next_action}", soft_wrap=True)
 
 
@@ -2724,6 +2729,28 @@ def status_delivery_runner_schedule_command(
     resolved_project = _resolve_project(project_name)
     status = get_delivery_runner_schedule_status(resolved_project)
     _print_delivery_runner_schedule_status(status)
+
+
+@delivery_app.command("runner-schedule-doctor")
+def doctor_delivery_runner_schedule_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Diagnose scheduled trusted runner health without modifying scheduler state."""
+    resolved_project = _resolve_project(project_name)
+    status = get_delivery_runner_schedule_status(resolved_project)
+    console.print("Runner schedule doctor")
+    _print_delivery_runner_schedule_status(status)
+    console.print("Read-only: no scheduler changes were made.")
+    if status.health == "healthy":
+        console.print("Doctor result: scheduler is healthy.")
+    elif status.health == "drift":
+        console.print("Doctor result: scheduler metadata drift detected; auto-delivery cannot be trusted until repaired.")
+    elif status.health == "not_installed":
+        console.print("Doctor result: scheduled task is not installed.")
+    elif status.health == "disabled":
+        console.print("Doctor result: scheduled task is installed but disabled.")
+    else:
+        console.print("Doctor result: scheduler health is unknown; inspect warnings and status output.")
 
 
 @delivery_app.command("runner-schedule-enable")

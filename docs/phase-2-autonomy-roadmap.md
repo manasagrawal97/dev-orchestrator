@@ -153,6 +153,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Follow-up: clarify queue-state completion wording and scheduled runner status when schedule artifacts say enabled but Windows installation is absent.
 - Status: Completed. See `docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md`.
 
+### TASK-DEVO-139: Scheduled Runner Reliability And Health Self-Check
+
+- Goal: Make scheduled trusted runner status reliable before approved queue auto-run depends on it.
+- Scope: classify schedule health, detect enabled-metadata/task-missing drift, print repair commands, add read-only `runner-schedule-doctor`, and document direct trusted runner fallback.
+- Not in scope: real Codex execution, AI/API calls, UI controls, daemon changes beyond existing schedule commands, direct commit/push, or delivery safety bypasses.
+- Status: Completed. See `docs/dogfood/task-devo-139-scheduled-runner-health.md`.
+
 ### TASK-DEVO-135: Queue-Worker Evidence Intake
 
 - Goal: Make it easier to feed manual worker, review, and validation evidence back into the queue-worker loop.
@@ -450,8 +457,8 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-139 queue-state and scheduled runner status clarity.
+Recommended next task: TASK-DEVO-140 approved queue auto-run v1.
 
-It should clarify the remaining operator-facing ambiguity found in TASK-DEVO-138 before adding UI approval/queue controls or retrying real Codex worker execution.
+Start it only after scheduled runner health is `healthy`, or with direct trusted `runner-run` accepted as the delivery fallback for the dogfood.
 
 It removes the remaining manual `runner-run` command and is the smallest practical step toward zero manual delivery. It also respects the key Phase 2 architecture decision: delivery happens from trusted local Windows user context, while Codex/sandbox prepares bounded requests and evidence.

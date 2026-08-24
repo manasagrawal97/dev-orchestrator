@@ -604,7 +604,9 @@ class DeliveryRunnerScheduleStatus(BaseModel):
     last_status_check_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     last_action: str = "status"
     last_action_result: str = "not_checked"
+    health: str = "unknown"
     warnings: list[str] = Field(default_factory=list)
+    repair_commands: list[str] = Field(default_factory=list)
     next_action: str
 
 
@@ -2103,6 +2105,8 @@ def install_delivery_runner_schedule(
         last_action_result=action_result,
         next_action=_schedule_next_action(project_name, installed=bool(installed), enabled=enabled),
     )
+    health = _schedule_health(installed=installed, enabled=enabled, metadata_enabled=enable)
+    repair_commands = _schedule_repair_commands(project_name, health=health)
     status = DeliveryRunnerScheduleStatus(
         project=project_name,
         task_name=plan.task_name,
@@ -2111,7 +2115,9 @@ def install_delivery_runner_schedule(
         last_status_check_at=now,
         last_action=config.last_action,
         last_action_result=action_result,
+        health=health,
         warnings=warnings,
+        repair_commands=repair_commands,
         next_action=config.next_action,
     )
     config_path, status_path = write_delivery_runner_schedule_artifacts(config, status, workspace_root=root)
@@ -2163,6 +2169,8 @@ def get_delivery_runner_schedule_status(
     config = load_delivery_runner_schedule_config(project_name, workspace_root=root)
     latest_watch = next(iter(list_delivery_runner_watches(project_name, workspace_root=root)), None)
     if not config:
+        health = "not_installed"
+        repair_commands = _schedule_repair_commands(project_name, health=health)
         return DeliveryRunnerScheduleStatus(
             project=project_name,
             installed=False,
@@ -2173,6 +2181,8 @@ def get_delivery_runner_schedule_status(
             latest_watch_commit_hash=latest_watch.commit_hash if latest_watch else None,
             latest_watch_pushed=latest_watch.pushed if latest_watch else None,
             last_action_result="missing_config",
+            health=health,
+            repair_commands=repair_commands,
             next_action=(
                 f"Plan or install scheduled runner: devo delivery runner-schedule-plan --project {project_name} "
                 '--approver "<name>" --interval-minutes 5'
@@ -2192,6 +2202,9 @@ def get_delivery_runner_schedule_status(
         result = _run_scheduler_command(["schtasks.exe", "/Query", "/TN", config.task_name, "/FO", "LIST", "/V"])
         if result.returncode != 0:
             installed = False
+            if config.enabled:
+                enabled = False
+                warnings.append("Schedule metadata says enabled, but the Windows scheduled task is missing.")
             action_result = result.stderr.strip() or result.stdout.strip() or "scheduled task not found"
         else:
             installed = True
@@ -2202,6 +2215,8 @@ def get_delivery_runner_schedule_status(
             next_run = fields.get("Next Run Time")
             last_result = fields.get("Last Result")
             action_result = "status_ok"
+    health = _schedule_health(installed=installed, enabled=enabled, metadata_enabled=config.enabled)
+    repair_commands = _schedule_repair_commands(project_name, health=health)
     return DeliveryRunnerScheduleStatus(
         project=project_name,
         task_name=config.task_name,
@@ -2217,7 +2232,9 @@ def get_delivery_runner_schedule_status(
         latest_watch_pushed=latest_watch.pushed if latest_watch else None,
         last_action="status",
         last_action_result=action_result,
+        health=health,
         warnings=warnings,
+        repair_commands=repair_commands,
         next_action=_schedule_next_action(project_name, installed=installed, enabled=enabled),
     )
 
@@ -2262,6 +2279,8 @@ def run_now_delivery_runner_schedule(
         raise ValueError(msg)
     result = _run_scheduler_command(["schtasks.exe", "/Run", "/TN", config.task_name])
     action_result = result.stderr.strip() or result.stdout.strip() or "run_now_requested"
+    health = _schedule_health(installed=result.returncode == 0, enabled=config.enabled, metadata_enabled=config.enabled)
+    repair_commands = _schedule_repair_commands(project_name, health=health)
     status = DeliveryRunnerScheduleStatus(
         project=project_name,
         task_name=config.task_name,
@@ -2269,7 +2288,9 @@ def run_now_delivery_runner_schedule(
         enabled=config.enabled,
         last_action="run_now",
         last_action_result=action_result,
+        health=health,
         warnings=[] if result.returncode == 0 else [action_result],
+        repair_commands=repair_commands,
         next_action=(
             f"Check latest watch: devo delivery runner-watch-latest --project {project_name}; "
             f"then delivery latest: devo delivery latest --project {project_name}"
@@ -2314,6 +2335,8 @@ def remove_delivery_runner_schedule(
             "next_action": f"Scheduled runner removed. Reinstall with devo delivery runner-schedule-install --project {project_name} ...",
         }
     )
+    health = _schedule_health(installed=installed, enabled=False, metadata_enabled=False)
+    repair_commands = _schedule_repair_commands(project_name, health=health)
     status = DeliveryRunnerScheduleStatus(
         project=project_name,
         task_name=config.task_name,
@@ -2322,7 +2345,9 @@ def remove_delivery_runner_schedule(
         last_status_check_at=now,
         last_action="remove",
         last_action_result=action_result,
+        health=health,
         warnings=warnings,
+        repair_commands=repair_commands,
         next_action=updated_config.next_action,
     )
     config_path, status_path = write_delivery_runner_schedule_artifacts(updated_config, status, workspace_root=root)
@@ -3286,6 +3311,8 @@ def _change_runner_schedule_state(
             "next_action": _schedule_next_action(project_name, installed=result.returncode == 0, enabled=enabled),
         }
     )
+    health = _schedule_health(installed=result.returncode == 0, enabled=updated_config.enabled, metadata_enabled=updated_config.enabled)
+    repair_commands = _schedule_repair_commands(project_name, health=health)
     status = DeliveryRunnerScheduleStatus(
         project=project_name,
         task_name=config.task_name,
@@ -3294,7 +3321,9 @@ def _change_runner_schedule_state(
         last_status_check_at=now,
         last_action=action,
         last_action_result=action_result,
+        health=health,
         warnings=warnings,
+        repair_commands=repair_commands,
         next_action=updated_config.next_action,
     )
     config_path, status_path = write_delivery_runner_schedule_artifacts(updated_config, status, workspace_root=root)
@@ -3312,6 +3341,34 @@ def _schedule_next_action(project_name: str, *, installed: bool | None, enabled:
     if enabled is True:
         return f"Check status with devo delivery runner-schedule-status --project {project_name}"
     return f"Review scheduler status with devo delivery runner-schedule-status --project {project_name}"
+
+
+def _schedule_health(*, installed: bool | None, enabled: bool | None, metadata_enabled: bool | None = None) -> str:
+    if installed is None:
+        return "unknown"
+    if installed is False:
+        if metadata_enabled is True:
+            return "drift"
+        return "not_installed"
+    if enabled is True:
+        return "healthy"
+    if enabled is False:
+        return "disabled"
+    return "unknown"
+
+
+def _schedule_repair_commands(project_name: str, *, health: str) -> list[str]:
+    install = (
+        f'.\\.venv\\Scripts\\devo.exe delivery runner-schedule-install --project {project_name} '
+        '--approver "Manas" --confirm-install'
+    )
+    enable = f".\\.venv\\Scripts\\devo.exe delivery runner-schedule-enable --project {project_name} --confirm-enable"
+    status = f".\\.venv\\Scripts\\devo.exe delivery runner-schedule-status --project {project_name}"
+    if health in {"not_installed", "drift"}:
+        return [install, enable, status]
+    if health == "disabled":
+        return [enable, status]
+    return []
 
 
 def _finish_runner_run(

@@ -750,6 +750,7 @@ To inspect scheduled/background delivery before enabling anything, use:
 .\.venv\Scripts\devo.exe delivery runner-schedule-plan --project <name> --approver "Manas" --interval-minutes 5
 .\.venv\Scripts\devo.exe delivery runner-schedule-install --project <name> --approver "Manas" --interval-minutes 5 --dry-run --confirm-install
 .\.venv\Scripts\devo.exe delivery runner-schedule-status --project <name>
+.\.venv\Scripts\devo.exe delivery runner-schedule-doctor --project <name>
 ```
 
 The dry-run writes local Devo schedule artifacts only. A real install is explicit, disabled by default, and creates a Windows Task Scheduler entry that runs:
@@ -766,6 +767,12 @@ Use these normal-PowerShell commands only when Manas is ready to manage the live
 .\.venv\Scripts\devo.exe delivery runner-schedule-disable --project <name> --confirm-disable
 .\.venv\Scripts\devo.exe delivery runner-schedule-run-now --project <name> --confirm-run-now
 .\.venv\Scripts\devo.exe delivery runner-schedule-remove --project <name> --confirm-remove
+```
+
+`runner-schedule-status` prints a scheduler health value: `healthy`, `disabled`, `not_installed`, `drift`, or `unknown`. `drift` means Devo's saved metadata says the runner is enabled, but the Windows scheduled task is missing. In `drift` or `not_installed` states, install and enable the schedule from normal PowerShell before relying on auto-delivery. If the schedule is unhealthy, direct trusted runner delivery remains safe:
+
+```powershell
+.\.venv\Scripts\devo.exe delivery runner-run --project <name> --request <REQ-ID> --approver "Manas" --confirm-runner-delivery
 ```
 
 Each scheduled trigger processes at most one pending request through the existing guarded runner path. It does not approve work, run Codex, run target validation, bypass delivery gates, or add UI commit/push controls.
