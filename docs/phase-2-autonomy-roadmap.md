@@ -210,6 +210,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: running Codex, calling Codex Desktop, AI/API calls, result ingest, automatic evidence recording, validation execution, delivery requests, commit, push, UI changes, voice/Jarvis/gesture/clap controls, ECC adoption, parallel workers, least-privilege implementation, or full autonomous multitask execution.
 - Status: Completed. Prompt packages are stored under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/` and the operator still runs Codex manually before recording worker evidence.
 
+### TASK-DEVO-147: Codex Worker Result Ingest V1
+
+- Goal: Convert a filled JSON worker result file into queue-worker worker evidence schema v1.
+- Scope: `devo project codex-worker-ingest --project <project> --run <QWR-ID> --result-file <path> --confirm-ingest`, ingest show/latest/list helpers, dry-run mapping, raw result preservation, preflight checks, tests, and docs.
+- Not in scope: running Codex, calling Codex Desktop, AI/API calls, Markdown result parsing, automatic review, validation execution, delivery requests, commit, push, UI changes, voice/Jarvis/gesture/clap controls, ECC adoption, parallel workers, least-privilege implementation, or full autonomous multitask execution.
+- Status: Completed. Ingest artifacts are stored under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and the next safe step is `approved-queue-run` to continue through review/validation/delivery gates.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -514,8 +521,8 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-147 Codex worker result ingest v1.
+Recommended next task: TASK-DEVO-148 Prompt-file Codex worker dogfood.
 
-Start by validating and importing the result files produced from prompt-file assisted worker sessions. Keep direct Codex CLI subprocess execution behind later readiness checks and fake-executable tests until the input/output contract is proven.
+Start by dogfooding the prompt-file assisted loop with a filled JSON result file and `codex-worker-ingest`. Keep direct Codex CLI subprocess execution behind later readiness checks and fake-executable tests until the input/output contract is proven.
 
 It should parse explicit worker result status, preserve raw evidence, reject unknown/missing status, and write worker evidence only through the existing evidence schema without running Codex, validation, delivery, commit, push, or AI/API calls.

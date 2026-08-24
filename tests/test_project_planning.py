@@ -26,6 +26,7 @@ from devo.project_planning import (
     generate_backlog_refinement_prompt,
     list_execution_policies,
     list_codex_handoffs,
+    list_codex_worker_ingests,
     list_codex_worker_preparations,
     list_batch_approvals,
     list_execution_queues,
@@ -33,6 +34,7 @@ from devo.project_planning import (
     get_queue_worker_handoff_checklist,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_ingest,
     load_codex_worker_preparation,
     load_codex_worker_report,
     load_codex_worker_review,
@@ -2365,6 +2367,233 @@ def test_codex_worker_prepare_refuses_duplicate_without_force(tmp_path: Path, mo
     assert "already exists" in second.output
 
 
+def test_codex_worker_ingest_blocks_missing_run_result_file_and_invalid_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    invalid = tmp_path / "invalid-result.json"
+    invalid.write_text("{not-json", encoding="utf-8")
+
+    missing_run = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-9999", "--result-file", str(invalid), "--confirm-ingest"],
+        terminal_width=240,
+    )
+    missing_file = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(tmp_path / "missing.json"), "--confirm-ingest"],
+        terminal_width=240,
+    )
+    invalid_json = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(invalid), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert missing_run.exit_code != 0
+    assert "Queue worker run not found" in missing_run.output
+    assert missing_file.exit_code != 0
+    assert "Result file not found" in missing_file.output
+    assert invalid_json.exit_code != 0
+    assert "Invalid JSON result file" in invalid_json.output
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
+def test_codex_worker_ingest_blocks_missing_and_unknown_status(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    missing_status = _worker_result_file(tmp_path, status="")
+    unknown_status = _worker_result_file(tmp_path, status="mystery")
+
+    missing = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(missing_status), "--confirm-ingest"],
+        terminal_width=240,
+    )
+    unknown = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(unknown_status), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert missing.exit_code != 0
+    assert "Worker result status is required" in missing.output
+    assert unknown.exit_code != 0
+    assert "Unknown worker result status" in unknown.output
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
+def test_codex_worker_ingest_blocks_non_waiting_run_and_unapproved_policy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    result_file = _worker_result_file(tmp_path)
+    paused = runner.invoke(app, ["project", "queue-worker-pause", "--project", "sample", "--run", "QWR-0001", "--reason", "operator pause"], terminal_width=240)
+    assert paused.exit_code == 0, paused.output
+
+    not_waiting = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert not_waiting.exit_code != 0
+    assert "must be waiting_worker" in not_waiting.output
+
+    _create_queue_worker_run(tmp_path)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    policy_json, policy_md = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    policy_json.write_text(policy.model_copy(update={"status": "draft"}).model_dump_json(indent=2), encoding="utf-8")
+    policy_md.write_text("draft policy\n", encoding="utf-8")
+    draft_policy = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0002", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert draft_policy.exit_code != 0
+    assert "must be approved" in draft_policy.output
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
+def test_codex_worker_ingest_dry_run_does_not_mutate(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    result_file = _worker_result_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Dry run: True" in result.output
+    assert "Mutation occurred: False" in result.output
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert load_codex_worker_report("sample", "WR001", workspace_root=workspace) is None
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_ingest_completed_records_worker_evidence_and_preserves_raw_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    prepare = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    result_file = _worker_result_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-ingest",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--prepare",
+            preparation.preparation_id,
+            "--result-file",
+            str(result_file),
+            "--recorded-by",
+            "Manas",
+            "--note",
+            "ingest worker result",
+            "--confirm-ingest",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Codex worker ingest:" in result.output
+    assert "Result status: completed" in result.output
+    assert "approved-queue-run --project sample --policy POL-0001 --run QWR-0001 --confirm-auto-run" in result.output
+    assert "Mutation occurred: True" in result.output
+    ingests = list_codex_worker_ingests("sample", workspace_root=workspace)
+    assert len(ingests) == 1
+    ingest = load_codex_worker_ingest("sample", ingests[0].ingest_id, workspace_root=workspace)
+    assert ingest is not None
+    assert ingest.preparation_id == preparation.preparation_id
+    assert ingest.status == "completed"
+    assert Path(ingest.raw_result_copy_path).exists()
+    assert json.loads(Path(ingest.raw_result_copy_path).read_text(encoding="utf-8"))["status"] == "completed"
+    assert ingest.worker_evidence_id == "qwr-0001-worker-result"
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    assert report.status_reported_by_worker == "completed"
+    assert report.evidence_record is not None
+    assert report.evidence_record.status == "completed"
+    assert report.evidence_record.changed_files == ["src/feature.py", "tests/test_feature.py"]
+    assert report.evidence_record.commands_run == ["pytest tests/test_feature.py"]
+    assert report.evidence_record.artifact_path == "workspace/results/worker.md"
+    assert report.evidence_record.recorded_by == "Manas"
+    assert _target_snapshot(project_path) == before_target
+
+
+@pytest.mark.parametrize("status", ["failed", "blocked", "usage_limit"])
+def test_codex_worker_ingest_records_non_success_worker_evidence(tmp_path: Path, monkeypatch, status: str) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    result_file = _worker_result_file(tmp_path, status=status)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"Result status: {status}" in result.output
+    assert "Mutation occurred: True" in result.output
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    assert report.status_reported_by_worker == status
+    assert report.evidence_record is not None
+    assert report.evidence_record.status == status
+    ingest = list_codex_worker_ingests("sample", workspace_root=workspace)[0]
+    assert ingest.status == status
+    assert Path(ingest.raw_result_copy_path).exists()
+
+
+def test_codex_worker_ingest_prepare_mismatch_blocks(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    first_prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"], terminal_width=240)
+    assert first_prepare.exit_code == 0, first_prepare.output
+    first_preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"], terminal_width=240)
+    assert retry.exit_code == 0, retry.output
+    result_file = _worker_result_file(tmp_path)
+
+    mismatch = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-ingest",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0002",
+            "--prepare",
+            first_preparation.preparation_id,
+            "--result-file",
+            str(result_file),
+            "--confirm-ingest",
+        ],
+        terminal_width=240,
+    )
+
+    assert mismatch.exit_code != 0
+    assert "preparation run mismatch" in mismatch.output
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
 def test_queue_worker_step_requires_confirmation_unless_dry_run(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_execution_policy(tmp_path, allowed_task="T001")
@@ -3863,6 +4092,27 @@ def _import_worker_report(tmp_path: Path, *, status: str = "completed") -> None:
         terminal_width=240,
     )
     assert result.exit_code == 0, result.output
+
+
+def _worker_result_file(tmp_path: Path, *, status: str = "completed") -> Path:
+    data = {
+        "status": status,
+        "summary": "Worker completed the requested scoped change." if status == "completed" else f"Worker reported {status}.",
+        "work_performed": ["Implemented the scoped task."] if status == "completed" else [],
+        "changed_files": ["src/feature.py", "tests/test_feature.py"] if status == "completed" else [],
+        "commands_run": ["pytest tests/test_feature.py"] if status == "completed" else [],
+        "risks": ["manual result ingest"],
+        "recommended_next_action": "",
+        "artifact_path": "workspace/results/worker.md",
+        "dirty_repo_status": "clean",
+        "usage_limit_details": "usage window exhausted" if status == "usage_limit" else "",
+        "failure_details": "test failure" if status == "failed" else "",
+        "recorded_by": "Codex",
+        "created_at": "2026-08-24T00:00:00+00:00",
+    }
+    path = tmp_path / f"worker-result-{status or 'missing'}.json"
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
 
 
 def _record_worker_review(*, status: str = "reviewed_passed") -> None:

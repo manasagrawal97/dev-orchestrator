@@ -56,7 +56,7 @@ This is the safest early mode because Devo does not launch a subprocess and does
 
 Devo writes a complete prompt package and command guidance for one queue-worker run. The package includes the exact worker objective, safety boundaries, expected output schema, and result-file path. The user still launches Codex manually, but no longer has to assemble context by hand.
 
-TASK-DEVO-146 implements the first version of this mode. It improves operator consistency while preserving manual launch control.
+TASK-DEVO-146 implements the first version of this mode. TASK-DEVO-147 adds JSON result ingest so a filled worker result file can become queue-worker worker evidence while preserving manual launch control.
 
 ### Mode C: Codex CLI Subprocess Mode
 
@@ -90,6 +90,8 @@ Implemented helper commands:
 .\.venv\Scripts\devo.exe project codex-worker-prepare-list --project <project>
 .\.venv\Scripts\devo.exe project codex-worker-prepare-latest --project <project>
 .\.venv\Scripts\devo.exe project codex-worker-prepare-show --project <project> --prepare <CWP-ID>
+.\.venv\Scripts\devo.exe project codex-worker-ingest --project <project> --run <QWR-ID> --result-file <path> --confirm-ingest
+.\.venv\Scripts\devo.exe project codex-worker-ingest-latest --project <project>
 ```
 
 ### Run
@@ -277,10 +279,10 @@ If a trusted runner commit succeeds but push fails, `runner-recover-push` is the
 Recommended order:
 
 1. TASK-DEVO-146: Codex worker prepare/prompt-file mode v1 - completed
-2. TASK-DEVO-147: Codex worker ingest result v1
-3. TASK-DEVO-148: Codex CLI subprocess execution v1 for one safe task
-4. TASK-DEVO-149: Codex worker failure/usage-limit recovery
-5. TASK-DEVO-150: Batch Codex-worker loop for approved queue items
+2. TASK-DEVO-147: Codex worker ingest result v1 - completed
+3. TASK-DEVO-148: prompt-file Codex worker dogfood
+4. TASK-DEVO-149: fake-executable subprocess contract tests
+5. TASK-DEVO-150: real supervised single-run retry only after launcher readiness
 
 Prompt-file mode should come before subprocess mode. It proves the input package, result schema, and ingestion flow without adding launcher/process risk.
 

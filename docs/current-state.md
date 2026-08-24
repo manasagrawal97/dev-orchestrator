@@ -39,7 +39,7 @@ The working loop is:
 ## Latest State
 
 - Latest completed dogfood task: TASK-DEVO-143 Approved queue auto-run 3-task assisted dogfood
-- Latest implementation task: TASK-DEVO-146 Codex worker prepare/prompt-file mode v1
+- Latest implementation task: TASK-DEVO-147 Codex worker result ingest v1
 - Latest design task: TASK-DEVO-145 Codex worker launch/integration design
 - Latest assisted queue polish task: TASK-DEVO-144 push-only runner recovery, approved queue continuation, evidence wording, and flow-summary defaults
 - Latest queue-worker ergonomics task: TASK-DEVO-135 Queue-worker evidence intake and policy usability hardening
@@ -54,7 +54,7 @@ The working loop is:
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Phase 1 MVP status: complete after TASK-DEVO-124 and checkpointed with the `phase-1-mvp` tag.
 - Active focus: Phase 2 autonomy. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas using `delivery runner-watch --once --confirm-runner-watch`, the precise `delivery runner-run --request ...` fallback, or an explicitly installed local scheduled runner.
-- Next recommended task: TASK-DEVO-147 Codex worker result ingest v1.
+- Next recommended task: TASK-DEVO-148 Prompt-file Codex worker dogfood.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.
@@ -176,6 +176,7 @@ The working loop is:
 - TASK-DEVO-144 closes that recovery-polish gap with `devo delivery runner-recover-push`, adds `approved-queue-run --continue-next`, improves validation evidence wording, and lets `worker codex flow-summary` / `project flow-summary` default to the uniquely latest queue. See `docs/dogfood/task-devo-144-assisted-queue-recovery-and-flow-polish.md`.
 - TASK-DEVO-145 adds `docs/architecture/codex-worker-launch-integration-design.md` and `docs/dogfood/task-devo-145-codex-worker-launch-integration-design.md`. It is design-only and recommends prompt-file assisted Codex worker preparation before direct Codex CLI subprocess execution.
 - TASK-DEVO-146 adds `devo project codex-worker-prepare` plus show/latest/list helpers. It writes a Codex-ready prompt package and worker result templates for one `waiting_worker` queue-worker run under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/`. It does not run Codex, call AI APIs, record evidence automatically, validate, commit, push, or modify target repositories. See `docs/dogfood/task-devo-146-codex-worker-prepare-prompt-file-mode-v1.md`.
+- TASK-DEVO-147 adds `devo project codex-worker-ingest` plus show/latest/list helpers. It reads a filled JSON worker result file, validates the status/detail, preserves a raw result copy under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and records existing queue-worker worker evidence schema v1. It does not run Codex, call AI APIs, run review, run validation, create delivery, commit, push, or bypass trusted delivery gates. See `docs/dogfood/task-devo-147-codex-worker-result-ingest-v1.md`.
 
 ## Readiness Estimate
 

@@ -134,6 +134,8 @@ from .project_planning import (
     CodexExecutionPreview,
     CodexExecutionResult,
     CodexWorkerFlowSummary,
+    CodexWorkerIngest,
+    CodexWorkerIngestResult,
     CodexWorkerPreparation,
     CodexQueueWorkerStatus,
     CodexPreflightResult,
@@ -175,6 +177,7 @@ from .project_planning import (
     create_codex_worker_run_plan,
     create_codex_worker_report_template,
     create_codex_worker_preparation,
+    create_codex_worker_ingest,
     create_codex_worker_review_template,
     create_codex_wrapper_template,
     create_execution_queue_from_batch,
@@ -199,6 +202,7 @@ from .project_planning import (
     list_queue_worker_runs,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_ingests,
     list_codex_worker_preparations,
     list_codex_run_plans,
     list_codex_worker_reports,
@@ -210,6 +214,7 @@ from .project_planning import (
     load_queue_worker_run,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_ingest,
     load_codex_worker_preparation,
     load_codex_run_plan,
     load_codex_worker_report,
@@ -794,6 +799,62 @@ def _print_codex_worker_preparation(preparation: CodexWorkerPreparation) -> None
         console.print(f"  - {warning}", soft_wrap=True)
     console.print(f"Next action: {preparation.next_action}", soft_wrap=True)
     console.print("Safety: prompt-file preparation does not run Codex, call AI APIs, record evidence, validate, commit, or push.")
+
+
+def _print_codex_worker_ingest_result(result: CodexWorkerIngestResult) -> None:
+    ingest = result.ingest
+    console.print(f"[bold]Codex worker ingest: {ingest.ingest_id}[/bold]")
+    console.print(f"Project: {ingest.project}")
+    console.print(f"Queue-worker run: {ingest.queue_worker_run_id}")
+    console.print(f"Preparation: {ingest.preparation_id or 'none'}")
+    console.print(f"Policy: {ingest.policy_id}")
+    console.print(f"Queue item: {ingest.queue_item_id or 'none'}")
+    console.print(f"Task: {ingest.task_id or 'none'}")
+    console.print(f"Result status: {ingest.status}")
+    console.print(f"Summary: {ingest.summary}", soft_wrap=True)
+    console.print(f"Worker evidence id: {ingest.worker_evidence_id or 'none'}")
+    console.print(f"Worker evidence JSON: {_named_path(Path(ingest.worker_evidence_json_path)) if ingest.worker_evidence_json_path else 'none'}")
+    console.print(f"Worker evidence Markdown: {_named_path(Path(ingest.worker_evidence_markdown_path)) if ingest.worker_evidence_markdown_path else 'none'}")
+    console.print(f"Raw result file: {_named_path(Path(ingest.raw_result_file))}")
+    console.print(f"Raw result copy: {_named_path(Path(result.raw_result_copy_path)) if result.raw_result_copy_path else 'not written'}")
+    console.print("Changed files:")
+    for path in ingest.changed_files or ["none"]:
+        console.print(f"  - {path}", soft_wrap=True)
+    console.print("Commands run:")
+    for command in ingest.commands_run or ["none"]:
+        console.print(f"  - {command}", soft_wrap=True)
+    console.print("Risks:")
+    for risk in ingest.risks or ["none"]:
+        console.print(f"  - {risk}", soft_wrap=True)
+    console.print(f"Recommended next action: {ingest.recommended_next_action or 'none'}", soft_wrap=True)
+    console.print(f"Mutation occurred: {result.mutation_occurred}")
+    console.print(f"Dry run: {result.dry_run}")
+    console.print(f"Ingest JSON: {_named_path(Path(result.ingest_json_path)) if result.ingest_json_path else 'not written'}")
+    console.print(f"Ingest Markdown: {_named_path(Path(result.ingest_markdown_path)) if result.ingest_markdown_path else 'not written'}")
+    console.print(f"Next action: {result.next_action or ingest.next_action}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ingest.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(
+        "Safety: ingest records workspace evidence only. It does not run Codex, call AI APIs, run review, run validation, create delivery, commit, or push.",
+        soft_wrap=True,
+    )
+
+
+def _print_codex_worker_ingest(ingest: CodexWorkerIngest) -> None:
+    console.print(f"[bold]Codex worker ingest: {ingest.ingest_id}[/bold]")
+    console.print(f"Project: {ingest.project}")
+    console.print(f"Queue-worker run: {ingest.queue_worker_run_id}")
+    console.print(f"Preparation: {ingest.preparation_id or 'none'}")
+    console.print(f"Result status: {ingest.status}")
+    console.print(f"Summary: {ingest.summary}", soft_wrap=True)
+    console.print(f"Worker evidence id: {ingest.worker_evidence_id or 'none'}")
+    console.print(f"Raw result copy: {_named_path(Path(ingest.raw_result_copy_path))}")
+    console.print(f"Next action: {ingest.next_action}", soft_wrap=True)
+    console.print("Read-only: no worker execution or target project mutation was run.")
 
 
 def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
@@ -4515,6 +4576,94 @@ def list_codex_worker_preparation_command(
     for preparation in preparations:
         console.print(
             f"- {preparation.preparation_id} | run={preparation.queue_worker_run_id} | task={preparation.task_id or 'none'} | {preparation.status} | {preparation.created_at.isoformat()}",
+            soft_wrap=True,
+        )
+    console.print("Read-only: no worker execution or target project mutation was run.")
+
+
+@project_app.command("codex-worker-ingest")
+def ingest_codex_worker_result_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    result_file: Path = typer.Option(..., "--result-file", help="JSON worker result file to ingest."),
+    preparation_id: str | None = typer.Option(None, "--prepare", help="Optional Codex worker preparation id to link."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording this ingest."),
+    note: str = typer.Option("", "--note", help="Optional note stored on the ingest/evidence record."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate and map the result without writing evidence."),
+    force: bool = typer.Option(False, "--force", help="Allow another ingest for the same queue-worker run."),
+    confirm_ingest: bool = typer.Option(False, "--confirm-ingest", help="Confirm workspace evidence ingest."),
+) -> None:
+    """Ingest a filled Codex worker result JSON file into worker evidence."""
+    project_name = _resolve_project(project_name)
+    if not dry_run and not confirm_ingest:
+        console.print("codex-worker-ingest requires --confirm-ingest unless --dry-run is used.")
+        console.print(
+            "Safety: this command records workspace evidence only; it does not run Codex, call AI APIs, review, validate, deliver, commit, or push.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    try:
+        result = create_codex_worker_ingest(
+            project_name,
+            run_id,
+            result_file,
+            preparation_id=preparation_id,
+            dry_run=dry_run,
+            force=force,
+            recorded_by=recorded_by,
+            note=note,
+        )
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project queue-worker-show --project {project_name} --run {run_id}")
+        raise typer.Exit(1) from exc
+    _print_codex_worker_ingest_result(result)
+
+
+@project_app.command("codex-worker-ingest-show")
+def show_codex_worker_ingest_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    ingest_id: str = typer.Option(..., "--ingest", help="Codex worker ingest id."),
+) -> None:
+    """Show one Codex worker result ingest artifact."""
+    project_name = _resolve_project(project_name)
+    ingest = load_codex_worker_ingest(project_name, ingest_id)
+    if not ingest:
+        console.print(f"[yellow]Codex worker ingest not found: {ingest_id}[/yellow]")
+        console.print(f"Suggested next command: devo project codex-worker-ingest-list --project {project_name}")
+        raise typer.Exit(1)
+    _print_codex_worker_ingest(ingest)
+
+
+@project_app.command("codex-worker-ingest-latest")
+def latest_codex_worker_ingest_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the latest Codex worker result ingest artifact."""
+    project_name = _resolve_project(project_name)
+    ingests = list_codex_worker_ingests(project_name)
+    if not ingests:
+        console.print(f"No Codex worker ingests found for {project_name}.")
+        console.print(f"Suggested next command: devo project codex-worker-ingest --project {project_name} --run <QWR-ID> --result-file <path> --confirm-ingest")
+        return
+    _print_codex_worker_ingest(ingests[0])
+
+
+@project_app.command("codex-worker-ingest-list")
+def list_codex_worker_ingest_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List Codex worker result ingest artifacts."""
+    project_name = _resolve_project(project_name)
+    ingests = list_codex_worker_ingests(project_name)
+    console.print(f"Codex worker ingests: {project_name}")
+    if not ingests:
+        console.print("No ingests found.")
+        console.print(f"Suggested next command: devo project codex-worker-ingest --project {project_name} --run <QWR-ID> --result-file <path> --confirm-ingest")
+        return
+    for ingest in ingests:
+        console.print(
+            f"- {ingest.ingest_id} | run={ingest.queue_worker_run_id} | task={ingest.task_id or 'none'} | {ingest.status} | {ingest.created_at.isoformat()}",
             soft_wrap=True,
         )
     console.print("Read-only: no worker execution or target project mutation was run.")

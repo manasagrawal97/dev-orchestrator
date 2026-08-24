@@ -319,7 +319,15 @@ devo project codex-worker-prepare-latest --project MyProject
 devo project codex-worker-prepare-show --project MyProject --prepare CWP-YYYYMMDDHHMMSS-QWR-0001
 ```
 
-`codex-worker-prepare` generates a complete prompt package and worker result templates under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/`. The user still runs Codex manually and later records worker evidence with `queue-worker-record-worker-result`. The command does not run Codex, call AI APIs, record evidence automatically, validate, deliver, commit, push, or modify the target project. The recommended sequence remains prompt-file assisted mode first, result ingestion second, and direct Codex CLI subprocess execution only after those contracts are proven. Worker completion remains separate from review, validation, and trusted runner delivery.
+`codex-worker-prepare` generates a complete prompt package and worker result templates under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/`. The user still runs Codex manually. TASK-DEVO-147 adds the next prompt-file step:
+
+```powershell
+devo project codex-worker-ingest --project MyProject --run QWR-0001 --result-file worker-result.json --dry-run
+devo project codex-worker-ingest --project MyProject --run QWR-0001 --prepare CWP-YYYYMMDDHHMMSS-QWR-0001 --result-file worker-result.json --confirm-ingest
+devo project codex-worker-ingest-latest --project MyProject
+```
+
+`codex-worker-ingest` validates a filled JSON result file, preserves the raw result under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and records queue-worker worker evidence schema v1. JSON is the supported v1 ingest format; Markdown result ingest is future scope. Neither command runs Codex, calls AI APIs, runs review, runs validation, creates delivery, commits, pushes, or modifies the target project. Worker completion remains separate from review, validation, and trusted runner delivery.
 
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 

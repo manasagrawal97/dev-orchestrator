@@ -52,6 +52,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-144 assisted queue recovery and flow polish](docs/dogfood/task-devo-144-assisted-queue-recovery-and-flow-polish.md)
 - [TASK-DEVO-145 Codex worker launch design report](docs/dogfood/task-devo-145-codex-worker-launch-integration-design.md)
 - [TASK-DEVO-146 Codex worker prepare prompt-file mode](docs/dogfood/task-devo-146-codex-worker-prepare-prompt-file-mode-v1.md)
+- [TASK-DEVO-147 Codex worker result ingest v1](docs/dogfood/task-devo-147-codex-worker-result-ingest-v1.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -285,6 +286,16 @@ devo project codex-worker-prepare-latest --project MyProject
 ```
 
 The command writes `codex-worker-prompt.md`, `worker-result-template.json`, `worker-result-template.md`, and preparation summary artifacts under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/`. It does not run Codex, call AI APIs, record evidence automatically, validate, commit, push, or modify the target project.
+
+TASK-DEVO-147 adds JSON result ingest for that prompt-file loop:
+
+```powershell
+devo project codex-worker-ingest --project MyProject --run QWR-0001 --result-file worker-result.json --confirm-ingest
+devo project codex-worker-ingest --project MyProject --run QWR-0001 --result-file worker-result.json --dry-run
+devo project codex-worker-ingest-latest --project MyProject
+```
+
+The ingest command validates a filled `worker-result-template.json`, preserves a raw result copy under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and records existing queue-worker worker evidence schema v1. It does not run Codex, call AI APIs, run review, run validation, create delivery, commit, push, or bypass trusted delivery gates.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

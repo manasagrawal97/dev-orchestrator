@@ -6,8 +6,10 @@ import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
-from pydantic import ValidationError
 from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,6 +42,7 @@ WORKERS_DIR_NAME = "workers"
 CODEX_WORKER_DIR_NAME = "codex"
 CODEX_WORKER_PREPARATION_DIR_NAME = "codex-worker"
 CODEX_WORKER_PREPARATIONS_DIR_NAME = "preparations"
+CODEX_WORKER_INGESTS_DIR_NAME = "ingests"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
 WORKER_REVIEWS_DIR_NAME = "reviews"
@@ -618,6 +621,65 @@ class CodexWorkerPreparation(BaseModel):
     note: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CodexWorkerIngest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    ingest_id: str
+    queue_worker_run_id: str
+    preparation_id: str | None = None
+    policy_id: str
+    batch_id: str | None = None
+    queue_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    handoff_id: str | None = None
+    worker_run_id: str | None = None
+    status: str
+    summary: str
+    work_performed: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    commands_run: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    recommended_next_action: str = ""
+    artifact_path: str = ""
+    dirty_repo_status: str = ""
+    usage_limit_details: str = ""
+    failure_details: str = ""
+    raw_result_file: str
+    raw_result_copy_path: str
+    raw_result: dict[str, Any] = Field(default_factory=dict)
+    worker_evidence_id: str | None = None
+    worker_evidence_json_path: str | None = None
+    worker_evidence_markdown_path: str | None = None
+    dry_run: bool = False
+    mutation_occurred: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    recorded_by: str | None = None
+    note: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CodexWorkerIngestResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    run_id: str
+    ingest: CodexWorkerIngest
+    evidence_result: QueueWorkerEvidenceRecordResult | None = None
+    ingest_json_path: str | None = None
+    ingest_markdown_path: str | None = None
+    raw_result_copy_path: str | None = None
+    dry_run: bool = False
+    mutation_occurred: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
 
 
 class QueueWorkerRunIndexEntry(BaseModel):
@@ -1844,6 +1906,24 @@ def codex_worker_preparation_artifact_paths(
     )
 
 
+def codex_worker_ingest_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    return root / "projects" / project_name / CODEX_WORKER_PREPARATION_DIR_NAME / CODEX_WORKER_INGESTS_DIR_NAME
+
+
+def codex_worker_ingest_artifact_paths(
+    project_name: str,
+    ingest_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path, Path]:
+    directory = codex_worker_ingest_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(ingest_id)
+    return (
+        directory / "codex-worker-ingest.json",
+        directory / "codex-worker-ingest.md",
+        directory / "raw-result-copy.json",
+    )
+
+
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -1964,6 +2044,241 @@ def load_codex_worker_preparation(
     if not json_path.exists():
         return None
     return CodexWorkerPreparation.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_worker_ingests(project_name: str, workspace_root: Path | None = None) -> list[CodexWorkerIngest]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    directory = codex_worker_ingest_directory(project_name, workspace_root=root)
+    ingests: list[CodexWorkerIngest] = []
+    if not directory.exists():
+        return []
+    for path in sorted(directory.glob("*/codex-worker-ingest.json")):
+        try:
+            ingests.append(CodexWorkerIngest.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(ingests, key=lambda item: item.updated_at, reverse=True)
+
+
+def load_codex_worker_ingest(
+    project_name: str,
+    ingest_id: str,
+    workspace_root: Path | None = None,
+) -> CodexWorkerIngest | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path, _raw_path = codex_worker_ingest_artifact_paths(project_name, ingest_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return CodexWorkerIngest.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def create_codex_worker_ingest(
+    project_name: str,
+    run_id: str,
+    result_file: Path,
+    *,
+    preparation_id: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    recorded_by: str | None = None,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> CodexWorkerIngestResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status != "waiting_worker":
+        msg = f"Queue worker run must be waiting_worker before Codex worker ingest, not {run.status}."
+        raise ValueError(msg)
+    if run.delivery_request_id or run.delivery_request_status:
+        msg = f"Queue worker run {run.run_id} already has delivery request state; result ingest is unsafe."
+        raise ValueError(msg)
+    if load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else False:
+        msg = f"Queue worker run {run.run_id} already has worker evidence/report imported."
+        raise ValueError(msg)
+    existing = [item for item in list_codex_worker_ingests(project_name, workspace_root=root) if item.queue_worker_run_id == run.run_id]
+    if existing and not force:
+        msg = f"Codex worker ingest already exists for {run.run_id}: {existing[0].ingest_id}. Use --force to create another."
+        raise ValueError(msg)
+
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=root)
+    if not policy:
+        msg = f"Execution policy not found: {run.policy_id}"
+        raise ValueError(msg)
+    if policy.status != "approved":
+        msg = f"Execution policy must be approved before Codex worker ingest, not {policy.status}."
+        raise ValueError(msg)
+    registration = load_registered_project(project_name, workspace_root=root)
+    target_path = Path(registration.path).expanduser().resolve()
+    if not target_path.exists():
+        msg = f"Target repo path does not exist: {target_path}"
+        raise ValueError(msg)
+
+    preparation: CodexWorkerPreparation | None = None
+    cleaned_prepare_id = preparation_id.strip() if preparation_id and preparation_id.strip() else None
+    if cleaned_prepare_id:
+        preparation = load_codex_worker_preparation(project_name, cleaned_prepare_id, workspace_root=root)
+        if not preparation:
+            msg = f"Codex worker preparation not found: {cleaned_prepare_id}"
+            raise ValueError(msg)
+        if preparation.project != project_name:
+            msg = f"Codex worker preparation project mismatch: expected {project_name}, got {preparation.project}."
+            raise ValueError(msg)
+        if preparation.queue_worker_run_id != run.run_id:
+            msg = (
+                f"Codex worker preparation run mismatch: expected {run.run_id}, "
+                f"got {preparation.queue_worker_run_id}."
+            )
+            raise ValueError(msg)
+
+    result_path = Path(result_file).expanduser()
+    if not result_path.exists():
+        msg = f"Result file not found: {result_path}"
+        raise ValueError(msg)
+    if result_path.suffix.lower() not in {".json"}:
+        msg = "Codex worker ingest v1 supports JSON result files only."
+        raise ValueError(msg)
+    raw_text = result_path.read_text(encoding="utf-8")
+    try:
+        raw_result = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        msg = f"Invalid JSON result file: {exc.msg}"
+        raise ValueError(msg) from exc
+    if not isinstance(raw_result, dict):
+        msg = "Worker result JSON must be an object."
+        raise ValueError(msg)
+
+    result_status = str(raw_result.get("status") or "").strip().lower()
+    if not result_status:
+        msg = "Worker result status is required."
+        raise ValueError(msg)
+    if result_status not in {"completed", "failed", "blocked", "usage_limit"}:
+        msg = f"Unknown worker result status: {result_status}"
+        raise ValueError(msg)
+    summary = str(raw_result.get("summary") or "").strip()
+    if not summary:
+        msg = "Worker result summary is required."
+        raise ValueError(msg)
+    work_performed = _result_string_list(raw_result, "work_performed")
+    changed_files = _result_string_list(raw_result, "changed_files")
+    commands_run = _result_string_list(raw_result, "commands_run")
+    risks = _result_string_list(raw_result, "risks")
+    if result_status == "completed" and not (work_performed or changed_files or commands_run):
+        msg = "Completed worker result must include work_performed, changed_files, or commands_run detail."
+        raise ValueError(msg)
+
+    now = datetime.now(UTC)
+    ingest_id = _next_codex_worker_ingest_id(project_name, run.run_id, now, workspace_root=root)
+    ingest_json_path, ingest_markdown_path, raw_copy_path = codex_worker_ingest_artifact_paths(
+        project_name,
+        ingest_id,
+        workspace_root=root,
+    )
+    cleaned_recorded_by = (
+        (recorded_by or "").strip()
+        or str(raw_result.get("recorded_by") or "").strip()
+        or None
+    )
+    artifact_path = str(raw_result.get("artifact_path") or "").strip()
+    raw_copy_string = str(raw_copy_path)
+    evidence_artifact = artifact_path or raw_copy_string
+    recommended_next_action = str(raw_result.get("recommended_next_action") or "").strip()
+    if not recommended_next_action:
+        recommended_next_action = _codex_worker_ingest_next_action(project_name, run, result_status)
+    warnings: list[str] = []
+    if not cleaned_prepare_id:
+        warnings.append("No Codex worker preparation id was linked to this ingest.")
+    if result_status != "completed":
+        warnings.append(f"Worker result status is {result_status}; this is non-success evidence and must not advance as successful work.")
+    ingest = CodexWorkerIngest(
+        project=project_name,
+        ingest_id=ingest_id,
+        queue_worker_run_id=run.run_id,
+        preparation_id=cleaned_prepare_id,
+        policy_id=policy.policy_id,
+        batch_id=run.batch_id,
+        queue_id=run.queue_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        handoff_id=run.selected_handoff_id,
+        worker_run_id=run.selected_worker_run_id,
+        status=result_status,
+        summary=summary,
+        work_performed=work_performed,
+        changed_files=changed_files,
+        commands_run=commands_run,
+        risks=risks,
+        recommended_next_action=recommended_next_action,
+        artifact_path=artifact_path,
+        dirty_repo_status=str(raw_result.get("dirty_repo_status") or "").strip(),
+        usage_limit_details=str(raw_result.get("usage_limit_details") or "").strip(),
+        failure_details=str(raw_result.get("failure_details") or "").strip(),
+        raw_result_file=str(result_path),
+        raw_result_copy_path=raw_copy_string,
+        raw_result=dict(raw_result),
+        dry_run=dry_run,
+        mutation_occurred=False,
+        warnings=warnings,
+        next_action=_codex_worker_ingest_next_action(project_name, run, result_status),
+        recorded_by=cleaned_recorded_by,
+        note=note.strip(),
+        created_at=now,
+        updated_at=now,
+    )
+    if dry_run:
+        return CodexWorkerIngestResult(
+            project=project_name,
+            run_id=run.run_id,
+            ingest=ingest,
+            dry_run=True,
+            mutation_occurred=False,
+            warnings=warnings,
+            next_action=ingest.next_action,
+        )
+
+    ingest_json_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_copy_path.write_text(raw_text, encoding="utf-8")
+    evidence_result = record_queue_worker_worker_result(
+        project_name,
+        run.run_id,
+        status=result_status,
+        summary=summary,
+        artifact_path=evidence_artifact,
+        commands_run=", ".join(commands_run),
+        files_changed=", ".join(changed_files),
+        risks=", ".join(risks),
+        recommended_next_action=recommended_next_action,
+        recorded_by=cleaned_recorded_by,
+        note=_codex_worker_ingest_note(note, work_performed, raw_copy_string, artifact_path),
+        workspace_root=root,
+    )
+    updated_ingest = ingest.model_copy(
+        update={
+            "worker_evidence_id": evidence_result.evidence_record.evidence_id if evidence_result.evidence_record else None,
+            "worker_evidence_json_path": evidence_result.record_json_path,
+            "worker_evidence_markdown_path": evidence_result.record_markdown_path,
+            "mutation_occurred": True,
+            "updated_at": datetime.now(UTC),
+        }
+    )
+    _write_model(ingest_json_path, updated_ingest)
+    ingest_markdown_path.write_text(render_codex_worker_ingest_markdown(updated_ingest), encoding="utf-8")
+    return CodexWorkerIngestResult(
+        project=project_name,
+        run_id=run.run_id,
+        ingest=updated_ingest,
+        evidence_result=evidence_result,
+        ingest_json_path=str(ingest_json_path),
+        ingest_markdown_path=str(ingest_markdown_path),
+        raw_result_copy_path=raw_copy_string,
+        dry_run=False,
+        mutation_occurred=True,
+        warnings=warnings,
+        blockers=evidence_result.blockers,
+        next_action=updated_ingest.next_action,
+    )
 
 
 def create_codex_worker_preparation(
@@ -5856,6 +6171,65 @@ def render_codex_worker_preparation_markdown(preparation: CodexWorkerPreparation
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_codex_worker_ingest_markdown(ingest: CodexWorkerIngest) -> str:
+    lines = [
+        f"# Codex Worker Ingest {ingest.ingest_id}",
+        "",
+        f"- Project: `{ingest.project}`",
+        f"- Queue-worker run: `{ingest.queue_worker_run_id}`",
+        f"- Preparation: `{ingest.preparation_id or 'none'}`",
+        f"- Policy: `{ingest.policy_id}`",
+        f"- Queue item: `{ingest.queue_item_id or 'none'}`",
+        f"- Task: `{ingest.task_id or 'none'}`",
+        f"- Handoff: `{ingest.handoff_id or 'none'}`",
+        f"- Worker run: `{ingest.worker_run_id or 'none'}`",
+        f"- Result status: `{ingest.status}`",
+        f"- Raw result file: `{ingest.raw_result_file}`",
+        f"- Raw result copy: `{ingest.raw_result_copy_path}`",
+        f"- Worker evidence id: `{ingest.worker_evidence_id or 'none'}`",
+        f"- Worker evidence JSON: `{ingest.worker_evidence_json_path or 'none'}`",
+        f"- Worker evidence Markdown: `{ingest.worker_evidence_markdown_path or 'none'}`",
+        f"- Dry run: `{ingest.dry_run}`",
+        f"- Mutation occurred: `{ingest.mutation_occurred}`",
+        f"- Recorded by: `{ingest.recorded_by or 'none'}`",
+        f"- Created: `{ingest.created_at.isoformat()}`",
+        "",
+        "## Summary",
+        "",
+        ingest.summary or "No summary recorded.",
+        "",
+    ]
+    _append_list_section(lines, "Work Performed", ingest.work_performed)
+    _append_list_section(lines, "Changed Files", ingest.changed_files)
+    _append_list_section(lines, "Commands Run", ingest.commands_run)
+    _append_list_section(lines, "Risks", ingest.risks)
+    lines.extend(
+        [
+            "## Extra Result Fields",
+            "",
+            f"- Artifact path: `{ingest.artifact_path or 'none'}`",
+            f"- Dirty repo status: `{ingest.dirty_repo_status or 'none'}`",
+            f"- Usage-limit details: `{ingest.usage_limit_details or 'none'}`",
+            f"- Failure details: `{ingest.failure_details or 'none'}`",
+            "",
+        ]
+    )
+    _append_list_section(lines, "Warnings", ingest.warnings)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            ingest.next_action,
+            "",
+            "## Safety Note",
+            "",
+            "This ingest records workspace evidence only. It does not run Codex, call AI APIs, run review, run validation, create delivery, commit, push, or modify the target repository.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_worker_preparation_prompt(
     preparation: CodexWorkerPreparation,
     run: QueueWorkerRun,
@@ -8296,6 +8670,59 @@ def _next_codex_worker_preparation_id(
         candidate = f"{base}-{index}"
         index += 1
     return candidate
+
+
+def _next_codex_worker_ingest_id(
+    project_name: str,
+    run_id: str,
+    now: datetime,
+    workspace_root: Path | None = None,
+) -> str:
+    base = f"CWI-{now.strftime('%Y%m%d%H%M%S')}-{_normalize_queue_worker_run_id(run_id)}"
+    existing = {_safe_artifact_id(item.ingest_id) for item in list_codex_worker_ingests(project_name, workspace_root=workspace_root)}
+    candidate = base
+    index = 2
+    while _safe_artifact_id(candidate) in existing:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
+def _result_string_list(raw_result: dict[str, Any], key: str) -> list[str]:
+    value = raw_result.get(key)
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return _clean_string_list([str(item) for item in value])
+    if isinstance(value, str):
+        return _clean_string_list([value])
+    msg = f"Worker result field {key} must be a list of strings or a string."
+    raise ValueError(msg)
+
+
+def _codex_worker_ingest_next_action(project_name: str, run: QueueWorkerRun, status: str) -> str:
+    if status == "completed":
+        return (
+            "Worker evidence was ingested. Continue through the review gate with: "
+            f"devo project approved-queue-run --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-auto-run"
+        )
+    if status == "blocked":
+        return "Worker reported blocked. Resolve the blocker or retry the worker before review/validation/delivery."
+    if status == "failed":
+        return "Worker reported failed. Inspect failure details, then retry or cancel the queue-worker run."
+    if status == "usage_limit":
+        return "Worker reported usage_limit. Wait for usage reset or retry later before continuing."
+    return "Inspect worker result before continuing."
+
+
+def _codex_worker_ingest_note(note: str, work_performed: list[str], raw_copy_path: str, artifact_path: str) -> str:
+    parts = _record_notes(note=note, artifact_path=None)
+    if work_performed:
+        parts.append("Work performed: " + "; ".join(work_performed))
+    parts.append(f"Raw result copy: {raw_copy_path}")
+    if artifact_path:
+        parts.append(f"Worker-reported artifact: {artifact_path}")
+    return " ".join(parts).strip()
 
 
 def _capture_prepare_git_context(project_name: str, target_path: Path, workspace_root: Path) -> dict[str, object]:
