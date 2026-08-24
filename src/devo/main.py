@@ -134,6 +134,7 @@ from .project_planning import (
     CodexExecutionPreview,
     CodexExecutionResult,
     CodexWorkerFlowSummary,
+    CodexWorkerPreparation,
     CodexQueueWorkerStatus,
     CodexPreflightResult,
     CodexRunPlan,
@@ -173,6 +174,7 @@ from .project_planning import (
     create_codex_worker_run_from_handoff,
     create_codex_worker_run_plan,
     create_codex_worker_report_template,
+    create_codex_worker_preparation,
     create_codex_worker_review_template,
     create_codex_wrapper_template,
     create_execution_queue_from_batch,
@@ -197,6 +199,7 @@ from .project_planning import (
     list_queue_worker_runs,
     list_batch_approvals,
     list_codex_handoffs,
+    list_codex_worker_preparations,
     list_codex_run_plans,
     list_codex_worker_reports,
     list_codex_worker_reviews,
@@ -207,6 +210,7 @@ from .project_planning import (
     load_queue_worker_run,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_preparation,
     load_codex_run_plan,
     load_codex_worker_report,
     load_codex_worker_review,
@@ -769,6 +773,27 @@ def _print_queue_worker_handoff_checklist(
         f"Record command: .\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {project_name} --run {run_id} --status completed --summary \"...\" --files-changed \"...\" --commands-run \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
         soft_wrap=True,
     )
+
+
+def _print_codex_worker_preparation(preparation: CodexWorkerPreparation) -> None:
+    console.print(f"[bold]Codex worker preparation: {preparation.preparation_id}[/bold]")
+    console.print(f"Project: {preparation.project}")
+    console.print(f"Queue-worker run: {preparation.queue_worker_run_id}")
+    console.print(f"Queue item: {preparation.queue_item_id or 'none'}")
+    console.print(f"Task: {preparation.task_id or 'none'}")
+    console.print(f"Policy: {preparation.policy_id} | {preparation.policy_status}")
+    console.print(f"Target repo: {preparation.target_repo_path}")
+    console.print(f"Current branch: {preparation.current_branch or 'unknown'}")
+    console.print(f"Upstream: {preparation.upstream_branch or 'none'}")
+    console.print(f"Current git status: {preparation.git_status_summary}")
+    console.print(f"Prompt path: {_named_path(Path(preparation.prompt_path))}")
+    console.print(f"Result template JSON: {_named_path(Path(preparation.worker_result_template_json_path))}")
+    console.print(f"Result template Markdown: {_named_path(Path(preparation.worker_result_template_markdown_path))}")
+    console.print("Warnings:")
+    for warning in preparation.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print(f"Next action: {preparation.next_action}", soft_wrap=True)
+    console.print("Safety: prompt-file preparation does not run Codex, call AI APIs, record evidence, validate, commit, or push.")
 
 
 def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
@@ -4404,6 +4429,95 @@ def show_queue_worker_handoff_checklist_command(
         raise typer.Exit(1) from exc
     _print_queue_worker_handoff_checklist(checklist, project_name=project_name, run_id=run_id)
     console.print("Read-only: no target project files, worker execution, validation, delivery, commit, or push was run.")
+
+
+@project_app.command("codex-worker-prepare")
+def prepare_codex_worker_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    confirm_prepare: bool = typer.Option(False, "--confirm-prepare", help="Confirm workspace-only Codex prompt preparation."),
+    force: bool = typer.Option(False, "--force", help="Create another preparation package if one already exists for this run."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process preparing the package."),
+    note: str = typer.Option("", "--note", help="Optional note stored on the preparation record."),
+) -> None:
+    """Generate a Codex-ready prompt package for one waiting queue-worker run."""
+    project_name = _resolve_project(project_name)
+    if not confirm_prepare:
+        console.print("codex-worker-prepare requires --confirm-prepare.")
+        console.print(
+            "Safety: this command only writes workspace prompt/template artifacts; it does not run Codex, call AI APIs, validate, commit, or push.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    try:
+        preparation, json_path, markdown_path, prompt_path, template_json_path, template_md_path = create_codex_worker_preparation(
+            project_name,
+            run_id,
+            force=force,
+            recorded_by=recorded_by,
+            note=note,
+        )
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project queue-worker-show --project {project_name} --run {run_id}")
+        raise typer.Exit(1) from exc
+    _print_codex_worker_preparation(preparation)
+    console.print(f"JSON: {_named_path(json_path)}")
+    console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print(f"Prompt: {_named_path(prompt_path)}")
+    console.print(f"Result template JSON: {_named_path(template_json_path)}")
+    console.print(f"Result template Markdown: {_named_path(template_md_path)}")
+
+
+@project_app.command("codex-worker-prepare-show")
+def show_codex_worker_preparation_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    preparation_id: str = typer.Option(..., "--prepare", help="Codex worker preparation id."),
+) -> None:
+    """Show one Codex worker prompt preparation package."""
+    project_name = _resolve_project(project_name)
+    preparation = load_codex_worker_preparation(project_name, preparation_id)
+    if not preparation:
+        console.print(f"[yellow]Codex worker preparation not found: {preparation_id}[/yellow]")
+        console.print(f"Suggested next command: devo project codex-worker-prepare-list --project {project_name}")
+        raise typer.Exit(1)
+    _print_codex_worker_preparation(preparation)
+    console.print("Read-only: no worker execution or target project mutation was run.")
+
+
+@project_app.command("codex-worker-prepare-latest")
+def latest_codex_worker_preparation_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show the latest Codex worker prompt preparation package."""
+    project_name = _resolve_project(project_name)
+    preparations = list_codex_worker_preparations(project_name)
+    if not preparations:
+        console.print(f"No Codex worker preparations found for {project_name}.")
+        console.print(f"Suggested next command: devo project codex-worker-prepare --project {project_name} --run <QWR-ID> --confirm-prepare")
+        return
+    _print_codex_worker_preparation(preparations[0])
+    console.print("Read-only: no worker execution or target project mutation was run.")
+
+
+@project_app.command("codex-worker-prepare-list")
+def list_codex_worker_preparation_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """List Codex worker prompt preparation packages."""
+    project_name = _resolve_project(project_name)
+    preparations = list_codex_worker_preparations(project_name)
+    console.print(f"Codex worker preparations: {project_name}")
+    if not preparations:
+        console.print("No preparations found.")
+        console.print(f"Suggested next command: devo project codex-worker-prepare --project {project_name} --run <QWR-ID> --confirm-prepare")
+        return
+    for preparation in preparations:
+        console.print(
+            f"- {preparation.preparation_id} | run={preparation.queue_worker_run_id} | task={preparation.task_id or 'none'} | {preparation.status} | {preparation.created_at.isoformat()}",
+            soft_wrap=True,
+        )
+    console.print("Read-only: no worker execution or target project mutation was run.")
 
 
 @project_app.command("queue-worker-status")

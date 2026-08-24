@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -37,6 +38,8 @@ HANDOFFS_DIR_NAME = "handoffs"
 HANDOFF_INDEX_JSON = "handoff-index.json"
 WORKERS_DIR_NAME = "workers"
 CODEX_WORKER_DIR_NAME = "codex"
+CODEX_WORKER_PREPARATION_DIR_NAME = "codex-worker"
+CODEX_WORKER_PREPARATIONS_DIR_NAME = "preparations"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
 WORKER_REVIEWS_DIR_NAME = "reviews"
@@ -576,6 +579,45 @@ class QueueWorkerEvidenceRecordResult(BaseModel):
     next_action: str = ""
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
+
+
+class CodexWorkerPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    preparation_id: str
+    queue_worker_run_id: str
+    policy_id: str
+    batch_id: str | None = None
+    queue_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    handoff_id: str | None = None
+    worker_run_id: str | None = None
+    status: str = "prepared"
+    target_repo_path: str
+    current_branch: str | None = None
+    upstream_branch: str | None = None
+    head_commit: str | None = None
+    git_status_summary: str = "unknown"
+    git_dirty: bool = False
+    staged_files: list[str] = Field(default_factory=list)
+    unstaged_files: list[str] = Field(default_factory=list)
+    untracked_files: list[str] = Field(default_factory=list)
+    policy_status: str
+    policy_risk_level: str | None = None
+    prompt_path: str
+    worker_result_template_json_path: str
+    worker_result_template_markdown_path: str
+    prepare_json_path: str
+    prepare_markdown_path: str
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    recorded_by: str | None = None
+    note: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class QueueWorkerRunIndexEntry(BaseModel):
@@ -1782,6 +1824,26 @@ def queue_worker_run_artifact_paths(project_name: str, run_id: str, workspace_ro
     return paths.queue_worker_runs_dir / f"queue-worker-run-{safe_id}.json", paths.queue_worker_runs_dir / f"queue-worker-run-{safe_id}.md"
 
 
+def codex_worker_preparation_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    return root / "projects" / project_name / CODEX_WORKER_PREPARATION_DIR_NAME / CODEX_WORKER_PREPARATIONS_DIR_NAME
+
+
+def codex_worker_preparation_artifact_paths(
+    project_name: str,
+    preparation_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path, Path, Path, Path]:
+    directory = codex_worker_preparation_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(preparation_id)
+    return (
+        directory / "codex-worker-prepare.json",
+        directory / "codex-worker-prepare.md",
+        directory / "codex-worker-prompt.md",
+        directory / "worker-result-template.json",
+        directory / "worker-result-template.md",
+    )
+
+
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -1870,6 +1932,152 @@ def load_queue_worker_run(project_name: str, run_id: str, workspace_root: Path |
     if not json_path.exists():
         return None
     return QueueWorkerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_worker_preparations(project_name: str, workspace_root: Path | None = None) -> list[CodexWorkerPreparation]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    directory = codex_worker_preparation_directory(project_name, workspace_root=root)
+    preparations: list[CodexWorkerPreparation] = []
+    if not directory.exists():
+        return []
+    for path in sorted(directory.glob("*/codex-worker-prepare.json")):
+        try:
+            preparations.append(CodexWorkerPreparation.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(preparations, key=lambda item: item.updated_at, reverse=True)
+
+
+def load_codex_worker_preparation(
+    project_name: str,
+    preparation_id: str,
+    workspace_root: Path | None = None,
+) -> CodexWorkerPreparation | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path, _prompt_path, _template_json, _template_md = codex_worker_preparation_artifact_paths(
+        project_name,
+        preparation_id,
+        workspace_root=root,
+    )
+    if not json_path.exists():
+        return None
+    return CodexWorkerPreparation.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def create_codex_worker_preparation(
+    project_name: str,
+    run_id: str,
+    *,
+    force: bool = False,
+    recorded_by: str | None = None,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[CodexWorkerPreparation, Path, Path, Path, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status != "waiting_worker":
+        msg = f"Queue worker run must be waiting_worker before Codex prompt preparation, not {run.status}."
+        raise ValueError(msg)
+    if run.delivery_request_id or run.delivery_request_status:
+        msg = f"Queue worker run {run.run_id} already has delivery request state; prompt preparation is unsafe."
+        raise ValueError(msg)
+    existing = [item for item in list_codex_worker_preparations(project_name, workspace_root=root) if item.queue_worker_run_id == run.run_id]
+    if existing and not force:
+        msg = f"Codex worker preparation already exists for {run.run_id}: {existing[0].preparation_id}. Use --force to create another."
+        raise ValueError(msg)
+
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=root)
+    if not policy:
+        msg = f"Execution policy not found: {run.policy_id}"
+        raise ValueError(msg)
+    if policy.status != "approved":
+        msg = f"Execution policy must be approved before Codex prompt preparation, not {policy.status}."
+        raise ValueError(msg)
+    if not run.queue_id:
+        msg = f"Queue worker run {run.run_id} has no queue id."
+        raise ValueError(msg)
+    queue = load_execution_queue(project_name, run.queue_id, workspace_root=root)
+    if not queue:
+        msg = f"Execution queue not found: {run.queue_id}"
+        raise ValueError(msg)
+    if not run.selected_queue_item_id:
+        msg = f"Queue worker run {run.run_id} has no selected queue item."
+        raise ValueError(msg)
+    queue_item = _find_queue_item(queue.items, run.selected_queue_item_id)
+    if not queue_item:
+        msg = f"Selected queue item not found: {run.selected_queue_item_id}"
+        raise ValueError(msg)
+    if not run.selected_task_id and not queue_item.task_id:
+        msg = f"Queue worker run {run.run_id} has no selected task id."
+        raise ValueError(msg)
+
+    registration = load_registered_project(project_name, workspace_root=root)
+    target_path = Path(registration.path).expanduser().resolve()
+    if not target_path.exists():
+        msg = f"Target repo path does not exist: {target_path}"
+        raise ValueError(msg)
+    checklist = run.handoff_checklist or build_queue_worker_handoff_checklist(project_name, run, workspace_root=root)
+    git_context = _capture_prepare_git_context(project_name, target_path, workspace_root=root)
+    now = datetime.now(UTC)
+    preparation_id = _next_codex_worker_preparation_id(project_name, run.run_id, now, workspace_root=root)
+    json_path, markdown_path, prompt_path, template_json_path, template_md_path = codex_worker_preparation_artifact_paths(
+        project_name,
+        preparation_id,
+        workspace_root=root,
+    )
+    warnings = list(git_context["warnings"])
+    if git_context["git_dirty"]:
+        warnings.append("Target repository is dirty; Codex should not proceed unless the operator confirms this state is expected.")
+    if not policy.validation_commands:
+        warnings.append("Execution policy has no validation commands; worker must report validation choice honestly.")
+    cleaned_recorded_by = recorded_by.strip() if recorded_by and recorded_by.strip() else None
+    preparation = CodexWorkerPreparation(
+        project=project_name,
+        preparation_id=preparation_id,
+        queue_worker_run_id=run.run_id,
+        policy_id=policy.policy_id,
+        batch_id=run.batch_id,
+        queue_id=run.queue_id,
+        queue_item_id=queue_item.item_id,
+        task_id=run.selected_task_id or queue_item.task_id,
+        handoff_id=run.selected_handoff_id,
+        worker_run_id=run.selected_worker_run_id,
+        target_repo_path=str(target_path),
+        current_branch=git_context["current_branch"],
+        upstream_branch=git_context["upstream_branch"],
+        head_commit=git_context["head_commit"],
+        git_status_summary=git_context["git_status_summary"],
+        git_dirty=bool(git_context["git_dirty"]),
+        staged_files=list(git_context["staged_files"]),
+        unstaged_files=list(git_context["unstaged_files"]),
+        untracked_files=list(git_context["untracked_files"]),
+        policy_status=policy.status,
+        policy_risk_level=policy.risk_level,
+        prompt_path=str(prompt_path),
+        worker_result_template_json_path=str(template_json_path),
+        worker_result_template_markdown_path=str(template_md_path),
+        prepare_json_path=str(json_path),
+        prepare_markdown_path=str(markdown_path),
+        warnings=warnings,
+        next_action=(
+            "Give codex-worker-prompt.md to Codex manually, then record worker evidence with "
+            f"devo project queue-worker-record-worker-result --project {project_name} --run {run.run_id} --confirm-record"
+        ),
+        recorded_by=cleaned_recorded_by,
+        note=note.strip(),
+        created_at=now,
+        updated_at=now,
+    )
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_model(json_path, preparation)
+    prompt_path.write_text(render_codex_worker_preparation_prompt(preparation, run, policy, queue_item, checklist), encoding="utf-8")
+    template_json_path.write_text(_render_worker_result_template_json(cleaned_recorded_by, now), encoding="utf-8")
+    template_md_path.write_text(_render_worker_result_template_markdown(cleaned_recorded_by, now), encoding="utf-8")
+    markdown_path.write_text(render_codex_worker_preparation_markdown(preparation), encoding="utf-8")
+    return preparation, json_path, markdown_path, prompt_path, template_json_path, template_md_path
 
 
 def create_batch_execution_policy(
@@ -5610,6 +5818,241 @@ def render_queue_worker_run_markdown(run: QueueWorkerRun) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_codex_worker_preparation_markdown(preparation: CodexWorkerPreparation) -> str:
+    lines = [
+        f"# Codex Worker Preparation {preparation.preparation_id}",
+        "",
+        f"- Project: `{preparation.project}`",
+        f"- Queue-worker run: `{preparation.queue_worker_run_id}`",
+        f"- Policy: `{preparation.policy_id}`",
+        f"- Queue item: `{preparation.queue_item_id or 'none'}`",
+        f"- Task: `{preparation.task_id or 'none'}`",
+        f"- Handoff: `{preparation.handoff_id or 'none'}`",
+        f"- Worker run: `{preparation.worker_run_id or 'none'}`",
+        f"- Target repo: `{preparation.target_repo_path}`",
+        f"- Branch: `{preparation.current_branch or 'unknown'}`",
+        f"- Upstream: `{preparation.upstream_branch or 'none'}`",
+        f"- Git status: `{preparation.git_status_summary}`",
+        f"- Prompt: `{preparation.prompt_path}`",
+        f"- Result template JSON: `{preparation.worker_result_template_json_path}`",
+        f"- Result template Markdown: `{preparation.worker_result_template_markdown_path}`",
+        f"- Recorded by: `{preparation.recorded_by or 'none'}`",
+        f"- Created: `{preparation.created_at.isoformat()}`",
+        "",
+    ]
+    _append_list_section(lines, "Warnings", preparation.warnings)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            preparation.next_action,
+            "",
+            "## Safety Note",
+            "",
+            "This preparation is a prompt-file handoff only. It does not run Codex, call AI APIs, record evidence, validate, commit, push, or modify the target repository.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_codex_worker_preparation_prompt(
+    preparation: CodexWorkerPreparation,
+    run: QueueWorkerRun,
+    policy: BatchExecutionPolicy,
+    queue_item: QueueItem,
+    checklist: QueueWorkerHandoffChecklist,
+) -> str:
+    fallback = "Not specified in current policy."
+    lines = [
+        f"# Codex Worker Prompt Package: {preparation.preparation_id}",
+        "",
+        "You are working as a Codex implementation worker for Devo.",
+        "You are working on exactly one approved queue-worker run.",
+        "",
+        "## 1. Identity And Task",
+        "",
+        f"- Project: `{preparation.project}`",
+        f"- Target repo path: `{preparation.target_repo_path}`",
+        f"- Queue-worker run id: `{preparation.queue_worker_run_id}`",
+        f"- Queue item id: `{preparation.queue_item_id or 'none'}`",
+        f"- Task id: `{preparation.task_id or 'none'}`",
+        f"- Task objective: {checklist.objective}",
+        "",
+        "## 2. Handoff Checklist",
+        "",
+        f"- Objective: {checklist.objective}",
+        "",
+        "### Allowed Scope",
+        "",
+        *_prompt_bullet_lines(checklist.allowed_scope),
+        "",
+        "### Forbidden Scope",
+        "",
+        *_prompt_bullet_lines(checklist.forbidden_scope),
+        "",
+        "### Relevant Files",
+        "",
+        *_prompt_bullet_lines(checklist.relevant_files),
+        "",
+        "### Acceptance Criteria",
+        "",
+        *_prompt_bullet_lines(checklist.acceptance_criteria),
+        "",
+        "### Required Tests",
+        "",
+        *_prompt_bullet_lines(checklist.required_tests),
+        "",
+        "### Expected Worker Result Format",
+        "",
+        *_prompt_bullet_lines(checklist.expected_worker_result_format),
+        "",
+        "### Risk Notes",
+        "",
+        *_prompt_bullet_lines(checklist.risk_notes),
+        "",
+        f"- Next action: {checklist.next_action or fallback}",
+        "",
+        "## 3. Policy Summary",
+        "",
+        f"- Policy id: `{policy.policy_id}`",
+        f"- Policy status: `{policy.status}`",
+        f"- Allowed tasks: `{', '.join(policy.allowed_task_ids) if policy.allowed_task_ids else fallback}`",
+        f"- Allowed queue items: `{', '.join(policy.allowed_queue_item_ids) if policy.allowed_queue_item_ids else fallback}`",
+        f"- Allowed file patterns: `{', '.join(policy.allowed_file_patterns) if policy.allowed_file_patterns else fallback}`",
+        f"- Forbidden file patterns: `{', '.join(policy.forbidden_file_patterns) if policy.forbidden_file_patterns else fallback}`",
+        f"- Auto delivery allowed: `{policy.auto_delivery_allowed}`",
+        f"- Auto push allowed: `{policy.auto_push_allowed}`",
+        f"- Risk level: `{policy.risk_level or fallback}`",
+        "",
+        "### Policy Risk Notes",
+        "",
+        *_prompt_bullet_lines(policy.notes),
+        "",
+        "## 4. Repo Context",
+        "",
+        f"- Target repo path: `{preparation.target_repo_path}`",
+        f"- Current branch: `{preparation.current_branch or 'unknown'}`",
+        f"- Upstream: `{preparation.upstream_branch or 'none'}`",
+        f"- Head commit: `{preparation.head_commit or 'unknown'}`",
+        f"- Current git status summary: `{preparation.git_status_summary}`",
+        "",
+    ]
+    if preparation.git_dirty:
+        lines.extend(
+            [
+                "Important dirty-state warning: the target repository is not clean. Do not proceed until the operator confirms the dirty state is expected for this one task.",
+                "",
+                "Staged files:",
+                "",
+                *_prompt_bullet_lines(preparation.staged_files),
+                "",
+                "Unstaged files:",
+                "",
+                *_prompt_bullet_lines(preparation.unstaged_files),
+                "",
+                "Untracked files:",
+                "",
+                *_prompt_bullet_lines(preparation.untracked_files),
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## 5. Worker Boundaries",
+            "",
+            "- Work on this one task only.",
+            "- Do not modify unrelated files.",
+            "- Do not commit.",
+            "- Do not push.",
+            "- Do not edit Devo workspace artifacts unless explicitly required.",
+            f"- Do not touch PersonalOS unless this target project is explicitly PersonalOS. Current project: `{preparation.project}`.",
+            "- Do not add secrets or expose tokens.",
+            "- Do not broaden scope.",
+            "- Stop and report blocked if the task is ambiguous or unsafe.",
+            "- Stop and report usage_limit if usage limits prevent completion.",
+            "- Do not bypass worker, review, validation, policy, or trusted delivery gates.",
+            "",
+            "## 6. Validation Expectations",
+            "",
+        ]
+    )
+    if checklist.required_tests:
+        lines.extend(_prompt_bullet_lines(checklist.required_tests))
+    else:
+        lines.append("No specific tests were provided. Run the smallest relevant validation you can identify and report exactly what was run.")
+    lines.extend(
+        [
+            "",
+            "## 7. Worker Output Contract",
+            "",
+            "Return or fill a result with exactly these fields:",
+            "",
+            "- status: completed | failed | blocked | usage_limit",
+            "- summary",
+            "- work_performed",
+            "- changed_files",
+            "- commands_run",
+            "- risks",
+            "- recommended_next_action",
+            "- artifact_path",
+            "- dirty_repo_status",
+            "- usage_limit_details",
+            "- failure_details",
+            "",
+            "Only status=completed should be treated as successful worker evidence.",
+            "Unknown or missing status is unsafe.",
+            "",
+            "## 8. Result Template Instructions",
+            "",
+            "Fill one of these generated result templates, or return content matching the same fields:",
+            "",
+            f"- JSON template: `{preparation.worker_result_template_json_path}`",
+            f"- Markdown template: `{preparation.worker_result_template_markdown_path}`",
+            "",
+            "## 9. Next Devo Commands",
+            "",
+            "After Codex finishes, the operator records worker evidence manually.",
+            "",
+            "Completed:",
+            "",
+            "```powershell",
+            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status completed --summary \"...\" --files-changed \"...\" --commands-run \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+            "```",
+            "",
+            "Blocked:",
+            "",
+            "```powershell",
+            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status blocked --summary \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+            "```",
+            "",
+            "Failed:",
+            "",
+            "```powershell",
+            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status failed --summary \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+            "```",
+            "",
+            "Usage limit:",
+            "",
+            "```powershell",
+            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status usage_limit --summary \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+            "```",
+            "",
+            "Then continue the approved queue only through Devo:",
+            "",
+            "```powershell",
+            f".\\.venv\\Scripts\\devo.exe project approved-queue-run --project {preparation.project} --policy {preparation.policy_id} --run {preparation.queue_worker_run_id} --confirm-auto-run",
+            "```",
+            "",
+            "## Delivery Reminder",
+            "",
+            "This prompt package does not deliver anything. Commit and push remain trusted-runner-only after worker evidence, review evidence, validation evidence, and delivery request gates pass.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_project_batch_markdown(batch: ProjectBatch) -> str:
     lines = [
         f"# {batch.title}",
@@ -7837,6 +8280,114 @@ def _default_queue_worker_commit_message(project_name: str, run: QueueWorkerRun,
     if run.selected_queue_item_id:
         return f"feat: complete {run.selected_queue_item_id}"
     return f"feat: complete queue worker run {run.run_id}"
+
+
+def _next_codex_worker_preparation_id(
+    project_name: str,
+    run_id: str,
+    now: datetime,
+    workspace_root: Path | None = None,
+) -> str:
+    base = f"CWP-{now.strftime('%Y%m%d%H%M%S')}-{_normalize_queue_worker_run_id(run_id)}"
+    existing = {_safe_artifact_id(item.preparation_id) for item in list_codex_worker_preparations(project_name, workspace_root=workspace_root)}
+    candidate = base
+    index = 2
+    while _safe_artifact_id(candidate) in existing:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
+def _capture_prepare_git_context(project_name: str, target_path: Path, workspace_root: Path) -> dict[str, object]:
+    try:
+        from .git_delivery import get_git_repository_status
+
+        status = get_git_repository_status(project_name, workspace_root=workspace_root)
+        staged = [item.path for item in status.staged_files]
+        unstaged = [item.path for item in status.unstaged_files]
+        untracked = [item.path for item in status.untracked_files]
+        return {
+            "current_branch": status.current_branch,
+            "upstream_branch": status.upstream_branch,
+            "head_commit": status.head_commit,
+            "git_status_summary": _prepare_git_status_summary(staged, unstaged, untracked),
+            "git_dirty": not status.working_tree_clean,
+            "staged_files": staged,
+            "unstaged_files": unstaged,
+            "untracked_files": untracked,
+            "warnings": list(status.warnings),
+        }
+    except ValueError as exc:
+        return {
+            "current_branch": None,
+            "upstream_branch": None,
+            "head_commit": None,
+            "git_status_summary": f"unavailable: {exc}",
+            "git_dirty": False,
+            "staged_files": [],
+            "unstaged_files": [],
+            "untracked_files": [],
+            "warnings": [f"Could not capture Git status for {target_path}: {exc}"],
+        }
+
+
+def _prepare_git_status_summary(staged: list[str], unstaged: list[str], untracked: list[str]) -> str:
+    if not staged and not unstaged and not untracked:
+        return "clean"
+    return f"staged {len(staged)}, unstaged {len(unstaged)}, untracked {len(untracked)}"
+
+
+def _render_worker_result_template_json(recorded_by: str | None, now: datetime) -> str:
+    data = {
+        "status": "completed | failed | blocked | usage_limit",
+        "summary": "",
+        "work_performed": [],
+        "changed_files": [],
+        "commands_run": [],
+        "risks": [],
+        "recommended_next_action": "",
+        "artifact_path": "",
+        "dirty_repo_status": "",
+        "usage_limit_details": "",
+        "failure_details": "",
+        "recorded_by": recorded_by or "",
+        "created_at": now.isoformat(),
+    }
+    return json.dumps(data, indent=2) + "\n"
+
+
+def _render_worker_result_template_markdown(recorded_by: str | None, now: datetime) -> str:
+    return "\n".join(
+        [
+            "Status:",
+            "Summary:",
+            "Work performed:",
+            "Changed files:",
+            "Commands/tests run:",
+            "Risks:",
+            "Recommended next action:",
+            "Artifact path:",
+            "Dirty repo status:",
+            "Usage-limit details:",
+            "Failure details:",
+            f"Recorded by: {recorded_by or ''}",
+            f"Created at: {now.isoformat()}",
+            "",
+        ]
+    )
+
+
+def _prompt_bullet_lines(items: list[str]) -> list[str]:
+    values = [item for item in items if str(item).strip()]
+    if not values:
+        return ["- Not specified in current policy."]
+    return [f"- {item}" for item in values]
+
+
+def _safe_artifact_id(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    cleaned = cleaned.strip(".-")
+    return cleaned or "artifact"
 
 
 def _dedupe(items: list[str]) -> list[str]:

@@ -26,12 +26,14 @@ from devo.project_planning import (
     generate_backlog_refinement_prompt,
     list_execution_policies,
     list_codex_handoffs,
+    list_codex_worker_preparations,
     list_batch_approvals,
     list_execution_queues,
     list_queue_worker_runs,
     get_queue_worker_handoff_checklist,
     load_batch_approval,
     load_codex_handoff,
+    load_codex_worker_preparation,
     load_codex_worker_report,
     load_codex_worker_review,
     load_codex_worker_run,
@@ -2217,6 +2219,152 @@ def test_queue_worker_request_delivery_creates_runner_request_without_commit_or_
     assert _git(project_path, "log", "--oneline", "-n", "1", capture=True).stdout.strip().endswith("initial")
 
 
+def test_codex_worker_prepare_blocks_when_run_missing(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-9999", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Queue worker run not found" in result.output
+
+
+def test_codex_worker_prepare_blocks_when_run_not_waiting_worker(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    paused = runner.invoke(
+        app,
+        ["project", "queue-worker-pause", "--project", "sample", "--run", "QWR-0001", "--reason", "operator pause"],
+        terminal_width=240,
+    )
+    assert paused.exit_code == 0, paused.output
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "must be waiting_worker" in result.output
+
+
+def test_codex_worker_prepare_blocks_when_policy_missing_or_not_approved(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    json_path, markdown_path = queue_worker_run_artifact_paths("sample", "QWR-0001", workspace_root=workspace)
+    json_path.write_text(run.model_copy(update={"policy_id": "POL-9999"}).model_dump_json(indent=2), encoding="utf-8")
+    markdown_path.write_text("missing policy\n", encoding="utf-8")
+
+    missing = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert missing.exit_code != 0
+    assert "Execution policy not found" in missing.output
+
+    json_path.write_text(run.model_dump_json(indent=2), encoding="utf-8")
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    policy_json, policy_md = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    policy_json.write_text(policy.model_copy(update={"status": "draft"}).model_dump_json(indent=2), encoding="utf-8")
+    policy_md.write_text("draft policy\n", encoding="utf-8")
+    draft = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert draft.exit_code != 0
+    assert "must be approved" in draft.output
+
+
+def test_codex_worker_prepare_generates_prompt_and_result_templates(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-prepare",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--recorded-by",
+            "Manas",
+            "--note",
+            "prepare prompt package",
+            "--confirm-prepare",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Codex worker preparation:" in result.output
+    assert "Prompt path:" in result.output
+    assert "Next action:" in result.output
+    preparations = list_codex_worker_preparations("sample", workspace_root=workspace)
+    assert len(preparations) == 1
+    preparation = load_codex_worker_preparation("sample", preparations[0].preparation_id, workspace_root=workspace)
+    assert preparation is not None
+    assert preparation.queue_worker_run_id == "QWR-0001"
+    assert preparation.queue_item_id == "QI001"
+    assert preparation.task_id == "T001"
+    assert preparation.git_status_summary == "clean"
+    prompt = Path(preparation.prompt_path)
+    template_json = Path(preparation.worker_result_template_json_path)
+    template_md = Path(preparation.worker_result_template_markdown_path)
+    assert prompt.exists()
+    assert template_json.exists()
+    assert template_md.exists()
+    prompt_text = prompt.read_text(encoding="utf-8")
+    assert "You are working as a Codex implementation worker for Devo." in prompt_text
+    assert "Work on this one task only." in prompt_text
+    assert "Do not commit." in prompt_text
+    assert "Do not push." in prompt_text
+    assert "Allowed file pattern: src/**" in prompt_text
+    assert "Forbidden file pattern: .env" in prompt_text
+    assert "status: completed | failed | blocked | usage_limit" in prompt_text
+    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in prompt_text
+    data = json.loads(template_json.read_text(encoding="utf-8"))
+    assert data["status"] == "completed | failed | blocked | usage_limit"
+    assert data["recorded_by"] == "Manas"
+    markdown_template = template_md.read_text(encoding="utf-8")
+    assert "Status:" in markdown_template
+    assert "Usage-limit details:" in markdown_template
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_prepare_refuses_duplicate_without_force(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    first = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    second = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code != 0
+    assert "already exists" in second.output
+
+
 def test_queue_worker_step_requires_confirmation_unless_dry_run(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_execution_policy(tmp_path, allowed_task="T001")
@@ -3872,4 +4020,8 @@ def _workspace(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
 
 
 def _target_snapshot(project_path: Path) -> dict[str, str]:
-    return {str(path.relative_to(project_path)): path.read_text(encoding="utf-8") for path in project_path.rglob("*") if path.is_file()}
+    return {
+        str(path.relative_to(project_path)): path.read_text(encoding="utf-8")
+        for path in project_path.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(project_path).parts
+    }

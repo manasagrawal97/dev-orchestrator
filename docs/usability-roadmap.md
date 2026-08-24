@@ -83,6 +83,8 @@ TASK-DEVO-143 dogfoods the approved queue path across three disposable delivered
 
 TASK-DEVO-145 keeps the next worker-launch step design-only. It recommends prompt-file assisted Codex worker preparation as the first safer bridge before direct Codex CLI subprocess execution.
 
+TASK-DEVO-146 implements that safer bridge with `devo project codex-worker-prepare`. It writes a prompt file and worker result templates for one `waiting_worker` queue-worker run, but it still does not run Codex, call AI APIs, ingest results, validate, commit, push, or modify target project source.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

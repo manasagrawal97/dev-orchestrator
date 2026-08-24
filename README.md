@@ -22,7 +22,7 @@ The current strategy is CLI-first and local-first:
 - Manual/Codex mode must remain supported even after future model adapters exist.
 - Dashboard/UI work stays read-only for now; the CLI remains the execution and recovery path.
 
-The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred. Phase 1 MVP is complete and recorded in [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md). Active focus now moves through the [Phase 2 autonomy roadmap](docs/phase-2-autonomy-roadmap.md). The next Codex-worker step is design-first; [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md) recommends prompt-file assisted mode before direct Codex CLI subprocess execution.
+The long-term product vision is documented in [Company-model vision](docs/devo-company-model.md): Devo should behave like a local software-development company operating system around AI workers, with Codex CLI as the default personal/local worker and optional API/model agents deferred. Phase 1 MVP is complete and recorded in [Phase 1 MVP checkpoint](docs/phase-1-mvp-checkpoint.md). Active focus now moves through the [Phase 2 autonomy roadmap](docs/phase-2-autonomy-roadmap.md). Devo now supports prompt-file assisted Codex worker preparation before any direct Codex CLI subprocess execution; see [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md).
 
 ## Project Memory
 
@@ -51,6 +51,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-138 polished assisted dogfood report](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md)
 - [TASK-DEVO-144 assisted queue recovery and flow polish](docs/dogfood/task-devo-144-assisted-queue-recovery-and-flow-polish.md)
 - [TASK-DEVO-145 Codex worker launch design report](docs/dogfood/task-devo-145-codex-worker-launch-integration-design.md)
+- [TASK-DEVO-146 Codex worker prepare prompt-file mode](docs/dogfood/task-devo-146-codex-worker-prepare-prompt-file-mode-v1.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -275,6 +276,15 @@ Queue-worker run artifacts are stored under `workspace/projects/<project>/planni
 TASK-DEVO-141 adds a shared queue-worker evidence schema v1 to those record commands. Worker, review, and validation evidence now store a structured record with evidence id, queue-worker run, queue item/task, evidence type/status, summary, changed files, commands run, artifact path, risks, recommended next action, note, timestamp, and recorder. Older evidence artifacts without these fields remain readable, and only `completed` worker evidence plus `passed` review/validation evidence can advance the queue.
 
 TASK-DEVO-142 adds a lightweight queue-worker handoff checklist before worker implementation. `queue-worker-handoff-show` prints objective, allowed/forbidden scope, relevant files, acceptance criteria, required tests, expected worker result fields, risk notes, and the next evidence-recording command. This is a simple operator checklist, not a full agent-role contract system; real Codex-worker execution and least-privilege permissions remain future scope.
+
+TASK-DEVO-146 adds prompt-file preparation for one `waiting_worker` queue-worker run:
+
+```powershell
+devo project codex-worker-prepare --project MyProject --run QWR-0001 --confirm-prepare
+devo project codex-worker-prepare-latest --project MyProject
+```
+
+The command writes `codex-worker-prompt.md`, `worker-result-template.json`, `worker-result-template.md`, and preparation summary artifacts under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/`. It does not run Codex, call AI APIs, record evidence automatically, validate, commit, push, or modify the target project.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

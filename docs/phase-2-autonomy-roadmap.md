@@ -203,6 +203,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, AI/API calls, voice/Jarvis/gesture/clap controls, ECC adoption, broad parallel workers, least-privilege implementation, UI delivery controls, direct commit/push, or full autonomous multitask execution.
 - Status: Completed as a design-only task. The recommended next step is TASK-DEVO-146: implement prompt-file assisted worker preparation first, then add result ingestion before any direct subprocess retry.
 
+### TASK-DEVO-146: Codex Worker Prepare Prompt-File Mode V1
+
+- Goal: Generate a complete Codex-ready prompt package for exactly one `waiting_worker` queue-worker run.
+- Scope: `devo project codex-worker-prepare --project <project> --run <QWR-ID> --confirm-prepare`, preparation show/latest/list helpers, workspace-only prompt package artifacts, JSON and Markdown worker result templates, preflight checks, tests, and docs.
+- Not in scope: running Codex, calling Codex Desktop, AI/API calls, result ingest, automatic evidence recording, validation execution, delivery requests, commit, push, UI changes, voice/Jarvis/gesture/clap controls, ECC adoption, parallel workers, least-privilege implementation, or full autonomous multitask execution.
+- Status: Completed. Prompt packages are stored under `workspace/projects/<project>/codex-worker/preparations/<CWP-ID>/` and the operator still runs Codex manually before recording worker evidence.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -507,8 +514,8 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-146 Codex worker prepare/prompt-file mode v1.
+Recommended next task: TASK-DEVO-147 Codex worker result ingest v1.
 
-Start with prompt-file assisted worker preparation and explicit operator handoff. Keep direct Codex CLI subprocess execution behind later readiness checks and fake-executable tests until the input/output contract is proven.
+Start by validating and importing the result files produced from prompt-file assisted worker sessions. Keep direct Codex CLI subprocess execution behind later readiness checks and fake-executable tests until the input/output contract is proven.
 
-It should produce a safe worker input package from the current queue/handoff/checklist state without running Codex, validation, delivery, commit, push, or AI/API calls.
+It should parse explicit worker result status, preserve raw evidence, reject unknown/missing status, and write worker evidence only through the existing evidence schema without running Codex, validation, delivery, commit, push, or AI/API calls.

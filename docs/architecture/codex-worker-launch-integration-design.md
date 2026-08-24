@@ -56,7 +56,7 @@ This is the safest early mode because Devo does not launch a subprocess and does
 
 Devo writes a complete prompt package and command guidance for one queue-worker run. The package includes the exact worker objective, safety boundaries, expected output schema, and result-file path. The user still launches Codex manually, but no longer has to assemble context by hand.
 
-This should be the first implementation target. It improves operator consistency while preserving manual launch control.
+TASK-DEVO-146 implements the first version of this mode. It improves operator consistency while preserving manual launch control.
 
 ### Mode C: Codex CLI Subprocess Mode
 
@@ -69,7 +69,7 @@ This is future scope after Mode B proves the prompt package and output contract.
 ### Prepare
 
 ```powershell
-.\.venv\Scripts\devo.exe project codex-worker-prepare --project <project> --run <QWR-ID>
+.\.venv\Scripts\devo.exe project codex-worker-prepare --project <project> --run <QWR-ID> --confirm-prepare
 ```
 
 Purpose: generate a Codex-ready prompt/input package for one queue-worker run.
@@ -78,9 +78,19 @@ Expected behavior:
 
 - read the queue-worker run, queue item, task, policy, handoff checklist, and current Git status
 - write a prompt package under the Devo workspace
+- write JSON and Markdown worker result templates
 - print the prompt path and manual launch guidance
 - not launch Codex
+- not record evidence automatically
 - not modify the target repo
+
+Implemented helper commands:
+
+```powershell
+.\.venv\Scripts\devo.exe project codex-worker-prepare-list --project <project>
+.\.venv\Scripts\devo.exe project codex-worker-prepare-latest --project <project>
+.\.venv\Scripts\devo.exe project codex-worker-prepare-show --project <project> --prepare <CWP-ID>
+```
 
 ### Run
 
@@ -266,7 +276,7 @@ If a trusted runner commit succeeds but push fails, `runner-recover-push` is the
 
 Recommended order:
 
-1. TASK-DEVO-146: Codex worker prepare/prompt-file mode v1
+1. TASK-DEVO-146: Codex worker prepare/prompt-file mode v1 - completed
 2. TASK-DEVO-147: Codex worker ingest result v1
 3. TASK-DEVO-148: Codex CLI subprocess execution v1 for one safe task
 4. TASK-DEVO-149: Codex worker failure/usage-limit recovery
