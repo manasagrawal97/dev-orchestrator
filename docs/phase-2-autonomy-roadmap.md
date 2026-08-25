@@ -217,6 +217,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: running Codex, calling Codex Desktop, AI/API calls, Markdown result parsing, automatic review, validation execution, delivery requests, commit, push, UI changes, voice/Jarvis/gesture/clap controls, ECC adoption, parallel workers, least-privilege implementation, or full autonomous multitask execution.
 - Status: Completed. Ingest artifacts are stored under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and the next safe step is `approved-queue-run` to continue through review/validation/delivery gates.
 
+### TASK-DEVO-148: Prompt-File Codex Worker Dogfood
+
+- Goal: Prove the prompt-file/manual worker loop on a disposable project before designing direct Codex subprocess execution.
+- Scope: disposable Git repo plus local bare remote, `codex-worker-prepare`, manually filled JSON result, `codex-worker-ingest --dry-run`, confirmed ingest, manual review and validation evidence, approved queue continuation, trusted runner delivery request, trusted runner delivery, push-only recovery, and queue completion observation.
+- Not in scope: real Codex CLI, Codex Desktop, AI/API calls, PersonalOS, automatic review, automatic validation execution, direct subprocess launch, UI changes, parallel workers, ECC adoption, voice/Jarvis/gesture controls, or delivery safety changes.
+- Status: Completed. See `docs/dogfood/task-devo-148-prompt-file-codex-worker-dogfood.md`. Prompt-file worker mode is usable with the small next-action guidance fixes made during the task. Devo is ready for a subprocess execution design checkpoint, but not direct subprocess implementation yet.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -521,8 +528,6 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-148 Prompt-file Codex worker dogfood.
+Recommended next task: TASK-DEVO-149 Codex subprocess execution design checkpoint.
 
-Start by dogfooding the prompt-file assisted loop with a filled JSON result file and `codex-worker-ingest`. Keep direct Codex CLI subprocess execution behind later readiness checks and fake-executable tests until the input/output contract is proven.
-
-It should parse explicit worker result status, preserve raw evidence, reject unknown/missing status, and write worker evidence only through the existing evidence schema without running Codex, validation, delivery, commit, push, or AI/API calls.
+TASK-DEVO-148 proved the prompt-file assisted loop with a filled JSON result file and `codex-worker-ingest`. The next step should design the subprocess contract and fake-executable test plan before any real Codex launch. Keep direct Codex CLI subprocess execution behind launcher readiness, explicit operator approval, fake-executable validation, clear result-file contracts, timeout/usage-limit handling, and trusted-runner-only delivery.

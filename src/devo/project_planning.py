@@ -2228,6 +2228,12 @@ def create_codex_worker_ingest(
         updated_at=now,
     )
     if dry_run:
+        dry_next_action = (
+            "Dry-run mapping passed. To record worker evidence, rerun with "
+            f"devo project codex-worker-ingest --project {project_name} --run {run.run_id} "
+            f"--result-file {result_path} --confirm-ingest"
+        )
+        ingest = ingest.model_copy(update={"next_action": dry_next_action})
         return CodexWorkerIngestResult(
             project=project_name,
             run_id=run.run_id,
@@ -2235,7 +2241,7 @@ def create_codex_worker_ingest(
             dry_run=True,
             mutation_occurred=False,
             warnings=warnings,
-            next_action=ingest.next_action,
+            next_action=dry_next_action,
         )
 
     ingest_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2378,8 +2384,8 @@ def create_codex_worker_preparation(
         prepare_markdown_path=str(markdown_path),
         warnings=warnings,
         next_action=(
-            "Give codex-worker-prompt.md to Codex manually, then record worker evidence with "
-            f"devo project queue-worker-record-worker-result --project {project_name} --run {run.run_id} --confirm-record"
+            "Give codex-worker-prompt.md to Codex manually, fill worker-result-template.json, then ingest it with "
+            f"devo project codex-worker-ingest --project {project_name} --run {run.run_id} --result-file <path> --confirm-ingest"
         ),
         recorded_by=cleaned_recorded_by,
         note=note.strip(),
@@ -6386,30 +6392,10 @@ def render_codex_worker_preparation_prompt(
             "",
             "## 9. Next Devo Commands",
             "",
-            "After Codex finishes, the operator records worker evidence manually.",
-            "",
-            "Completed:",
+            "After Codex finishes, the operator ingests the filled JSON result file. The result file status controls whether the worker evidence is completed, blocked, failed, or usage_limit.",
             "",
             "```powershell",
-            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status completed --summary \"...\" --files-changed \"...\" --commands-run \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
-            "```",
-            "",
-            "Blocked:",
-            "",
-            "```powershell",
-            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status blocked --summary \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
-            "```",
-            "",
-            "Failed:",
-            "",
-            "```powershell",
-            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status failed --summary \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
-            "```",
-            "",
-            "Usage limit:",
-            "",
-            "```powershell",
-            f".\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {preparation.project} --run {preparation.queue_worker_run_id} --status usage_limit --summary \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+            f".\\.venv\\Scripts\\devo.exe project codex-worker-ingest --project {preparation.project} --run {preparation.queue_worker_run_id} --prepare {preparation.preparation_id} --result-file <worker-result.json> --confirm-ingest",
             "```",
             "",
             "Then continue the approved queue only through Devo:",
@@ -8153,8 +8139,9 @@ def _validation_nonpassing_next_action(validation_status: str, run_id: str | Non
 def _queue_worker_record_worker_result_next_action(project_name: str, run_id: str | None) -> str:
     run_fragment = run_id or "<QWR-ID>"
     return (
-        f"devo project queue-worker-record-worker-result --project {project_name} --run {run_fragment} "
-        "--status completed --summary \"<summary>\" --confirm-record"
+        f"devo project codex-worker-prepare --project {project_name} --run {run_fragment} --confirm-prepare; "
+        f"then fill worker-result-template.json and run devo project codex-worker-ingest --project {project_name} "
+        f"--run {run_fragment} --result-file <worker-result.json> --confirm-ingest"
     )
 
 
@@ -8619,8 +8606,9 @@ def _queue_worker_next_action_for_run(project_name: str, run: QueueWorkerRun, ev
     if not evidence.worker_report_imported:
         return (
             f"Review the handoff checklist first: devo project queue-worker-handoff-show --project {project_name} --run {run.run_id}. "
-            f"Then record worker result evidence after manual/Codex work: devo project queue-worker-record-worker-result --project {project_name} "
-            f"--run {run.run_id} --status completed --summary \"<summary>\" --confirm-record"
+            f"Then prepare a prompt package: devo project codex-worker-prepare --project {project_name} --run {run.run_id} --confirm-prepare. "
+            f"After manual/Codex work, ingest the filled JSON result: devo project codex-worker-ingest --project {project_name} "
+            f"--run {run.run_id} --result-file <worker-result.json> --confirm-ingest"
         )
     if not evidence.worker_review_exists:
         return (

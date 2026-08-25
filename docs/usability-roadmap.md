@@ -87,6 +87,8 @@ TASK-DEVO-146 implements that safer bridge with `devo project codex-worker-prepa
 
 TASK-DEVO-147 completes the first manual prompt-file loop by adding `devo project codex-worker-ingest`. It validates filled JSON worker result files, preserves a raw result copy, and records queue-worker worker evidence schema v1 without running Codex, review, validation, delivery, commit, push, or AI/API calls.
 
+TASK-DEVO-148 dogfoods that prompt-file loop end to end on a disposable project and makes the worker-boundary next actions point to `codex-worker-prepare` and `codex-worker-ingest`. The loop is usable for manual/Codex-assisted work, but direct Codex subprocess execution still needs a design checkpoint and fake-executable tests before implementation.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

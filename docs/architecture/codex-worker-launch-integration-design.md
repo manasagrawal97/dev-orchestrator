@@ -56,7 +56,7 @@ This is the safest early mode because Devo does not launch a subprocess and does
 
 Devo writes a complete prompt package and command guidance for one queue-worker run. The package includes the exact worker objective, safety boundaries, expected output schema, and result-file path. The user still launches Codex manually, but no longer has to assemble context by hand.
 
-TASK-DEVO-146 implements the first version of this mode. TASK-DEVO-147 adds JSON result ingest so a filled worker result file can become queue-worker worker evidence while preserving manual launch control.
+TASK-DEVO-146 implements the first version of this mode. TASK-DEVO-147 adds JSON result ingest so a filled worker result file can become queue-worker worker evidence while preserving manual launch control. TASK-DEVO-148 dogfoods the full prompt-file loop on a disposable project and confirms the mode is usable before subprocess execution is added.
 
 ### Mode C: Codex CLI Subprocess Mode
 
@@ -280,9 +280,10 @@ Recommended order:
 
 1. TASK-DEVO-146: Codex worker prepare/prompt-file mode v1 - completed
 2. TASK-DEVO-147: Codex worker ingest result v1 - completed
-3. TASK-DEVO-148: prompt-file Codex worker dogfood
-4. TASK-DEVO-149: fake-executable subprocess contract tests
-5. TASK-DEVO-150: real supervised single-run retry only after launcher readiness
+3. TASK-DEVO-148: prompt-file Codex worker dogfood - completed
+4. TASK-DEVO-149: Codex subprocess execution design checkpoint
+5. TASK-DEVO-150: fake-executable subprocess contract tests
+6. TASK-DEVO-151: real supervised single-run retry only after launcher readiness
 
 Prompt-file mode should come before subprocess mode. It proves the input package, result schema, and ingestion flow without adding launcher/process risk.
 

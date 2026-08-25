@@ -775,7 +775,11 @@ def _print_queue_worker_handoff_checklist(
         console.print(f"  - {item}", soft_wrap=True)
     console.print(f"Next action: {checklist.next_action}", soft_wrap=True)
     console.print(
-        f"Record command: .\\.venv\\Scripts\\devo.exe project queue-worker-record-worker-result --project {project_name} --run {run_id} --status completed --summary \"...\" --files-changed \"...\" --commands-run \"...\" --risks \"...\" --recommended-next-action \"...\" --confirm-record",
+        f"Prompt-file command: .\\.venv\\Scripts\\devo.exe project codex-worker-prepare --project {project_name} --run {run_id} --confirm-prepare",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Ingest command: .\\.venv\\Scripts\\devo.exe project codex-worker-ingest --project {project_name} --run {run_id} --result-file <worker-result.json> --confirm-ingest",
         soft_wrap=True,
     )
 

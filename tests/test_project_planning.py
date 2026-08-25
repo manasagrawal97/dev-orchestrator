@@ -1214,7 +1214,8 @@ def test_queue_worker_run_creates_artifacts_handoff_and_worker_without_completin
     assert "status: completed, failed, blocked, or usage_limit" in queue_worker_run.handoff_checklist.expected_worker_result_format
     assert "queue-worker-handoff-show --project sample --run QWR-0001" in result.output
     assert "Expected worker result:" in result.output
-    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
+    assert "codex-worker-prepare --project sample --run QWR-0001" in result.output
+    assert "codex-worker-ingest --project sample --run QWR-0001" in result.output
     assert _target_snapshot(project_path) == before_target
 
 
@@ -1239,7 +1240,8 @@ def test_queue_worker_handoff_show_prints_checklist_without_mutating_target(tmp_
     assert "Registered validation command: pytest" in result.output
     assert "Expected worker result:" in result.output
     assert "recommended next action" in result.output
-    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
+    assert "codex-worker-prepare --project sample --run QWR-0001" in result.output
+    assert "codex-worker-ingest --project sample --run QWR-0001" in result.output
     assert "Policy risk level: medium" in checklist.risk_notes
     assert _target_snapshot(project_path) == before_target
 
@@ -1389,7 +1391,8 @@ def test_queue_worker_status_shows_waiting_worker_missing_evidence(tmp_path: Pat
     assert "Status: waiting_worker" in result.output
     assert "Worker result/report not imported." in result.output
     assert "Worker review not recorded." not in result.output
-    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
+    assert "codex-worker-prepare --project sample --run QWR-0001" in result.output
+    assert "codex-worker-ingest --project sample --run QWR-0001" in result.output
 
 
 def test_queue_worker_pause_records_paused_state_and_reason(tmp_path: Path, monkeypatch) -> None:
@@ -2338,7 +2341,7 @@ def test_codex_worker_prepare_generates_prompt_and_result_templates(tmp_path: Pa
     assert "Allowed file pattern: src/**" in prompt_text
     assert "Forbidden file pattern: .env" in prompt_text
     assert "status: completed | failed | blocked | usage_limit" in prompt_text
-    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in prompt_text
+    assert "codex-worker-ingest --project sample --run QWR-0001" in prompt_text
     data = json.loads(template_json.read_text(encoding="utf-8"))
     assert data["status"] == "completed | failed | blocked | usage_limit"
     assert data["recorded_by"] == "Manas"
@@ -2470,6 +2473,8 @@ def test_codex_worker_ingest_dry_run_does_not_mutate(tmp_path: Path, monkeypatch
     assert result.exit_code == 0, result.output
     assert "Dry run: True" in result.output
     assert "Mutation occurred: False" in result.output
+    assert "Dry-run mapping passed" in result.output
+    assert "--confirm-ingest" in result.output
     assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
     assert load_codex_worker_report("sample", "WR001", workspace_root=workspace) is None
     assert _target_snapshot(project_path) == before_target
@@ -2853,7 +2858,8 @@ def test_queue_worker_loop_creates_waiting_worker_run_and_stops(tmp_path: Path, 
     assert result.exit_code == 0, result.output
     assert "Steps attempted: 1" in result.output
     assert "Stop reason: worker result missing" in result.output
-    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in result.output
+    assert "codex-worker-prepare --project sample --run QWR-0001" in result.output
+    assert "codex-worker-ingest --project sample --run QWR-0001" in result.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
     assert run is not None
     assert run.status == "waiting_worker"
