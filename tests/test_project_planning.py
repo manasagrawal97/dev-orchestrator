@@ -1942,6 +1942,8 @@ def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatc
     assert "Stop reason: validation evidence missing" in waiting_validation.output
     assert "queue-worker-record-validation --project sample --run QWR-0001" in waiting_validation.output
     assert validation.exit_code == 0, validation.output
+    assert "Validation evidence artifact JSON:" in validation.output
+    assert "Validation evidence artifact Markdown:" in validation.output
     assert delivery.exit_code == 0, delivery.output
     assert "created delivery runner request REQ-0001" in delivery.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
@@ -2422,6 +2424,7 @@ def test_codex_worker_config_show_validate_and_set(tmp_path: Path, monkeypatch) 
     config = load_codex_worker_subprocess_config("sample", workspace_root=workspace)
     assert config is not None
     assert config.command == str(fake_codex)
+    assert config.args_template == 'exec -s workspace-write --output-last-message "{result_path}"'
     assert config.timeout_minutes == 15
     assert config.result_file_name == "worker-output.json"
     assert show_result.exit_code == 0, show_result.output
@@ -2463,7 +2466,7 @@ def test_codex_worker_config_validation_blocks_bad_values(tmp_path: Path, monkey
                 "schema_version": "1",
                 "project": "sample",
                 "command": "codex",
-                "args_template": "run --output-file \"{result_path}\"",
+                "args_template": "exec -s workspace-write",
                 "timeout_minutes": 30,
                 "result_file_name": "codex-worker-result.json",
                 "created_at": "2026-01-01T00:00:00+00:00",
@@ -2475,7 +2478,7 @@ def test_codex_worker_config_validation_blocks_bad_values(tmp_path: Path, monkey
     )
     validate = runner.invoke(app, ["project", "codex-worker-config-validate", "--project", "sample"], terminal_width=240)
     assert validate.exit_code != 0
-    assert "must include {prompt_path}" in validate.output
+    assert "must include {result_path}" in validate.output
 
 
 def test_codex_worker_run_preview_blocks_missing_prerequisites(tmp_path: Path, monkeypatch) -> None:
@@ -2607,6 +2610,8 @@ def test_codex_worker_run_preview_generates_artifacts_without_launching_codex(tm
     assert "AI/API called: False" in preview.output
     assert "Mutation occurred: True" in preview.output
     assert "Safety: this command does not launch Codex" in preview.output
+    assert "Future execution is not implemented" not in preview.output
+    assert "codex-worker-run with --confirm-codex-worker" in preview.output
     preview_dir = codex_worker_run_preview_directory("sample", workspace_root=workspace)
     previews = list(preview_dir.glob("*/codex-worker-run-preview.json"))
     assert len(previews) == 1
@@ -3008,6 +3013,52 @@ def test_codex_worker_ingest_completed_records_worker_evidence_and_preserves_raw
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_ingest_accepts_utf8_bom_json(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    result_file = _worker_result_file(tmp_path)
+    result_file.write_text("\ufeff" + result_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Result status: completed" in result.output
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    assert report.status_reported_by_worker == "completed"
+
+
+def test_codex_worker_ingest_rejects_structured_text_with_helpful_message(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    result_file = tmp_path / "structured-result.json"
+    result_file.write_text(
+        "\n".join(
+            [
+                "status: completed",
+                "summary: changed the note",
+                "changed_files: dogfood-note.md",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "structured text, not a JSON object" in result.output
+    assert "final response must be one JSON object only" in result.output
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
 @pytest.mark.parametrize("status", ["failed", "blocked", "usage_limit"])
 def test_codex_worker_ingest_records_non_success_worker_evidence(tmp_path: Path, monkeypatch, status: str) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
@@ -3260,6 +3311,13 @@ def test_queue_worker_step_delivery_requested_marks_completed_after_trusted_runn
     assert result.exit_code == 0, result.output
     assert "Action taken: marked queue-worker run completed" in result.output
     assert "New status: completed" in result.output
+    show = runner.invoke(app, ["project", "queue-worker-show", "--project", "sample", "--run", "QWR-0001"], terminal_width=240)
+    latest = runner.invoke(app, ["project", "queue-worker-latest", "--project", "sample"], terminal_width=240)
+    assert show.exit_code == 0, show.output
+    assert latest.exit_code == 0, latest.output
+    assert "No action needed" in show.output
+    assert "codex-worker-ingest" not in show.output
+    assert "codex-worker-ingest" not in latest.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
     assert run is not None
     assert run.status == "completed"
@@ -3775,6 +3833,8 @@ def test_approved_queue_run_blocks_unhealthy_scheduler_before_mutation(tmp_path:
     assert "Trusted runner scheduler gate" in result.output
     assert "Health: drift" in result.output
     assert "Stop reason: trusted runner scheduler is not healthy." in result.output
+    assert "--no-require-scheduler-healthy" in result.output
+    assert "disposable/local manual-runner dogfood" in result.output
     assert "runner-watch --project sample" in result.output
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
 

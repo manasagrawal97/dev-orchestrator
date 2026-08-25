@@ -742,7 +742,9 @@ def _print_queue_worker_run(run: QueueWorkerRun, json_path: Path | None = None, 
         console.print("Skipped items:")
         for item in run.skipped_queue_item_summaries:
             console.print(f"  - {item}", soft_wrap=True)
-    if run.handoff_checklist:
+    if run.status == "completed":
+        console.print("Handoff checklist: completed; no worker prepare/ingest action needed.")
+    elif run.handoff_checklist:
         _print_queue_worker_handoff_checklist(run.handoff_checklist, project_name=run.project, run_id=run.run_id)
     else:
         console.print(f"Handoff checklist: devo project queue-worker-handoff-show --project {run.project} --run {run.run_id}")
@@ -826,7 +828,8 @@ def _print_codex_worker_subprocess_config(config: CodexWorkerSubprocessConfig) -
     console.print("Warnings:")
     for warning in config.warnings or ["none"]:
         console.print(f"  - {warning}", soft_wrap=True)
-    console.print("Safety: config is preview-only. It does not launch Codex, call AI/API, ingest, review, validate, deliver, commit, or push.")
+    console.print("Guidance: the default template uses `codex exec` and passes the prompt on stdin; use a wrapper when local quoting or launcher behavior requires it.")
+    console.print("Safety: config-show does not launch Codex, call AI/API, ingest, review, validate, deliver, commit, or push.")
 
 
 def _print_codex_worker_config_validation(result: CodexWorkerConfigValidationResult) -> None:
@@ -1164,6 +1167,10 @@ def _print_approved_queue_run_scheduler_gate(status: DeliveryRunnerScheduleStatu
         console.print(f"  - Check scheduler: devo delivery runner-schedule-doctor --project {status.project}")
         for command in status.repair_commands:
             console.print(f"  - Repair if confirmed unhealthy: {command}", soft_wrap=True)
+        console.print(
+            "  - For disposable/local manual-runner dogfood only, rerun approved-queue-run with --no-require-scheduler-healthy after operator confirms direct trusted delivery will be used.",
+            soft_wrap=True,
+        )
         console.print(
             f"  - Direct fallback after operator approval: devo delivery runner-watch --project {status.project} --approver \"Manas\" --once --confirm-runner-watch",
             soft_wrap=True,
@@ -4638,7 +4645,7 @@ def show_codex_worker_config_command(
 def set_codex_worker_config_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     command: str = typer.Option("codex", "--command", help="Planned Codex command or executable path."),
-    args_template: str = typer.Option('run --prompt-file "{prompt_path}" --output-file "{result_path}"', "--args-template", help="Planned argument template."),
+    args_template: str = typer.Option('exec -s workspace-write --output-last-message "{result_path}"', "--args-template", help="Planned PowerShell-safe argument template. The generated prompt is passed on stdin; include {prompt_path} only for wrapper modes that require a prompt-file argument."),
     timeout_minutes: int = typer.Option(30, "--timeout-minutes", help="Future subprocess timeout in minutes."),
     result_file_name: str = typer.Option("codex-worker-result.json", "--result-file-name", help="Preview result file name."),
     recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording config."),

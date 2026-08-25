@@ -692,7 +692,7 @@ class CodexWorkerSubprocessConfig(BaseModel):
     schema_version: str = PLANNING_SCHEMA_VERSION
     project: str
     command: str = "codex"
-    args_template: str = 'run --prompt-file "{prompt_path}" --output-file "{result_path}"'
+    args_template: str = 'exec -s workspace-write --output-last-message "{result_path}"'
     timeout_minutes: float = 30
     result_file_name: str = "codex-worker-result.json"
     config_json_path: str | None = None
@@ -2336,7 +2336,7 @@ def set_codex_worker_subprocess_config(
     project_name: str,
     *,
     command: str = "codex",
-    args_template: str = 'run --prompt-file "{prompt_path}" --output-file "{result_path}"',
+    args_template: str = 'exec -s workspace-write --output-last-message "{result_path}"',
     timeout_minutes: int = 30,
     result_file_name: str = "codex-worker-result.json",
     recorded_by: str | None = None,
@@ -2357,7 +2357,7 @@ def set_codex_worker_subprocess_config(
         result_file_name=result_file_name.strip(),
         config_json_path=str(config_path),
         warnings=[
-            "Configured command shape is preview-only; TASK-DEVO-150 does not launch Codex or call AI/API."
+            "Configured command is used only by explicit codex-worker-run --confirm-codex-worker; preview/config commands remain read-only."
         ],
         recorded_by=recorded_by.strip() if recorded_by and recorded_by.strip() else None,
         note=note.strip(),
@@ -2404,7 +2404,7 @@ def validate_codex_worker_subprocess_config(
         warnings=warnings,
         blockers=blockers,
         next_action=(
-            "Config is structurally valid for dry-run preview."
+            "Config is structurally valid for preview and one confirmed subprocess run."
             if not blockers
             else f"Fix config with devo project codex-worker-config-set --project {project_name} --confirm-config"
         ),
@@ -2545,7 +2545,7 @@ def create_codex_worker_run_preview(
         untracked_files=list(git_context["untracked_files"]),
         warnings=warnings,
         next_action=(
-            "Review this dry-run preview. Future execution is not implemented in TASK-DEVO-150; do not launch Codex from Devo yet."
+            "Review this dry-run preview. To run exactly one subprocess, use codex-worker-run with --confirm-codex-worker from the appropriate operator context."
         ),
         recorded_by=recorded_by.strip() if recorded_by and recorded_by.strip() else None,
         note=note.strip(),
@@ -2709,7 +2709,8 @@ def execute_codex_worker_subprocess_run(
     )
     planned_command_text = _format_planned_command(planned_command)
     run_dir.mkdir(parents=True, exist_ok=True)
-    prompt_used_path.write_text(prompt_path.read_text(encoding="utf-8"), encoding="utf-8")
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    prompt_used_path.write_text(prompt_text, encoding="utf-8")
     planned_command_path.write_text(planned_command_text + "\n", encoding="utf-8")
     git_status_before_path.write_text(str(git_before["git_status_summary"]) + "\n", encoding="utf-8")
     expected_result_path_file.write_text(json.dumps({"expected_result_path": str(expected_result_path)}, indent=2) + "\n", encoding="utf-8")
@@ -2723,6 +2724,7 @@ def execute_codex_worker_subprocess_run(
         completed = subprocess.run(
             planned_command,
             cwd=target_path,
+            input=prompt_text,
             text=True,
             capture_output=True,
             timeout=effective_timeout * 60,
@@ -2930,11 +2932,18 @@ def create_codex_worker_ingest(
     if result_path.suffix.lower() not in {".json"}:
         msg = "Codex worker ingest v1 supports JSON result files only."
         raise ValueError(msg)
-    raw_text = result_path.read_text(encoding="utf-8")
+    raw_text = result_path.read_text(encoding="utf-8-sig")
     try:
         raw_result = json.loads(raw_text)
     except json.JSONDecodeError as exc:
-        msg = f"Invalid JSON result file: {exc.msg}"
+        if _looks_like_structured_non_json_worker_result(raw_text):
+            msg = (
+                "Invalid JSON result file: Codex returned structured text, not a JSON object. "
+                "Normalize the worker result into the generated JSON template, or rerun Codex with stricter instructions: "
+                "final response must be one JSON object only, with no Markdown, code fence, or prose."
+            )
+        else:
+            msg = f"Invalid JSON result file: {exc.msg}"
         raise ValueError(msg) from exc
     if not isinstance(raw_result, dict):
         msg = "Worker result JSON must be an object."
@@ -7046,7 +7055,9 @@ def render_codex_worker_subprocess_config_markdown(config: CodexWorkerSubprocess
         [
             "## Safety Note",
             "",
-            "This config is preview-only. It does not launch Codex, call AI/API, ingest results, review, validate, deliver, commit, or push.",
+            "This config is used only by explicit `codex-worker-run --confirm-codex-worker`. Config and preview commands do not launch Codex, call AI/API, ingest results, review, validate, deliver, commit, or push.",
+            "",
+            "Default guidance: `codex exec` receives the prompt on stdin and writes the final response through `--output-last-message`. If local quoting or launcher behavior is fragile, use a small explicit wrapper that accepts prompt and result paths.",
             "",
         ]
     )
@@ -7095,7 +7106,7 @@ def render_codex_worker_run_preview_markdown(preview: CodexWorkerRunPreview) -> 
             "",
             "## Safety Note",
             "",
-            "This preview does not launch Codex, call AI/API, implement worker execution, ingest results, review, validate, deliver, commit, or push.",
+            "This preview does not launch Codex, call AI/API, ingest results, review, validate, deliver, commit, or push. To run one subprocess, use `codex-worker-run --confirm-codex-worker` from the appropriate operator context after reviewing this plan.",
             "",
         ]
     )
@@ -7287,7 +7298,15 @@ def render_codex_worker_preparation_prompt(
             "",
             "## 7. Worker Output Contract",
             "",
-            "Return or fill a result with exactly these fields:",
+            "Your final response must be a single JSON object only.",
+            "",
+            "- No Markdown.",
+            "- No code fence.",
+            "- No prose before or after the JSON object.",
+            "- Use exactly the fields below.",
+            "- `codex exec --output-last-message` captures only the final response, so the final response format matters.",
+            "",
+            "Return a result with exactly these fields:",
             "",
             "- status: completed | failed | blocked | usage_limit",
             "- summary",
@@ -7303,10 +7322,11 @@ def render_codex_worker_preparation_prompt(
             "",
             "Only status=completed should be treated as successful worker evidence.",
             "Unknown or missing status is unsafe.",
+            "Structured key/value text is not enough; `codex-worker-ingest` accepts strict JSON only.",
             "",
             "## 8. Result Template Instructions",
             "",
-            "Fill one of these generated result templates, or return content matching the same fields:",
+            "Use the generated JSON template shape. If you cannot write the result file directly, make your final answer be the same JSON object:",
             "",
             f"- JSON template: `{preparation.worker_result_template_json_path}`",
             f"- Markdown template: `{preparation.worker_result_template_markdown_path}`",
@@ -9641,9 +9661,6 @@ def _validate_codex_worker_config_values(command: str, args_template: str, timeo
     if not args_template or not args_template.strip():
         msg = "Codex worker args template is required."
         raise ValueError(msg)
-    if "{prompt_path}" not in args_template:
-        msg = "Codex worker args template must include {prompt_path}."
-        raise ValueError(msg)
     if "{result_path}" not in args_template:
         msg = "Codex worker args template must include {result_path}."
         raise ValueError(msg)
@@ -9689,6 +9706,33 @@ def _planned_codex_worker_command(
 ) -> list[str]:
     filled_template = args_template.format(prompt_path=str(prompt_path), result_path=str(result_path))
     return [command.strip(), *_split_args_template(filled_template)]
+
+
+def _looks_like_structured_non_json_worker_result(raw_text: str) -> bool:
+    stripped = raw_text.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("{") or stripped.startswith("["):
+        return False
+    labels = {
+        "status",
+        "summary",
+        "work_performed",
+        "changed_files",
+        "commands_run",
+        "risks",
+        "recommended_next_action",
+        "artifact_path",
+        "dirty_repo_status",
+        "usage_limit_details",
+        "failure_details",
+    }
+    matches = 0
+    for line in stripped.splitlines():
+        head = line.split(":", 1)[0].strip().lower().replace(" ", "_").replace("-", "_")
+        if head in labels:
+            matches += 1
+    return matches >= 2
 
 
 def _split_args_template(value: str) -> list[str]:

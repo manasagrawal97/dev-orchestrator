@@ -327,13 +327,13 @@ devo project codex-worker-ingest --project MyProject --run QWR-0001 --prepare CW
 devo project codex-worker-ingest-latest --project MyProject
 ```
 
-`codex-worker-ingest` validates a filled JSON result file, preserves the raw result under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and records queue-worker worker evidence schema v1. JSON is the supported v1 ingest format; Markdown result ingest is future scope. Neither command runs Codex, calls AI APIs, runs review, runs validation, creates delivery, commits, pushes, or modifies the target project. Worker completion remains separate from review, validation, and trusted runner delivery.
+`codex-worker-ingest` validates a filled JSON result file, preserves the raw result under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and records queue-worker worker evidence schema v1. JSON is the supported v1 ingest format, including UTF-8 BOM JSON; Markdown result ingest is future scope. If Codex returns structured text instead of a strict JSON object, normalize it into the generated JSON template or rerun with stricter output instructions. Neither command runs Codex, calls AI APIs, runs review, runs validation, creates delivery, commits, pushes, or modifies the target project. Worker completion remains separate from review, validation, and trusted runner delivery.
 
 TASK-DEVO-148 proves the prompt-file/manual loop against disposable project `Dogfood148`: prepare the prompt, manually perform the scoped work, fill the JSON result, dry-run ingest, confirmed ingest, record review and validation evidence, then let approved queue continuation create a trusted delivery runner request. This is the recommended bridge before any direct Codex CLI subprocess mode. Direct subprocess execution remains future design/implementation work and should keep using fake-executable tests before any real Codex retry.
 
 TASK-DEVO-149 documents the subprocess checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. The next safe step is `TASK-DEVO-150`, limited to subprocess configuration and a dry-run launcher. Real Codex execution remains deferred.
 
-TASK-DEVO-150 adds that preview-only layer:
+TASK-DEVO-150 adds the subprocess config and preview layer:
 
 ```powershell
 devo project codex-worker-config-show --project MyProject
@@ -342,7 +342,7 @@ devo project codex-worker-config-validate --project MyProject
 devo project codex-worker-run-preview --project MyProject --run QWR-0001 --prepare CWP-YYYYMMDDHHMMSS-QWR-0001
 ```
 
-`codex-worker-run-preview` writes workspace-only artifacts under `workspace/projects/<project>/codex-worker/run-previews/<CWRP-ID>/` that show the future planned command, prompt path, result path, stdout/stderr paths, and Git status before launch. It does not launch Codex, call AI APIs, implement subprocess execution, ingest results, review, validate, deliver, commit, or push.
+`codex-worker-run-preview` writes workspace-only artifacts under `workspace/projects/<project>/codex-worker/run-previews/<CWRP-ID>/` that show the planned command, prompt path, result path, stdout/stderr paths, and Git status before launch. It does not launch Codex, call AI APIs, ingest results, review, validate, deliver, commit, or push.
 
 TASK-DEVO-151 adds one-task subprocess execution:
 
@@ -353,6 +353,8 @@ devo project codex-worker-run --project MyProject --run QWR-0001 --prepare CWP-Y
 Use `--dry-run` to reuse preview behavior without spawning anything. Confirmed execution runs the configured subprocess once, captures stdout/stderr/exit code, records Git status before and after, writes `workspace/projects/<project>/codex-worker/runs/<CWR-ID>/`, and prints the next `codex-worker-ingest` command when the expected result JSON exists. It does not auto-ingest, review, validate, deliver, commit, push, or complete the queue.
 
 TASK-DEVO-152 shows the safe operator boundary for real Codex subprocess dogfood. Codex/sandbox can prepare the disposable project, queue-worker run, prompt package, config, and preview, but a real `codex-worker-run` should be launched from normal PowerShell when running inside Codex would be recursive or unclear. See `docs/dogfood/task-devo-152-real-codex-subprocess-dogfood.md` for the prepared `Dogfood152` continuation command.
+
+TASK-DEVO-153 updates the recommended default config to real Codex CLI shape: `exec -s workspace-write --output-last-message "{result_path}"`. Devo passes the generated prompt on stdin, which avoids fragile PowerShell prompt-file quoting for the default path. Use an explicit wrapper when a local launcher needs a different calling convention.
 
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 

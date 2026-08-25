@@ -129,7 +129,7 @@ Recommended v1 model:
 - Devo does not commit or push.
 - Devo requires result ingest after execution.
 
-Exact Codex CLI syntax is an implementation detail to confirm during TASK-DEVO-150.
+The recommended default Codex CLI shape after TASK-DEVO-153 is `exec -s workspace-write --output-last-message "{result_path}"`, with Devo passing the generated prompt on stdin. Use an explicit wrapper if a local launcher needs prompt-path based behavior or special quoting.
 
 ## 7. Output Artifacts
 
@@ -231,15 +231,15 @@ Recommended next tasks:
 1. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed.
 2. TASK-DEVO-151: Codex subprocess execution v1 for one safe run - completed.
 3. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task - prepared through preview; real launch deferred to normal PowerShell.
-4. TASK-DEVO-152A: Normal-PowerShell real Codex subprocess continuation for `Dogfood152`.
-5. TASK-DEVO-153: Usage-limit and retry handling v1.
-6. TASK-DEVO-154: Batch Codex-worker loop design.
+4. TASK-DEVO-153: Codex subprocess dogfood hardening and recovery polish - completed.
+5. Normal-PowerShell real Codex subprocess continuation for `Dogfood152`, only from a safe launcher/context.
+6. Later: usage-limit/retry handling and batch Codex-worker loop design.
 
-TASK-DEVO-150 is complete and remains conservative: it adds workspace-only config plus dry-run preview artifacts without launching Codex or calling AI/API. TASK-DEVO-151 is complete and adds a one-task subprocess execution command with fake-command tests. Real Codex execution remains a separate dogfood task.
+TASK-DEVO-150 is complete and remains conservative: it adds workspace-only config plus dry-run preview artifacts without launching Codex or calling AI/API. TASK-DEVO-151 is complete and adds a one-task subprocess execution command with fake-command tests. TASK-DEVO-153 hardens that path with the real `codex exec` argument shape, stdin prompt passing, strict JSON output guidance, BOM-tolerant ingest, and clearer completed-run next actions. Real Codex execution remains a separate dogfood task.
 
 ## 15. Final Checkpoint Verdict
 
 - Prompt-file mode: usable.
 - Direct subprocess execution: implemented only as a one-task explicit-confirmation command.
 - Readiness verdict: ready for one disposable real-Codex dogfood run, not full autonomous execution.
-- Next safe step: run the prepared `Dogfood152` subprocess command from normal PowerShell, then use the resulting `CWR-*` artifact to decide recovery hardening.
+- Next safe step: run the prepared `Dogfood152` subprocess command from normal PowerShell only after confirming a safe launcher/context, then use the resulting `CWR-*` artifact to decide further recovery hardening.

@@ -8,7 +8,7 @@ This is practical autonomy, not reckless full automation. Devo should reduce rep
 
 Phase 2 should not try to make Codex or a sandboxed worker directly commit or push. Codex/sandbox prepares work, evidence, and runner requests. A trusted local Devo executor running in the normal Windows user context performs delivery.
 
-TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. The prepared `Dogfood152` run should be executed from normal PowerShell before recovery hardening or batch worker loops proceed.
+TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording.
 
 ## 1. Phase 2 Vision
 
@@ -246,6 +246,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Scope: `codex-worker-run`, fake-command tests, stdout/stderr/exit-code capture, Git before/after capture, workspace-only run artifacts, result-state classification, timeout handling, usage-limit warning hints, lightweight scope warnings, and docs.
 - Not in scope: real Codex dogfood during implementation, Codex Desktop, AI/API calls, automatic ingest, automatic review, automatic validation, automatic delivery, commit, push, UI changes, parallel workers, ECC adoption, voice/Jarvis/gesture controls, least-privilege implementation, or full autonomous multi-task execution.
 - Status: Completed. See `docs/dogfood/task-devo-151-one-task-codex-subprocess-execution-v1.md`. The next safe step is TASK-DEVO-152: real Codex subprocess dogfood for one safe disposable task.
+
+### TASK-DEVO-152 And TASK-DEVO-153: Real Codex Dogfood Boundary
+
+- Goal: Prepare one disposable real Codex subprocess dogfood and harden the command/output boundary before retrying.
+- Scope: disposable `Dogfood152` setup through preview, normal-PowerShell launch guidance, real Codex CLI default args, stdin prompt passing, strict JSON output guidance, BOM-tolerant ingest, completed queue-worker output cleanup, validation evidence label clarity, and disposable manual-runner scheduler-gate guidance.
+- Not in scope: batch Codex worker loop, automatic retry, automatic ingest/review/validation/delivery, UI actions, PersonalOS, AI/API calls, parallel workers, or delivery safety weakening.
+- Status: TASK-DEVO-152 reached preview and TASK-DEVO-153 completed hardening. The next safe step is a normal-PowerShell real Codex subprocess continuation only from a safe launcher/context.
 
 ### Future Spikes
 
@@ -553,4 +560,4 @@ Do not start with API/model integration. First make the trusted executor and que
 
 Recommended next task: TASK-DEVO-152 Real Codex subprocess dogfood for one safe disposable task.
 
-TASK-DEVO-149 documented the subprocess checkpoint. TASK-DEVO-150 implemented configuration and dry-run launcher behavior only, using fake-executable tests and preserving launcher readiness, explicit operator approval, clear result-file contracts, timeout/usage-limit planning, and trusted-runner-only delivery. TASK-DEVO-151 implemented the first narrow fake-tested execution step and still avoids automatic ingest, review, validation, delivery, commit, or push. TASK-DEVO-152 should dogfood real Codex only on one disposable task with explicit stop conditions.
+TASK-DEVO-149 documented the subprocess checkpoint. TASK-DEVO-150 implemented configuration and dry-run launcher behavior only, using fake-executable tests and preserving launcher readiness, explicit operator approval, clear result-file contracts, timeout/usage-limit planning, and trusted-runner-only delivery. TASK-DEVO-151 implemented the first narrow fake-tested execution step and still avoids automatic ingest, review, validation, delivery, commit, or push. TASK-DEVO-152 prepared real Codex dogfood on one disposable task through preview, and TASK-DEVO-153 hardens the command/output/recovery boundary before another normal-PowerShell retry.

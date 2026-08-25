@@ -215,7 +215,7 @@ The queue remains at `waiting_worker` for `QWR-0001`.
 ## What Was Awkward
 
 - Creating a one-task refined backlog required hand-writing JSON rather than a small "one task" helper.
-- The preview output still says future execution is not implemented in TASK-DEVO-150 even though TASK-DEVO-151 has added `codex-worker-run`; this is a wording stale-note and should be polished later.
+- TASK-DEVO-153 resolves the stale preview wording: preview now points to `codex-worker-run --confirm-codex-worker` as the explicit one-run path instead of saying execution is not implemented.
 - Scheduler health remains noisy inside Codex/sandbox despite normal PowerShell evidence being healthy.
 - The first local bare-remote push from the restricted context hit the same Windows process/security family of issue as earlier Git operations.
 
@@ -267,7 +267,7 @@ Docs were updated to record the dogfood state and operator continuation command.
 
 Recommended next task:
 
-- `TASK-DEVO-152A: Run the prepared Dogfood152 real Codex subprocess command from normal PowerShell and record the result`
+- `TASK-DEVO-152A: Run the prepared Dogfood152 real Codex subprocess command from normal PowerShell and record the result`, after applying the TASK-DEVO-153 default command-shape hardening.
 
 After that succeeds or fails with concrete `CWR-*` artifacts, continue to:
 

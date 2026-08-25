@@ -50,6 +50,8 @@ The default planned command shape is:
 codex run --prompt-file "{prompt_path}" --output-file "{result_path}"
 ```
 
+TASK-DEVO-153 supersedes this historical default. Current recommended guidance is `codex exec -s workspace-write --output-last-message "{result_path}"`, with Devo passing the generated prompt content on stdin.
+
 That default is only a planned command shape. It does not prove the operator's installed Codex CLI supports those exact arguments.
 
 ## Run-Preview Preflight

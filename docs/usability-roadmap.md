@@ -95,6 +95,8 @@ TASK-DEVO-150 adds that safe preview step with workspace-only Codex subprocess c
 
 TASK-DEVO-151 adds `codex-worker-run`, the first one-task subprocess execution command. It is fake-command tested, writes `codex-worker/runs/<CWR-ID>/` artifacts, classifies the result, and still leaves ingest/review/validation/delivery as explicit later gates. TASK-DEVO-152 prepares the first real dogfood on disposable `Dogfood152` through preview, but defers real Codex launch to normal PowerShell because launching Codex from inside Codex/sandbox would be recursive/unclear.
 
+TASK-DEVO-153 hardens the TASK-DEVO-152 retry path: the default command now uses the real `codex exec -s workspace-write --output-last-message` shape with prompt content on stdin, worker ingest accepts UTF-8 BOM JSON and explains strict-JSON failures clearly, completed queue-worker output stops advertising stale prepare/ingest commands, and disposable manual-runner scheduler guidance is easier to find.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
