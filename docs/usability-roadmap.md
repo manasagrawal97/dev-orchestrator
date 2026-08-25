@@ -89,6 +89,8 @@ TASK-DEVO-147 completes the first manual prompt-file loop by adding `devo projec
 
 TASK-DEVO-148 dogfoods that prompt-file loop end to end on a disposable project and makes the worker-boundary next actions point to `codex-worker-prepare` and `codex-worker-ingest`. The loop is usable for manual/Codex-assisted work, but direct Codex subprocess execution still needs a design checkpoint and fake-executable tests before implementation.
 
+TASK-DEVO-149 adds that design checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. It recommends a very narrow one-task subprocess v1 and says the next safe usability step is configuration plus dry-run launcher behavior, not real Codex execution.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

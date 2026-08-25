@@ -224,6 +224,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex CLI, Codex Desktop, AI/API calls, PersonalOS, automatic review, automatic validation execution, direct subprocess launch, UI changes, parallel workers, ECC adoption, voice/Jarvis/gesture controls, or delivery safety changes.
 - Status: Completed. See `docs/dogfood/task-devo-148-prompt-file-codex-worker-dogfood.md`. Prompt-file worker mode is usable with the small next-action guidance fixes made during the task. Devo is ready for a subprocess execution design checkpoint, but not direct subprocess implementation yet.
 
+### TASK-DEVO-149: Codex Subprocess Execution Design Checkpoint
+
+- Goal: Decide the safest path from proven prompt-file/manual mode toward direct Codex CLI subprocess execution.
+- Scope: readiness assessment, subprocess risks, non-goals, narrow v1 command shape, preflight checks, execution model, output artifacts, result handling, states, usage-limit handling, dirty repo handling, scope checking, override model, and implementation sequence.
+- Not in scope: real Codex CLI, Codex Desktop, AI/API calls, subprocess dry-run launcher implementation, subprocess execution implementation, automatic review, automatic validation, automatic delivery, UI changes, parallel workers, ECC adoption, voice/Jarvis/gesture controls, least-privilege implementation, or full autonomous multi-task execution.
+- Status: Completed as docs/design-only. See `docs/architecture/codex-subprocess-execution-checkpoint.md` and `docs/dogfood/task-devo-149-codex-subprocess-execution-checkpoint.md`. The verdict is ready only for a very narrow one-task subprocess v1.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -528,6 +535,6 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-149 Codex subprocess execution design checkpoint.
+Recommended next task: TASK-DEVO-150 Codex subprocess configuration and dry-run launcher v1.
 
-TASK-DEVO-148 proved the prompt-file assisted loop with a filled JSON result file and `codex-worker-ingest`. The next step should design the subprocess contract and fake-executable test plan before any real Codex launch. Keep direct Codex CLI subprocess execution behind launcher readiness, explicit operator approval, fake-executable validation, clear result-file contracts, timeout/usage-limit handling, and trusted-runner-only delivery.
+TASK-DEVO-149 documented the subprocess checkpoint. TASK-DEVO-150 should implement configuration and dry-run launcher behavior only, using fake-executable tests and preserving launcher readiness, explicit operator approval, clear result-file contracts, timeout/usage-limit planning, and trusted-runner-only delivery.

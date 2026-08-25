@@ -32,6 +32,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
 - [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md)
+- [Codex subprocess execution checkpoint](docs/architecture/codex-subprocess-execution-checkpoint.md)
 - [Codex worker adapter design](docs/codex-worker-adapter-design.md)
 - [Delivery safety design](docs/delivery-safety-design.md)
 - [Phase 1 MVP closure plan](docs/phase-1-mvp-closure-plan.md)
@@ -54,6 +55,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-146 Codex worker prepare prompt-file mode](docs/dogfood/task-devo-146-codex-worker-prepare-prompt-file-mode-v1.md)
 - [TASK-DEVO-147 Codex worker result ingest v1](docs/dogfood/task-devo-147-codex-worker-result-ingest-v1.md)
 - [TASK-DEVO-148 prompt-file Codex worker dogfood](docs/dogfood/task-devo-148-prompt-file-codex-worker-dogfood.md)
+- [TASK-DEVO-149 Codex subprocess execution checkpoint](docs/dogfood/task-devo-149-codex-subprocess-execution-checkpoint.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -299,6 +301,8 @@ devo project codex-worker-ingest-latest --project MyProject
 The ingest command validates a filled `worker-result-template.json`, preserves a raw result copy under `workspace/projects/<project>/codex-worker/ingests/<CWI-ID>/`, and records existing queue-worker worker evidence schema v1. It does not run Codex, call AI APIs, run review, run validation, create delivery, commit, push, or bypass trusted delivery gates.
 
 TASK-DEVO-148 dogfoods that prompt-file loop end to end on disposable project `Dogfood148`. It proves `codex-worker-prepare` plus `codex-worker-ingest` can carry one docs-only task through worker evidence, manual review, manual validation evidence, trusted runner delivery request, trusted runner delivery, push-only recovery, and queue completion without running real Codex, calling AI APIs, or modifying PersonalOS. The next step is TASK-DEVO-149: a Codex subprocess execution design checkpoint, not immediate subprocess implementation.
+
+TASK-DEVO-149 records that checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. The verdict is conservative: Devo is ready only for a very narrow one-task subprocess v1, and the next safe task is subprocess configuration plus a dry-run launcher with fake-executable tests, not full Codex execution.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

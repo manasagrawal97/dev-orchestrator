@@ -331,6 +331,8 @@ devo project codex-worker-ingest-latest --project MyProject
 
 TASK-DEVO-148 proves the prompt-file/manual loop against disposable project `Dogfood148`: prepare the prompt, manually perform the scoped work, fill the JSON result, dry-run ingest, confirmed ingest, record review and validation evidence, then let approved queue continuation create a trusted delivery runner request. This is the recommended bridge before any direct Codex CLI subprocess mode. Direct subprocess execution remains future design/implementation work and should keep using fake-executable tests before any real Codex retry.
 
+TASK-DEVO-149 documents the subprocess checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. The next safe step is `TASK-DEVO-150`, limited to subprocess configuration and a dry-run launcher. Real Codex execution remains deferred.
+
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 
 ```powershell
