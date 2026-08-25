@@ -230,9 +230,10 @@ Recommended next tasks:
 
 1. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed.
 2. TASK-DEVO-151: Codex subprocess execution v1 for one safe run - completed.
-3. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task.
-4. TASK-DEVO-153: Usage-limit and retry handling v1.
-5. TASK-DEVO-154: Batch Codex-worker loop design.
+3. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task - prepared through preview; real launch deferred to normal PowerShell.
+4. TASK-DEVO-152A: Normal-PowerShell real Codex subprocess continuation for `Dogfood152`.
+5. TASK-DEVO-153: Usage-limit and retry handling v1.
+6. TASK-DEVO-154: Batch Codex-worker loop design.
 
 TASK-DEVO-150 is complete and remains conservative: it adds workspace-only config plus dry-run preview artifacts without launching Codex or calling AI/API. TASK-DEVO-151 is complete and adds a one-task subprocess execution command with fake-command tests. Real Codex execution remains a separate dogfood task.
 
@@ -241,4 +242,4 @@ TASK-DEVO-150 is complete and remains conservative: it adds workspace-only confi
 - Prompt-file mode: usable.
 - Direct subprocess execution: implemented only as a one-task explicit-confirmation command.
 - Readiness verdict: ready for one disposable real-Codex dogfood run, not full autonomous execution.
-- Next safe step: real Codex subprocess dogfood for one safe disposable task.
+- Next safe step: run the prepared `Dogfood152` subprocess command from normal PowerShell, then use the resulting `CWR-*` artifact to decide recovery hardening.

@@ -8,6 +8,8 @@ This is practical autonomy, not reckless full automation. Devo should reduce rep
 
 Phase 2 should not try to make Codex or a sandboxed worker directly commit or push. Codex/sandbox prepares work, evidence, and runner requests. A trusted local Devo executor running in the normal Windows user context performs delivery.
 
+TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. The prepared `Dogfood152` run should be executed from normal PowerShell before recovery hardening or batch worker loops proceed.
+
 ## 1. Phase 2 Vision
 
 The target workflow is:

@@ -352,6 +352,8 @@ devo project codex-worker-run --project MyProject --run QWR-0001 --prepare CWP-Y
 
 Use `--dry-run` to reuse preview behavior without spawning anything. Confirmed execution runs the configured subprocess once, captures stdout/stderr/exit code, records Git status before and after, writes `workspace/projects/<project>/codex-worker/runs/<CWR-ID>/`, and prints the next `codex-worker-ingest` command when the expected result JSON exists. It does not auto-ingest, review, validate, deliver, commit, push, or complete the queue.
 
+TASK-DEVO-152 shows the safe operator boundary for real Codex subprocess dogfood. Codex/sandbox can prepare the disposable project, queue-worker run, prompt package, config, and preview, but a real `codex-worker-run` should be launched from normal PowerShell when running inside Codex would be recursive or unclear. See `docs/dogfood/task-devo-152-real-codex-subprocess-dogfood.md` for the prepared `Dogfood152` continuation command.
+
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 
 ```powershell

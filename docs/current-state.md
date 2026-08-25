@@ -38,7 +38,7 @@ The working loop is:
 
 ## Latest State
 
-- Latest completed dogfood task: TASK-DEVO-148 Prompt-file Codex worker dogfood
+- Latest completed dogfood task: TASK-DEVO-152 prepared the real Codex subprocess dogfood on disposable project `Dogfood152` through `codex-worker-run-preview`; real Codex launch was deferred to normal PowerShell because this Codex/sandbox context would be recursive/unclear.
 - Latest implementation task: TASK-DEVO-148 prompt-file worker guidance polish from dogfood findings
 - Latest design task: TASK-DEVO-149 Codex subprocess execution design checkpoint
 - Latest assisted queue polish task: TASK-DEVO-144 push-only runner recovery, approved queue continuation, evidence wording, and flow-summary defaults
@@ -54,7 +54,7 @@ The working loop is:
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Phase 1 MVP status: complete after TASK-DEVO-124 and checkpointed with the `phase-1-mvp` tag.
 - Active focus: Phase 2 autonomy. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas using `delivery runner-watch --once --confirm-runner-watch`, the precise `delivery runner-run --request ...` fallback, or an explicitly installed local scheduled runner.
-- Next recommended task: TASK-DEVO-152 Real Codex subprocess dogfood for one safe disposable task.
+- Next recommended task: TASK-DEVO-152A normal-PowerShell real Codex subprocess continuation for `Dogfood152`, then TASK-DEVO-153 recovery hardening after concrete `CWR-*` evidence exists.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.

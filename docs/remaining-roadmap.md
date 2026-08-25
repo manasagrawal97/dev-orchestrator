@@ -58,6 +58,7 @@ Devo already has:
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
 - Explicit workspace-only Batch approval/review artifacts and decisions
 - Codex subprocess config and dry-run run-preview artifacts without launching Codex
+- One-task Codex subprocess execution command with fake-command tests, plus a disposable `Dogfood152` real-run preparation that reaches preview and defers real Codex launch to normal PowerShell
 
 These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives.
 

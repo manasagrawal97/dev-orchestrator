@@ -325,6 +325,8 @@ devo project codex-worker-run --project MyProject --run QWR-0001 --prepare CWP-Y
 
 The command runs the configured subprocess once for an approved `waiting_worker` queue-worker run, captures stdout/stderr/exit code, records Git status before and after, classifies the result, and writes artifacts under `workspace/projects/<project>/codex-worker/runs/<CWR-ID>/`. Tests and dogfood use fake subprocess commands only. Real Codex execution is still the next dogfood step. The command does not auto-ingest, review, validate, deliver, commit, push, or complete queue state.
 
+TASK-DEVO-152 prepares that real dogfood on disposable project `Dogfood152` through queue/policy setup, `codex-worker-prepare`, config, and `codex-worker-run-preview`. Because launching real Codex from inside a Codex/sandbox task is recursive/unclear, the report stops before `codex-worker-run` and records the exact normal-PowerShell command to continue: [TASK-DEVO-152 Real Codex subprocess dogfood](docs/dogfood/task-devo-152-real-codex-subprocess-dogfood.md).
+
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:

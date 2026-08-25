@@ -284,7 +284,7 @@ Recommended order:
 4. TASK-DEVO-149: Codex subprocess execution design checkpoint - completed
 5. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed
 6. TASK-DEVO-151: one-task Codex subprocess execution v1 - completed
-7. TASK-DEVO-152: real Codex subprocess dogfood for one safe disposable task
+7. TASK-DEVO-152: real Codex subprocess dogfood preparation for one safe disposable task - reached preview; normal-PowerShell real launch still required
 
 Prompt-file mode should come before subprocess mode. It proves the input package, result schema, and ingestion flow without adding launcher/process risk.
 
@@ -309,7 +309,7 @@ Subprocess tests should use fake executables only. No real Codex CLI should run 
 
 ## 15. Open Questions
 
-- Which Codex CLI command/form should be used?
+- Which Codex CLI command/form should be used? TASK-DEVO-152 previewed the default `codex run --prompt-file ... --output-file ...` shape but did not prove it with a real launch.
 - Can Codex CLI reliably run non-interactively on Windows?
 - How should Devo capture Codex output and result files cleanly?
 - Should Devo run Codex in the target repo root or a generated worktree?
