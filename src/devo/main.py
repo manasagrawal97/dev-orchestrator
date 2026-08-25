@@ -133,10 +133,13 @@ from .project_planning import (
     CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
+    CodexWorkerConfigValidationResult,
     CodexWorkerFlowSummary,
     CodexWorkerIngest,
     CodexWorkerIngestResult,
     CodexWorkerPreparation,
+    CodexWorkerRunPreviewResult,
+    CodexWorkerSubprocessConfig,
     CodexQueueWorkerStatus,
     CodexPreflightResult,
     CodexRunPlan,
@@ -178,6 +181,7 @@ from .project_planning import (
     create_codex_worker_report_template,
     create_codex_worker_preparation,
     create_codex_worker_ingest,
+    create_codex_worker_run_preview,
     create_codex_worker_review_template,
     create_codex_wrapper_template,
     create_execution_queue_from_batch,
@@ -216,6 +220,7 @@ from .project_planning import (
     load_codex_handoff,
     load_codex_worker_ingest,
     load_codex_worker_preparation,
+    load_codex_worker_subprocess_config,
     load_codex_run_plan,
     load_codex_worker_report,
     load_codex_worker_review,
@@ -248,6 +253,7 @@ from .project_planning import (
     suggest_project_batch,
     start_execution_queue,
     step_queue_worker_run,
+    set_codex_worker_subprocess_config,
     run_queue_worker_once,
     retry_queue_worker_run,
     fail_queue_worker_run,
@@ -256,6 +262,7 @@ from .project_planning import (
     update_codex_worker_run_status,
     validate_refined_backlog_file,
     validate_codex_worker_report_file,
+    validate_codex_worker_subprocess_config,
     import_codex_worker_report,
     write_intake_prompt,
     write_intake_template,
@@ -803,6 +810,76 @@ def _print_codex_worker_preparation(preparation: CodexWorkerPreparation) -> None
         console.print(f"  - {warning}", soft_wrap=True)
     console.print(f"Next action: {preparation.next_action}", soft_wrap=True)
     console.print("Safety: prompt-file preparation does not run Codex, call AI APIs, record evidence, validate, commit, or push.")
+
+
+def _print_codex_worker_subprocess_config(config: CodexWorkerSubprocessConfig) -> None:
+    console.print("[bold]Codex worker subprocess config[/bold]")
+    console.print(f"Project: {config.project}")
+    console.print(f"Command: {config.command}")
+    console.print(f"Args template: {config.args_template}")
+    console.print(f"Timeout minutes: {config.timeout_minutes}")
+    console.print(f"Result file name: {config.result_file_name}")
+    console.print(f"Config path: {_named_path(Path(config.config_json_path)) if config.config_json_path else 'unknown'}")
+    console.print(f"Recorded by: {config.recorded_by or 'none'}")
+    console.print("Warnings:")
+    for warning in config.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Safety: config is preview-only. It does not launch Codex, call AI/API, ingest, review, validate, deliver, commit, or push.")
+
+
+def _print_codex_worker_config_validation(result: CodexWorkerConfigValidationResult) -> None:
+    console.print("[bold]Codex worker subprocess config validation[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Config exists: {result.config_exists}")
+    if result.config:
+        console.print(f"Command: {result.config.command}")
+        console.print(f"Timeout minutes: {result.config.timeout_minutes}")
+        console.print(f"Result file name: {result.config.result_file_name}")
+    console.print(f"Command resolvable: {result.command_resolvable}")
+    console.print(f"Resolved command path: {result.resolved_command_path or 'none'}")
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print("Safety: validation does not launch Codex or call AI/API.")
+
+
+def _print_codex_worker_run_preview_result(result: CodexWorkerRunPreviewResult) -> None:
+    preview = result.preview
+    console.print(f"[bold]Codex worker run preview: {preview.preview_id}[/bold]")
+    console.print(f"Project: {preview.project}")
+    console.print(f"Queue-worker run: {preview.queue_worker_run_id}")
+    console.print(f"Prepare id: {preview.preparation_id}")
+    console.print(f"Target repo: {preview.target_repo_path}")
+    console.print(f"Working directory: {preview.working_directory}")
+    console.print(f"Configured command: {preview.configured_command}")
+    console.print(f"Planned command: {preview.planned_command_text}", soft_wrap=True)
+    console.print(f"Prompt path: {_named_path(Path(preview.prompt_path))}")
+    console.print(f"Planned result path: {_named_path(Path(preview.planned_result_path))}")
+    console.print(f"Planned stdout path: {_named_path(Path(preview.planned_stdout_path))}")
+    console.print(f"Planned stderr path: {_named_path(Path(preview.planned_stderr_path))}")
+    console.print(f"Timeout minutes: {preview.timeout_minutes}")
+    console.print(f"Current git status: {preview.git_status_summary}")
+    console.print(f"Codex launched: {preview.codex_launched}")
+    console.print(f"AI/API called: {preview.ai_api_called}")
+    console.print(f"Mutation occurred: {result.mutation_occurred}")
+    console.print(f"Preview JSON: {_named_path(Path(result.preview_json_path)) if result.preview_json_path else 'not written'}")
+    console.print(f"Preview Markdown: {_named_path(Path(result.preview_markdown_path)) if result.preview_markdown_path else 'not written'}")
+    console.print(f"Planned command file: {_named_path(Path(result.planned_command_path)) if result.planned_command_path else 'not written'}")
+    console.print("Warnings:")
+    for warning in result.warnings or preview.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action or preview.next_action}", soft_wrap=True)
+    console.print(
+        "Safety: this command does not launch Codex, call AI/API, implement worker execution, ingest results, review, validate, deliver, commit, or push.",
+        soft_wrap=True,
+    )
 
 
 def _print_codex_worker_ingest_result(result: CodexWorkerIngestResult) -> None:
@@ -4494,6 +4571,100 @@ def show_queue_worker_handoff_checklist_command(
         raise typer.Exit(1) from exc
     _print_queue_worker_handoff_checklist(checklist, project_name=project_name, run_id=run_id)
     console.print("Read-only: no target project files, worker execution, validation, delivery, commit, or push was run.")
+
+
+@project_app.command("codex-worker-config-show")
+def show_codex_worker_config_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Show Codex worker subprocess preview configuration."""
+    project_name = _resolve_project(project_name)
+    config = load_codex_worker_subprocess_config(project_name)
+    if not config:
+        console.print(f"[yellow]No Codex worker subprocess config found for {project_name}.[/yellow]")
+        console.print(
+            f"Suggested next command: devo project codex-worker-config-set --project {project_name} --command \"codex\" --timeout-minutes 30 --confirm-config",
+            soft_wrap=True,
+        )
+        console.print("Read-only: no config, worker execution, target project mutation, Codex launch, or AI/API call was run.")
+        return
+    _print_codex_worker_subprocess_config(config)
+
+
+@project_app.command("codex-worker-config-set")
+def set_codex_worker_config_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    command: str = typer.Option("codex", "--command", help="Planned Codex command or executable path."),
+    args_template: str = typer.Option('run --prompt-file "{prompt_path}" --output-file "{result_path}"', "--args-template", help="Planned argument template."),
+    timeout_minutes: int = typer.Option(30, "--timeout-minutes", help="Future subprocess timeout in minutes."),
+    result_file_name: str = typer.Option("codex-worker-result.json", "--result-file-name", help="Preview result file name."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording config."),
+    note: str = typer.Option("", "--note", help="Optional note stored on the config."),
+    confirm_config: bool = typer.Option(False, "--confirm-config", help="Confirm workspace-only config write."),
+) -> None:
+    """Write Codex worker subprocess preview configuration."""
+    project_name = _resolve_project(project_name)
+    if not confirm_config:
+        console.print("codex-worker-config-set requires --confirm-config.")
+        console.print("Safety: this command only writes workspace config. It does not launch Codex, call AI/API, validate, commit, or push.")
+        raise typer.Exit(1)
+    try:
+        config, config_path = set_codex_worker_subprocess_config(
+            project_name,
+            command=command,
+            args_template=args_template,
+            timeout_minutes=timeout_minutes,
+            result_file_name=result_file_name,
+            recorded_by=recorded_by,
+            note=note,
+        )
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1) from exc
+    _print_codex_worker_subprocess_config(config)
+    console.print(f"JSON: {_named_path(config_path)}")
+    console.print("Mutation occurred: True")
+
+
+@project_app.command("codex-worker-config-validate")
+def validate_codex_worker_config_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+) -> None:
+    """Validate Codex worker subprocess preview configuration without launching Codex."""
+    project_name = _resolve_project(project_name)
+    result = validate_codex_worker_subprocess_config(project_name)
+    _print_codex_worker_config_validation(result)
+    if result.blockers:
+        raise typer.Exit(1)
+
+
+@project_app.command("codex-worker-run-preview")
+def preview_codex_worker_run_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    preparation_id: str = typer.Option(..., "--prepare", help="Codex worker preparation id."),
+    timeout_minutes: int | None = typer.Option(None, "--timeout-minutes", help="Override preview timeout minutes."),
+    result_file: Path | None = typer.Option(None, "--result-file", help="Optional planned result file path."),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording preview."),
+    note: str = typer.Option("", "--note", help="Optional note stored on the preview."),
+) -> None:
+    """Create a dry-run preview of a future Codex subprocess run without launching Codex."""
+    project_name = _resolve_project(project_name)
+    try:
+        result = create_codex_worker_run_preview(
+            project_name,
+            run_id,
+            preparation_id,
+            timeout_minutes=timeout_minutes,
+            result_file=result_file,
+            recorded_by=recorded_by,
+            note=note,
+        )
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project codex-worker-prepare --project {project_name} --run {run_id} --confirm-prepare")
+        raise typer.Exit(1) from exc
+    _print_codex_worker_run_preview_result(result)
 
 
 @project_app.command("codex-worker-prepare")

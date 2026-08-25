@@ -91,6 +91,8 @@ TASK-DEVO-148 dogfoods that prompt-file loop end to end on a disposable project 
 
 TASK-DEVO-149 adds that design checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. It recommends a very narrow one-task subprocess v1 and says the next safe usability step is configuration plus dry-run launcher behavior, not real Codex execution.
 
+TASK-DEVO-150 adds that safe preview step with workspace-only Codex subprocess config plus `codex-worker-run-preview`. The preview records the planned command, prompt/result/stdout/stderr paths, and Git status without launching Codex, calling AI/API, ingesting, reviewing, validating, delivering, committing, or pushing.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

@@ -57,6 +57,7 @@ Devo already has:
 - Read-only UI Blueprint and Backlog detail pages
 - Read-only UI Batch, Queue, Handoff, and Progress detail pages
 - Explicit workspace-only Batch approval/review artifacts and decisions
+- Codex subprocess config and dry-run run-preview artifacts without launching Codex
 
 These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives.
 
@@ -212,8 +213,9 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 72. TASK-DEVO-147: Codex worker result ingest v1 - completed.
 73. TASK-DEVO-148: Prompt-file Codex worker dogfood - completed.
 74. TASK-DEVO-149: Codex subprocess execution design checkpoint - completed.
-75. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - next.
-76. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+75. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed.
+76. TASK-DEVO-151: One-task Codex subprocess execution v1 - next.
+77. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

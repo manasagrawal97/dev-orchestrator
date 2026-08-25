@@ -333,6 +333,17 @@ TASK-DEVO-148 proves the prompt-file/manual loop against disposable project `Dog
 
 TASK-DEVO-149 documents the subprocess checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. The next safe step is `TASK-DEVO-150`, limited to subprocess configuration and a dry-run launcher. Real Codex execution remains deferred.
 
+TASK-DEVO-150 adds that preview-only layer:
+
+```powershell
+devo project codex-worker-config-show --project MyProject
+devo project codex-worker-config-set --project MyProject --command "codex" --timeout-minutes 30 --confirm-config
+devo project codex-worker-config-validate --project MyProject
+devo project codex-worker-run-preview --project MyProject --run QWR-0001 --prepare CWP-YYYYMMDDHHMMSS-QWR-0001
+```
+
+`codex-worker-run-preview` writes workspace-only artifacts under `workspace/projects/<project>/codex-worker/run-previews/<CWRP-ID>/` that show the future planned command, prompt path, result path, stdout/stderr paths, and Git status before launch. It does not launch Codex, call AI APIs, implement subprocess execution, ingest results, review, validate, deliver, commit, or push.
+
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 
 ```powershell

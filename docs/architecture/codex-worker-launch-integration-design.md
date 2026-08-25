@@ -282,8 +282,8 @@ Recommended order:
 2. TASK-DEVO-147: Codex worker ingest result v1 - completed
 3. TASK-DEVO-148: prompt-file Codex worker dogfood - completed
 4. TASK-DEVO-149: Codex subprocess execution design checkpoint - completed
-5. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1
-6. TASK-DEVO-151: fake-executable subprocess contract tests
+5. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed
+6. TASK-DEVO-151: one-task Codex subprocess execution v1
 7. TASK-DEVO-152: real supervised single-run retry only after launcher readiness
 
 Prompt-file mode should come before subprocess mode. It proves the input package, result schema, and ingestion flow without adding launcher/process risk.

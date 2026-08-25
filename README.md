@@ -56,6 +56,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-147 Codex worker result ingest v1](docs/dogfood/task-devo-147-codex-worker-result-ingest-v1.md)
 - [TASK-DEVO-148 prompt-file Codex worker dogfood](docs/dogfood/task-devo-148-prompt-file-codex-worker-dogfood.md)
 - [TASK-DEVO-149 Codex subprocess execution checkpoint](docs/dogfood/task-devo-149-codex-subprocess-execution-checkpoint.md)
+- [TASK-DEVO-150 Codex subprocess dry-run preview](docs/dogfood/task-devo-150-codex-subprocess-config-and-dry-run-launcher-v1.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -303,6 +304,17 @@ The ingest command validates a filled `worker-result-template.json`, preserves a
 TASK-DEVO-148 dogfoods that prompt-file loop end to end on disposable project `Dogfood148`. It proves `codex-worker-prepare` plus `codex-worker-ingest` can carry one docs-only task through worker evidence, manual review, manual validation evidence, trusted runner delivery request, trusted runner delivery, push-only recovery, and queue completion without running real Codex, calling AI APIs, or modifying PersonalOS. The next step is TASK-DEVO-149: a Codex subprocess execution design checkpoint, not immediate subprocess implementation.
 
 TASK-DEVO-149 records that checkpoint in `docs/architecture/codex-subprocess-execution-checkpoint.md`. The verdict is conservative: Devo is ready only for a very narrow one-task subprocess v1, and the next safe task is subprocess configuration plus a dry-run launcher with fake-executable tests, not full Codex execution.
+
+TASK-DEVO-150 adds that configuration and dry-run preview layer:
+
+```powershell
+devo project codex-worker-config-show --project MyProject
+devo project codex-worker-config-set --project MyProject --command "codex" --timeout-minutes 30 --confirm-config
+devo project codex-worker-config-validate --project MyProject
+devo project codex-worker-run-preview --project MyProject --run QWR-0001 --prepare CWP-YYYYMMDDHHMMSS-QWR-0001
+```
+
+The config is workspace-only at `workspace/projects/<project>/codex-worker/config/codex-worker-config.json`. Preview artifacts are written under `workspace/projects/<project>/codex-worker/run-previews/<CWRP-ID>/` and include the planned command, prompt/result paths, stdout/stderr paths, Git status before launch, and process-info metadata. This layer does not launch Codex, call AI APIs, implement subprocess execution, ingest results, review, validate, deliver, commit, or push.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 
