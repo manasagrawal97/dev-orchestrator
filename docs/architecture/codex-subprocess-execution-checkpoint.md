@@ -229,16 +229,16 @@ Prefer separate commands for retry, ingest, review, validation, and delivery.
 Recommended next tasks:
 
 1. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed.
-2. TASK-DEVO-151: Codex subprocess execution v1 for one safe run.
-3. TASK-DEVO-152: Codex subprocess result/dirty-repo recovery dogfood.
+2. TASK-DEVO-151: Codex subprocess execution v1 for one safe run - completed.
+3. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task.
 4. TASK-DEVO-153: Usage-limit and retry handling v1.
 5. TASK-DEVO-154: Batch Codex-worker loop design.
 
-TASK-DEVO-150 is complete and remains conservative: it adds workspace-only config plus dry-run preview artifacts without launching Codex or calling AI/API. TASK-DEVO-151 should be the first narrow execution task.
+TASK-DEVO-150 is complete and remains conservative: it adds workspace-only config plus dry-run preview artifacts without launching Codex or calling AI/API. TASK-DEVO-151 is complete and adds a one-task subprocess execution command with fake-command tests. Real Codex execution remains a separate dogfood task.
 
 ## 15. Final Checkpoint Verdict
 
 - Prompt-file mode: usable.
-- Direct subprocess execution: not implemented.
-- Readiness verdict: ready only for a very narrow one-task subprocess v1.
-- Next safe step: one-task subprocess execution v1 with fake-tested command construction and explicit confirmation, not full autonomous execution.
+- Direct subprocess execution: implemented only as a one-task explicit-confirmation command.
+- Readiness verdict: ready for one disposable real-Codex dogfood run, not full autonomous execution.
+- Next safe step: real Codex subprocess dogfood for one safe disposable task.

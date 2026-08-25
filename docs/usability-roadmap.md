@@ -93,6 +93,8 @@ TASK-DEVO-149 adds that design checkpoint in `docs/architecture/codex-subprocess
 
 TASK-DEVO-150 adds that safe preview step with workspace-only Codex subprocess config plus `codex-worker-run-preview`. The preview records the planned command, prompt/result/stdout/stderr paths, and Git status without launching Codex, calling AI/API, ingesting, reviewing, validating, delivering, committing, or pushing.
 
+TASK-DEVO-151 adds `codex-worker-run`, the first one-task subprocess execution command. It is fake-command tested, writes `codex-worker/runs/<CWR-ID>/` artifacts, classifies the result, and still leaves ingest/review/validation/delivery as explicit later gates.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

@@ -238,6 +238,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex CLI, Codex Desktop, AI/API calls, subprocess execution implementation, automatic ingest, automatic review, automatic validation, automatic delivery, UI changes, parallel workers, ECC adoption, voice/Jarvis/gesture controls, least-privilege implementation, or full autonomous multi-task execution.
 - Status: Completed. See `docs/dogfood/task-devo-150-codex-subprocess-config-and-dry-run-launcher-v1.md`. The next safe step is TASK-DEVO-151: one-task Codex subprocess execution v1, still narrow and explicitly gated.
 
+### TASK-DEVO-151: One-Task Codex Subprocess Execution V1
+
+- Goal: Run one configured subprocess for one approved `waiting_worker` queue-worker run after explicit confirmation.
+- Scope: `codex-worker-run`, fake-command tests, stdout/stderr/exit-code capture, Git before/after capture, workspace-only run artifacts, result-state classification, timeout handling, usage-limit warning hints, lightweight scope warnings, and docs.
+- Not in scope: real Codex dogfood during implementation, Codex Desktop, AI/API calls, automatic ingest, automatic review, automatic validation, automatic delivery, commit, push, UI changes, parallel workers, ECC adoption, voice/Jarvis/gesture controls, least-privilege implementation, or full autonomous multi-task execution.
+- Status: Completed. See `docs/dogfood/task-devo-151-one-task-codex-subprocess-execution-v1.md`. The next safe step is TASK-DEVO-152: real Codex subprocess dogfood for one safe disposable task.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
@@ -542,6 +549,6 @@ Do not start with API/model integration. First make the trusted executor and que
 
 ## 13. Recommended Immediate Next Task
 
-Recommended next task: TASK-DEVO-151 One-task Codex subprocess execution v1.
+Recommended next task: TASK-DEVO-152 Real Codex subprocess dogfood for one safe disposable task.
 
-TASK-DEVO-149 documented the subprocess checkpoint. TASK-DEVO-150 implemented configuration and dry-run launcher behavior only, using fake-executable tests and preserving launcher readiness, explicit operator approval, clear result-file contracts, timeout/usage-limit planning, and trusted-runner-only delivery. TASK-DEVO-151 should be the first narrow execution step and must still avoid automatic ingest, review, validation, delivery, commit, or push.
+TASK-DEVO-149 documented the subprocess checkpoint. TASK-DEVO-150 implemented configuration and dry-run launcher behavior only, using fake-executable tests and preserving launcher readiness, explicit operator approval, clear result-file contracts, timeout/usage-limit planning, and trusted-runner-only delivery. TASK-DEVO-151 implemented the first narrow fake-tested execution step and still avoids automatic ingest, review, validation, delivery, commit, or push. TASK-DEVO-152 should dogfood real Codex only on one disposable task with explicit stop conditions.

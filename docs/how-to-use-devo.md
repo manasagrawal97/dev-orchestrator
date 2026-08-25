@@ -344,6 +344,14 @@ devo project codex-worker-run-preview --project MyProject --run QWR-0001 --prepa
 
 `codex-worker-run-preview` writes workspace-only artifacts under `workspace/projects/<project>/codex-worker/run-previews/<CWRP-ID>/` that show the future planned command, prompt path, result path, stdout/stderr paths, and Git status before launch. It does not launch Codex, call AI APIs, implement subprocess execution, ingest results, review, validate, deliver, commit, or push.
 
+TASK-DEVO-151 adds one-task subprocess execution:
+
+```powershell
+devo project codex-worker-run --project MyProject --run QWR-0001 --prepare CWP-YYYYMMDDHHMMSS-QWR-0001 --confirm-codex-worker
+```
+
+Use `--dry-run` to reuse preview behavior without spawning anything. Confirmed execution runs the configured subprocess once, captures stdout/stderr/exit code, records Git status before and after, writes `workspace/projects/<project>/codex-worker/runs/<CWR-ID>/`, and prints the next `codex-worker-ingest` command when the expected result JSON exists. It does not auto-ingest, review, validate, deliver, commit, push, or complete the queue.
+
 If trusted runner commit succeeded but the guarded push failed, use the push-only recovery command instead of rerunning the whole delivery:
 
 ```powershell

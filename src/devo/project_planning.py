@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import fnmatch
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ CODEX_WORKER_PREPARATIONS_DIR_NAME = "preparations"
 CODEX_WORKER_INGESTS_DIR_NAME = "ingests"
 CODEX_WORKER_CONFIG_DIR_NAME = "config"
 CODEX_WORKER_RUN_PREVIEWS_DIR_NAME = "run-previews"
+CODEX_WORKER_SUBPROCESS_RUNS_DIR_NAME = "runs"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
 WORKER_REVIEWS_DIR_NAME = "reviews"
@@ -691,7 +693,7 @@ class CodexWorkerSubprocessConfig(BaseModel):
     project: str
     command: str = "codex"
     args_template: str = 'run --prompt-file "{prompt_path}" --output-file "{result_path}"'
-    timeout_minutes: int = 30
+    timeout_minutes: float = 30
     result_file_name: str = "codex-worker-result.json"
     config_json_path: str | None = None
     warnings: list[str] = Field(default_factory=list)
@@ -737,7 +739,7 @@ class CodexWorkerRunPreview(BaseModel):
     planned_result_path: str
     planned_stdout_path: str
     planned_stderr_path: str
-    timeout_minutes: int
+    timeout_minutes: float
     current_branch: str | None = None
     upstream_branch: str | None = None
     head_commit: str | None = None
@@ -775,6 +777,90 @@ class CodexWorkerRunPreviewResult(BaseModel):
     planned_result_path_file: str | None = None
     git_status_before_path: str | None = None
     process_info_path: str | None = None
+    mutation_occurred: bool = True
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class CodexWorkerSubprocessRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    codex_worker_run_id: str
+    queue_worker_run_id: str
+    preparation_id: str
+    policy_id: str
+    batch_id: str | None = None
+    queue_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    worker_run_id: str | None = None
+    target_repo_path: str
+    working_directory: str
+    configured_command: str
+    args_template: str
+    planned_command: list[str] = Field(default_factory=list)
+    planned_command_text: str
+    prompt_path: str
+    expected_result_path: str
+    stdout_path: str
+    stderr_path: str
+    timeout_minutes: float
+    status: str = "blocked_preflight"
+    exit_code: int | None = None
+    timed_out: bool = False
+    usage_limit_detected: bool = False
+    codex_launched: bool = False
+    ai_api_called: bool = False
+    mutation_occurred: bool = True
+    current_branch_before: str | None = None
+    upstream_branch_before: str | None = None
+    head_commit_before: str | None = None
+    git_status_before: str = "unknown"
+    git_dirty_before: bool = False
+    staged_files_before: list[str] = Field(default_factory=list)
+    unstaged_files_before: list[str] = Field(default_factory=list)
+    untracked_files_before: list[str] = Field(default_factory=list)
+    current_branch_after: str | None = None
+    upstream_branch_after: str | None = None
+    head_commit_after: str | None = None
+    git_status_after: str = "unknown"
+    git_dirty_after: bool = False
+    staged_files_after: list[str] = Field(default_factory=list)
+    unstaged_files_after: list[str] = Field(default_factory=list)
+    untracked_files_after: list[str] = Field(default_factory=list)
+    changed_files_after: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    recorded_by: str | None = None
+    note: str = ""
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class CodexWorkerSubprocessRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    run_id: str
+    preparation_id: str
+    subprocess_run: CodexWorkerSubprocessRun
+    run_json_path: str | None = None
+    run_markdown_path: str | None = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    prompt_used_path: str | None = None
+    expected_result_path_file: str | None = None
+    git_status_before_path: str | None = None
+    git_status_after_path: str | None = None
+    process_info_path: str | None = None
+    planned_command_path: str | None = None
+    dry_run: bool = False
     mutation_occurred: bool = True
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
@@ -2059,6 +2145,31 @@ def codex_worker_run_preview_artifact_paths(
     )
 
 
+def codex_worker_subprocess_run_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    return root / "projects" / project_name / CODEX_WORKER_PREPARATION_DIR_NAME / CODEX_WORKER_SUBPROCESS_RUNS_DIR_NAME
+
+
+def codex_worker_subprocess_run_artifact_paths(
+    project_name: str,
+    codex_worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path, Path, Path, Path, Path, Path, Path, Path, Path]:
+    directory = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(codex_worker_run_id)
+    return (
+        directory / "codex-worker-run.json",
+        directory / "codex-worker-run.md",
+        directory / "stdout.txt",
+        directory / "stderr.txt",
+        directory / "prompt-used.md",
+        directory / "expected-result-path.json",
+        directory / "git-status-before.txt",
+        directory / "git-status-after.txt",
+        directory / "process-info.json",
+        directory / "planned-command.txt",
+    )
+
+
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -2305,7 +2416,7 @@ def create_codex_worker_run_preview(
     run_id: str,
     preparation_id: str,
     *,
-    timeout_minutes: int | None = None,
+    timeout_minutes: float | None = None,
     result_file: Path | None = None,
     recorded_by: str | None = None,
     note: str = "",
@@ -2482,6 +2593,274 @@ def create_codex_worker_run_preview(
         mutation_occurred=True,
         warnings=warnings,
         next_action=preview.next_action,
+    )
+
+
+def execute_codex_worker_subprocess_run(
+    project_name: str,
+    run_id: str,
+    preparation_id: str,
+    *,
+    timeout_minutes: float | None = None,
+    result_file: Path | None = None,
+    recorded_by: str | None = None,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> CodexWorkerSubprocessRunResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    if run.status != "waiting_worker":
+        msg = f"Queue worker run must be waiting_worker before Codex subprocess execution, not {run.status}."
+        raise ValueError(msg)
+    if run.delivery_request_id or run.delivery_request_status:
+        msg = f"Queue worker run {run.run_id} already has delivery request state; Codex subprocess execution is unsafe."
+        raise ValueError(msg)
+    if load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else False:
+        msg = f"Queue worker run {run.run_id} already has worker evidence/report imported."
+        raise ValueError(msg)
+    existing_completed_ingests = [
+        item
+        for item in list_codex_worker_ingests(project_name, workspace_root=root)
+        if item.queue_worker_run_id == run.run_id and item.status == "completed"
+    ]
+    if existing_completed_ingests:
+        msg = f"Queue worker run {run.run_id} already has completed worker evidence from ingest {existing_completed_ingests[0].ingest_id}."
+        raise ValueError(msg)
+
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=root)
+    if not policy:
+        msg = f"Execution policy not found: {run.policy_id}"
+        raise ValueError(msg)
+    if policy.status != "approved":
+        msg = f"Execution policy must be approved before Codex subprocess execution, not {policy.status}."
+        raise ValueError(msg)
+
+    preparation = load_codex_worker_preparation(project_name, preparation_id, workspace_root=root)
+    if not preparation:
+        msg = f"Codex worker preparation not found: {preparation_id}"
+        raise ValueError(msg)
+    if preparation.project != project_name:
+        msg = f"Codex worker preparation project mismatch: expected {project_name}, got {preparation.project}."
+        raise ValueError(msg)
+    if preparation.queue_worker_run_id != run.run_id:
+        msg = f"Codex worker preparation run mismatch: expected {run.run_id}, got {preparation.queue_worker_run_id}."
+        raise ValueError(msg)
+    prompt_path = Path(preparation.prompt_path)
+    template_path = Path(preparation.worker_result_template_json_path)
+    if not prompt_path.exists():
+        msg = f"Codex worker prompt file not found: {prompt_path}"
+        raise ValueError(msg)
+    if not template_path.exists():
+        msg = f"Worker result template JSON not found: {template_path}"
+        raise ValueError(msg)
+
+    config_result = validate_codex_worker_subprocess_config(project_name, workspace_root=root)
+    if not config_result.config:
+        msg = "Codex worker subprocess config is missing."
+        raise ValueError(msg)
+    if config_result.blockers:
+        msg = "Codex worker subprocess config is invalid: " + "; ".join(config_result.blockers)
+        raise ValueError(msg)
+    if not config_result.command_resolvable:
+        msg = "Codex worker subprocess command is not resolvable. Set --command to an executable on PATH or an existing absolute path."
+        raise ValueError(msg)
+    config = config_result.config
+
+    registration = load_registered_project(project_name, workspace_root=root)
+    target_path = Path(registration.path).expanduser().resolve()
+    if not target_path.exists():
+        msg = f"Target repo path does not exist: {target_path}"
+        raise ValueError(msg)
+    git_before = _capture_prepare_git_context(project_name, target_path, workspace_root=root)
+    if git_before["git_dirty"]:
+        msg = f"Target repository must be clean before Codex subprocess execution; current status is {git_before['git_status_summary']}."
+        raise ValueError(msg)
+
+    effective_timeout = timeout_minutes if timeout_minutes is not None else config.timeout_minutes
+    result_name = str(result_file) if result_file else config.result_file_name
+    _validate_codex_worker_config_values(config.command, config.args_template, effective_timeout, Path(result_name).name if result_file else result_name)
+
+    now = datetime.now(UTC)
+    codex_worker_run_id = _next_codex_worker_subprocess_run_id(project_name, run.run_id, now, workspace_root=root)
+    (
+        run_json_path,
+        run_markdown_path,
+        stdout_path,
+        stderr_path,
+        prompt_used_path,
+        expected_result_path_file,
+        git_status_before_path,
+        git_status_after_path,
+        process_info_path,
+        planned_command_path,
+    ) = codex_worker_subprocess_run_artifact_paths(project_name, codex_worker_run_id, workspace_root=root)
+    run_dir = run_json_path.parent
+    expected_result_path = (
+        Path(result_file).expanduser().resolve()
+        if result_file
+        else run_dir / config.result_file_name
+    )
+    planned_command = _planned_codex_worker_command(
+        config.command,
+        config.args_template,
+        prompt_path=prompt_path,
+        result_path=expected_result_path,
+    )
+    planned_command_text = _format_planned_command(planned_command)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    prompt_used_path.write_text(prompt_path.read_text(encoding="utf-8"), encoding="utf-8")
+    planned_command_path.write_text(planned_command_text + "\n", encoding="utf-8")
+    git_status_before_path.write_text(str(git_before["git_status_summary"]) + "\n", encoding="utf-8")
+    expected_result_path_file.write_text(json.dumps({"expected_result_path": str(expected_result_path)}, indent=2) + "\n", encoding="utf-8")
+
+    started_at = datetime.now(UTC)
+    exit_code: int | None
+    timed_out = False
+    stdout = ""
+    stderr = ""
+    try:
+        completed = subprocess.run(
+            planned_command,
+            cwd=target_path,
+            text=True,
+            capture_output=True,
+            timeout=effective_timeout * 60,
+            check=False,
+        )
+        exit_code = int(completed.returncode)
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        exit_code = None
+        timed_out = True
+        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
+        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
+        stderr = (stderr + "\nCodex worker subprocess timed out.").strip() + "\n"
+    except (PermissionError, FileNotFoundError, OSError) as exc:
+        exit_code = _codex_worker_subprocess_exception_exit_code(exc)
+        stdout = ""
+        stderr = f"{type(exc).__name__}: {exc}\n"
+    completed_at = datetime.now(UTC)
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+
+    git_after = _capture_prepare_git_context(project_name, target_path, workspace_root=root)
+    git_status_after_path.write_text(str(git_after["git_status_summary"]) + "\n", encoding="utf-8")
+    changed_files = _dedupe(
+        [
+            *[str(item) for item in git_after["staged_files"]],
+            *[str(item) for item in git_after["unstaged_files"]],
+            *[str(item) for item in git_after["untracked_files"]],
+        ]
+    )
+    worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+    scope_warnings, scope_violation = _codex_worker_subprocess_scope_findings(policy, worker_run, run.handoff_checklist, changed_files)
+    usage_limit_detected = _contains_usage_limit_hint(stdout + "\n" + stderr)
+    warnings = [*config_result.warnings, *scope_warnings]
+    if usage_limit_detected:
+        warnings.append("usage_limit_detected: subprocess output contains usage/rate/quota limit wording.")
+    status = _classify_codex_worker_subprocess_state(
+        exit_code=exit_code,
+        timed_out=timed_out,
+        result_exists=expected_result_path.exists(),
+        scope_violation=scope_violation,
+        scope_warning=bool(scope_warnings),
+    )
+    next_action = _codex_worker_subprocess_next_action(project_name, run, preparation, status, expected_result_path)
+    subprocess_run = CodexWorkerSubprocessRun(
+        project=project_name,
+        codex_worker_run_id=codex_worker_run_id,
+        queue_worker_run_id=run.run_id,
+        preparation_id=preparation.preparation_id,
+        policy_id=policy.policy_id,
+        batch_id=run.batch_id,
+        queue_id=run.queue_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        worker_run_id=run.selected_worker_run_id,
+        target_repo_path=str(target_path),
+        working_directory=str(target_path),
+        configured_command=config.command,
+        args_template=config.args_template,
+        planned_command=planned_command,
+        planned_command_text=planned_command_text,
+        prompt_path=str(prompt_path),
+        expected_result_path=str(expected_result_path),
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+        timeout_minutes=effective_timeout,
+        status=status,
+        exit_code=exit_code,
+        timed_out=timed_out,
+        usage_limit_detected=usage_limit_detected,
+        codex_launched=_configured_command_looks_like_codex(config.command),
+        ai_api_called=False,
+        current_branch_before=git_before["current_branch"],
+        upstream_branch_before=git_before["upstream_branch"],
+        head_commit_before=git_before["head_commit"],
+        git_status_before=str(git_before["git_status_summary"]),
+        git_dirty_before=bool(git_before["git_dirty"]),
+        staged_files_before=list(git_before["staged_files"]),
+        unstaged_files_before=list(git_before["unstaged_files"]),
+        untracked_files_before=list(git_before["untracked_files"]),
+        current_branch_after=git_after["current_branch"],
+        upstream_branch_after=git_after["upstream_branch"],
+        head_commit_after=git_after["head_commit"],
+        git_status_after=str(git_after["git_status_summary"]),
+        git_dirty_after=bool(git_after["git_dirty"]),
+        staged_files_after=list(git_after["staged_files"]),
+        unstaged_files_after=list(git_after["unstaged_files"]),
+        untracked_files_after=list(git_after["untracked_files"]),
+        changed_files_after=changed_files,
+        warnings=warnings,
+        next_action=next_action,
+        recorded_by=recorded_by.strip() if recorded_by and recorded_by.strip() else None,
+        note=note.strip(),
+        started_at=started_at,
+        completed_at=completed_at,
+        created_at=now,
+        updated_at=completed_at,
+    )
+    _write_model(run_json_path, subprocess_run)
+    run_markdown_path.write_text(render_codex_worker_subprocess_run_markdown(subprocess_run), encoding="utf-8")
+    process_info_path.write_text(
+        json.dumps(
+            {
+                "codex_launched": subprocess_run.codex_launched,
+                "ai_api_called": False,
+                "subprocess_launched": True,
+                "timeout_minutes": effective_timeout,
+                "timed_out": timed_out,
+                "exit_code": exit_code,
+                "working_directory": str(target_path),
+                "planned_command": planned_command,
+                "started_at": started_at.isoformat(),
+                "completed_at": completed_at.isoformat(),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return CodexWorkerSubprocessRunResult(
+        project=project_name,
+        run_id=run.run_id,
+        preparation_id=preparation.preparation_id,
+        subprocess_run=subprocess_run,
+        run_json_path=str(run_json_path),
+        run_markdown_path=str(run_markdown_path),
+        stdout_path=str(stdout_path),
+        stderr_path=str(stderr_path),
+        prompt_used_path=str(prompt_used_path),
+        expected_result_path_file=str(expected_result_path_file),
+        git_status_before_path=str(git_status_before_path),
+        git_status_after_path=str(git_status_after_path),
+        process_info_path=str(process_info_path),
+        planned_command_path=str(planned_command_path),
+        mutation_occurred=True,
+        warnings=warnings,
+        next_action=next_action,
     )
 
 
@@ -6725,6 +7104,59 @@ def render_codex_worker_run_preview_markdown(preview: CodexWorkerRunPreview) -> 
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_codex_worker_subprocess_run_markdown(run: CodexWorkerSubprocessRun) -> str:
+    lines = [
+        f"# Codex Worker Run {run.codex_worker_run_id}",
+        "",
+        f"- Project: `{run.project}`",
+        f"- Queue-worker run: `{run.queue_worker_run_id}`",
+        f"- Preparation: `{run.preparation_id}`",
+        f"- Policy: `{run.policy_id}`",
+        f"- Queue item: `{run.queue_item_id or 'none'}`",
+        f"- Task: `{run.task_id or 'none'}`",
+        f"- Worker run: `{run.worker_run_id or 'none'}`",
+        f"- Status: `{run.status}`",
+        f"- Exit code: `{run.exit_code if run.exit_code is not None else 'none'}`",
+        f"- Timed out: `{run.timed_out}`",
+        f"- Usage limit detected: `{run.usage_limit_detected}`",
+        f"- Target repo: `{run.target_repo_path}`",
+        f"- Working directory: `{run.working_directory}`",
+        f"- Configured command: `{run.configured_command}`",
+        f"- Args template: `{run.args_template}`",
+        f"- Planned command: `{run.planned_command_text}`",
+        f"- Prompt path: `{run.prompt_path}`",
+        f"- Expected result path: `{run.expected_result_path}`",
+        f"- Stdout path: `{run.stdout_path}`",
+        f"- Stderr path: `{run.stderr_path}`",
+        f"- Timeout minutes: `{run.timeout_minutes}`",
+        f"- Git status before: `{run.git_status_before}`",
+        f"- Git status after: `{run.git_status_after}`",
+        f"- Codex launched: `{run.codex_launched}`",
+        f"- AI/API called: `{run.ai_api_called}`",
+        f"- Started: `{run.started_at.isoformat() if run.started_at else 'none'}`",
+        f"- Completed: `{run.completed_at.isoformat() if run.completed_at else 'none'}`",
+        "",
+    ]
+    _append_list_section(lines, "Changed Files After", run.changed_files_after)
+    _append_list_section(lines, "Warnings", run.warnings)
+    _append_list_section(lines, "Blockers", run.blockers)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            run.next_action,
+            "",
+            "## Safety Note",
+            "",
+            "This run artifact records one configured subprocess execution. Devo did not auto-ingest the result, run review, run validation, deliver, commit, push, or complete the queue.",
+            "",
+        ]
+    )
+    if run.note:
+        lines.extend(["## Note", "", run.note, ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_worker_preparation_prompt(
     preparation: CodexWorkerPreparation,
     run: QueueWorkerRun,
@@ -9202,7 +9634,7 @@ def _codex_worker_ingest_note(note: str, work_performed: list[str], raw_copy_pat
     return " ".join(parts).strip()
 
 
-def _validate_codex_worker_config_values(command: str, args_template: str, timeout_minutes: int, result_file_name: str) -> None:
+def _validate_codex_worker_config_values(command: str, args_template: str, timeout_minutes: float, result_file_name: str) -> None:
     if not command or not command.strip():
         msg = "Codex worker subprocess command is required."
         raise ValueError(msg)
@@ -9262,7 +9694,13 @@ def _planned_codex_worker_command(
 def _split_args_template(value: str) -> list[str]:
     import shlex
 
-    return shlex.split(value, posix=False)
+    return [_strip_arg_quotes(part) for part in shlex.split(value, posix=False)]
+
+
+def _strip_arg_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 def _format_planned_command(parts: list[str]) -> str:
@@ -9286,6 +9724,133 @@ def _next_codex_worker_run_preview_id(project_name: str, run_id: str, now: datet
         candidate = f"{base}-{counter}"
         counter += 1
     return candidate
+
+
+def _next_codex_worker_subprocess_run_id(project_name: str, run_id: str, now: datetime, workspace_root: Path) -> str:
+    base = f"CWR-{now.strftime('%Y%m%d%H%M%S')}-{_safe_artifact_id(run_id)}"
+    existing = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root)
+    candidate = base
+    counter = 2
+    while (existing / candidate).exists():
+        candidate = f"{base}-{counter}"
+        counter += 1
+    return candidate
+
+
+def _classify_codex_worker_subprocess_state(
+    *,
+    exit_code: int | None,
+    timed_out: bool,
+    result_exists: bool,
+    scope_violation: bool,
+    scope_warning: bool,
+) -> str:
+    if timed_out:
+        return "timeout"
+    if exit_code != 0:
+        return "failed_process"
+    if scope_violation:
+        return "scope_violation"
+    if scope_warning:
+        return "scope_warning"
+    if result_exists:
+        return "completed_with_result"
+    return "completed_missing_result"
+
+
+def _codex_worker_subprocess_next_action(
+    project_name: str,
+    run: QueueWorkerRun,
+    preparation: CodexWorkerPreparation,
+    status: str,
+    result_path: Path,
+) -> str:
+    if status == "completed_with_result":
+        return (
+            "Subprocess completed and wrote the expected result JSON. Ingest it only after review: "
+            f".\\.venv\\Scripts\\devo.exe project codex-worker-ingest --project {project_name} --run {run.run_id} "
+            f"--prepare {preparation.preparation_id} --result-file {result_path} --confirm-ingest"
+        )
+    if status == "completed_missing_result":
+        return "Subprocess exited 0 but did not write the expected result JSON. Inspect stdout/stderr and retry or record failed/blocked worker evidence manually."
+    if status == "failed_process":
+        return "Subprocess exited non-zero. Inspect stdout/stderr artifacts, then retry or record failed/blocked worker evidence manually."
+    if status == "timeout":
+        return "Subprocess timed out. Inspect partial stdout/stderr, wait or adjust timeout if appropriate, then retry manually."
+    if status == "scope_violation":
+        return "Subprocess changed files that match forbidden scope. Inspect artifacts before any ingest, review, validation, delivery, commit, or push."
+    if status == "scope_warning":
+        return "Subprocess changed files and scope could not be fully verified. Inspect changed files before ingest or continuing the queue."
+    return "Inspect subprocess artifacts before continuing."
+
+
+def _codex_worker_subprocess_exception_exit_code(exc: OSError) -> int:
+    if isinstance(exc, FileNotFoundError):
+        return 127
+    if isinstance(exc, PermissionError):
+        return 126
+    return 1
+
+
+def _contains_usage_limit_hint(text: str) -> bool:
+    normalized = text.lower()
+    return any(pattern in normalized for pattern in ["usage limit", "rate limit", "quota", "limit reached", "try again later"])
+
+
+def _configured_command_looks_like_codex(command: str) -> bool:
+    name = Path(command.strip()).name.lower()
+    return name in {"codex", "codex.exe", "codex.cmd", "codex.bat"}
+
+
+def _codex_worker_subprocess_scope_findings(
+    policy: ExecutionPolicy,
+    worker_run: WorkerRun | None,
+    checklist: QueueWorkerHandoffChecklist | None,
+    changed_files: list[str],
+) -> tuple[list[str], bool]:
+    if not changed_files:
+        return [], False
+    warnings: list[str] = []
+    forbidden_patterns = _dedupe(
+        [
+            *policy.forbidden_file_patterns,
+            *(worker_run.forbidden_scope if worker_run else []),
+            *(checklist.forbidden_scope if checklist else []),
+        ]
+    )
+    violating = [path for path in changed_files if _matches_any_scope_pattern(path, forbidden_patterns)]
+    if violating:
+        warnings.append("Changed files match forbidden scope: " + ", ".join(violating))
+        return warnings, True
+    allowed_patterns = _dedupe(
+        [
+            *policy.allowed_file_patterns,
+            *(worker_run.allowed_scope if worker_run else []),
+            *(checklist.relevant_files if checklist else []),
+        ]
+    )
+    if not allowed_patterns:
+        warnings.append("Changed files exist, but no narrow allowed scope was available for lightweight checking.")
+        return warnings, False
+    outside_allowed = [path for path in changed_files if not _matches_any_scope_pattern(path, allowed_patterns)]
+    if outside_allowed:
+        warnings.append("Changed files could not be matched to allowed scope: " + ", ".join(outside_allowed))
+    return warnings, False
+
+
+def _matches_any_scope_pattern(path: str, patterns: list[str]) -> bool:
+    normalized_path = path.replace("\\", "/")
+    for raw_pattern in patterns:
+        pattern = raw_pattern.strip().replace("\\", "/")
+        if not pattern:
+            continue
+        if pattern in {"*", "**"}:
+            return True
+        if fnmatch.fnmatch(normalized_path, pattern) or fnmatch.fnmatch(normalized_path, pattern.rstrip("/") + "/**"):
+            return True
+        if normalized_path == pattern or normalized_path.startswith(pattern.rstrip("/") + "/"):
+            return True
+    return False
 
 
 def _capture_prepare_git_context(project_name: str, target_path: Path, workspace_root: Path) -> dict[str, object]:

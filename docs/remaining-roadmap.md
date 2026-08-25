@@ -214,8 +214,9 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 73. TASK-DEVO-148: Prompt-file Codex worker dogfood - completed.
 74. TASK-DEVO-149: Codex subprocess execution design checkpoint - completed.
 75. TASK-DEVO-150: Codex subprocess configuration and dry-run launcher v1 - completed.
-76. TASK-DEVO-151: One-task Codex subprocess execution v1 - next.
-77. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+76. TASK-DEVO-151: One-task Codex subprocess execution v1 - completed.
+77. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task - next.
+78. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

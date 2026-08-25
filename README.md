@@ -57,6 +57,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-148 prompt-file Codex worker dogfood](docs/dogfood/task-devo-148-prompt-file-codex-worker-dogfood.md)
 - [TASK-DEVO-149 Codex subprocess execution checkpoint](docs/dogfood/task-devo-149-codex-subprocess-execution-checkpoint.md)
 - [TASK-DEVO-150 Codex subprocess dry-run preview](docs/dogfood/task-devo-150-codex-subprocess-config-and-dry-run-launcher-v1.md)
+- [TASK-DEVO-151 one-task Codex subprocess execution v1](docs/dogfood/task-devo-151-one-task-codex-subprocess-execution-v1.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -315,6 +316,14 @@ devo project codex-worker-run-preview --project MyProject --run QWR-0001 --prepa
 ```
 
 The config is workspace-only at `workspace/projects/<project>/codex-worker/config/codex-worker-config.json`. Preview artifacts are written under `workspace/projects/<project>/codex-worker/run-previews/<CWRP-ID>/` and include the planned command, prompt/result paths, stdout/stderr paths, Git status before launch, and process-info metadata. This layer does not launch Codex, call AI APIs, implement subprocess execution, ingest results, review, validate, deliver, commit, or push.
+
+TASK-DEVO-151 adds the first one-task subprocess execution command:
+
+```powershell
+devo project codex-worker-run --project MyProject --run QWR-0001 --prepare CWP-YYYYMMDDHHMMSS-QWR-0001 --confirm-codex-worker
+```
+
+The command runs the configured subprocess once for an approved `waiting_worker` queue-worker run, captures stdout/stderr/exit code, records Git status before and after, classifies the result, and writes artifacts under `workspace/projects/<project>/codex-worker/runs/<CWR-ID>/`. Tests and dogfood use fake subprocess commands only. Real Codex execution is still the next dogfood step. The command does not auto-ingest, review, validate, deliver, commit, push, or complete queue state.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

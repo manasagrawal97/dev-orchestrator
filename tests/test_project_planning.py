@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from devo.project_planning import (
     create_execution_queue_from_batch,
     codex_worker_config_artifact_path,
     codex_worker_run_preview_directory,
+    codex_worker_subprocess_run_directory,
     execution_policy_artifact_paths,
     generate_backlog_refinement_prompt,
     list_execution_policies,
@@ -2628,6 +2630,213 @@ def test_codex_worker_run_preview_generates_artifacts_without_launching_codex(tm
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_run_blocks_missing_prerequisites(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    missing_run = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-9999", "--prepare", "CWP-missing", "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert missing_run.exit_code != 0
+    assert "Queue worker run not found" in missing_run.output
+
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    paused = runner.invoke(app, ["project", "queue-worker-pause", "--project", "sample", "--run", "QWR-0001", "--reason", "pause"], terminal_width=240)
+    assert paused.exit_code == 0, paused.output
+    not_waiting = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", "CWP-missing", "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert not_waiting.exit_code != 0
+    assert "must be waiting_worker" in not_waiting.output
+
+    _create_queue_worker_run(tmp_path)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    policy_json, policy_md = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    policy_json.write_text(policy.model_copy(update={"status": "draft"}).model_dump_json(indent=2), encoding="utf-8")
+    policy_md.write_text("draft policy\n", encoding="utf-8")
+    unapproved = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", "CWP-missing", "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert unapproved.exit_code != 0
+    assert "must be approved" in unapproved.output
+
+
+def test_codex_worker_run_blocks_missing_config_mismatched_prepare_and_dirty_repo(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"], terminal_width=240)
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+
+    missing_config = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert missing_config.exit_code != 0
+    assert "subprocess config is missing" in missing_config.output
+
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"], terminal_width=240)
+    assert retry.exit_code == 0, retry.output
+    mismatch = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert mismatch.exit_code != 0
+    assert "preparation run mismatch" in mismatch.output
+
+    dirty_prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"], terminal_width=240)
+    assert dirty_prepare.exit_code == 0, dirty_prepare.output
+    dirty_preparation = [item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"][0]
+    (project_path / "src" / "dirty.py").parent.mkdir(parents=True, exist_ok=True)
+    (project_path / "src" / "dirty.py").write_text("dirty\n", encoding="utf-8")
+    dirty = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", dirty_preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert dirty.exit_code != 0
+    assert "must be clean before Codex subprocess execution" in dirty.output
+
+
+def test_codex_worker_run_dry_run_does_not_spawn_subprocess(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    marker = tmp_path / "spawned-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"], terminal_width=240)
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+
+    dry_run = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", preparation.preparation_id, "--dry-run"],
+        terminal_width=240,
+    )
+
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Subprocess spawned: False" in dry_run.output
+    assert "Codex launched: False" in dry_run.output
+    assert not marker.exists()
+    assert list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json")) == []
+
+
+def test_codex_worker_run_executes_fake_command_and_captures_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"], terminal_width=240)
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: completed_with_result" in result.output
+    assert "Exit code: 0" in result.output
+    assert "codex-worker-ingest --project sample --run QWR-0001" in result.output
+    assert "AI/API called: False" in result.output
+    assert "Codex launched: False" in result.output
+    runs = list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert len(runs) == 1
+    data = json.loads(runs[0].read_text(encoding="utf-8"))
+    assert data["status"] == "completed_with_result"
+    assert data["exit_code"] == 0
+    assert data["ai_api_called"] is False
+    assert data["codex_launched"] is False
+    run_dir = runs[0].parent
+    assert "fake stdout" in (run_dir / "stdout.txt").read_text(encoding="utf-8")
+    assert "fake stderr" in (run_dir / "stderr.txt").read_text(encoding="utf-8")
+    assert Path(data["expected_result_path"]).exists()
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_status", "expected_exit"),
+    [
+        ("missing", "completed_missing_result", 0),
+        ("fail", "failed_process", 7),
+    ],
+)
+def test_codex_worker_run_classifies_fake_command_outcomes(tmp_path: Path, monkeypatch, mode: str, expected_status: str, expected_exit: int) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, mode)
+    prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"], terminal_width=240)
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"Status: {expected_status}" in result.output
+    runs = list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert len(runs) == 1
+    data = json.loads(runs[0].read_text(encoding="utf-8"))
+    assert data["status"] == expected_status
+    assert data["exit_code"] == expected_exit
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
+def test_codex_worker_run_classifies_timeout(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, "sleep")
+    prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"], terminal_width=240)
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-run",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--prepare",
+            preparation.preparation_id,
+            "--timeout-minutes",
+            "0.001",
+            "--confirm-codex-worker",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: timeout" in result.output
+    runs = list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert len(runs) == 1
+    data = json.loads(runs[0].read_text(encoding="utf-8"))
+    assert data["status"] == "timeout"
+    assert data["timed_out"] is True
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+
 def test_codex_worker_ingest_blocks_missing_run_result_file_and_invalid_json(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)
@@ -4377,6 +4586,63 @@ def _worker_result_file(tmp_path: Path, *, status: str = "completed") -> Path:
     path = tmp_path / f"worker-result-{status or 'missing'}.json"
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return path
+
+
+def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | None = None) -> Path:
+    script = tmp_path / f"fake-worker-{mode}.py"
+    marker_arg = str(marker) if marker else ""
+    script.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import sys",
+                "import time",
+                "from pathlib import Path",
+                "",
+                "mode = sys.argv[1]",
+                "prompt_path = Path(sys.argv[2])",
+                "result_path = Path(sys.argv[3])",
+                "marker_path = Path(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None",
+                "print('fake stdout')",
+                "print('fake stderr', file=sys.stderr)",
+                "if marker_path:",
+                "    marker_path.write_text('spawned', encoding='utf-8')",
+                "if mode == 'sleep':",
+                "    time.sleep(5)",
+                "elif mode == 'fail':",
+                "    sys.exit(7)",
+                "elif mode == 'completed':",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'missing':",
+                "    pass",
+                "else:",
+                "    raise SystemExit(3)",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    args_template = f'"{script}" {mode} "{{prompt_path}}" "{{result_path}}" "{marker_arg}"'
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-config-set",
+            "--project",
+            "sample",
+            "--command",
+            sys.executable,
+            "--args-template",
+            args_template,
+            "--timeout-minutes",
+            "1",
+            "--confirm-config",
+        ],
+        terminal_width=240,
+    )
+    assert result.exit_code == 0, result.output
+    return script
 
 
 def _record_worker_review(*, status: str = "reviewed_passed") -> None:
