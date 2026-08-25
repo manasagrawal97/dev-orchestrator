@@ -233,7 +233,8 @@ Recommended next tasks:
 3. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task - prepared through preview; real launch deferred to normal PowerShell.
 4. TASK-DEVO-153: Codex subprocess dogfood hardening and recovery polish - completed.
 5. Normal-PowerShell real Codex subprocess continuation for `Dogfood152`, only from a safe launcher/context.
-6. Later: usage-limit/retry handling and batch Codex-worker loop design.
+6. TASK-DEVO-154: Batch Codex-worker loop design - completed in `docs/architecture/codex-worker-batch-loop-design.md`.
+7. Later: implementation, usage-limit/retry handling, and broader automation only after the v1 safety gates are fake-tested.
 
 TASK-DEVO-150 is complete and remains conservative: it adds workspace-only config plus dry-run preview artifacts without launching Codex or calling AI/API. TASK-DEVO-151 is complete and adds a one-task subprocess execution command with fake-command tests. TASK-DEVO-153 hardens that path with the real `codex exec` argument shape, stdin prompt passing, strict JSON output guidance, BOM-tolerant ingest, and clearer completed-run next actions. Real Codex execution remains a separate dogfood task.
 

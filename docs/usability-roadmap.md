@@ -97,6 +97,8 @@ TASK-DEVO-151 adds `codex-worker-run`, the first one-task subprocess execution c
 
 TASK-DEVO-153 hardens the TASK-DEVO-152 retry path: the default command now uses the real `codex exec -s workspace-write --output-last-message` shape with prompt content on stdin, worker ingest accepts UTF-8 BOM JSON and explains strict-JSON failures clearly, completed queue-worker output stops advertising stale prepare/ingest commands, and disposable manual-runner scheduler guidance is easier to find.
 
+TASK-DEVO-154 designs the next Codex-worker batch loop before implementation. The design keeps v1 intentionally small: process one approved queue item at a time, reuse the proven prepare/run/ingest/review/validation/trusted-delivery primitives, stop at the first unsafe or human-evidence boundary, and avoid parallel workers, UI actions, direct Codex commits/pushes, or automatic trust of subprocess output.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

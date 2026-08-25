@@ -254,6 +254,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: batch Codex worker loop, automatic retry, automatic ingest/review/validation/delivery, UI actions, PersonalOS, AI/API calls, parallel workers, or delivery safety weakening.
 - Status: TASK-DEVO-152 reached preview and TASK-DEVO-153 completed hardening. The next safe step is a normal-PowerShell real Codex subprocess continuation only from a safe launcher/context.
 
+### TASK-DEVO-154: Batch Codex-Worker Loop Design
+
+- Goal: Design how Devo should process multiple approved queue items with Codex subprocess execution while keeping v1 one-task-at-a-time and evidence-gated.
+- Scope: `docs/architecture/codex-worker-batch-loop-design.md`, proposed `codex-worker-batch-run` command shape, state machine, stop conditions, retry/resume behavior, safety gates, evidence requirements, trusted-runner delivery behavior, scheduler/manual-runner behavior, expected artifacts, CLI UX examples, out-of-scope boundaries, and TASK-DEVO-155 acceptance criteria.
+- Not in scope: implementation, real Codex execution, batch worker automation, parallel workers, automatic review, automatic validation, UI actions, AI/API calls, PersonalOS, scheduler modification, or delivery safety weakening.
+- Status: Design-only. TASK-DEVO-155 should implement the smallest fake-tested v1 around existing one-task primitives.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
