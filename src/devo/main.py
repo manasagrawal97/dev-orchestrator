@@ -135,6 +135,7 @@ from .project_planning import (
     CodexExecutionResult,
     CodexWorkerConfigValidationResult,
     CodexWorkerFlowSummary,
+    CodexWorkerBatchRunResult,
     CodexWorkerIngest,
     CodexWorkerIngestResult,
     CodexWorkerPreparation,
@@ -256,6 +257,7 @@ from .project_planning import (
     start_execution_queue,
     step_queue_worker_run,
     set_codex_worker_subprocess_config,
+    run_codex_worker_batch,
     run_queue_worker_once,
     retry_queue_worker_run,
     fail_queue_worker_run,
@@ -924,6 +926,52 @@ def _print_codex_worker_subprocess_run_result(result: CodexWorkerSubprocessRunRe
     console.print(f"Next action: {result.next_action or run.next_action}", soft_wrap=True)
     console.print(
         "Safety: this command does not auto-ingest, review, validate, deliver, commit, push, complete the queue, call Codex Desktop, or call AI/API.",
+        soft_wrap=True,
+    )
+
+
+def _print_codex_worker_batch_run_result(result: CodexWorkerBatchRunResult) -> None:
+    run = result.batch_run
+    console.print(f"[bold]Codex worker batch run: {run.batch_worker_run_id}[/bold]")
+    console.print(f"Project: {run.project}")
+    console.print(f"Policy: {run.policy_id}")
+    console.print(f"Status: {run.status}")
+    console.print(f"Stop reason: {run.stop_reason or 'none'}", soft_wrap=True)
+    console.print(f"Dry run: {run.dry_run}")
+    console.print(f"Max items: {run.max_items}")
+    console.print(f"Max cycles: {run.max_cycles}")
+    console.print(f"Processed items: {run.processed_items}")
+    console.print(f"Queue-worker run: {run.queue_worker_run_id or 'none'}")
+    console.print(f"Queue item: {run.queue_item_id or 'none'}")
+    console.print(f"Task: {run.task_id or 'none'}")
+    console.print(f"Preparation: {run.preparation_id or 'none'}")
+    console.print(f"Codex worker run: {run.codex_worker_run_id or 'none'}")
+    console.print(f"Ingest: {run.ingest_id or 'none'}")
+    console.print("Steps:")
+    if not run.steps:
+        console.print("  - none")
+    for step in run.steps:
+        console.print(
+            f"  - Step {step.step_number}: {step.action} [{step.status}] | "
+            f"run={step.queue_worker_run_id or 'none'} item={step.queue_item_id or 'none'} "
+            f"task={step.task_id or 'none'} prepare={step.preparation_id or 'none'} "
+            f"worker={step.codex_worker_run_id or 'none'} ingest={step.ingest_id or 'none'}",
+            soft_wrap=True,
+        )
+        if step.detail:
+            console.print(f"    {step.detail}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or run.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or run.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Mutation occurred: {result.mutation_occurred}")
+    console.print(f"Batch JSON: {_named_path(Path(result.batch_run_json_path)) if result.batch_run_json_path else 'not written'}")
+    console.print(f"Batch Markdown: {_named_path(Path(result.batch_run_markdown_path)) if result.batch_run_markdown_path else 'not written'}")
+    console.print(f"Next action: {result.next_action or run.next_action or 'none'}", soft_wrap=True)
+    console.print(
+        "Safety: codex-worker-batch-run v1 processes at most one queue item and stops at review, validation, delivery, failure, timeout, usage-limit, scope, or scheduler gates. It does not run parallel workers, validate automatically, create delivery automatically, run trusted runner, commit, push, or complete queue items.",
         soft_wrap=True,
     )
 
@@ -4770,6 +4818,99 @@ def run_codex_worker_subprocess_command(
         console.print(f"Suggested next command: devo project codex-worker-run-preview --project {project_name} --run {run_id} --prepare {preparation_id}")
         raise typer.Exit(1) from exc
     _print_codex_worker_subprocess_run_result(result)
+
+
+@project_app.command("codex-worker-batch-run")
+def run_codex_worker_batch_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Approved execution policy id."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the next eligible one-item Codex worker batch step without mutating artifacts."),
+    max_items: int = typer.Option(1, "--max-items", help="Maximum queue items to process. V1 supports exactly 1."),
+    max_cycles: int = typer.Option(1, "--max-cycles", help="Maximum batch cycles to process. V1 supports exactly 1."),
+    require_scheduler_healthy: bool = typer.Option(
+        True,
+        "--require-scheduler-healthy/--no-require-scheduler-healthy",
+        help="Require a healthy trusted delivery runner schedule before executing mutations.",
+    ),
+    recorded_by: str | None = typer.Option(None, "--recorded-by", help="Optional person or process recording this batch attempt."),
+    note: str = typer.Option("", "--note", help="Optional note stored on the batch-run artifact."),
+    confirm_codex_batch_run: bool = typer.Option(False, "--confirm-codex-batch-run", help="Confirm one configured Codex worker subprocess batch item."),
+) -> None:
+    """Run one approved queue item through Codex subprocess execution and stop at the next evidence gate."""
+    project_name = _resolve_project(project_name)
+    if max_items != 1:
+        console.print("Codex worker batch-run v1 supports exactly one item; use --max-items 1.")
+        raise typer.Exit(1)
+    if max_cycles != 1:
+        console.print("Codex worker batch-run v1 supports exactly one cycle; use --max-cycles 1.")
+        raise typer.Exit(1)
+    if not dry_run and not confirm_codex_batch_run:
+        console.print("codex-worker-batch-run requires --confirm-codex-batch-run unless --dry-run is used.")
+        console.print(
+            "Safety: this command can spawn one configured worker subprocess. It does not review, validate, create delivery, run trusted runner, commit, push, or process parallel work.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        preview = run_codex_worker_batch(
+            project_name,
+            policy_id,
+            dry_run=True,
+            max_items=max_items,
+            max_cycles=max_cycles,
+            recorded_by=recorded_by,
+            note=note,
+        )
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1) from exc
+
+    if dry_run:
+        if require_scheduler_healthy:
+            scheduler_status = get_delivery_runner_schedule_status(project_name)
+            _print_approved_queue_run_scheduler_gate(scheduler_status, blocked=False)
+        else:
+            console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
+        _print_codex_worker_batch_run_result(preview)
+        if preview.blockers:
+            raise typer.Exit(1)
+        return
+
+    if preview.blockers:
+        console.print("Preview blocked before scheduler/execution.")
+        _print_codex_worker_batch_run_result(preview)
+        raise typer.Exit(1)
+
+    if require_scheduler_healthy:
+        scheduler_status = get_delivery_runner_schedule_status(project_name)
+        blocked_by_scheduler = scheduler_status.health != "healthy"
+        _print_approved_queue_run_scheduler_gate(scheduler_status, blocked=blocked_by_scheduler)
+        if blocked_by_scheduler:
+            console.print(
+                "Safety: no queue-worker mutation, Codex subprocess, validation, runner-watch, commit, or push was run because scheduler health was not confirmed.",
+                soft_wrap=True,
+            )
+            raise typer.Exit(1)
+    else:
+        console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
+
+    try:
+        result = run_codex_worker_batch(
+            project_name,
+            policy_id,
+            dry_run=False,
+            max_items=max_items,
+            max_cycles=max_cycles,
+            recorded_by=recorded_by,
+            note=note,
+        )
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        raise typer.Exit(1) from exc
+    _print_codex_worker_batch_run_result(result)
+    if result.blockers or result.batch_run.status in {"blocked", "failed", "paused", "no_ready_item"}:
+        raise typer.Exit(1)
 
 
 @project_app.command("codex-worker-prepare")

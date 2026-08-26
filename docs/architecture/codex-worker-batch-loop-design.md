@@ -11,7 +11,7 @@ TASK-DEVO-154 designs the next Codex worker layer before implementation. The goa
 - trusted runner remains the only delivery path
 - unsafe or ambiguous states always stop the loop
 
-This document is design-only. TASK-DEVO-155 should implement from this design without broad architecture changes.
+This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest.
 
 ## 2. Current Proven Flow
 

@@ -259,7 +259,14 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Design how Devo should process multiple approved queue items with Codex subprocess execution while keeping v1 one-task-at-a-time and evidence-gated.
 - Scope: `docs/architecture/codex-worker-batch-loop-design.md`, proposed `codex-worker-batch-run` command shape, state machine, stop conditions, retry/resume behavior, safety gates, evidence requirements, trusted-runner delivery behavior, scheduler/manual-runner behavior, expected artifacts, CLI UX examples, out-of-scope boundaries, and TASK-DEVO-155 acceptance criteria.
 - Not in scope: implementation, real Codex execution, batch worker automation, parallel workers, automatic review, automatic validation, UI actions, AI/API calls, PersonalOS, scheduler modification, or delivery safety weakening.
-- Status: Design-only. TASK-DEVO-155 should implement the smallest fake-tested v1 around existing one-task primitives.
+- Status: Completed as design-only. TASK-DEVO-155 implemented the smallest fake-tested v1 around existing one-task primitives.
+
+### TASK-DEVO-155: Batch Codex-Worker Loop V1
+
+- Goal: Add the first safe command that coordinates one approved queue item through the Codex worker subprocess path.
+- Scope: `devo project codex-worker-batch-run --project <project> --policy <POL-ID> --confirm-codex-batch-run`, `--dry-run`, scheduler health gating by default, queue-worker selection, Codex prompt preparation, one configured subprocess run, strict JSON ingest, batch-run artifacts, and stop-at-review behavior.
+- Not in scope: real Codex execution during implementation, parallel workers, multiple items per invocation, automatic review, automatic validation, automatic delivery, trusted runner execution, commit, push, queue completion, UI controls, AI/API calls, PersonalOS, scheduler mutation, or delivery safety weakening.
+- Status: Completed. V1 is capped to one item and one cycle, uses fake-worker tests for subprocess outcomes, writes artifacts under `workspace/projects/<project>/codex-worker/batch-runs/<CWBR-ID>/`, and stops on missing/invalid JSON, failed process, timeout, usage-limit, scope warning/violation, scheduler unhealthy, policy drift, dirty repo, no eligible item, or the worker review gate.
 
 ### Future Spikes
 

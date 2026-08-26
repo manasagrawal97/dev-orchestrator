@@ -23,6 +23,7 @@ from devo.project_planning import (
     build_project_intake_status,
     calculate_project_progress,
     create_execution_queue_from_batch,
+    codex_worker_batch_run_directory,
     codex_worker_config_artifact_path,
     codex_worker_run_preview_directory,
     codex_worker_subprocess_run_directory,
@@ -34,6 +35,7 @@ from devo.project_planning import (
     list_codex_worker_preparations,
     list_batch_approvals,
     list_execution_queues,
+    list_codex_worker_batch_runs,
     list_queue_worker_runs,
     get_queue_worker_handoff_checklist,
     load_batch_approval,
@@ -2842,6 +2844,252 @@ def test_codex_worker_run_classifies_timeout(tmp_path: Path, monkeypatch) -> Non
     assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
 
 
+def test_codex_worker_batch_run_dry_run_does_not_spawn_subprocess(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    marker = tmp_path / "spawned-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--dry-run",
+            "--no-require-scheduler-healthy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Codex worker batch run:" in result.output
+    assert "Status: dry_run_ready" in result.output
+    assert "Dry run: True" in result.output
+    assert "Mutation occurred: False" in result.output
+    assert "not written" in result.output
+    assert not marker.exists()
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_run_executes_one_fake_worker_and_stops_at_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: waiting_review" in result.output
+    assert "Stop reason: worker review missing" in result.output
+    assert "codex worker subprocess run attempted" in result.output
+    assert "codex worker result ingested" in result.output
+    assert "queue-worker advanced to review gate" in result.output
+    assert "Processed items: 1" in result.output
+    assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
+    assert "Safety: codex-worker-batch-run v1 processes at most one queue item" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_review"
+    assert run.selected_queue_item_id == "QI001"
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+    assert len(list_codex_worker_preparations("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_ingests("sample", workspace_root=workspace)) == 1
+    batch_runs = list_codex_worker_batch_runs("sample", workspace_root=workspace)
+    assert len(batch_runs) == 1
+    batch_run = batch_runs[0]
+    assert batch_run.status == "waiting_review"
+    assert batch_run.queue_worker_run_id == "QWR-0001"
+    assert batch_run.ingest_id is not None
+    assert len(list(codex_worker_batch_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-batch-run.md"))) == 1
+    assert _target_snapshot(project_path) == before_target
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_text"),
+    [
+        ("missing", "completed_missing_result"),
+        ("invalid_json", "structured text, not a JSON object"),
+        ("fail", "failed_process"),
+        ("usage_limit", "worker result status is usage_limit"),
+    ],
+)
+def test_codex_worker_batch_run_stops_on_unsafe_fake_worker_results(tmp_path: Path, monkeypatch, mode: str, expected_text: str) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, mode)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert expected_text in result.output
+    batch_runs = list_codex_worker_batch_runs("sample", workspace_root=workspace)
+    assert len(batch_runs) == 1
+    assert batch_runs[0].status in {"blocked", "paused", "failed"}
+    if mode == "usage_limit":
+        ingests = list_codex_worker_ingests("sample", workspace_root=workspace)
+        assert len(ingests) == 1
+        assert ingests[0].status == "usage_limit"
+    elif mode != "invalid_json":
+        assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_run_reports_no_eligible_item_without_subprocess(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    before_target = _target_snapshot(project_path)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    completed_items = [item.model_copy(update={"status": "completed"}) for item in queue.items]
+    queue_json.write_text(
+        queue.model_copy(
+            update={
+                "status": "completed",
+                "items": completed_items,
+                "pending_count": 0,
+                "running_count": 0,
+                "completed_count": len(completed_items),
+                "current_item_id": None,
+            }
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "no eligible queue item" in result.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_run_scheduler_gate_blocks_before_mutation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    before_target = _target_snapshot(project_path)
+
+    def fake_schedule_status(project_name: str) -> DeliveryRunnerScheduleStatus:
+        return DeliveryRunnerScheduleStatus(
+            project=project_name,
+            installed=True,
+            enabled=False,
+            health="unhealthy",
+            task_query_result="status_ok",
+            next_action="Repair scheduler before running worker automation.",
+        )
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", fake_schedule_status)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "trusted runner scheduler is not healthy" in result.output
+    assert "no queue-worker mutation, Codex subprocess" in result.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_run_limits_v1_to_one_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--max-items",
+            "2",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "supports exactly one item" in result.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_codex_worker_ingest_blocks_missing_run_result_file_and_invalid_json(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)
@@ -4674,6 +4922,12 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "elif mode == 'completed':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'usage_limit':",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'usage_limit', 'summary': 'fake worker hit usage limit', 'work_performed': [], 'changed_files': [], 'commands_run': [], 'risks': ['usage limit'], 'recommended_next_action': '', 'usage_limit_details': 'usage exhausted'}, indent=2), encoding='utf-8')",
+                "elif mode == 'invalid_json':",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text('status: completed\\nsummary: fake structured text\\n', encoding='utf-8')",
                 "elif mode == 'missing':",
                 "    pass",
                 "else:",

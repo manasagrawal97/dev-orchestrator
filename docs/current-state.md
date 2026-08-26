@@ -40,8 +40,8 @@ The working loop is:
 
 - Latest completed dogfood task: TASK-DEVO-152 prepared the real Codex subprocess dogfood on disposable project `Dogfood152` through `codex-worker-run-preview`; real Codex launch was deferred to normal PowerShell because this Codex/sandbox context would be recursive/unclear.
 - Latest hardening task: TASK-DEVO-153 updates the Codex subprocess default to the real `codex exec -s workspace-write --output-last-message` shape, passes generated prompts on stdin, tightens strict-JSON worker output guidance, accepts UTF-8 BOM JSON ingest, and removes stale completed queue-worker next-action text.
-- Latest design task: TASK-DEVO-154 adds `docs/architecture/codex-worker-batch-loop-design.md`, a design-only plan for a safe v1 Codex worker batch loop that processes approved queue items one at a time and stops at review, validation, delivery, scheduler, dirty-repo, invalid-result, timeout, usage-limit, failed-process, or scope-violation boundaries.
-- Latest implementation task: TASK-DEVO-148 prompt-file worker guidance polish from dogfood findings
+- Latest implementation task: TASK-DEVO-155 adds `devo project codex-worker-batch-run`, a one-item-at-a-time coordinator around queue-worker selection, prompt preparation, configured subprocess execution, strict JSON ingest, and review-gate stopping. It is fake-worker tested and does not run parallel workers, review, validation, delivery, trusted runner, commit, push, or queue completion.
+- Latest prompt-file implementation task: TASK-DEVO-148 prompt-file worker guidance polish from dogfood findings
 - Latest subprocess checkpoint task: TASK-DEVO-149 Codex subprocess execution design checkpoint
 - Latest assisted queue polish task: TASK-DEVO-144 push-only runner recovery, approved queue continuation, evidence wording, and flow-summary defaults
 - Latest queue-worker ergonomics task: TASK-DEVO-135 Queue-worker evidence intake and policy usability hardening
@@ -55,8 +55,7 @@ The working loop is:
 - Latest PersonalOS dogfood milestone: warning cleanup completed with RZ10012 0, MUD0002 0, passing build, and 16 remaining generated Razor CS8669 warnings documented/ignored for now.
 - Latest pushed commit before TASK-035 reliability work: `4987b30 docs: register DevOrchestrator validation commands`
 - Phase 1 MVP status: complete after TASK-DEVO-124 and checkpointed with the `phase-1-mvp` tag.
-- Active focus: Phase 2 autonomy. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas using `delivery runner-watch --once --confirm-runner-watch`, the precise `delivery runner-run --request ...` fallback, or an explicitly installed local scheduled runner.
-- Next recommended task: TASK-DEVO-155 should implement the small v1 `codex-worker-batch-run` design from `docs/architecture/codex-worker-batch-loop-design.md`, using fake subprocess tests and preserving one-task-at-a-time execution. A normal-PowerShell real Codex retry for `Dogfood152` remains separate and should happen only from a safe launcher/context.
+- Active focus: Phase 2 autonomy. The standard delivery direction remains `delivery runner-request` from Codex/sandbox, then trusted local PowerShell runner execution by Manas using `delivery runner-watch --once --confirm-runner-watch`, the precise `delivery runner-run --request ...` fallback, or an explicitly installed local scheduled runner. The next recommended step is to dogfood `codex-worker-batch-run` on a disposable project before using it on live Devo or PersonalOS work.
 - PersonalOS validation registry exists in Devo workspace at `workspace/projects/PersonalOS/validation-commands.json`.
 - PersonalOS validation commands are high risk, approval required, and disabled by default.
 - DevOrchestrator validation registry exists in Devo workspace at `workspace/projects/DevOrchestrator/validation-commands.json`.

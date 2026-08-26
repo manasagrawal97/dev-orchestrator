@@ -59,6 +59,7 @@ Devo already has:
 - Explicit workspace-only Batch approval/review artifacts and decisions
 - Codex subprocess config and dry-run run-preview artifacts without launching Codex
 - One-task Codex subprocess execution command with fake-command tests, plus a disposable `Dogfood152` real-run preparation that reaches preview and defers real Codex launch to normal PowerShell; TASK-DEVO-153 hardens the real Codex CLI command shape and strict JSON result boundary
+- One-item Codex worker batch-run coordinator that selects an approved queue item, prepares a prompt package, runs one configured subprocess, ingests strict JSON, writes batch-run artifacts, and stops at review without automatic validation, delivery, commit, push, queue completion, or parallel work
 
 These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives.
 
@@ -219,8 +220,9 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 77. TASK-DEVO-152: Real Codex subprocess dogfood for one safe disposable task - prepared through preview.
 78. TASK-DEVO-153: Codex subprocess dogfood hardening and recovery polish - completed.
 79. TASK-DEVO-154: Batch Codex-worker loop design - completed.
-80. TASK-DEVO-155: Batch Codex-worker loop v1 implementation - next.
-81. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+80. TASK-DEVO-155: Batch Codex-worker loop v1 implementation - completed.
+81. Next: dogfood `codex-worker-batch-run` on a disposable project before using it on live Devo or PersonalOS work.
+82. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 

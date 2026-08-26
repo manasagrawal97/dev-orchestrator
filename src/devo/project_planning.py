@@ -47,6 +47,7 @@ CODEX_WORKER_INGESTS_DIR_NAME = "ingests"
 CODEX_WORKER_CONFIG_DIR_NAME = "config"
 CODEX_WORKER_RUN_PREVIEWS_DIR_NAME = "run-previews"
 CODEX_WORKER_SUBPROCESS_RUNS_DIR_NAME = "runs"
+CODEX_WORKER_BATCH_RUNS_DIR_NAME = "batch-runs"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
 WORKER_REVIEWS_DIR_NAME = "reviews"
@@ -862,6 +863,68 @@ class CodexWorkerSubprocessRunResult(BaseModel):
     planned_command_path: str | None = None
     dry_run: bool = False
     mutation_occurred: bool = True
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class CodexWorkerBatchRunStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_number: int
+    action: str
+    status: str = "ok"
+    detail: str = ""
+    queue_worker_run_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    preparation_id: str | None = None
+    codex_worker_run_id: str | None = None
+    ingest_id: str | None = None
+
+
+class CodexWorkerBatchRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    batch_worker_run_id: str
+    policy_id: str
+    queue_id: str | None = None
+    queue_worker_run_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    preparation_id: str | None = None
+    codex_worker_run_id: str | None = None
+    ingest_id: str | None = None
+    status: str = "blocked"
+    stop_reason: str = ""
+    dry_run: bool = False
+    max_items: int = 1
+    max_cycles: int = 1
+    processed_items: int = 0
+    mutation_occurred: bool = False
+    steps: list[CodexWorkerBatchRunStep] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    recorded_by: str | None = None
+    note: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+
+
+class CodexWorkerBatchRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    batch_run: CodexWorkerBatchRun
+    batch_run_json_path: str | None = None
+    batch_run_markdown_path: str | None = None
+    dry_run: bool = False
+    mutation_occurred: bool = False
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     next_action: str = ""
@@ -2170,6 +2233,23 @@ def codex_worker_subprocess_run_artifact_paths(
     )
 
 
+def codex_worker_batch_run_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    root = workspace_root or get_workspace_root()
+    return root / "projects" / project_name / CODEX_WORKER_PREPARATION_DIR_NAME / CODEX_WORKER_BATCH_RUNS_DIR_NAME
+
+
+def codex_worker_batch_run_artifact_paths(
+    project_name: str,
+    batch_worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    directory = codex_worker_batch_run_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(batch_worker_run_id)
+    return (
+        directory / "codex-worker-batch-run.json",
+        directory / "codex-worker-batch-run.md",
+    )
+
+
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -2258,6 +2338,34 @@ def load_queue_worker_run(project_name: str, run_id: str, workspace_root: Path |
     if not json_path.exists():
         return None
     return QueueWorkerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_codex_worker_batch_runs(project_name: str, workspace_root: Path | None = None) -> list[CodexWorkerBatchRun]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    directory = codex_worker_batch_run_directory(project_name, workspace_root=root)
+    runs: list[CodexWorkerBatchRun] = []
+    if not directory.exists():
+        return []
+    for path in sorted(directory.glob("*/codex-worker-batch-run.json")):
+        try:
+            runs.append(CodexWorkerBatchRun.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(runs, key=lambda item: item.updated_at, reverse=True)
+
+
+def load_codex_worker_batch_run(
+    project_name: str,
+    batch_worker_run_id: str,
+    workspace_root: Path | None = None,
+) -> CodexWorkerBatchRun | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = codex_worker_batch_run_artifact_paths(project_name, batch_worker_run_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return CodexWorkerBatchRun.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
 def list_codex_worker_preparations(project_name: str, workspace_root: Path | None = None) -> list[CodexWorkerPreparation]:
@@ -3198,6 +3306,386 @@ def create_codex_worker_preparation(
     template_md_path.write_text(_render_worker_result_template_markdown(cleaned_recorded_by, now), encoding="utf-8")
     markdown_path.write_text(render_codex_worker_preparation_markdown(preparation), encoding="utf-8")
     return preparation, json_path, markdown_path, prompt_path, template_json_path, template_md_path
+
+
+def run_codex_worker_batch(
+    project_name: str,
+    policy_id: str,
+    *,
+    dry_run: bool = False,
+    max_items: int = 1,
+    max_cycles: int = 1,
+    recorded_by: str | None = None,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> CodexWorkerBatchRunResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_policy_id = _normalize_policy_id(policy_id)
+    if max_items != 1:
+        msg = "Codex worker batch-run v1 supports exactly one item per invocation; use --max-items 1."
+        raise ValueError(msg)
+    if max_cycles != 1:
+        msg = "Codex worker batch-run v1 supports exactly one cycle per invocation; use --max-cycles 1."
+        raise ValueError(msg)
+
+    now = datetime.now(UTC)
+    steps: list[CodexWorkerBatchRunStep] = []
+    warnings: list[str] = []
+    blockers: list[str] = []
+    mutation_occurred = False
+
+    def add_step(
+        action: str,
+        *,
+        status: str = "ok",
+        detail: str = "",
+        queue_worker_run_id: str | None = None,
+        queue_item_id: str | None = None,
+        task_id: str | None = None,
+        preparation_id: str | None = None,
+        codex_worker_run_id: str | None = None,
+        ingest_id: str | None = None,
+    ) -> None:
+        steps.append(
+            CodexWorkerBatchRunStep(
+                step_number=len(steps) + 1,
+                action=action,
+                status=status,
+                detail=detail,
+                queue_worker_run_id=queue_worker_run_id,
+                queue_item_id=queue_item_id,
+                task_id=task_id,
+                preparation_id=preparation_id,
+                codex_worker_run_id=codex_worker_run_id,
+                ingest_id=ingest_id,
+            )
+        )
+
+    def build_result(
+        *,
+        status: str,
+        stop_reason: str,
+        next_action: str,
+        queue_id: str | None = None,
+        queue_worker_run_id: str | None = None,
+        queue_item_id: str | None = None,
+        task_id: str | None = None,
+        preparation_id: str | None = None,
+        codex_worker_run_id: str | None = None,
+        ingest_id: str | None = None,
+        processed_items: int = 0,
+        write_artifact: bool = True,
+    ) -> CodexWorkerBatchRunResult:
+        nonlocal mutation_occurred
+        completed_at = datetime.now(UTC) if status in {"waiting_review", "paused", "failed", "blocked", "no_ready_item"} else None
+        batch_run = CodexWorkerBatchRun(
+            project=project_name,
+            batch_worker_run_id=_next_codex_worker_batch_run_id(project_name, workspace_root=root),
+            policy_id=normalized_policy_id,
+            queue_id=queue_id,
+            queue_worker_run_id=queue_worker_run_id,
+            queue_item_id=queue_item_id,
+            task_id=task_id,
+            preparation_id=preparation_id,
+            codex_worker_run_id=codex_worker_run_id,
+            ingest_id=ingest_id,
+            status=status,
+            stop_reason=stop_reason,
+            dry_run=dry_run,
+            max_items=max_items,
+            max_cycles=max_cycles,
+            processed_items=processed_items,
+            mutation_occurred=mutation_occurred,
+            steps=steps,
+            warnings=_dedupe(warnings),
+            blockers=_dedupe(blockers),
+            next_action=next_action,
+            recorded_by=recorded_by.strip() if recorded_by and recorded_by.strip() else None,
+            note=note.strip(),
+            created_at=now,
+            updated_at=datetime.now(UTC),
+            completed_at=completed_at,
+        )
+        json_path: Path | None = None
+        markdown_path: Path | None = None
+        if write_artifact and not dry_run:
+            batch_run, json_path, markdown_path = _write_codex_worker_batch_run(project_name, batch_run, workspace_root=root)
+            mutation_occurred = True
+            batch_run = batch_run.model_copy(update={"mutation_occurred": True})
+            _write_codex_worker_batch_run(project_name, batch_run, workspace_root=root)
+        return CodexWorkerBatchRunResult(
+            project=project_name,
+            policy_id=normalized_policy_id,
+            batch_run=batch_run,
+            batch_run_json_path=str(json_path) if json_path else None,
+            batch_run_markdown_path=str(markdown_path) if markdown_path else None,
+            dry_run=dry_run,
+            mutation_occurred=mutation_occurred,
+            warnings=_dedupe(warnings),
+            blockers=_dedupe(blockers),
+            next_action=next_action,
+        )
+
+    plan = plan_queue_worker_run(project_name, normalized_policy_id, workspace_root=root)
+    add_step(
+        "policy and queue item checked",
+        status="ok" if plan.usable else "blocked",
+        detail=plan.next_action,
+        queue_item_id=plan.selected_queue_item_id,
+        task_id=plan.selected_task_id,
+    )
+    warnings = _dedupe([*warnings, *plan.warnings])
+    blockers = _dedupe([*blockers, *plan.blockers])
+    if not plan.usable:
+        return build_result(
+            status=plan.status or "blocked",
+            stop_reason="no eligible queue item" if plan.status == "no_ready_item" else "policy or queue selection blocked",
+            next_action=plan.next_action,
+            queue_id=plan.queue_id,
+            queue_item_id=plan.selected_queue_item_id,
+            task_id=plan.selected_task_id,
+            write_artifact=not dry_run,
+        )
+    if dry_run:
+        return build_result(
+            status="dry_run_ready",
+            stop_reason="dry run only",
+            next_action=(
+                f"Run exactly one Codex worker batch item: devo project codex-worker-batch-run --project {project_name} "
+                f"--policy {normalized_policy_id} --confirm-codex-batch-run"
+            ),
+            queue_id=plan.queue_id,
+            queue_item_id=plan.selected_queue_item_id,
+            task_id=plan.selected_task_id,
+            write_artifact=False,
+        )
+
+    step = step_queue_worker_run(project_name, normalized_policy_id, dry_run=False, workspace_root=root)
+    mutation_occurred = mutation_occurred or step.mutated
+    warnings = _dedupe([*warnings, *step.warnings])
+    blockers = _dedupe([*blockers, *step.blockers])
+    add_step(
+        "queue-worker run created or selected",
+        status="ok" if not step.blockers and step.new_status == "waiting_worker" else "blocked",
+        detail=f"{step.previous_status or 'none'} -> {step.new_status or 'none'}; {step.action_taken}",
+        queue_worker_run_id=step.run_id,
+        queue_item_id=step.selected_queue_item_id,
+        task_id=step.selected_task_id,
+    )
+    run = load_queue_worker_run(project_name, step.run_id, workspace_root=root) if step.run_id else None
+    if step.blockers or not run or run.status != "waiting_worker":
+        if not run:
+            blockers.append("Queue-worker run was not created or could not be loaded.")
+        return build_result(
+            status=step.new_status or "blocked",
+            stop_reason="queue-worker run is not waiting for worker execution",
+            next_action=step.next_action,
+            queue_id=run.queue_id if run else None,
+            queue_worker_run_id=step.run_id,
+            queue_item_id=step.selected_queue_item_id,
+            task_id=step.selected_task_id,
+        )
+
+    preparations = [
+        item
+        for item in list_codex_worker_preparations(project_name, workspace_root=root)
+        if item.queue_worker_run_id == run.run_id
+    ]
+    if preparations:
+        preparation = preparations[0]
+        add_step(
+            "codex worker preparation reused",
+            detail=preparation.next_action,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+        )
+    else:
+        preparation, _json_path, _markdown_path, _prompt_path, _template_json_path, _template_md_path = create_codex_worker_preparation(
+            project_name,
+            run.run_id,
+            recorded_by=recorded_by,
+            note=note,
+            workspace_root=root,
+        )
+        mutation_occurred = True
+        warnings = _dedupe([*warnings, *preparation.warnings])
+        add_step(
+            "codex worker preparation created",
+            detail=preparation.next_action,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+        )
+
+    try:
+        subprocess_result = execute_codex_worker_subprocess_run(
+            project_name,
+            run.run_id,
+            preparation.preparation_id,
+            recorded_by=recorded_by,
+            note=note,
+            workspace_root=root,
+        )
+    except ValueError as exc:
+        blockers.append(str(exc))
+        add_step(
+            "codex worker subprocess blocked",
+            status="blocked",
+            detail=str(exc),
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+        )
+        return build_result(
+            status="blocked",
+            stop_reason="codex worker subprocess preflight blocked",
+            next_action="Inspect subprocess configuration and retry only after blockers are resolved.",
+            queue_id=run.queue_id,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+        )
+    mutation_occurred = True
+    subprocess_run = subprocess_result.subprocess_run
+    warnings = _dedupe([*warnings, *subprocess_result.warnings])
+    blockers = _dedupe([*blockers, *subprocess_result.blockers])
+    add_step(
+        "codex worker subprocess run attempted",
+        status="ok" if subprocess_run.status == "completed_with_result" else "blocked",
+        detail=f"status={subprocess_run.status}; exit={subprocess_run.exit_code if subprocess_run.exit_code is not None else 'none'}",
+        queue_worker_run_id=run.run_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        preparation_id=preparation.preparation_id,
+        codex_worker_run_id=subprocess_run.codex_worker_run_id,
+    )
+    if subprocess_run.status != "completed_with_result":
+        blockers.append(f"Codex worker subprocess stopped with status {subprocess_run.status}.")
+        return build_result(
+            status="blocked",
+            stop_reason=subprocess_run.status,
+            next_action=subprocess_run.next_action,
+            queue_id=run.queue_id,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+            codex_worker_run_id=subprocess_run.codex_worker_run_id,
+        )
+
+    try:
+        ingest_result = create_codex_worker_ingest(
+            project_name,
+            run.run_id,
+            Path(subprocess_run.expected_result_path),
+            preparation_id=preparation.preparation_id,
+            recorded_by=recorded_by,
+            note=note,
+            workspace_root=root,
+        )
+    except ValueError as exc:
+        blockers.append(str(exc))
+        add_step(
+            "codex worker result ingest blocked",
+            status="blocked",
+            detail=str(exc),
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+            codex_worker_run_id=subprocess_run.codex_worker_run_id,
+        )
+        return build_result(
+            status="blocked",
+            stop_reason="worker result ingest blocked",
+            next_action="Inspect the worker result file, fix JSON/result status, then retry ingest or rerun the worker safely.",
+            queue_id=run.queue_id,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+            codex_worker_run_id=subprocess_run.codex_worker_run_id,
+        )
+    mutation_occurred = True
+    ingest = ingest_result.ingest
+    warnings = _dedupe([*warnings, *ingest_result.warnings])
+    blockers = _dedupe([*blockers, *ingest_result.blockers])
+    add_step(
+        "codex worker result ingested",
+        status="ok" if ingest.status == "completed" and not ingest_result.blockers else "blocked",
+        detail=f"worker result status={ingest.status}",
+        queue_worker_run_id=run.run_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        preparation_id=preparation.preparation_id,
+        codex_worker_run_id=subprocess_run.codex_worker_run_id,
+        ingest_id=ingest.ingest_id,
+    )
+    if ingest.status != "completed" or ingest_result.blockers:
+        blockers.append(f"Worker result status is {ingest.status}; batch-run must stop before review/validation/delivery.")
+        status = "paused" if ingest.status in {"blocked", "usage_limit"} else "failed"
+        return build_result(
+            status=status,
+            stop_reason=f"worker result status is {ingest.status}",
+            next_action=ingest.next_action or ingest_result.next_action,
+            queue_id=run.queue_id,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+            codex_worker_run_id=subprocess_run.codex_worker_run_id,
+            ingest_id=ingest.ingest_id,
+        )
+
+    review_step = step_queue_worker_run(project_name, normalized_policy_id, run_id=run.run_id, dry_run=False, workspace_root=root)
+    mutation_occurred = mutation_occurred or review_step.mutated
+    warnings = _dedupe([*warnings, *review_step.warnings])
+    blockers = _dedupe([*blockers, *review_step.blockers])
+    add_step(
+        "queue-worker advanced to review gate",
+        status="ok" if review_step.new_status == "waiting_review" and not review_step.blockers else "blocked",
+        detail=f"{review_step.previous_status or 'none'} -> {review_step.new_status or 'none'}; {review_step.action_taken}",
+        queue_worker_run_id=run.run_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        preparation_id=preparation.preparation_id,
+        codex_worker_run_id=subprocess_run.codex_worker_run_id,
+        ingest_id=ingest.ingest_id,
+    )
+    if review_step.blockers or review_step.new_status != "waiting_review":
+        return build_result(
+            status=review_step.new_status or "blocked",
+            stop_reason="queue-worker did not stop cleanly at review gate",
+            next_action=review_step.next_action,
+            queue_id=run.queue_id,
+            queue_worker_run_id=run.run_id,
+            queue_item_id=run.selected_queue_item_id,
+            task_id=run.selected_task_id,
+            preparation_id=preparation.preparation_id,
+            codex_worker_run_id=subprocess_run.codex_worker_run_id,
+            ingest_id=ingest.ingest_id,
+            processed_items=1,
+        )
+
+    return build_result(
+        status="waiting_review",
+        stop_reason="worker review missing",
+        next_action=_queue_worker_record_review_next_action(project_name, run.run_id),
+        queue_id=run.queue_id,
+        queue_worker_run_id=run.run_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        preparation_id=preparation.preparation_id,
+        codex_worker_run_id=subprocess_run.codex_worker_run_id,
+        ingest_id=ingest.ingest_id,
+        processed_items=1,
+    )
 
 
 def create_batch_execution_policy(
@@ -7168,6 +7656,63 @@ def render_codex_worker_subprocess_run_markdown(run: CodexWorkerSubprocessRun) -
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_codex_worker_batch_run_markdown(run: CodexWorkerBatchRun) -> str:
+    lines = [
+        f"# Codex Worker Batch Run {run.batch_worker_run_id}",
+        "",
+        f"- Project: `{run.project}`",
+        f"- Policy: `{run.policy_id}`",
+        f"- Queue: `{run.queue_id or 'none'}`",
+        f"- Queue-worker run: `{run.queue_worker_run_id or 'none'}`",
+        f"- Queue item: `{run.queue_item_id or 'none'}`",
+        f"- Task: `{run.task_id or 'none'}`",
+        f"- Preparation: `{run.preparation_id or 'none'}`",
+        f"- Codex worker run: `{run.codex_worker_run_id or 'none'}`",
+        f"- Ingest: `{run.ingest_id or 'none'}`",
+        f"- Status: `{run.status}`",
+        f"- Stop reason: `{run.stop_reason or 'none'}`",
+        f"- Dry run: `{run.dry_run}`",
+        f"- Max items: `{run.max_items}`",
+        f"- Max cycles: `{run.max_cycles}`",
+        f"- Processed items: `{run.processed_items}`",
+        f"- Mutation occurred: `{run.mutation_occurred}`",
+        f"- Recorded by: `{run.recorded_by or 'none'}`",
+        f"- Created: `{run.created_at.isoformat()}`",
+        f"- Updated: `{run.updated_at.isoformat()}`",
+        f"- Completed: `{run.completed_at.isoformat() if run.completed_at else 'none'}`",
+        "",
+        "## Steps",
+        "",
+    ]
+    if not run.steps:
+        lines.append("- none")
+    for step in run.steps:
+        detail = f" - {step.detail}" if step.detail else ""
+        lines.append(
+            f"- {step.step_number}. `{step.action}` [{step.status}]{detail} "
+            f"(run={step.queue_worker_run_id or 'none'}, item={step.queue_item_id or 'none'}, "
+            f"prepare={step.preparation_id or 'none'}, cwr={step.codex_worker_run_id or 'none'}, ingest={step.ingest_id or 'none'})"
+        )
+    lines.append("")
+    _append_list_section(lines, "Warnings", run.warnings)
+    _append_list_section(lines, "Blockers", run.blockers)
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            run.next_action or "none",
+            "",
+            "## Safety Note",
+            "",
+            "This batch-run artifact records a one-task-at-a-time Codex worker orchestration attempt. It does not auto-review, auto-validate, commit, push, bypass trusted delivery, run parallel workers, or modify PersonalOS.",
+            "",
+        ]
+    )
+    if run.note:
+        lines.extend(["## Note", "", run.note, ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_worker_preparation_prompt(
     preparation: CodexWorkerPreparation,
     run: QueueWorkerRun,
@@ -7933,6 +8478,16 @@ def _next_queue_worker_run_id(project_name: str, workspace_root: Path | None = N
         index += 1
 
 
+def _next_codex_worker_batch_run_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {run.batch_worker_run_id for run in list_codex_worker_batch_runs(project_name, workspace_root=workspace_root)}
+    index = 1
+    while True:
+        candidate = f"CWBR-{index:04d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
 def _build_batch_from_tasks(
     *,
     project_name: str,
@@ -8017,6 +8572,15 @@ def _write_queue_worker_run(project_name: str, run: QueueWorkerRun, workspace_ro
     _write_model(json_path, run)
     markdown_path.write_text(render_queue_worker_run_markdown(run), encoding="utf-8")
     _write_queue_worker_run_index(project_name, workspace_root=root)
+    return run, json_path, markdown_path
+
+
+def _write_codex_worker_batch_run(project_name: str, run: CodexWorkerBatchRun, workspace_root: Path | None = None) -> tuple[CodexWorkerBatchRun, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    json_path, markdown_path = codex_worker_batch_run_artifact_paths(project_name, run.batch_worker_run_id, workspace_root=root)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_model(json_path, run)
+    markdown_path.write_text(render_codex_worker_batch_run_markdown(run), encoding="utf-8")
     return run, json_path, markdown_path
 
 

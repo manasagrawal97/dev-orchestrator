@@ -99,6 +99,8 @@ TASK-DEVO-153 hardens the TASK-DEVO-152 retry path: the default command now uses
 
 TASK-DEVO-154 designs the next Codex-worker batch loop before implementation. The design keeps v1 intentionally small: process one approved queue item at a time, reuse the proven prepare/run/ingest/review/validation/trusted-delivery primitives, stop at the first unsafe or human-evidence boundary, and avoid parallel workers, UI actions, direct Codex commits/pushes, or automatic trust of subprocess output.
 
+TASK-DEVO-155 implements the first `codex-worker-batch-run` command from that design. It removes several operator handoff commands for one approved queue item by coordinating queue-worker selection, prompt preparation, one configured subprocess run, strict JSON ingest, and review-gate stopping. It remains intentionally conservative: one item/cycle per invocation, scheduler health checked by default, fake-worker tested, and no automatic review, validation, delivery, trusted runner execution, commit, push, queue completion, UI action, PersonalOS work, or parallel execution.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
