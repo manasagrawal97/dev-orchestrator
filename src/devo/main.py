@@ -653,6 +653,10 @@ def _print_execution_policy(policy: BatchExecutionPolicy, json_path: Path | None
         f"max_changed_files_per_task={policy.max_changed_files_per_task} max_total_changed_files={policy.max_total_changed_files}",
         soft_wrap=True,
     )
+    console.print(
+        f"Effective changed-file limit: {policy.max_changed_files_per_task} per task, {policy.max_total_changed_files} total for this policy.",
+        soft_wrap=True,
+    )
     console.print(f"Validation commands: {', '.join(policy.validation_commands) if policy.validation_commands else 'none'}", soft_wrap=True)
     console.print(f"Auto delivery: {policy.auto_delivery_allowed}")
     console.print(f"Auto push: {policy.auto_push_allowed}")
@@ -4420,11 +4424,11 @@ def create_execution_policy_command(
     title: str = typer.Option(..., "--title", help="Execution policy title."),
     queue_id: str | None = typer.Option(None, "--queue", help="Optional execution queue id."),
     allowed_tasks: list[str] | None = typer.Option(None, "--allowed-task", help="Allowed backlog task id. Repeatable or comma-separated."),
-    allowed_files: list[str] | None = typer.Option(None, "--allowed-file", help="Allowed file pattern. Repeatable or comma-separated."),
-    forbidden_files: list[str] | None = typer.Option(None, "--forbidden-file", help="Forbidden file pattern. Repeatable or comma-separated."),
+    allowed_files: list[str] | None = typer.Option(None, "--allowed-file", help='Allowed changed-file pattern, for example "docs/**" or "src/app.py". Repeatable or comma-separated.'),
+    forbidden_files: list[str] | None = typer.Option(None, "--forbidden-file", help='Forbidden changed-file pattern, for example ".env" or "**/secrets/**". Repeatable or comma-separated.'),
     max_tasks: int | None = typer.Option(None, "--max-tasks", help="Maximum tasks covered by this policy."),
     max_tasks_per_run: int = typer.Option(1, "--max-tasks-per-run", help="Maximum tasks a future worker may process per run."),
-    max_changed_files_per_task: int = typer.Option(20, "--max-changed-files-per-task", help="Maximum changed files allowed per task."),
+    max_changed_files_per_task: int = typer.Option(20, "--max-changed-files-per-task", help="Maximum changed files allowed per task; default 20, use smaller values for disposable dogfood or same-pattern maintenance."),
     validation_commands: list[str] | None = typer.Option(None, "--validation-command", help="Required validation command. Repeatable or comma-separated."),
     auto_delivery: bool = typer.Option(True, "--auto-delivery/--no-auto-delivery", help="Allow future runner-request creation within policy bounds."),
     auto_push: bool = typer.Option(True, "--auto-push/--no-auto-push", help="Allow future trusted runner push within policy bounds."),

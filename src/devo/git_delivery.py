@@ -32,6 +32,10 @@ GIT_READ_TIMEOUT_SECONDS = 8
 GLOBAL_IGNORE_WARNING_DETAIL = (
     "Git global ignore file is unreadable; this is non-blocking for delivery checks unless Git status or diff fails."
 )
+NO_UPSTREAM_GIT_DELIVERY_WARNING = (
+    "No upstream branch is configured; delivery can still be inspected, "
+    "but push guidance may be unavailable and trusted runner push may block or fail until an upstream push target exists."
+)
 
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("OPENAI_API_KEY", re.compile(r"\bOPENAI_API_KEY\s*[:=]\s*['\"]?([A-Za-z0-9_\-]{20,})", re.IGNORECASE)),
@@ -118,7 +122,7 @@ def get_git_repository_status(project_name: str, workspace_root: Path | None = N
         else:
             warnings.append("Could not determine ahead/behind counts for upstream branch.")
     else:
-        warnings.append("No upstream branch is configured.")
+        warnings.append(NO_UPSTREAM_GIT_DELIVERY_WARNING)
     if not remote_detected:
         warnings.append("No Git remote is configured.")
 
@@ -205,6 +209,8 @@ def run_delivery_check(
 
     if status.behind and status.behind > 0:
         blockers.append("Remote upstream has commits not present locally; review or integrate before pushing.")
+    if not status.upstream_branch:
+        warnings.append(NO_UPSTREAM_GIT_DELIVERY_WARNING)
     if not status.remote_detected:
         warnings.append("No Git remote detected; push guidance may be unavailable.")
     checks.append("push readiness inspected")

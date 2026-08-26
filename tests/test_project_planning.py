@@ -905,6 +905,7 @@ def test_execution_policy_create_creates_draft_policy_artifact(tmp_path: Path, m
 
     assert result.exit_code == 0, result.output
     assert "Execution policy saved" in result.output
+    assert "Effective changed-file limit: 20 per task" in result.output
     policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
     assert policy is not None
     assert policy.status == "draft"

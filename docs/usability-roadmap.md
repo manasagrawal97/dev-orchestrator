@@ -101,7 +101,9 @@ TASK-DEVO-154 designs the next Codex-worker batch loop before implementation. Th
 
 TASK-DEVO-155 implements the first `codex-worker-batch-run` command from that design. It removes several operator handoff commands for one approved queue item by coordinating queue-worker selection, prompt preparation, one configured subprocess run, strict JSON ingest, and review-gate stopping. It remains intentionally conservative: one item/cycle per invocation, scheduler health checked by default, fake-worker tested, and no automatic review, validation, delivery, trusted runner execution, commit, push, queue completion, UI action, PersonalOS work, or parallel execution.
 
-TASK-DEVO-156 dogfoods that command against disposable `Dogfood156` with a fake subprocess worker. The dry-run is non-mutating, confirmed execution processes one queue item, strict JSON ingest works, the review gate stops correctly, and manual review plus validation evidence can create a trusted delivery request. The main usability follow-up is TASK-DEVO-157: make disposable delivery readiness and policy option hints clearer before broader use.
+TASK-DEVO-156 dogfoods that command against disposable `Dogfood156` with a fake subprocess worker. The dry-run is non-mutating, confirmed execution processes one queue item, strict JSON ingest works, the review gate stops correctly, and manual review plus validation evidence can create a trusted delivery request. It identified one usability follow-up: make disposable delivery readiness and policy option hints clearer before broader use.
+
+TASK-DEVO-157 completes that polish. Disposable dogfood docs now show local bare remote plus upstream setup, no-upstream delivery warnings now say trusted runner push may block or fail, and execution policy output makes the effective changed-file limit visible.
 
 ### Work Packages - MVP Added
 

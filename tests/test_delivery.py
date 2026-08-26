@@ -255,6 +255,25 @@ def test_delivery_runner_request_creates_snapshot_artifacts(tmp_path: Path, monk
     assert (request_dir / "runner-request-index.json").exists()
 
 
+def test_delivery_runner_request_warns_when_upstream_is_missing(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    _git(repo, "branch", "--unset-upstream")
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted runner"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "trusted delivery request may still be created" in result.output
+    assert "runner push/guarded push may block or fail" in result.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert any("upstream push target exists" in warning for warning in request.warnings)
+
+
 def test_delivery_runner_request_refuses_clean_repo_by_default(tmp_path: Path, monkeypatch) -> None:
     workspace, _repo_path = _workspace(tmp_path, monkeypatch)
 

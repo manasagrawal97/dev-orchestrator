@@ -125,6 +125,8 @@ The trusted delivery request path was reached safely:
 
 The trusted runner was not executed for the disposable project because the target repo lacked a configured upstream after the sandbox-local push failure. This was treated as not safe enough to force inside this task. The live DevOrchestrator docs delivery should still use the normal trusted runner request flow.
 
+TASK-DEVO-157 follows up on this caveat by making disposable dogfood setup guidance explicit: use a local bare remote with a `file:///...` URL when practical, run the initial `git push -u origin main`, and verify `git branch -vv` plus `git remote -v` before treating a disposable repo as ready for trusted runner delivery.
+
 ## Verdict
 
 PASS with delivery-runner caveat.
@@ -140,3 +142,4 @@ TASK-DEVO-157 should polish batch-run dogfood friction:
 - Consider a disposable-dogfood setup checklist that explicitly verifies upstream before attempting runner delivery.
 - Consider reducing noisy "worker-reported validation" wording after review evidence when independent validation is still intentionally pending.
 
+TASK-DEVO-157 scope keeps this as polish only. It should not add real Codex batch dogfood, parallel workers, UI actions, PersonalOS changes, or delivery safety weakening.

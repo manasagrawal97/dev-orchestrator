@@ -29,6 +29,10 @@ DELIVERY_INDEX_JSON = "delivery-index.json"
 READY = "ready"
 WARNINGS = "warnings"
 BLOCKED = "blocked"
+NO_UPSTREAM_DELIVERY_WARNING = (
+    "No upstream branch is configured; a trusted delivery request may still be created, "
+    "but runner push/guarded push may block or fail until an upstream push target exists."
+)
 
 
 class DeliveryCheck(BaseModel):
@@ -740,8 +744,10 @@ def run_delivery_readiness_check(
         warnings.extend(status.warnings)
         if not status.working_tree_clean:
             warnings.append("Target repository has uncommitted changes; review them before delivery.")
+        if not status.upstream_branch:
+            warnings.append(NO_UPSTREAM_DELIVERY_WARNING)
         if not remote:
-            warnings.append("No Git remote/upstream was detected for delivery.")
+            warnings.append("No Git remote was detected for delivery.")
         legacy_check = run_delivery_check(project_name=project_name, workspace_root=root)
         secret_signal_paths = [signal.path for signal in legacy_check.secret_signals]
     except ValueError as exc:
@@ -2502,7 +2508,7 @@ def run_delivery_runner_request(
         if not status.current_branch:
             blockers.append("Current Git branch could not be determined.")
         if not status.upstream_branch:
-            warnings.append("No upstream branch was detected; push preview may block.")
+            warnings.append(NO_UPSTREAM_DELIVERY_WARNING)
 
         probe = _probe_git_index_lock(repo_path)
         run.index_lock_probe_result = _probe_result_payload(probe)

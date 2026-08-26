@@ -273,7 +273,14 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Prove `codex-worker-batch-run` on a disposable project before using it for live Devo or PersonalOS work.
 - Scope: disposable `Dogfood156`, three small note-file tasks, approved execution policy, fake Python subprocess worker, dry-run, confirmed one-item execution, strict JSON ingest, manual review evidence, manual validation evidence, and trusted delivery request creation.
 - Not in scope: real Codex CLI, PersonalOS, parallel workers, automatic review, automatic validation, automatic trusted runner execution, direct worker commit/push, source feature work, UI actions, or delivery safety weakening.
-- Status: Completed with a delivery-readiness caveat. The core path passed and is documented in `docs/dogfood/task-devo-156-batch-run-fake-worker-dogfood.md`; the disposable trusted runner was not executed because the sandbox-local temp repo lacked a working upstream after a local bare push failure. TASK-DEVO-157 should polish that operator friction.
+- Status: Completed with a delivery-readiness caveat. The core path passed and is documented in `docs/dogfood/task-devo-156-batch-run-fake-worker-dogfood.md`; the disposable trusted runner was not executed because the sandbox-local temp repo lacked a working upstream after a local bare push failure. TASK-DEVO-157 polishes that operator friction.
+
+### TASK-DEVO-157: Batch-Run Dogfood Polish And Disposable Delivery Readiness
+
+- Goal: Make the TASK-DEVO-156 caveat easier to avoid before broader batch-run dogfood.
+- Scope: disposable repo setup guidance, local bare remote/upstream checklist, clearer no-upstream delivery warnings, and `execution-policy-create` changed-file-limit discoverability.
+- Not in scope: real Codex batch dogfood, parallel workers, UI actions, PersonalOS, AI/API calls, scheduler mutation, backup/restore, delivery safety weakening, or manual Git delivery.
+- Status: Completed. Disposable projects should verify `git branch -vv` and `git remote -v` after an initial `git push -u origin main`; no-upstream delivery requests are still allowed when policy permits, but now warn that trusted runner push may block or fail until an upstream push target exists.
 
 ### Future Spikes
 

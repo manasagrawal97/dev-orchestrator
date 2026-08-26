@@ -277,11 +277,38 @@ When testing trusted delivery on a disposable project, create a real local Git s
 
 - initialize the temp target repository normally
 - add a valid disposable local bare remote before testing delivery push
+- prefer a `file:///...` remote URL for local bare remotes so Git has an explicit push target
+- run the first `git push -u origin main` before Devo delivery dogfood
+- verify `git branch -vv` shows an upstream branch before creating a trusted delivery request
 - treat a failed temp push as a real delivery safety stop
 - use `devo delivery runner-latest --project <project>` to confirm whether a request is still `requested`
 - if `runner-watch-latest` shows an older `no_pending` watch while `runner-latest` shows a requested item, run `runner-watch` again or use the precise `runner-run --request <REQ-ID>` fallback
 
-Do not bypass Devo delivery with manual `git add`, `git commit`, or `git push` during dogfood.
+Initial disposable repository setup may use normal Git commands to create the first commit and upstream. After Devo dogfood work begins, do not bypass Devo delivery with manual `git add`, `git commit`, or `git push`.
+
+Example disposable setup from normal PowerShell:
+
+```powershell
+$root = "E:\DevOrchestrator\pt-dogfood-example"
+$work = Join-Path $root "work"
+$remote = Join-Path $root "remote.git"
+New-Item -ItemType Directory -Path $work -Force | Out-Null
+git init $work
+git -C $work config user.email "dogfood@example.invalid"
+git -C $work config user.name "Devo Dogfood"
+Set-Content -Path (Join-Path $work "README.md") -Value "# Disposable dogfood`n"
+git -C $work add README.md
+git -C $work commit -m "chore: initialize disposable dogfood repo"
+git -C $work branch -M main
+git init --bare $remote
+$remoteUri = "file:///" + ($remote -replace "\\", "/")
+git -C $work remote add origin $remoteUri
+git -C $work push -u origin main
+git -C $work branch -vv
+git -C $work remote -v
+```
+
+`devo delivery runner-request` may still create a request when no upstream exists, because the trusted runner remains a separate safety gate. Treat the no-upstream warning as serious: runner push or guarded push may block or fail until the disposable repo has a verified upstream push target.
 
 ## Codex Handoff Prompts
 
