@@ -282,6 +282,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex batch dogfood, parallel workers, UI actions, PersonalOS, AI/API calls, scheduler mutation, backup/restore, delivery safety weakening, or manual Git delivery.
 - Status: Completed. Disposable projects should verify `git branch -vv` and `git remote -v` after an initial `git push -u origin main`; no-upstream delivery requests are still allowed when policy permits, but now warn that trusted runner push may block or fail until an upstream push target exists.
 
+### TASK-DEVO-158: Real Codex Batch-Run One-Item Dogfood
+
+- Goal: Prove `codex-worker-batch-run` with a real Codex subprocess on exactly one disposable queue item.
+- Scope: disposable `Dogfood158`, one task `T001`, allowed file `dogfood-note.md`, real Codex launched from normal PowerShell, strict JSON result ingest, manual review evidence, manual validation evidence, Devo delivery request, trusted runner commit/push, and clean final disposable repo.
+- Not in scope: PersonalOS, DevOrchestrator source edits by Codex, parallel workers, automatic review, automatic validation, direct Codex commit/push, UI actions, scheduler mutation, backup/restore, or larger batch execution.
+- Status: Completed with PASS verdict. Commit `3eff3c36515063a65de6283032364e2df467b540` was pushed to the disposable local bare remote. TASK-DEVO-159 should polish the false-positive `usage_limit_detected` readout, confusing validation evidence artifact names, and remaining completed-run next-action wording.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
