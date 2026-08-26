@@ -296,6 +296,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, PersonalOS, parallel workers, automatic review, automatic validation, automatic delivery, direct Codex commit/push, UI actions, scheduler mutation, backup/restore, or larger batch execution.
 - Status: Completed. The next safe step is continuation dogfood for another disposable queue item, still one item at a time.
 
+### TASK-DEVO-160: Multi-Item Fake-Worker Batch Continuation Dogfood
+
+- Goal: Prove `codex-worker-batch-run` can continue from completed item 1 to item 2 and item 3 before spending real Codex usage on a larger continuation run.
+- Scope: disposable `Dogfood160`, three docs-only note tasks, fake Python worker subprocess, one item per batch-run invocation, manual review and validation evidence, trusted delivery requests, trusted runner commit/push, and final queue completion.
+- Not in scope: real Codex execution, PersonalOS, parallel workers, automatic review, automatic validation, direct worker commit/push, UI actions, scheduler mutation, backup/restore, or larger real batch execution.
+- Status: Completed with PASS verdict. All three queue items completed and pushed. TASK-DEVO-161 should polish stale retry/run selection and completed-queue next-action wording found during the dogfood.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

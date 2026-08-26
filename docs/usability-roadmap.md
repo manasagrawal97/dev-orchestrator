@@ -107,6 +107,8 @@ TASK-DEVO-157 completes that polish. Disposable dogfood docs now show local bare
 
 TASK-DEVO-158 proves one real Codex batch-run item on disposable `Dogfood158` from normal PowerShell. It reaches real subprocess execution, strict JSON ingest, review gate, manual review and validation evidence, trusted runner delivery, push, and a clean final disposable repo. TASK-DEVO-159 completes the immediate readout polish from that dogfood: false-positive usage-limit wording from echoed schema text is reduced, validation evidence labels shared evidence artifacts clearly, and completed trusted-delivery next actions are terminal. The next usability step should prove continuation to another disposable item while keeping v1 one-task-at-a-time.
 
+TASK-DEVO-160 proves that continuation path with a fake subprocess worker before spending more real Codex usage. Disposable `Dogfood160` completes three queue items one at a time, with separate fake worker runs, strict JSON ingests, manual review and validation evidence, trusted delivery requests, trusted runner commits, push recovery, and a final completed queue. The main remaining usability issue is stale retry/run selection after a failed worker attempt; TASK-DEVO-161 should polish that before larger real Codex continuation dogfood.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
