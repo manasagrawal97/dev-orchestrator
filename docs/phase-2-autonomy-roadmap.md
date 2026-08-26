@@ -287,7 +287,14 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Prove `codex-worker-batch-run` with a real Codex subprocess on exactly one disposable queue item.
 - Scope: disposable `Dogfood158`, one task `T001`, allowed file `dogfood-note.md`, real Codex launched from normal PowerShell, strict JSON result ingest, manual review evidence, manual validation evidence, Devo delivery request, trusted runner commit/push, and clean final disposable repo.
 - Not in scope: PersonalOS, DevOrchestrator source edits by Codex, parallel workers, automatic review, automatic validation, direct Codex commit/push, UI actions, scheduler mutation, backup/restore, or larger batch execution.
-- Status: Completed with PASS verdict. Commit `3eff3c36515063a65de6283032364e2df467b540` was pushed to the disposable local bare remote. TASK-DEVO-159 should polish the false-positive `usage_limit_detected` readout, confusing validation evidence artifact names, and remaining completed-run next-action wording.
+- Status: Completed with PASS verdict. Commit `3eff3c36515063a65de6283032364e2df467b540` was pushed to the disposable local bare remote.
+
+### TASK-DEVO-159: Real Codex Batch-Run Polish
+
+- Goal: Polish the readout friction found during Dogfood158 before expanding real Codex batch dogfood.
+- Scope: reduce false-positive `usage_limit_detected` warnings from echoed schema/prompt text after successful completed results, label validation evidence as shared queue-worker evidence artifacts, tighten completed trusted-delivery next actions, and update docs.
+- Not in scope: real Codex execution, PersonalOS, parallel workers, automatic review, automatic validation, automatic delivery, direct Codex commit/push, UI actions, scheduler mutation, backup/restore, or larger batch execution.
+- Status: Completed. The next safe step is continuation dogfood for another disposable queue item, still one item at a time.
 
 ### Future Spikes
 

@@ -9978,7 +9978,7 @@ def _step_queue_worker_delivery_requested(
             "warnings": warnings,
             "policy_check_summary": policy_summary or run.policy_check_summary,
             "steps_run": [*run.steps_run, f"trusted delivery completed: {run.delivery_request_id}"],
-            "next_action": "No action needed; trusted delivery completed. Queue item completion remains an explicit operator step if needed.",
+            "next_action": "No action needed; trusted delivery completed.",
         }
     )
     if dry_run:
@@ -10401,8 +10401,31 @@ def _codex_worker_subprocess_exception_exit_code(exc: OSError) -> int:
 
 
 def _contains_usage_limit_hint(text: str) -> bool:
-    normalized = text.lower()
-    return any(pattern in normalized for pattern in ["usage limit", "rate limit", "quota", "limit reached", "try again later"])
+    normalized_lines = [line.strip().lower() for line in text.splitlines()]
+    strong_failure_patterns = [
+        "usage limit reached",
+        "usage limit exceeded",
+        "usage limit has been reached",
+        "rate limit",
+        "quota exceeded",
+        "quota has been exceeded",
+        "too many requests",
+        "try again later",
+    ]
+    schema_markers = [
+        "usage_limit",
+        "usage limit details",
+        "status: completed | failed | blocked | usage_limit",
+        "completed | failed | blocked | usage_limit",
+    ]
+    for line in normalized_lines:
+        if not line:
+            continue
+        if any(marker in line for marker in schema_markers):
+            continue
+        if any(pattern in line for pattern in strong_failure_patterns):
+            return True
+    return False
 
 
 def _configured_command_looks_like_codex(command: str) -> bool:

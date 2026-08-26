@@ -1717,7 +1717,8 @@ def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path
     assert worker_review.validation_evidence.evidence_record.recommended_next_action == "Prepare trusted delivery."
     assert worker_review.validation_evidence.evidence_record.recorded_by == "Validator"
     assert "Supporting artifact: workspace/reports/validation.md" in validation.output
-    assert "Validation evidence artifact JSON:" in validation.output
+    assert "Shared validation evidence artifact JSON:" in validation.output
+    assert "Validation evidence is stored with the shared queue-worker review/evidence record." in validation.output
     assert "Validation passed. Run approved-queue-run to create delivery request" in validation.output
 
 
@@ -1945,8 +1946,8 @@ def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatc
     assert "Stop reason: validation evidence missing" in waiting_validation.output
     assert "queue-worker-record-validation --project sample --run QWR-0001" in waiting_validation.output
     assert validation.exit_code == 0, validation.output
-    assert "Validation evidence artifact JSON:" in validation.output
-    assert "Validation evidence artifact Markdown:" in validation.output
+    assert "Shared validation evidence artifact JSON:" in validation.output
+    assert "Shared validation evidence artifact Markdown:" in validation.output
     assert delivery.exit_code == 0, delivery.output
     assert "created delivery runner request REQ-0001" in delivery.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
@@ -2928,6 +2929,39 @@ def test_codex_worker_batch_run_executes_one_fake_worker_and_stops_at_review(tmp
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_batch_run_does_not_flag_usage_limit_from_schema_echo(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "completed_schema_echo")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: waiting_review" in result.output
+    runs = list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert len(runs) == 1
+    subprocess_run = json.loads(runs[0].read_text(encoding="utf-8"))
+    assert subprocess_run["status"] == "completed_with_result"
+    assert subprocess_run["usage_limit_detected"] is False
+    assert not any("usage_limit_detected" in warning for warning in subprocess_run["warnings"])
+    assert _target_snapshot(project_path) == before_target
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_text"),
     [
@@ -3564,7 +3598,9 @@ def test_queue_worker_step_delivery_requested_marks_completed_after_trusted_runn
     latest = runner.invoke(app, ["project", "queue-worker-latest", "--project", "sample"], terminal_width=240)
     assert show.exit_code == 0, show.output
     assert latest.exit_code == 0, latest.output
-    assert "No action needed" in show.output
+    assert "Next action: No action needed; trusted delivery completed." in show.output
+    assert "Queue item completion remains" not in show.output
+    assert "Queue item completion remains" not in latest.output
     assert "codex-worker-ingest" not in show.output
     assert "codex-worker-ingest" not in latest.output
     run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
@@ -4923,6 +4959,12 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "elif mode == 'completed':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'completed_schema_echo':",
+                "    print('Expected result schema: status: completed | failed | blocked | usage_limit')",
+                "    print('Stop and report usage_limit if usage limits prevent completion.')",
+                "    print('- usage_limit_details')",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed with schema echo', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': '', 'usage_limit_details': ''}, indent=2), encoding='utf-8')",
                 "elif mode == 'usage_limit':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'usage_limit', 'summary': 'fake worker hit usage limit', 'work_performed': [], 'changed_files': [], 'commands_run': [], 'risks': ['usage limit'], 'recommended_next_action': '', 'usage_limit_details': 'usage exhausted'}, indent=2), encoding='utf-8')",

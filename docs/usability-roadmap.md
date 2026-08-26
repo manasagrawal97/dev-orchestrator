@@ -105,7 +105,7 @@ TASK-DEVO-156 dogfoods that command against disposable `Dogfood156` with a fake 
 
 TASK-DEVO-157 completes that polish. Disposable dogfood docs now show local bare remote plus upstream setup, no-upstream delivery warnings now say trusted runner push may block or fail, and execution policy output makes the effective changed-file limit visible.
 
-TASK-DEVO-158 proves one real Codex batch-run item on disposable `Dogfood158` from normal PowerShell. It reaches real subprocess execution, strict JSON ingest, review gate, manual review and validation evidence, trusted runner delivery, push, and a clean final disposable repo. The next usability polish is TASK-DEVO-159: reduce false-positive usage-limit wording, clarify validation evidence artifact names, and remove stale completed-run next-action hints.
+TASK-DEVO-158 proves one real Codex batch-run item on disposable `Dogfood158` from normal PowerShell. It reaches real subprocess execution, strict JSON ingest, review gate, manual review and validation evidence, trusted runner delivery, push, and a clean final disposable repo. TASK-DEVO-159 completes the immediate readout polish from that dogfood: false-positive usage-limit wording from echoed schema text is reduced, validation evidence labels shared evidence artifacts clearly, and completed trusted-delivery next actions are terminal. The next usability step should prove continuation to another disposable item while keeping v1 one-task-at-a-time.
 
 ### Work Packages - MVP Added
 

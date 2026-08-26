@@ -1260,9 +1260,11 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
     console.print(f"  Validation status: {result.evidence.validation_status or 'none'}")
     console.print(f"  Validation passed: {result.evidence.validation_passed}")
     console.print(f"  Delivery request exists: {result.evidence.delivery_request_exists}")
-    label = "Validation evidence artifact" if result.evidence_type == "validation" else "Evidence artifact"
+    label = "Shared validation evidence artifact" if result.evidence_type == "validation" else "Evidence artifact"
     console.print(f"{label} JSON: {_named_path(Path(result.record_json_path)) if result.record_json_path else 'none'}")
     console.print(f"{label} Markdown: {_named_path(Path(result.record_markdown_path)) if result.record_markdown_path else 'none'}")
+    if result.evidence_type == "validation":
+        console.print("Validation evidence is stored with the shared queue-worker review/evidence record.", soft_wrap=True)
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
     console.print("Warnings:")
     for warning in result.warnings or ["none"]:

@@ -122,10 +122,20 @@ Codex did not commit or push. Manual review and validation evidence were recorde
 2. Validation evidence artifact output still uses names like `review-WR001.json` and `review-WR001.md`, which is confusing for validation evidence.
 3. Some completed-run next-action wording may still mention an explicit operator step after completion. The main completed output is better, but the older wording remains visible in some artifacts.
 
+## TASK-DEVO-159 Follow-Up
+
+TASK-DEVO-159 keeps the successful Dogfood158 result intact and polishes the readouts found during the run:
+
+- Usage-limit detection now ignores echoed worker-result schema/prompt text such as `usage_limit` and `usage_limit_details`; explicit `status=usage_limit` result evidence and strong subprocess failure messages still stop safely.
+- Validation evidence output now labels the files as shared queue-worker review/evidence artifacts instead of implying a validation-only artifact.
+- Completed queue-worker delivery now records the final next action as `No action needed; trusted delivery completed.`
+
+The next expansion should be a multi-item continuation dogfood that still runs one queue item at a time. Parallel workers, automatic review, automatic validation, and direct Codex commit/push remain out of scope.
+
 ## Verdict
 
 PASS.
 
 TASK-DEVO-158 proves the first real one-item `codex-worker-batch-run` dogfood through disposable real Codex execution, strict JSON ingest, review gate, manual evidence gates, trusted runner delivery, push, and completed queue-worker state. No PersonalOS files were modified, no real Codex work was run against DevOrchestrator source, and Codex did not commit or push.
 
-Recommended next task: TASK-DEVO-159 should polish the three readout issues above before expanding to a larger real Codex batch dogfood.
+Recommended next task: run a continuation dogfood that proves the next eligible disposable queue item can proceed after a completed trusted delivery, still one task at a time.
