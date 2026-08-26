@@ -268,6 +268,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution during implementation, parallel workers, multiple items per invocation, automatic review, automatic validation, automatic delivery, trusted runner execution, commit, push, queue completion, UI controls, AI/API calls, PersonalOS, scheduler mutation, or delivery safety weakening.
 - Status: Completed. V1 is capped to one item and one cycle, uses fake-worker tests for subprocess outcomes, writes artifacts under `workspace/projects/<project>/codex-worker/batch-runs/<CWBR-ID>/`, and stops on missing/invalid JSON, failed process, timeout, usage-limit, scope warning/violation, scheduler unhealthy, policy drift, dirty repo, no eligible item, or the worker review gate.
 
+### TASK-DEVO-156: Batch-Run Fake Worker Dogfood
+
+- Goal: Prove `codex-worker-batch-run` on a disposable project before using it for live Devo or PersonalOS work.
+- Scope: disposable `Dogfood156`, three small note-file tasks, approved execution policy, fake Python subprocess worker, dry-run, confirmed one-item execution, strict JSON ingest, manual review evidence, manual validation evidence, and trusted delivery request creation.
+- Not in scope: real Codex CLI, PersonalOS, parallel workers, automatic review, automatic validation, automatic trusted runner execution, direct worker commit/push, source feature work, UI actions, or delivery safety weakening.
+- Status: Completed with a delivery-readiness caveat. The core path passed and is documented in `docs/dogfood/task-devo-156-batch-run-fake-worker-dogfood.md`; the disposable trusted runner was not executed because the sandbox-local temp repo lacked a working upstream after a local bare push failure. TASK-DEVO-157 should polish that operator friction.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
