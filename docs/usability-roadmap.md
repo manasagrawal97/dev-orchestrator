@@ -109,6 +109,8 @@ TASK-DEVO-158 proves one real Codex batch-run item on disposable `Dogfood158` fr
 
 TASK-DEVO-160 proves that continuation path with a fake subprocess worker before spending more real Codex usage. Disposable `Dogfood160` completes three queue items one at a time, with separate fake worker runs, strict JSON ingests, manual review and validation evidence, trusted delivery requests, trusted runner commits, push recovery, and a final completed queue. TASK-DEVO-161 polishes the main usability issue from that dogfood: stale active runs tied to completed items are ignored with warnings, retry-created runs link a worker run when possible, completed queues get clearer terminal guidance, and push failures point at `runner-recover-push`.
 
+TASK-DEVO-162 proves the real Codex version of that continuation shape on disposable `Dogfood162`: two real subprocess items complete one at a time, stop at review and validation gates, deliver only through trusted runner, and finish with all allowed items completed. The remaining usability gap is command/output ergonomics between items, not the core safety path.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

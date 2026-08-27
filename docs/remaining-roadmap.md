@@ -60,8 +60,9 @@ Devo already has:
 - Codex subprocess config and dry-run run-preview artifacts without launching Codex
 - One-task Codex subprocess execution command with fake-command tests, plus a disposable `Dogfood152` real-run preparation that reaches preview and defers real Codex launch to normal PowerShell; TASK-DEVO-153 hardens the real Codex CLI command shape and strict JSON result boundary
 - One-item Codex worker batch-run coordinator that selects an approved queue item, prepares a prompt package, runs one configured subprocess, ingests strict JSON, writes batch-run artifacts, and stops at review without automatic validation, delivery, commit, push, queue completion, or parallel work
+- Real Codex multi-item continuation dogfood on disposable `Dogfood162`, proving two queue items can complete one at a time through real subprocess execution, strict JSON ingest, manual evidence gates, trusted runner delivery, and final all-completed guidance
 
-These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives.
+These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives. TASK-DEVO-162 now shows the Phase 2 Codex-worker path can continue across multiple real disposable items while keeping review, validation, and trusted delivery gates explicit.
 
 ## Final Target Workflow
 

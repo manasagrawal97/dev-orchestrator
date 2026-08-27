@@ -11,7 +11,7 @@ TASK-DEVO-154 designs the next Codex worker layer before implementation. The goa
 - trusted runner remains the only delivery path
 - unsafe or ambiguous states always stop the loop
 
-This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery.
+This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner.
 
 ## 2. Current Proven Flow
 
@@ -40,6 +40,7 @@ Important proven constraints:
 - `codex-worker-ingest` accepts UTF-8 BOM JSON but still requires strict JSON.
 - Non-JSON structured text is blocked with operator guidance.
 - Delivery is still performed by trusted runner commands, not Codex.
+- Real multi-item continuation has been proven only in the disposable normal-PowerShell pattern documented by TASK-DEVO-162.
 
 ## 3. Proposed Command Shape
 
