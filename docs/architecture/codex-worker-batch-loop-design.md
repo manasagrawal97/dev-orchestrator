@@ -150,11 +150,14 @@ Recommended behavior:
 - `codex-worker-batch-run` may resume a known safe state.
 - Retry of a failed subprocess requires explicit operator confirmation.
 - Retry should create a new worker run or retry-linked artifact rather than overwriting old evidence.
+- Retry-created queue-worker runs should link a worker run before entering `waiting_worker`; if linking cannot be done safely, they should block rather than leaving a partial run.
+- Stale active queue-worker runs tied to completed items should not block selecting the next eligible item; Devo should warn when it ignores stale runs.
 - Usage limit should pause the queue-worker run and preserve stdout/stderr/result text.
 - Invalid JSON should preserve the raw result and tell the operator to normalize it or rerun with stricter JSON-only instructions.
 - Missing result should preserve process logs and expected result path.
 - Scope violation should not be retried until policy/scope is reviewed.
 - Delivery push failure should use existing trusted runner recovery, not rerun Codex.
+- Fake or scripted workers should parse the explicit `Task id:` line in the generated prompt rather than scanning broad objective or policy text.
 
 Suggested future commands:
 

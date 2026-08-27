@@ -631,6 +631,7 @@ def test_delivery_runner_recover_push_completes_committed_failed_push(tmp_path: 
 
     latest = runner.invoke(app, ["delivery", "runner-latest", "--project", "sample"], terminal_width=240)
     assert latest.exit_code == 0, latest.output
+    assert "safe push-only recovery path" in latest.output
     assert "runner-recover-push --project sample --request REQ-0001" in latest.output
 
     monkeypatch.setattr("devo.delivery._run_git", real_run_git)

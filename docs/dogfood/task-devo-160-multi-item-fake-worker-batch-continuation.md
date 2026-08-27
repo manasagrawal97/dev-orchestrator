@@ -155,6 +155,8 @@ Final queue state:
 6. Direct trusted runner push to the local bare `file:///...` remote still fails inside the restricted Codex/sandbox context with Git-for-Windows `sh.exe` signal pipe permission errors. Devo push recovery succeeds outside the sandbox.
 7. Review evidence output still uses the generic `Evidence artifact` label for review files, while validation evidence now uses the clearer shared validation evidence label from TASK-DEVO-159.
 
+TASK-DEVO-161 addresses items 1, 3, 4, 5, and 6 directly: generated worker prompts now tell scripted workers to parse the explicit `Task id:` line; stale active queue-worker runs tied to completed items are ignored with warnings; retry-created queue-worker runs create/link a fresh worker run when a handoff exists; completed queues get terminal no-action guidance; and push failure output points at `runner-recover-push`. Item 2 remains a possible future UX improvement because adding `--run` to `codex-worker-batch-run` would expand the command surface beyond targeted polish.
+
 ## Verdict
 
 PASS.

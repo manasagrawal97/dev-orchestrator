@@ -2719,7 +2719,7 @@ def recover_delivery_runner_push(
         next_action=(
             f"Runner push recovery completed for {request_id}."
             if completed.returncode == 0
-            else "Review the git push failure before retrying runner push recovery."
+            else f"Review the git push failure, then retry the safe push-only recovery path: {_runner_recover_push_command(project_name, request_id)}"
         ),
     )
     write_delivery_push_result(push, workspace_root=root)
@@ -3607,7 +3607,7 @@ def _runner_next_action(
     if status == "completed" and pushed:
         return f"Trusted delivery runner completed and pushed commit {commit_hash or 'unknown'}."
     if commit_hash and not pushed and status in {"blocked", "failed"}:
-        return _runner_recover_push_command(project_name, request_id)
+        return f"Use the safe push-only recovery path: {_runner_recover_push_command(project_name, request_id)}"
     if blockers:
         return "Resolve runner blockers before creating a new runner request: " + _summary_text(blockers)
     return _runner_run_command(project_name, request_id)
@@ -3632,7 +3632,7 @@ def _runner_latest_next_action(
     if request.status == "completed":
         return f"Runner request {request.request_id} is completed; no runner action needed."
     if latest_run and latest_run.status in {"blocked", "failed"} and latest_run.commit_hash and not latest_run.pushed:
-        return _runner_recover_push_command(project_name, request.request_id)
+        return f"Use the safe push-only recovery path: {_runner_recover_push_command(project_name, request.request_id)}"
     if latest_run and latest_run.status in {"blocked", "failed"}:
         return (
             f"Review {request.request_id} with devo delivery runner-show --project {project_name} "

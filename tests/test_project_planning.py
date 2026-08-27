@@ -1498,8 +1498,12 @@ def test_queue_worker_retry_requires_confirmation_and_creates_linked_attempt(tmp
     assert original.status == "failed"
     assert retry.retry_of == "QWR-0001"
     assert retry.selected_queue_item_id == "QI001"
-    assert retry.selected_worker_run_id is None
-    assert "run-create --project sample --handoff H001" in retry.next_action
+    assert retry.selected_worker_run_id == "WR002"
+    assert "queue-worker-handoff-show --project sample --run QWR-0002" in retry.next_action
+    worker_run = load_codex_worker_run("sample", "WR002", workspace_root=workspace)
+    assert worker_run is not None
+    assert worker_run.source_handoff_id == "H001"
+    assert worker_run.source_queue_item_id == "QI001"
 
 
 def test_queue_worker_retry_blocks_when_selected_item_no_longer_valid(tmp_path: Path, monkeypatch) -> None:
@@ -1523,6 +1527,52 @@ def test_queue_worker_retry_blocks_when_selected_item_no_longer_valid(tmp_path: 
     assert result.exit_code != 0
     assert "item status is completed" in result.output
     assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+
+
+def test_queue_worker_step_ignores_stale_active_run_for_completed_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+    created = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    items = [
+        queue.items[0].model_copy(update={"status": "completed"}),
+        queue.items[1].model_copy(update={"status": "pending"}),
+    ]
+    queue_json, queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(
+        queue.model_copy(
+            update={
+                "status": "running",
+                "items": items,
+                "current_item_id": None,
+                "pending_count": 1,
+                "running_count": 0,
+                "completed_count": 1,
+            }
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    queue_markdown.write_text("# Queue\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Ignoring stale queue-worker run QWR-0001" in result.output
+    assert "Action taken: created queue-worker run" in result.output
+    retry = load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace)
+    assert retry is not None
+    assert retry.selected_queue_item_id == "QI002"
+    assert retry.selected_task_id == "T002"
 
 
 def test_queue_worker_evidence_shows_missing_report_without_mutating_target(tmp_path: Path, monkeypatch) -> None:
@@ -2351,6 +2401,8 @@ def test_codex_worker_prepare_generates_prompt_and_result_templates(tmp_path: Pa
     assert "Do not push." in prompt_text
     assert "Allowed file pattern: src/**" in prompt_text
     assert "Forbidden file pattern: .env" in prompt_text
+    assert "- Task id: `T001`" in prompt_text
+    assert "Scripted/fake workers should parse this explicit `Task id:` line" in prompt_text
     assert "status: completed | failed | blocked | usage_limit" in prompt_text
     assert "codex-worker-ingest --project sample --run QWR-0001" in prompt_text
     data = json.loads(template_json.read_text(encoding="utf-8"))
@@ -3048,7 +3100,9 @@ def test_codex_worker_batch_run_reports_no_eligible_item_without_subprocess(tmp_
     )
 
     assert result.exit_code != 0
-    assert "no eligible queue item" in result.output
+    assert "Summary: All allowed queue items are completed." in result.output
+    assert "Stop reason: All allowed queue items are completed." in result.output
+    assert "No action needed; all allowed queue items are completed." in result.output
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
     assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
     assert list_codex_worker_ingests("sample", workspace_root=workspace) == []

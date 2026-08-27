@@ -3438,9 +3438,10 @@ def run_codex_worker_batch(
     warnings = _dedupe([*warnings, *plan.warnings])
     blockers = _dedupe([*blockers, *plan.blockers])
     if not plan.usable:
+        stop_reason = plan.selection_reason if plan.status == "no_ready_item" and plan.selection_reason else "policy or queue selection blocked"
         return build_result(
             status=plan.status or "blocked",
-            stop_reason="no eligible queue item" if plan.status == "no_ready_item" else "policy or queue selection blocked",
+            stop_reason=stop_reason,
             next_action=plan.next_action,
             queue_id=plan.queue_id,
             queue_item_id=plan.selected_queue_item_id,
@@ -3983,8 +3984,12 @@ def plan_queue_worker_run(project_name: str, policy_id: str, workspace_root: Pat
             next_action="Resolve policy blockers before queue-worker-run.",
         )
     assert queue is not None
+    stale_warnings = _stale_queue_worker_run_selection_warnings(project_name, policy.policy_id, queue, workspace_root=root)
+    warnings = _dedupe([*warnings, *stale_warnings])
     eligible, skipped = _select_policy_queue_items(project_name, policy, queue, workspace_root=root)
     if not eligible:
+        completed_reason = _all_allowed_queue_items_completed_reason(project_name, policy, queue, workspace_root=root)
+        selection_reason = completed_reason or "No pending or running queue item matched the approved policy bounds."
         return QueueWorkerPlan(
             project=project_name,
             policy_id=policy.policy_id,
@@ -3993,11 +3998,15 @@ def plan_queue_worker_run(project_name: str, policy_id: str, workspace_root: Pat
             batch_id=policy.batch_id,
             queue_id=queue.queue_id,
             skipped_queue_item_summaries=skipped,
-            blockers=["No pending or running queue item matched the approved policy bounds."],
+            blockers=[] if completed_reason else ["No pending or running queue item matched the approved policy bounds."],
             warnings=warnings,
             policy_check_summary=policy_summary,
-            selection_reason="No pending or running queue item matched the approved policy bounds.",
-            next_action="Review queue state and policy scope before retrying.",
+            selection_reason=selection_reason,
+            next_action=(
+                "No action needed; all allowed queue items are completed. Create/approve another queue or policy for more work."
+                if completed_reason
+                else "Review queue state and policy scope before retrying."
+            ),
         )
     selected = eligible[0]
     existing_worker = _latest_worker_run_for_queue_item(project_name, queue.queue_id, selected.item_id, workspace_root=root)
@@ -5031,8 +5040,17 @@ def retry_queue_worker_run(
     now = datetime.now(UTC)
     handoff = load_codex_handoff(project_name, previous.selected_handoff_id, workspace_root=root) if previous.selected_handoff_id else None
     status = "waiting_worker" if handoff else "handoff_ready"
+    worker_run: WorkerRun | None = None
+    worker_creation_step: list[str] = []
+    if handoff:
+        try:
+            worker_run, _worker_json, _worker_markdown = create_codex_worker_run_from_handoff(project_name, handoff.handoff_id, workspace_root=root)
+        except ValueError as exc:
+            msg = f"Retry could not create a linked worker run from handoff {handoff.handoff_id}: {exc}"
+            raise ValueError(msg) from exc
+        worker_creation_step.append(f"created retry Codex worker run: {worker_run.worker_run_id}")
     next_action = (
-        f"Create a fresh worker run from the handoff: devo worker codex run-create --project {project_name} --handoff {handoff.handoff_id}"
+        f"Review the handoff checklist: devo project queue-worker-handoff-show --project {project_name} --run <new-run-id>"
         if handoff
         else f"Create a fresh queue handoff: devo project handoff-next --project {project_name} --queue {previous.queue_id or '<queueId>'}"
     )
@@ -5045,19 +5063,30 @@ def retry_queue_worker_run(
         selected_queue_item_id=previous.selected_queue_item_id,
         selected_task_id=previous.selected_task_id,
         selected_handoff_id=handoff.handoff_id if handoff else None,
-        selected_worker_run_id=None,
+        selected_worker_run_id=worker_run.worker_run_id if worker_run else None,
         status=status,
         started_at=now,
         updated_at=now,
         approver=previous.approver,
         retry_of=previous.run_id,
-        steps_run=[f"retry of queue worker run {previous.run_id}", "policy and selected queue item rechecked"],
+        steps_run=[
+            f"retry of queue worker run {previous.run_id}",
+            "policy and selected queue item rechecked",
+            *worker_creation_step,
+        ],
         warnings=policy_warnings,
         policy_check_summary=policy_summary or previous.policy_check_summary,
         selection_reason=previous.selection_reason,
         pause_reason=status,
         next_action=next_action,
     )
+    if worker_run:
+        retry = retry.model_copy(
+            update={
+                "next_action": f"Review the handoff checklist: devo project queue-worker-handoff-show --project {project_name} --run {retry.run_id}",
+                "handoff_checklist": build_queue_worker_handoff_checklist(project_name, retry, workspace_root=root),
+            }
+        )
     return _write_queue_worker_run(project_name, retry, workspace_root=root)
 
 
@@ -7232,6 +7261,7 @@ def render_codex_handoff_prompt(
                 "",
                 f"- Item id: `{queue_item.item_id}`",
                 f"- Task id: `{queue_item.task_id}`",
+                "- Scripted/fake workers should parse this explicit `Task id:` line for deterministic task selection.",
                 f"- Title: {queue_item.title}",
                 f"- Status: `{queue_item.status}`",
                 "",
@@ -7734,6 +7764,7 @@ def render_codex_worker_preparation_prompt(
         f"- Queue-worker run id: `{preparation.queue_worker_run_id}`",
         f"- Queue item id: `{preparation.queue_item_id or 'none'}`",
         f"- Task id: `{preparation.task_id or 'none'}`",
+        "- Scripted/fake workers should parse this explicit `Task id:` line for deterministic task selection.",
         f"- Task objective: {checklist.objective}",
         "",
         "## 2. Handoff Checklist",
@@ -9020,6 +9051,41 @@ def _select_policy_queue_items(
     return eligible[: max(1, policy.max_tasks_per_run)], skipped
 
 
+def _policy_queue_items_static_scope(
+    project_name: str,
+    policy: BatchExecutionPolicy,
+    queue: ExecutionQueue,
+    workspace_root: Path | None = None,
+) -> list[QueueItem]:
+    root = workspace_root or get_workspace_root()
+    allowed_tasks = {_normalize_task_id(task_id) for task_id in policy.allowed_task_ids}
+    allowed_items = {_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids}
+    scoped: list[QueueItem] = []
+    for item in queue.items:
+        if _normalize_batch_id(item.batch_id) != _normalize_batch_id(policy.batch_id):
+            continue
+        if allowed_tasks and _normalize_task_id(item.task_id) not in allowed_tasks:
+            continue
+        if allowed_items and _normalize_queue_item_id(item.item_id) not in allowed_items:
+            continue
+        if not _try_get_backlog_task(project_name, item.task_id, root):
+            continue
+        scoped.append(item)
+    return scoped
+
+
+def _all_allowed_queue_items_completed_reason(
+    project_name: str,
+    policy: BatchExecutionPolicy,
+    queue: ExecutionQueue,
+    workspace_root: Path | None = None,
+) -> str:
+    scoped = _policy_queue_items_static_scope(project_name, policy, queue, workspace_root=workspace_root)
+    if scoped and all(item.status == "completed" for item in scoped):
+        return "All allowed queue items are completed."
+    return ""
+
+
 def _queue_worker_item_skip_reason(
     project_name: str,
     policy: BatchExecutionPolicy,
@@ -9054,6 +9120,43 @@ def _queue_worker_existing_worker_blockers(worker_run: WorkerRun | None, review:
     if review and review.validation_evidence.validation_status == "failed":
         blockers.append(f"Existing worker review {review.review_id} has failed validation evidence.")
     return blockers
+
+
+def _stale_queue_worker_run_selection_warnings(
+    project_name: str,
+    policy_id: str,
+    queue: ExecutionQueue,
+    workspace_root: Path | None = None,
+) -> list[str]:
+    warnings: list[str] = []
+    normalized_policy = _normalize_policy_id(policy_id)
+    newer_completed_items: set[str] = set()
+    for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
+        if run.policy_id != normalized_policy:
+            continue
+        item_id = run.selected_queue_item_id
+        item = _find_queue_item(queue.items, item_id) if item_id else None
+        if run.status == "completed" and item_id:
+            newer_completed_items.add(_normalize_queue_item_id(item_id))
+            continue
+        reason = _queue_worker_run_selection_skip_reason(run, item, newer_completed_items)
+        if reason:
+            warnings.append(f"Ignoring stale queue-worker run {run.run_id}: {reason}.")
+    return _dedupe(warnings)
+
+
+def _queue_worker_run_selection_skip_reason(
+    run: QueueWorkerRun,
+    item: QueueItem | None,
+    newer_completed_items: set[str],
+) -> str:
+    if run.status in {"completed", "cancelled", "failed"}:
+        return ""
+    if item and item.status in {"completed", "cancelled", "skipped", "superseded"}:
+        return f"selected queue item {item.item_id} is already {item.status}"
+    if run.selected_queue_item_id and _normalize_queue_item_id(run.selected_queue_item_id) in newer_completed_items:
+        return f"a newer completed queue-worker run exists for item {run.selected_queue_item_id}"
+    return ""
 
 
 def _latest_worker_run_for_queue_item(
@@ -9577,9 +9680,16 @@ def _select_queue_worker_step_run(
     if run_id:
         return _require_queue_worker_run(project_name, run_id, workspace_root)
     terminal_statuses = {"completed", "cancelled", "failed"}
+    newer_completed_items: set[str] = set()
     for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
         if run.policy_id == policy_id and run.status not in terminal_statuses:
+            queue = load_execution_queue(project_name, run.queue_id, workspace_root=workspace_root) if run.queue_id else None
+            item = _find_queue_item(queue.items, run.selected_queue_item_id) if queue and run.selected_queue_item_id else None
+            if _queue_worker_run_selection_skip_reason(run, item, newer_completed_items):
+                continue
             return run
+        if run.policy_id == policy_id and run.status == "completed" and run.selected_queue_item_id:
+            newer_completed_items.add(_normalize_queue_item_id(run.selected_queue_item_id))
     return None
 
 

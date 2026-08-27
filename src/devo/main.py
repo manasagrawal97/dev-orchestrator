@@ -694,6 +694,8 @@ def _print_execution_policy_check(result: ExecutionPolicyCheckResult) -> None:
 
 def _print_queue_worker_plan(plan: QueueWorkerPlan) -> None:
     console.print(f"[bold]Queue worker plan: {plan.policy_id}[/bold]")
+    if plan.status == "no_ready_item" and plan.selection_reason == "All allowed queue items are completed.":
+        console.print("Summary: All allowed queue items are completed.")
     console.print(f"Status: {plan.status}")
     console.print(f"Usable: {plan.usable}")
     console.print(f"Batch: {plan.batch_id or 'none'}")
@@ -939,6 +941,8 @@ def _print_codex_worker_batch_run_result(result: CodexWorkerBatchRunResult) -> N
     console.print(f"[bold]Codex worker batch run: {run.batch_worker_run_id}[/bold]")
     console.print(f"Project: {run.project}")
     console.print(f"Policy: {run.policy_id}")
+    if run.status == "no_ready_item" and run.stop_reason == "All allowed queue items are completed.":
+        console.print("Summary: All allowed queue items are completed.")
     console.print(f"Status: {run.status}")
     console.print(f"Stop reason: {run.stop_reason or 'none'}", soft_wrap=True)
     console.print(f"Dry run: {run.dry_run}")

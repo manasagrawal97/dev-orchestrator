@@ -303,6 +303,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, PersonalOS, parallel workers, automatic review, automatic validation, direct worker commit/push, UI actions, scheduler mutation, backup/restore, or larger real batch execution.
 - Status: Completed with PASS verdict. All three queue items completed and pushed. TASK-DEVO-161 should polish stale retry/run selection and completed-queue next-action wording found during the dogfood.
 
+### TASK-DEVO-161: Batch Continuation Friction Polish
+
+- Goal: Fix the narrow continuation friction found in TASK-DEVO-160 without changing the conservative one-item-at-a-time architecture.
+- Scope: stale active queue-worker run selection, retry worker-run linkage, completed-queue/no-ready wording, push-only recovery guidance, and generated prompt guidance for fake/scripted worker task selection.
+- Not in scope: real Codex execution, parallel workers, UI actions, PersonalOS, automatic review/validation/delivery, direct worker commit/push, scheduler mutation, or backup/restore.
+- Status: Completed. The next safe dogfood can recheck disposable continuation behavior before larger real Codex continuation work.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.
