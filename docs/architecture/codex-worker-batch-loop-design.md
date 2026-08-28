@@ -11,7 +11,7 @@ TASK-DEVO-154 designs the next Codex worker layer before implementation. The goa
 - trusted runner remains the only delivery path
 - unsafe or ambiguous states always stop the loop
 
-This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner. TASK-DEVO-163 records the readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`.
+This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner. TASK-DEVO-163 records the readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`. TASK-DEVO-164 proves the same one-item-at-a-time flow on a narrow live DevOrchestrator docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` as the read-only position summary for operators.
 
 ## 2. Current Proven Flow
 
@@ -163,12 +163,12 @@ Recommended behavior:
 Suggested future commands:
 
 ```powershell
-.\.venv\Scripts\devo.exe project codex-worker-batch-status --project <project> --policy <POL-ID>
+.\.venv\Scripts\devo.exe project codex-worker-batch-summary --project <project> --policy <POL-ID>
 .\.venv\Scripts\devo.exe project codex-worker-batch-resume --project <project> --policy <POL-ID> --confirm-codex-batch-resume
 .\.venv\Scripts\devo.exe project codex-worker-batch-retry --project <project> --run <QWR-ID> --confirm-codex-batch-retry
 ```
 
-These are not required for the first implementation if `codex-worker-batch-run` can report the exact existing lower-level resume command.
+`codex-worker-batch-summary` is implemented as the current read-only status command. Resume and retry-specific batch commands remain future options if the lower-level queue-worker commands are still too manual.
 
 ## 8. Safety Gates
 
@@ -225,6 +225,15 @@ Each item needs durable evidence:
 - final queue item status
 
 The batch run should summarize these per item without hiding lower-level artifact paths.
+
+The read-only batch summary should also join these records after the fact. For a terminal policy it should lead with:
+
+```text
+All allowed queue items are completed.
+Next action: No action needed. Create/approve another queue or policy for more work.
+```
+
+For an active policy, it should print one recommended command for the current evidence boundary rather than asking the operator to reconstruct state from separate artifacts.
 
 ## 10. Scheduler And Manual Runner Behavior
 

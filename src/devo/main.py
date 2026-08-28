@@ -136,6 +136,7 @@ from .project_planning import (
     CodexWorkerConfigValidationResult,
     CodexWorkerFlowSummary,
     CodexWorkerBatchRunResult,
+    CodexWorkerBatchPolicySummary,
     CodexWorkerIngest,
     CodexWorkerIngestResult,
     CodexWorkerPreparation,
@@ -262,6 +263,7 @@ from .project_planning import (
     retry_queue_worker_run,
     fail_queue_worker_run,
     summarize_queue_worker_evidence,
+    summarize_codex_worker_batch_policy,
     run_codex_worker_preflight,
     update_codex_worker_run_status,
     validate_refined_backlog_file,
@@ -980,6 +982,57 @@ def _print_codex_worker_batch_run_result(result: CodexWorkerBatchRunResult) -> N
     console.print(f"Next action: {result.next_action or run.next_action or 'none'}", soft_wrap=True)
     console.print(
         "Safety: codex-worker-batch-run v1 processes at most one queue item and stops at review, validation, delivery, failure, timeout, usage-limit, scope, or scheduler gates. It does not run parallel workers, validate automatically, create delivery automatically, run trusted runner, commit, push, or complete queue items.",
+        soft_wrap=True,
+    )
+
+
+def _print_codex_worker_batch_policy_summary(summary: CodexWorkerBatchPolicySummary) -> None:
+    console.print(f"[bold]Codex worker batch summary: {summary.project}[/bold]")
+    console.print(f"Project: {summary.project}")
+    console.print(f"Policy: {summary.policy_id}")
+    console.print(f"Policy status: {summary.policy_status}")
+    console.print(f"Batch: {summary.batch_id or 'none'}")
+    console.print(f"Queue: {summary.queue_id or 'none'}")
+    console.print(f"Allowed tasks: {', '.join(summary.allowed_task_ids) if summary.allowed_task_ids else 'none'}", soft_wrap=True)
+    console.print(f"Allowed queue items: {', '.join(summary.allowed_queue_item_ids) if summary.allowed_queue_item_ids else 'none'}", soft_wrap=True)
+    if summary.all_allowed_items_completed:
+        console.print("Summary: All allowed queue items are completed.")
+    else:
+        console.print(f"Summary: {summary.main_message or 'unknown'}", soft_wrap=True)
+    console.print(f"Items: {summary.completed_item_count}/{summary.item_count} completed")
+    console.print("Queue items:")
+    if not summary.items:
+        console.print("  - none")
+    for item in summary.items:
+        console.print(
+            f"  - {item.queue_item_id} / {item.task_id}: item={item.item_status}; "
+            f"qwr={item.queue_worker_run_id or 'none'} ({item.queue_worker_status or 'none'}); "
+            f"batch-run={item.codex_batch_run_id or 'none'}; worker={item.codex_worker_run_id or 'none'}; "
+            f"ingest={item.ingest_id or 'none'}",
+            soft_wrap=True,
+        )
+        console.print(
+            f"    evidence: worker={item.worker_evidence_status}; review={item.review_evidence_status}; "
+            f"validation={item.validation_evidence_status}",
+            soft_wrap=True,
+        )
+        console.print(
+            f"    delivery: request={item.delivery_request_id or 'none'} ({item.delivery_request_status or 'none'}); "
+            f"runner={item.runner_run_id or 'none'} ({item.runner_run_status or 'none'}); "
+            f"commit={item.commit_hash or 'none'}; pushed={item.pushed if item.pushed is not None else 'unknown'}",
+            soft_wrap=True,
+        )
+        console.print(f"    next: {item.current_safe_next_action or 'unknown'}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in summary.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in summary.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {summary.next_action or 'unknown'}", soft_wrap=True)
+    console.print(f"Recommended command: {summary.recommended_command or 'none'}", soft_wrap=True)
+    console.print(
+        "Safety: this summary is read-only. It does not run Codex, mutate queues, record evidence, create delivery requests, run trusted runner, commit, or push.",
         soft_wrap=True,
     )
 
@@ -4828,6 +4881,20 @@ def run_codex_worker_subprocess_command(
         console.print(f"Suggested next command: devo project codex-worker-run-preview --project {project_name} --run {run_id} --prepare {preparation_id}")
         raise typer.Exit(1) from exc
     _print_codex_worker_subprocess_run_result(result)
+
+
+@project_app.command("codex-worker-batch-summary")
+def show_codex_worker_batch_summary_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Execution policy id to summarize."),
+) -> None:
+    """Show one read-only position summary for an approved Codex worker batch policy."""
+    project_name = _resolve_project(project_name)
+    try:
+        summary = summarize_codex_worker_batch_policy(project_name, policy_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    _print_codex_worker_batch_policy_summary(summary)
 
 
 @project_app.command("codex-worker-batch-run")

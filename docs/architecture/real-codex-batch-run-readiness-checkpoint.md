@@ -27,11 +27,17 @@ The following path is proven on disposable repositories:
 15. Continue to the next eligible item.
 16. Stop when all allowed queue items are completed.
 
-TASK-DEVO-162 proved that this can continue across two real Codex subprocess items:
+TASK-DEVO-162 proved that this can continue across two real Codex subprocess items on a disposable project:
 
 - `T001/QI001/QWR-0001` delivered through `REQ-0001` with commit `0cb7e7a`.
 - `T002/QI002/QWR-0002` delivered through `REQ-0002` with commit `18b91bd`.
 - Final `CWBR-0003` reported that all allowed queue items were completed.
+
+TASK-DEVO-164 then proved the same operating mode on the live DevOrchestrator repo for a narrow docs-only policy:
+
+- `QI001/T001/QWR-0001` delivered through `REQ-0052` with commit `f9360f7`.
+- `QI002/T002/QWR-0002` delivered through `REQ-0053` with commit `3b6c44d`.
+- Final `CWBR-0004` reported that all allowed queue items were completed.
 
 ## Safe For Disposable Projects
 
@@ -69,7 +75,7 @@ Additional guardrails should be used:
 - Use `delivery runner-request` and trusted runner delivery only.
 - Avoid running real Codex against pending unreviewed source changes.
 
-DevOrchestrator itself is a good next target for tightly scoped docs or tests because it is the system under dogfood and has mature delivery safety commands.
+TASK-DEVO-164 proved this on a docs-only live DevOrchestrator batch. The recommended ongoing mode is still narrow and operator-gated: inspect the position with `devo project codex-worker-batch-summary --project DevOrchestrator --policy <POL-ID>`, run at most one real Codex item at a time, review manually, validate manually, and deliver only through the trusted runner.
 
 ## Not Ready For PersonalOS Or Family-Use Development
 
@@ -210,10 +216,6 @@ Do not use real Codex batch-run for:
 
 ## Recommended Next Task
 
-TASK-DEVO-164 should polish real multi-item continuation ergonomics without widening autonomy. Candidate improvements:
+TASK-DEVO-165 should finish the first operator-readout polish by adding a read-only consolidated real-batch position summary. The summary should join the execution policy, queue item, queue-worker run, Codex preparation/batch/ingest, review, validation, delivery request, runner run, commit, push, and the single safe next command without widening autonomy.
 
-- clearer post-ingest next-command summaries
-- easier review/validation evidence command generation
-- better operator output capture for dogfood reports
-- a read-only status command that summarizes the current real-Codex batch position
-- no automatic review, validation, delivery, commit, push, or parallel work
+The next implementation after that should continue with small real-batch dogfood/readout polish only. Do not add automatic review, automatic validation, automatic delivery, direct Codex commit/push, parallel workers, or PersonalOS real-Codex batch execution without a new checkpoint.

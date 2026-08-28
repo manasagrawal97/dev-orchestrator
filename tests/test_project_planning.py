@@ -3109,6 +3109,294 @@ def test_codex_worker_batch_run_reports_no_eligible_item_without_subprocess(tmp_
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_batch_summary_reports_waiting_review_next_command_and_is_read_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001,T002")
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 0, batch_run.output
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before_queue = queue_json.read_text(encoding="utf-8")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Codex worker batch summary: sample" in result.output
+    assert "QI001 / T001" in result.output
+    assert "qwr=QWR-0001 (waiting_review)" in result.output
+    assert "evidence: worker=completed; review=missing; validation=not_provided" in result.output
+    assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
+    assert "Safety: this summary is read-only." in result.output
+    assert queue_json.read_text(encoding="utf-8") == before_queue
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_summary_reports_waiting_validation_next_command(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 0, batch_run.output
+    review = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Reviewed.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    assert review.exit_code == 0, review.output
+    continued = runner.invoke(app, ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"], terminal_width=240)
+    assert continued.exit_code == 0, continued.output
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "qwr=QWR-0001 (waiting_validation)" in result.output
+    assert "review=reviewed_passed; validation=provided" in result.output
+    assert "queue-worker-record-validation --project sample --run QWR-0001" in result.output
+
+
+def test_codex_worker_batch_summary_reports_delivery_requested_next_command(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 0, batch_run.output
+    runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Reviewed.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    review_continue = runner.invoke(app, ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"], terminal_width=240)
+    assert review_continue.exit_code == 0, review_continue.output
+    runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-validation",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Validated.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    validation_continue = runner.invoke(app, ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"], terminal_width=240)
+    assert validation_continue.exit_code == 0, validation_continue.output
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('summary delivery')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-request-delivery",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--message",
+            "feat: summary delivery",
+            "--confirm-delivery-request",
+        ],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "qwr=QWR-0001 (delivery_requested)" in result.output
+    assert "delivery: request=REQ-0001 (requested)" in result.output
+    assert "delivery runner-run --project sample --request REQ-0001" in result.output
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).status == "delivery_requested"
+
+
+def test_codex_worker_batch_summary_reports_all_allowed_items_completed(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "completed")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 0, batch_run.output
+    runner.invoke(
+        app,
+        ["project", "queue-worker-record-review", "--project", "sample", "--run", "QWR-0001", "--status", "passed", "--summary", "Reviewed.", "--confirm-record"],
+        terminal_width=240,
+    )
+    review_continue = runner.invoke(app, ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"], terminal_width=240)
+    assert review_continue.exit_code == 0, review_continue.output
+    runner.invoke(
+        app,
+        ["project", "queue-worker-record-validation", "--project", "sample", "--run", "QWR-0001", "--status", "passed", "--summary", "Validated.", "--confirm-record"],
+        terminal_width=240,
+    )
+    validation_continue = runner.invoke(app, ["project", "queue-worker-continue", "--project", "sample", "--run", "QWR-0001", "--confirm-continue"], terminal_width=240)
+    assert validation_continue.exit_code == 0, validation_continue.output
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('summary complete')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-request-delivery",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--message",
+            "feat: summary complete",
+            "--confirm-delivery-request",
+        ],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery runner completed and pushed commit abc123."}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-0001",
+            runner_context="test",
+            commit_hash="abc123",
+            pushed=True,
+            push_remote="origin",
+            push_branch="main",
+            status="completed",
+            next_action="Trusted delivery runner completed and pushed commit abc123.",
+        ),
+        workspace_root=workspace,
+    )
+    completed = runner.invoke(
+        app,
+        [
+            "project",
+            "approved-queue-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+    assert completed.exit_code == 0, completed.output
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Summary: All allowed queue items are completed." in result.output
+    assert "Items: 1/1 completed" in result.output
+    assert "commit=abc123; pushed=True" in result.output
+    assert "Next action: No action needed. Create/approve another queue or policy for more work." in result.output
+    assert "Recommended command: none" in result.output
+
+
 def test_codex_worker_batch_run_scheduler_gate_blocks_before_mutation(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -4069,6 +4357,72 @@ def test_approved_queue_run_continue_next_starts_next_item_after_specified_compl
     assert first is not None and first.status == "completed"
     assert second is not None and second.status == "waiting_worker"
     assert second.selected_queue_item_id == "QI002"
+
+
+def test_approved_queue_run_specified_completion_reports_all_allowed_items_done(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+
+    created = runner.invoke(app, ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"], terminal_width=240)
+    assert created.exit_code == 0, created.output
+    _import_worker_report(tmp_path)
+    _record_worker_review(status="reviewed_passed")
+    _attach_validation(status="passed")
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('final item delivered')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--message", "feat: final item", "--confirm-loop"],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery runner completed and pushed commit abc123."}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-0001",
+            runner_context="test",
+            commit_hash="abc123",
+            pushed=True,
+            push_remote="origin",
+            push_branch="main",
+            status="completed",
+            next_action="Trusted delivery runner completed and pushed commit abc123.",
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "approved-queue-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: specified queue-worker run completed; all allowed queue items are completed" in result.output
+    assert "No action needed. Create/approve another queue or policy for more work." in result.output
+    assert "Start next eligible item" not in result.output
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert next(item for item in queue.items if item.item_id == "QI001").status == "completed"
 
 
 def test_queue_worker_loop_does_not_start_next_item_while_delivery_pending(tmp_path: Path, monkeypatch) -> None:

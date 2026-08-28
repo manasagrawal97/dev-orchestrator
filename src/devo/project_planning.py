@@ -930,6 +930,52 @@ class CodexWorkerBatchRunResult(BaseModel):
     next_action: str = ""
 
 
+class CodexWorkerBatchItemSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    queue_item_id: str
+    task_id: str
+    title: str = ""
+    item_status: str = "unknown"
+    queue_worker_run_id: str | None = None
+    queue_worker_status: str | None = None
+    codex_preparation_id: str | None = None
+    codex_batch_run_id: str | None = None
+    codex_worker_run_id: str | None = None
+    ingest_id: str | None = None
+    worker_evidence_status: str = "missing"
+    review_evidence_status: str = "missing"
+    validation_evidence_status: str = "not_provided"
+    delivery_request_id: str | None = None
+    delivery_request_status: str | None = None
+    runner_run_id: str | None = None
+    runner_run_status: str | None = None
+    commit_hash: str | None = None
+    pushed: bool | None = None
+    current_safe_next_action: str = ""
+
+
+class CodexWorkerBatchPolicySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    policy_status: str = "unknown"
+    batch_id: str | None = None
+    queue_id: str | None = None
+    allowed_task_ids: list[str] = Field(default_factory=list)
+    allowed_queue_item_ids: list[str] = Field(default_factory=list)
+    item_count: int = 0
+    completed_item_count: int = 0
+    all_allowed_items_completed: bool = False
+    main_message: str = ""
+    next_action: str = ""
+    recommended_command: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    items: list[CodexWorkerBatchItemSummary] = Field(default_factory=list)
+
+
 class QueueWorkerRunIndexEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3689,6 +3735,128 @@ def run_codex_worker_batch(
     )
 
 
+def summarize_codex_worker_batch_policy(
+    project_name: str,
+    policy_id: str,
+    workspace_root: Path | None = None,
+) -> CodexWorkerBatchPolicySummary:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_policy_id = _normalize_policy_id(policy_id)
+    policy = load_execution_policy(project_name, normalized_policy_id, workspace_root=root)
+    if not policy:
+        msg = f"Execution policy not found: {policy_id}"
+        raise ValueError(msg)
+    queue = load_execution_queue(project_name, policy.queue_id, workspace_root=root) if policy.queue_id else None
+    warnings: list[str] = []
+    blockers: list[str] = []
+    if not queue:
+        blockers.append(f"Referenced queue not found: {policy.queue_id or 'none'}.")
+        return CodexWorkerBatchPolicySummary(
+            project=project_name,
+            policy_id=policy.policy_id,
+            policy_status=policy.status,
+            batch_id=policy.batch_id,
+            queue_id=policy.queue_id,
+            allowed_task_ids=list(policy.allowed_task_ids),
+            allowed_queue_item_ids=list(policy.allowed_queue_item_ids),
+            main_message="Execution policy has no readable queue.",
+            next_action="Resolve queue/policy setup before running Codex worker batch work.",
+            recommended_command=f"devo project execution-policy-show --project {project_name} --policy {policy.policy_id}",
+            blockers=blockers,
+        )
+
+    warnings.extend(_stale_queue_worker_run_selection_warnings(project_name, policy.policy_id, queue, workspace_root=root))
+    scoped_items = _policy_queue_items_static_scope(project_name, policy, queue, workspace_root=root)
+    runs = list_queue_worker_runs(project_name, workspace_root=root)
+    preparations = list_codex_worker_preparations(project_name, workspace_root=root)
+    ingests = list_codex_worker_ingests(project_name, workspace_root=root)
+    batch_runs = list_codex_worker_batch_runs(project_name, workspace_root=root)
+    item_summaries: list[CodexWorkerBatchItemSummary] = []
+    for item in scoped_items:
+        latest_run = _latest_queue_worker_run_for_item(runs, policy.policy_id, queue.queue_id, item.item_id)
+        latest_preparation = _latest_preparation_for_queue_worker_run(preparations, latest_run.run_id if latest_run else None)
+        latest_ingest = _latest_ingest_for_queue_worker_run(ingests, latest_run.run_id if latest_run else None)
+        latest_batch_run = _latest_codex_worker_batch_run_for_item(
+            batch_runs,
+            policy.policy_id,
+            queue.queue_id,
+            item.item_id,
+            item.task_id,
+            latest_run.run_id if latest_run else None,
+        )
+        evidence = summarize_queue_worker_evidence(project_name, latest_run, workspace_root=root) if latest_run else QueueWorkerEvidenceSummary()
+        delivery_request_id = evidence.delivery_request_id or (latest_run.delivery_request_id if latest_run else None)
+        runner_run = None
+        if delivery_request_id:
+            from .delivery import load_delivery_runner_run
+
+            runner_run = load_delivery_runner_run(project_name, delivery_request_id, workspace_root=root)
+        worker_evidence_status = evidence.worker_report_status or (latest_ingest.status if latest_ingest else "missing")
+        review_status = evidence.worker_review_status or "missing"
+        validation_status = evidence.validation_status or "not_provided"
+        next_action = _codex_worker_batch_item_next_action(project_name, policy.policy_id, item, latest_run, evidence, runner_run)
+        item_summaries.append(
+            CodexWorkerBatchItemSummary(
+                queue_item_id=item.item_id,
+                task_id=item.task_id,
+                title=item.title,
+                item_status=item.status,
+                queue_worker_run_id=latest_run.run_id if latest_run else None,
+                queue_worker_status=latest_run.status if latest_run else None,
+                codex_preparation_id=latest_preparation.preparation_id if latest_preparation else latest_batch_run.preparation_id if latest_batch_run else None,
+                codex_batch_run_id=latest_batch_run.batch_worker_run_id if latest_batch_run else None,
+                codex_worker_run_id=latest_batch_run.codex_worker_run_id if latest_batch_run else latest_run.selected_worker_run_id if latest_run else None,
+                ingest_id=latest_ingest.ingest_id if latest_ingest else latest_batch_run.ingest_id if latest_batch_run else None,
+                worker_evidence_status=worker_evidence_status,
+                review_evidence_status=review_status,
+                validation_evidence_status=validation_status,
+                delivery_request_id=delivery_request_id,
+                delivery_request_status=evidence.delivery_request_status or (latest_run.delivery_request_status if latest_run else None),
+                runner_run_id=runner_run.run_id if runner_run else None,
+                runner_run_status=runner_run.status if runner_run else None,
+                commit_hash=runner_run.commit_hash if runner_run else None,
+                pushed=runner_run.pushed if runner_run else None,
+                current_safe_next_action=next_action,
+            )
+        )
+
+    completed_reason = _all_allowed_queue_items_completed_reason(project_name, policy, queue, workspace_root=root)
+    all_completed = bool(completed_reason)
+    completed_count = sum(1 for item in scoped_items if item.status == "completed")
+    if all_completed:
+        main_message = "All allowed queue items are completed."
+        next_action = "No action needed. Create/approve another queue or policy for more work."
+        recommended_command = "none"
+    else:
+        plan = plan_queue_worker_run(project_name, policy.policy_id, workspace_root=root)
+        warnings = _dedupe([*warnings, *plan.warnings])
+        blockers = _dedupe([*blockers, *plan.blockers])
+        active_item = next((item for item in item_summaries if item.item_status != "completed"), None)
+        main_message = plan.selection_reason or "Policy has allowed queue items that are not completed."
+        next_action = active_item.current_safe_next_action if active_item else plan.next_action
+        recommended_command = _codex_worker_batch_recommended_command_from_next_action(project_name, policy.policy_id, next_action)
+
+    return CodexWorkerBatchPolicySummary(
+        project=project_name,
+        policy_id=policy.policy_id,
+        policy_status=policy.status,
+        batch_id=policy.batch_id,
+        queue_id=queue.queue_id,
+        allowed_task_ids=list(policy.allowed_task_ids),
+        allowed_queue_item_ids=list(policy.allowed_queue_item_ids),
+        item_count=len(scoped_items),
+        completed_item_count=completed_count,
+        all_allowed_items_completed=all_completed,
+        main_message=main_message,
+        next_action=next_action,
+        recommended_command=recommended_command,
+        warnings=_dedupe(warnings),
+        blockers=_dedupe(blockers),
+        items=item_summaries,
+    )
+
+
 def create_batch_execution_policy(
     project_name: str,
     *,
@@ -4957,11 +5125,17 @@ def loop_queue_worker_run(
                     next_action = completion_next or step.next_action
                     break
                 if current_run_id and run_id:
-                    stop_reason = "specified queue-worker run completed"
-                    next_action = (
-                        f"Start next eligible item: devo project approved-queue-run --project {project_name} "
-                        f"--policy {normalized_policy_id} --confirm-auto-run"
-                    )
+                    policy = load_execution_policy(project_name, normalized_policy_id, workspace_root=root)
+                    queue = load_execution_queue(project_name, policy.queue_id, workspace_root=root) if policy and policy.queue_id else None
+                    if policy and queue and _all_allowed_queue_items_completed_reason(project_name, policy, queue, workspace_root=root):
+                        stop_reason = "specified queue-worker run completed; all allowed queue items are completed"
+                        next_action = "No action needed. Create/approve another queue or policy for more work."
+                    else:
+                        stop_reason = "specified queue-worker run completed"
+                        next_action = (
+                            f"Start next eligible item: devo project approved-queue-run --project {project_name} "
+                            f"--policy {normalized_policy_id} --confirm-auto-run"
+                        )
                     break
                 current_run_id = None
                 next_action = completion_next or f"Continue next eligible item: devo project queue-worker-loop --project {project_name} --policy {normalized_policy_id} --confirm-loop"
@@ -10243,6 +10417,143 @@ def _queue_worker_next_action_for_run(project_name: str, run: QueueWorkerRun, ev
     if not evidence.delivery_completed:
         return "Wait for or inspect the trusted delivery runner result."
     return "No action needed."
+
+
+def _latest_queue_worker_run_for_item(
+    runs: list[QueueWorkerRun],
+    policy_id: str,
+    queue_id: str,
+    item_id: str,
+) -> QueueWorkerRun | None:
+    normalized_policy = _normalize_policy_id(policy_id)
+    normalized_queue = _normalize_queue_id(queue_id)
+    normalized_item = _normalize_queue_item_id(item_id)
+    candidates = [
+        run
+        for run in runs
+        if _normalize_policy_id(run.policy_id) == normalized_policy
+        and run.queue_id
+        and _normalize_queue_id(run.queue_id) == normalized_queue
+        and run.selected_queue_item_id
+        and _normalize_queue_item_id(run.selected_queue_item_id) == normalized_item
+    ]
+    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+
+
+def _latest_preparation_for_queue_worker_run(
+    preparations: list[CodexWorkerPreparation],
+    run_id: str | None,
+) -> CodexWorkerPreparation | None:
+    if not run_id:
+        return None
+    normalized_run = _normalize_queue_worker_run_id(run_id)
+    candidates = [item for item in preparations if _normalize_queue_worker_run_id(item.queue_worker_run_id) == normalized_run]
+    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+
+
+def _latest_ingest_for_queue_worker_run(
+    ingests: list[CodexWorkerIngest],
+    run_id: str | None,
+) -> CodexWorkerIngest | None:
+    if not run_id:
+        return None
+    normalized_run = _normalize_queue_worker_run_id(run_id)
+    candidates = [item for item in ingests if _normalize_queue_worker_run_id(item.queue_worker_run_id) == normalized_run]
+    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+
+
+def _latest_codex_worker_batch_run_for_item(
+    batch_runs: list[CodexWorkerBatchRun],
+    policy_id: str,
+    queue_id: str,
+    item_id: str,
+    task_id: str,
+    run_id: str | None,
+) -> CodexWorkerBatchRun | None:
+    normalized_policy = _normalize_policy_id(policy_id)
+    normalized_queue = _normalize_queue_id(queue_id)
+    normalized_item = _normalize_queue_item_id(item_id)
+    normalized_task = _normalize_task_id(task_id)
+    normalized_run = _normalize_queue_worker_run_id(run_id) if run_id else None
+    candidates: list[CodexWorkerBatchRun] = []
+    for batch_run in batch_runs:
+        if _normalize_policy_id(batch_run.policy_id) != normalized_policy:
+            continue
+        if batch_run.queue_id and _normalize_queue_id(batch_run.queue_id) != normalized_queue:
+            continue
+        if normalized_run and batch_run.queue_worker_run_id and _normalize_queue_worker_run_id(batch_run.queue_worker_run_id) == normalized_run:
+            candidates.append(batch_run)
+            continue
+        if batch_run.queue_item_id and _normalize_queue_item_id(batch_run.queue_item_id) == normalized_item:
+            candidates.append(batch_run)
+            continue
+        if batch_run.task_id and _normalize_task_id(batch_run.task_id) == normalized_task:
+            candidates.append(batch_run)
+    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+
+
+def _codex_worker_batch_item_next_action(
+    project_name: str,
+    policy_id: str,
+    item: QueueItem,
+    run: QueueWorkerRun | None,
+    evidence: QueueWorkerEvidenceSummary,
+    runner_run: Any | None,
+) -> str:
+    if item.status == "completed":
+        return "No action needed."
+    if not run:
+        return (
+            f"devo project codex-worker-batch-run --project {project_name} "
+            f"--policy {policy_id} --confirm-codex-batch-run"
+        )
+    if run.status == "waiting_worker":
+        return (
+            f"devo project codex-worker-batch-run --project {project_name} "
+            f"--policy {policy_id} --confirm-codex-batch-run"
+        )
+    if run.status == "waiting_review":
+        return _queue_worker_record_review_next_action(project_name, run.run_id)
+    if run.status == "waiting_validation":
+        return _queue_worker_record_validation_next_action(project_name, run.run_id)
+    if run.status == "ready_for_delivery_request":
+        return (
+            f"devo project queue-worker-request-delivery --project {project_name} "
+            f"--run {run.run_id} --confirm-delivery-request"
+        )
+    if run.status == "delivery_requested":
+        if evidence.delivery_completed and runner_run and getattr(runner_run, "status", None) == "completed" and getattr(runner_run, "pushed", False):
+            return (
+                f"devo project approved-queue-run --project {project_name} --policy {policy_id} "
+                f"--run {run.run_id} --confirm-auto-run"
+            )
+        if evidence.delivery_request_id:
+            return (
+                f'.\\.venv\\Scripts\\devo.exe delivery runner-run --project {project_name} '
+                f'--request {evidence.delivery_request_id} --approver "<name>" --confirm-runner-run'
+            )
+        return "Wait for or inspect the trusted delivery runner result."
+    if run.status == "completed":
+        return "No action needed."
+    if run.status == "failed":
+        return f"Inspect evidence, then retry only if safe: devo project queue-worker-retry --project {project_name} --run {run.run_id} --confirm-retry"
+    if run.status == "paused":
+        return f"Resume when safe: devo project queue-worker-resume --project {project_name} --run {run.run_id} --confirm-resume"
+    return run.next_action or _queue_worker_next_action_for_status(project_name, run, run.status, evidence, [*run.blockers, *evidence.blockers])
+
+
+def _codex_worker_batch_recommended_command_from_next_action(project_name: str, policy_id: str, next_action: str) -> str:
+    if not next_action or next_action.startswith("No action needed"):
+        return "none"
+    if next_action.startswith("devo ") or next_action.startswith(".\\.venv\\Scripts\\devo.exe "):
+        return next_action.split("; then ", 1)[0]
+    if "queue-worker-record-review" in next_action:
+        return _queue_worker_record_review_next_action(project_name, "<QWR-ID>")
+    if "queue-worker-record-validation" in next_action:
+        return _queue_worker_record_validation_next_action(project_name, "<QWR-ID>")
+    if "trusted delivery runner" in next_action or "runner" in next_action:
+        return f'.\\.venv\\Scripts\\devo.exe delivery runner-latest --project {project_name}'
+    return f"devo project codex-worker-batch-summary --project {project_name} --policy {policy_id}"
 
 
 def _default_queue_worker_commit_message(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> str:

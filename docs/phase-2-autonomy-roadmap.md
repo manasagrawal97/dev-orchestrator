@@ -8,7 +8,7 @@ This is practical autonomy, not reckless full automation. Devo should reduce rep
 
 Phase 2 should not try to make Codex or a sandboxed worker directly commit or push. Codex/sandbox prepares work, evidence, and runner requests. A trusted local Devo executor running in the normal Windows user context performs delivery.
 
-TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording. TASK-DEVO-162 confirms that real Codex batch continuation should still be run from normal PowerShell, one item at a time, with Devo stopping at review and validation gates between items. TASK-DEVO-163 records the resulting readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`.
+TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording. TASK-DEVO-162 confirms that real Codex batch continuation should still be run from normal PowerShell, one item at a time, with Devo stopping at review and validation gates between items. TASK-DEVO-163 records the resulting readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`, TASK-DEVO-164 proves the same operating mode on a narrow live DevOrchestrator docs-only batch, and TASK-DEVO-165 adds the consolidated read-only batch-position summary.
 
 ## 1. Phase 2 Vision
 
@@ -322,7 +322,21 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Document what is safe after TASK-DEVO-162 and what remains manual-gated.
 - Scope: readiness checkpoint, operating mode, docs polish, and conservative next-task guidance.
 - Not in scope: real Codex execution, parallel workers, UI actions, PersonalOS, automatic review/validation/delivery, direct worker commit/push, scheduler mutation, or backup/restore.
-- Status: In progress. See `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`.
+- Status: Completed. See `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`.
+
+### TASK-DEVO-164: DevOrchestrator Real Batch-Run Narrow Internal Dogfood
+
+- Goal: Prove real `codex-worker-batch-run` on the live DevOrchestrator repo with a tiny docs-only policy.
+- Scope: two docs-only queue items, real Codex subprocess execution from normal PowerShell, strict JSON ingest, manual review, manual validation, trusted delivery requests, trusted runner commits, and final all-completed batch guidance.
+- Not in scope: PersonalOS, source-code feature work, parallel workers, automatic review/validation, direct Codex commit/push, UI actions, scheduler mutation, or backup/restore.
+- Status: Completed with PASS verdict. `QI001/T001/QWR-0001` delivered `REQ-0052` commit `f9360f7`; `QI002/T002/QWR-0002` delivered `REQ-0053` commit `3b6c44d`; final `CWBR-0004` reported all allowed queue items completed.
+
+### TASK-DEVO-165: Consolidated Real-Batch Position Summary
+
+- Goal: Reduce operator artifact-joining overhead without widening autonomy.
+- Scope: read-only `devo project codex-worker-batch-summary --project <project> --policy <POL-ID>`, item-by-item policy/queue/worker/Codex/evidence/delivery/runner/commit/push summary, one safe next command, and terminal all-completed guidance.
+- Not in scope: real Codex execution, queue mutation from the summary command, review/validation recording, delivery request creation, runner execution, commit, push, UI, parallel workers, or PersonalOS.
+- Status: Completed. Use the summary before rerunning batch commands when the operator needs to know exactly where a policy stands.
 
 ### Future Spikes
 
