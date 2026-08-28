@@ -111,6 +111,8 @@ TASK-DEVO-160 proves that continuation path with a fake subprocess worker before
 
 TASK-DEVO-162 proves the real Codex version of that continuation shape on disposable `Dogfood162`: two real subprocess items complete one at a time, stop at review and validation gates, deliver only through trusted runner, and finish with all allowed items completed. The remaining usability gap is command/output ergonomics between items, not the core safety path.
 
+TASK-DEVO-163 records the readiness checkpoint for that result: real Codex batch-run is usable for disposable dogfood and narrow DevOrchestrator scopes, but it remains manual-gated and not yet the default for PersonalOS/family-use development.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

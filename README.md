@@ -33,6 +33,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [Company-model vision](docs/devo-company-model.md)
 - [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md)
 - [Codex subprocess execution checkpoint](docs/architecture/codex-subprocess-execution-checkpoint.md)
+- [Real Codex batch-run readiness checkpoint](docs/architecture/real-codex-batch-run-readiness-checkpoint.md)
 - [Codex worker adapter design](docs/codex-worker-adapter-design.md)
 - [Delivery safety design](docs/delivery-safety-design.md)
 - [Phase 1 MVP closure plan](docs/phase-1-mvp-closure-plan.md)
@@ -335,6 +336,8 @@ TASK-DEVO-152 prepares that real dogfood on disposable project `Dogfood152` thro
 TASK-DEVO-153 hardens that dogfood boundary. The default subprocess template now follows the real Codex CLI shape, `exec -s workspace-write --output-last-message "{result_path}"`, with the generated prompt passed on stdin. Worker ingest accepts UTF-8 BOM JSON, gives clearer guidance when Codex returns structured text instead of strict JSON, and completed queue-worker runs no longer advertise stale prepare/ingest commands as the main next action.
 
 TASK-DEVO-155 adds `devo project codex-worker-batch-run` as the first one-command coordinator around the proven queue-worker, prompt preparation, subprocess run, and JSON ingest steps. V1 is deliberately capped to one approved queue item per invocation, supports read-only dry-run, checks trusted-runner scheduler health by default before mutation, writes batch-run artifacts under `workspace/projects/<project>/codex-worker/batch-runs/<CWBR-ID>/`, and stops at the worker review gate after completed JSON ingest. It stops on no eligible item, invalid or missing JSON, failed process, timeout, usage-limit, scope warning/violation, scheduler unhealthy, or queue-worker state drift. It does not run parallel workers, review, validation, delivery, trusted runner, commit, push, or queue completion.
+
+TASK-DEVO-162 proves real `codex-worker-batch-run` continuation across two disposable queue items from normal PowerShell. The readiness checkpoint in [Real Codex batch-run readiness checkpoint](docs/architecture/real-codex-batch-run-readiness-checkpoint.md) records the current operating mode: narrow approved policies, one item at a time, strict JSON worker output, manual review, manual validation, and trusted-runner-only delivery. This is approved batch worker execution with manual gates, not fully unattended coding.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

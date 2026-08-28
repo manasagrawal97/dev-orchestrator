@@ -143,4 +143,4 @@ PASS.
 
 TASK-DEVO-162 proves real Codex multi-item batch continuation on a disposable project. Two queue items completed one at a time through real Codex subprocess execution, strict JSON ingest, manual review, manual validation, Devo delivery requests, and trusted runner commits/pushes. The disposable repo ended clean, Codex did not commit or push, PersonalOS was not modified, and the final batch-run check reported that all allowed queue items were completed.
 
-Recommended next task: TASK-DEVO-163 should polish real multi-item continuation ergonomics and operator output capture without adding parallel workers, automatic review, automatic validation, or direct Codex commit/push.
+TASK-DEVO-163 records the readiness checkpoint for this result in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`. The recommended next implementation task is TASK-DEVO-164: polish real multi-item continuation ergonomics and operator output capture without adding parallel workers, automatic review, automatic validation, or direct Codex commit/push.

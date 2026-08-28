@@ -8,7 +8,7 @@ This is practical autonomy, not reckless full automation. Devo should reduce rep
 
 Phase 2 should not try to make Codex or a sandboxed worker directly commit or push. Codex/sandbox prepares work, evidence, and runner requests. A trusted local Devo executor running in the normal Windows user context performs delivery.
 
-TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording. TASK-DEVO-162 confirms that real Codex batch continuation should still be run from normal PowerShell, one item at a time, with Devo stopping at review and validation gates between items.
+TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording. TASK-DEVO-162 confirms that real Codex batch continuation should still be run from normal PowerShell, one item at a time, with Devo stopping at review and validation gates between items. TASK-DEVO-163 records the resulting readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`.
 
 ## 1. Phase 2 Vision
 
@@ -294,7 +294,7 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Polish the readout friction found during Dogfood158 before expanding real Codex batch dogfood.
 - Scope: reduce false-positive `usage_limit_detected` warnings from echoed schema/prompt text after successful completed results, label validation evidence as shared queue-worker evidence artifacts, tighten completed trusted-delivery next actions, and update docs.
 - Not in scope: real Codex execution, PersonalOS, parallel workers, automatic review, automatic validation, automatic delivery, direct Codex commit/push, UI actions, scheduler mutation, backup/restore, or larger batch execution.
-- Status: Completed. The next safe step is continuation dogfood for another disposable queue item, still one item at a time.
+- Status: Completed. TASK-DEVO-160 and TASK-DEVO-162 later proved continuation with fake and real workers while keeping one item at a time.
 
 ### TASK-DEVO-160: Multi-Item Fake-Worker Batch Continuation Dogfood
 
@@ -308,7 +308,21 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Fix the narrow continuation friction found in TASK-DEVO-160 without changing the conservative one-item-at-a-time architecture.
 - Scope: stale active queue-worker run selection, retry worker-run linkage, completed-queue/no-ready wording, push-only recovery guidance, and generated prompt guidance for fake/scripted worker task selection.
 - Not in scope: real Codex execution, parallel workers, UI actions, PersonalOS, automatic review/validation/delivery, direct worker commit/push, scheduler mutation, or backup/restore.
-- Status: Completed. The next safe dogfood can recheck disposable continuation behavior before larger real Codex continuation work.
+- Status: Completed. TASK-DEVO-162 later rechecked the continuation path with real Codex on disposable `Dogfood162`.
+
+### TASK-DEVO-162: Real Codex Multi-Item Batch Dogfood
+
+- Goal: Prove real `codex-worker-batch-run` continuation across two disposable queue items.
+- Scope: disposable `Dogfood162`, two docs-only note tasks, real Codex subprocess execution from normal PowerShell, strict JSON ingest, manual review and validation evidence, trusted delivery requests, trusted runner commit/push, and final completed queue guidance.
+- Not in scope: PersonalOS, parallel workers, automatic review, automatic validation, direct Codex commit/push, UI actions, scheduler mutation, backup/restore, or real-project batch execution.
+- Status: Completed with PASS verdict. See `docs/dogfood/task-devo-162-real-codex-multi-item-batch-dogfood.md`.
+
+### TASK-DEVO-163: Real Codex Batch-Run Readiness Checkpoint
+
+- Goal: Document what is safe after TASK-DEVO-162 and what remains manual-gated.
+- Scope: readiness checkpoint, operating mode, docs polish, and conservative next-task guidance.
+- Not in scope: real Codex execution, parallel workers, UI actions, PersonalOS, automatic review/validation/delivery, direct worker commit/push, scheduler mutation, or backup/restore.
+- Status: In progress. See `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`.
 
 ### Future Spikes
 
