@@ -39,6 +39,8 @@ TASK-DEVO-164 then proved the same operating mode on the live DevOrchestrator re
 - `QI002/T002/QWR-0002` delivered through `REQ-0053` with commit `3b6c44d`.
 - Final `CWBR-0004` reported that all allowed queue items were completed.
 
+TASK-DEVO-166 dogfooded the read-only consolidated summary against that completed live policy. `devo project codex-worker-batch-summary --project DevOrchestrator --policy POL-0002` reported both completed items, productive Codex batch/worker/ingest artifacts, review and validation evidence, delivery requests, trusted runner runs, pushed commits, and terminal no-action guidance in one view.
+
 ## Safe For Disposable Projects
 
 Real Codex batch-run is safe for disposable dogfood projects when all of these are true:
@@ -216,6 +218,6 @@ Do not use real Codex batch-run for:
 
 ## Recommended Next Task
 
-TASK-DEVO-165 should finish the first operator-readout polish by adding a read-only consolidated real-batch position summary. The summary should join the execution policy, queue item, queue-worker run, Codex preparation/batch/ingest, review, validation, delivery request, runner run, commit, push, and the single safe next command without widening autonomy.
+TASK-DEVO-165 finished the first operator-readout polish by adding a read-only consolidated real-batch position summary. TASK-DEVO-166 proved it against completed live policy `POL-0002`. The summary joins the execution policy, queue item, queue-worker run, Codex preparation/batch/ingest, review, validation, delivery request, runner run, commit, push, and the single safe next command without widening autonomy.
 
-The next implementation after that should continue with small real-batch dogfood/readout polish only. Do not add automatic review, automatic validation, automatic delivery, direct Codex commit/push, parallel workers, or PersonalOS real-Codex batch execution without a new checkpoint.
+The next implementation should continue with small real-batch dogfood/readout polish only. Do not add automatic review, automatic validation, automatic delivery, direct Codex commit/push, parallel workers, or PersonalOS real-Codex batch execution without a new checkpoint.

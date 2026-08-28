@@ -113,7 +113,7 @@ TASK-DEVO-162 proves the real Codex version of that continuation shape on dispos
 
 TASK-DEVO-163 records the readiness checkpoint for that result: real Codex batch-run is usable for disposable dogfood and narrow DevOrchestrator scopes, but it remains manual-gated and not yet the default for PersonalOS/family-use development.
 
-TASK-DEVO-164 proves the same mode on the live DevOrchestrator repo with a narrow docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` so the operator can read policy, queue, queue-worker, Codex, evidence, delivery, runner, commit, push, and one safe next command in one place. This reduces artifact joining without adding parallel workers, automatic review, automatic validation, or direct Codex commit/push.
+TASK-DEVO-164 proves the same mode on the live DevOrchestrator repo with a narrow docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` so the operator can read policy, queue, queue-worker, Codex, evidence, delivery, runner, commit, push, and one safe next command in one place. TASK-DEVO-166 dogfoods that summary against completed live policy `POL-0002` and confirms it gives a clear terminal no-action view. This reduces artifact joining without adding parallel workers, automatic review, automatic validation, or direct Codex commit/push.
 
 ### Work Packages - MVP Added
 

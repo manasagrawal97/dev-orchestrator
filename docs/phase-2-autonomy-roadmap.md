@@ -338,6 +338,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, queue mutation from the summary command, review/validation recording, delivery request creation, runner execution, commit, push, UI, parallel workers, or PersonalOS.
 - Status: Completed. Use the summary before rerunning batch commands when the operator needs to know exactly where a policy stands.
 
+### TASK-DEVO-166: Real Batch Summary Dogfood
+
+- Goal: Prove `codex-worker-batch-summary` against completed live DevOrchestrator policy `POL-0002`.
+- Scope: read-only dogfood, docs report, and tiny summary selection polish so completed items prefer evidence-bearing Codex batch-run artifacts over redundant no-subprocess boundary runs.
+- Not in scope: real Codex execution, queue mutation, review/validation recording, delivery request creation by the summary, runner execution, commit, push, UI, parallel workers, or PersonalOS.
+- Status: Completed with PASS verdict. The summary reports both completed queue items, `QWR-0001` and `QWR-0002`, productive Codex batch/worker/ingest IDs, review/validation evidence, delivery requests `REQ-0052` and `REQ-0053`, pushed commits, and terminal no-action guidance.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

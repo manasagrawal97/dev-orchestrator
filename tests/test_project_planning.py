@@ -3129,6 +3129,22 @@ def test_codex_worker_batch_summary_reports_waiting_review_next_command_and_is_r
         terminal_width=240,
     )
     assert batch_run.exit_code == 0, batch_run.output
+    repeated = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert repeated.exit_code == 0, repeated.output
+    assert "CWBR-0002" in repeated.output
     queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
     before_queue = queue_json.read_text(encoding="utf-8")
     before_target = _target_snapshot(project_path)
@@ -3143,6 +3159,8 @@ def test_codex_worker_batch_summary_reports_waiting_review_next_command_and_is_r
     assert "Codex worker batch summary: sample" in result.output
     assert "QI001 / T001" in result.output
     assert "qwr=QWR-0001 (waiting_review)" in result.output
+    assert "batch-run=CWBR-0001" in result.output
+    assert "worker=CWR-" in result.output
     assert "evidence: worker=completed; review=missing; validation=not_provided" in result.output
     assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
     assert "Safety: this summary is read-only." in result.output

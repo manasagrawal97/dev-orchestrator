@@ -10451,6 +10451,10 @@ def _latest_preparation_for_queue_worker_run(
     return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
 
 
+def _codex_worker_batch_run_has_worker_evidence(batch_run: CodexWorkerBatchRun) -> bool:
+    return bool(batch_run.codex_worker_run_id or batch_run.ingest_id or batch_run.processed_items > 0)
+
+
 def _latest_ingest_for_queue_worker_run(
     ingests: list[CodexWorkerIngest],
     run_id: str | None,
@@ -10489,7 +10493,7 @@ def _latest_codex_worker_batch_run_for_item(
             continue
         if batch_run.task_id and _normalize_task_id(batch_run.task_id) == normalized_task:
             candidates.append(batch_run)
-    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+    return sorted(candidates, key=lambda item: (_codex_worker_batch_run_has_worker_evidence(item), item.updated_at), reverse=True)[0] if candidates else None
 
 
 def _codex_worker_batch_item_next_action(
