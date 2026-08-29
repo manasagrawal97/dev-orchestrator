@@ -481,6 +481,8 @@ class QueueWorkerEvidenceSummary(BaseModel):
     delivery_request_status: str | None = None
     delivery_request_exists: bool = False
     delivery_completed: bool = False
+    patch_proposal_present: bool = False
+    patch_artifact_path: str | None = None
     missing_evidence: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -651,6 +653,8 @@ class CodexWorkerIngest(BaseModel):
     risks: list[str] = Field(default_factory=list)
     recommended_next_action: str = ""
     artifact_path: str = ""
+    patch_proposal_present: bool = False
+    patch_artifact_path: str = ""
     dirty_repo_status: str = ""
     usage_limit_details: str = ""
     failure_details: str = ""
@@ -952,6 +956,8 @@ class CodexWorkerBatchItemSummary(BaseModel):
     runner_run_status: str | None = None
     commit_hash: str | None = None
     pushed: bool | None = None
+    patch_proposal_present: bool = False
+    patch_artifact_path: str | None = None
     blockers: list[str] = Field(default_factory=list)
     current_safe_next_action: str = ""
 
@@ -3136,16 +3142,27 @@ def create_codex_worker_ingest(
         or None
     )
     artifact_path = str(raw_result.get("artifact_path") or "").strip()
+    patch_artifact_path = _extract_patch_proposal_path(raw_result, artifact_path)
+    patch_proposal_present = _worker_result_has_patch_proposal(raw_result, patch_artifact_path)
     raw_copy_string = str(raw_copy_path)
     evidence_artifact = artifact_path or raw_copy_string
     recommended_next_action = str(raw_result.get("recommended_next_action") or "").strip()
-    if not recommended_next_action:
-        recommended_next_action = _codex_worker_ingest_next_action(project_name, run, result_status)
+    if result_status in {"blocked", "failed"} and patch_proposal_present:
+        recommended_next_action = _patch_proposal_manual_review_next_action()
+    elif not recommended_next_action:
+        recommended_next_action = _codex_worker_ingest_next_action(
+            project_name,
+            run,
+            result_status,
+            patch_proposal_present=patch_proposal_present,
+        )
     warnings: list[str] = []
     if not cleaned_prepare_id:
         warnings.append("No Codex worker preparation id was linked to this ingest.")
     if result_status != "completed":
         warnings.append(f"Worker result status is {result_status}; this is non-success evidence and must not advance as successful work.")
+    if patch_proposal_present:
+        warnings.append("Patch proposal is present; it is review material only and must not be treated as applied work.")
     ingest = CodexWorkerIngest(
         project=project_name,
         ingest_id=ingest_id,
@@ -3166,6 +3183,8 @@ def create_codex_worker_ingest(
         risks=risks,
         recommended_next_action=recommended_next_action,
         artifact_path=artifact_path,
+        patch_proposal_present=patch_proposal_present,
+        patch_artifact_path=patch_artifact_path,
         dirty_repo_status=str(raw_result.get("dirty_repo_status") or "").strip(),
         usage_limit_details=str(raw_result.get("usage_limit_details") or "").strip(),
         failure_details=str(raw_result.get("failure_details") or "").strip(),
@@ -3175,7 +3194,12 @@ def create_codex_worker_ingest(
         dry_run=dry_run,
         mutation_occurred=False,
         warnings=warnings,
-        next_action=_codex_worker_ingest_next_action(project_name, run, result_status),
+        next_action=_codex_worker_ingest_next_action(
+            project_name,
+            run,
+            result_status,
+            patch_proposal_present=patch_proposal_present,
+        ),
         recorded_by=cleaned_recorded_by,
         note=note.strip(),
         created_at=now,
@@ -3211,7 +3235,14 @@ def create_codex_worker_ingest(
         risks=", ".join(risks),
         recommended_next_action=recommended_next_action,
         recorded_by=cleaned_recorded_by,
-        note=_codex_worker_ingest_note(note, work_performed, raw_copy_string, artifact_path),
+        note=_codex_worker_ingest_note(
+            note,
+            work_performed,
+            raw_copy_string,
+            artifact_path,
+            patch_proposal_present=patch_proposal_present,
+            patch_artifact_path=patch_artifact_path,
+        ),
         workspace_root=root,
     )
     updated_ingest = ingest.model_copy(
@@ -3819,6 +3850,8 @@ def summarize_codex_worker_batch_policy(
                 runner_run_status=runner_run.status if runner_run else None,
                 commit_hash=runner_run.commit_hash if runner_run else None,
                 pushed=runner_run.pushed if runner_run else None,
+                patch_proposal_present=evidence.patch_proposal_present,
+                patch_artifact_path=evidence.patch_artifact_path,
                 blockers=item_blockers,
                 current_safe_next_action=next_action,
             )
@@ -4417,6 +4450,7 @@ def summarize_queue_worker_evidence(
     handoff = load_codex_handoff(project_name, run.selected_handoff_id, workspace_root=root) if run.selected_handoff_id else None
     worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
     report = load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+    latest_ingest = _latest_ingest_for_queue_worker_run(list_codex_worker_ingests(project_name, workspace_root=root), run.run_id)
     review = load_codex_worker_review(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
     delivery_request = None
     if run.delivery_request_id:
@@ -4435,6 +4469,8 @@ def summarize_queue_worker_evidence(
     delivery_request_exists = delivery_request is not None
     delivery_status = delivery_request.status if delivery_request else run.delivery_request_status
     delivery_completed = delivery_status == "completed"
+    patch_proposal_present = bool(latest_ingest and latest_ingest.patch_proposal_present)
+    patch_artifact_path = latest_ingest.patch_artifact_path if latest_ingest and latest_ingest.patch_artifact_path else None
     if review:
         warnings.extend(review.validation_evidence.warnings)
 
@@ -4452,6 +4488,8 @@ def summarize_queue_worker_evidence(
         if report.status_reported_by_worker in {"usage_limit", "blocked", "failed", "needs_approval"}:
             blockers.append(f"Worker report says {report.status_reported_by_worker}.")
             blockers.extend(f"Worker blocker: {blocker}" for blocker in report.blockers)
+            if patch_proposal_present:
+                blockers.append("Worker provided a patch proposal; review it manually before any normal review/validation/delivery evidence.")
         else:
             blockers.append(f"Worker report status is not complete: {report.status_reported_by_worker}.")
     if worker_report_imported and not worker_review_exists:
@@ -4486,6 +4524,8 @@ def summarize_queue_worker_evidence(
         delivery_request_status=delivery_status,
         delivery_request_exists=delivery_request_exists,
         delivery_completed=delivery_completed,
+        patch_proposal_present=patch_proposal_present,
+        patch_artifact_path=patch_artifact_path,
         missing_evidence=missing,
         blockers=blockers,
         warnings=warnings,
@@ -7709,6 +7749,8 @@ def render_codex_worker_ingest_markdown(ingest: CodexWorkerIngest) -> str:
             "## Extra Result Fields",
             "",
             f"- Artifact path: `{ingest.artifact_path or 'none'}`",
+            f"- Patch proposal present: `{ingest.patch_proposal_present}`",
+            f"- Patch artifact path: `{ingest.patch_artifact_path or 'none'}`",
             f"- Dirty repo status: `{ingest.dirty_repo_status or 'none'}`",
             f"- Usage-limit details: `{ingest.usage_limit_details or 'none'}`",
             f"- Failure details: `{ingest.failure_details or 'none'}`",
@@ -8036,6 +8078,7 @@ def render_codex_worker_preparation_prompt(
             "- Do not add secrets or expose tokens.",
             "- Do not broaden scope.",
             "- Stop and report blocked if the task is ambiguous or unsafe.",
+            "- If you can identify the safe change but cannot update existing files, report blocked and provide a patch proposal instead of pretending the work completed.",
             "- Stop and report usage_limit if usage limits prevent completion.",
             "- Do not bypass worker, review, validation, policy, or trusted delivery gates.",
             "",
@@ -8070,11 +8113,16 @@ def render_codex_worker_preparation_prompt(
             "- risks",
             "- recommended_next_action",
             "- artifact_path",
+            "- patch_proposal_present",
+            "- patch_artifact_path",
             "- dirty_repo_status",
             "- usage_limit_details",
             "- failure_details",
             "",
             "Only status=completed should be treated as successful worker evidence.",
+            "If you only produce a patch proposal and do not actually change the target files, status must be blocked or failed, not completed.",
+            "When file writes fail but you know the safe change, set patch_proposal_present=true and point patch_artifact_path or artifact_path at the patch/diff artifact if one exists.",
+            "Patch proposals are review material only; they are not approval to record normal review, validation, delivery, commit, or push.",
             "Unknown or missing status is unsafe.",
             "Structured key/value text is not enough; `codex-worker-ingest` accepts strict JSON only.",
             "",
@@ -10517,8 +10565,13 @@ def _codex_worker_batch_item_next_action(
             f"--policy {policy_id} --confirm-codex-batch-run"
         )
     if evidence.worker_report_status == "blocked":
-        return _blocked_worker_result_next_action(blockers or evidence.blockers)
+        return _blocked_worker_result_next_action(
+            blockers or evidence.blockers,
+            patch_proposal_present=evidence.patch_proposal_present,
+        )
     if evidence.worker_report_status in {"failed", "usage_limit", "needs_approval", "partial"}:
+        if evidence.patch_proposal_present and evidence.worker_report_status == "failed":
+            return _patch_proposal_manual_review_next_action()
         return "Worker result is not completed. Do not record review/validation/delivery; inspect the worker result and resolve the blocker before retrying."
     if run.status == "waiting_worker":
         return (
@@ -10558,7 +10611,11 @@ def _codex_worker_batch_item_next_action(
 def _codex_worker_batch_recommended_command_from_next_action(project_name: str, policy_id: str, next_action: str) -> str:
     if not next_action or next_action.startswith("No action needed"):
         return "none"
-    if "Do not record review/validation" in next_action or "Diagnose write access" in next_action:
+    if (
+        "Do not record review/validation" in next_action
+        or "Do not record normal review/validation/delivery" in next_action
+        or "Diagnose write access" in next_action
+    ):
         return f"devo project codex-worker-batch-summary --project {project_name} --policy {policy_id}"
     if next_action.startswith("devo ") or next_action.startswith(".\\.venv\\Scripts\\devo.exe "):
         return next_action.split("; then ", 1)[0]
@@ -10571,7 +10628,13 @@ def _codex_worker_batch_recommended_command_from_next_action(project_name: str, 
     return f"devo project codex-worker-batch-summary --project {project_name} --policy {policy_id}"
 
 
-def _blocked_worker_result_next_action(blockers: list[str] | None = None) -> str:
+def _blocked_worker_result_next_action(
+    blockers: list[str] | None = None,
+    *,
+    patch_proposal_present: bool = False,
+) -> str:
+    if patch_proposal_present:
+        return _patch_proposal_manual_review_next_action()
     if _looks_like_write_access_blocker(blockers or []):
         return (
             "Worker result is blocked by write access. Do not record review/validation/delivery. "
@@ -10597,6 +10660,13 @@ def _looks_like_write_access_blocker(values: list[str]) -> bool:
         "write access",
     ]
     return any(signal in combined for signal in signals)
+
+
+def _patch_proposal_manual_review_next_action() -> str:
+    return (
+        "Review patch proposal manually. Do not record normal review/validation/delivery "
+        "until changes are actually applied and validated."
+    )
 
 
 def _default_queue_worker_commit_message(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> str:
@@ -10657,12 +10727,50 @@ def _result_string_list(raw_result: dict[str, Any], key: str) -> list[str]:
     raise ValueError(msg)
 
 
-def _codex_worker_ingest_next_action(project_name: str, run: QueueWorkerRun, status: str) -> str:
+def _extract_patch_proposal_path(raw_result: dict[str, Any], artifact_path: str) -> str:
+    explicit = (
+        str(raw_result.get("patch_artifact_path") or "").strip()
+        or str(raw_result.get("patch_proposal_path") or "").strip()
+        or str(raw_result.get("patch_path") or "").strip()
+    )
+    if explicit:
+        return explicit
+    artifact_suffix = Path(artifact_path).suffix.lower() if artifact_path else ""
+    if artifact_suffix in {".patch", ".diff"}:
+        return artifact_path
+    return ""
+
+
+def _worker_result_has_patch_proposal(raw_result: dict[str, Any], patch_artifact_path: str) -> bool:
+    if patch_artifact_path:
+        return True
+    explicit = raw_result.get("patch_proposal_present")
+    if isinstance(explicit, bool):
+        return explicit
+    if isinstance(explicit, str) and explicit.strip().lower() in {"true", "yes", "1"}:
+        return True
+    proposal = raw_result.get("patch_proposal")
+    if isinstance(proposal, str):
+        return bool(proposal.strip())
+    if isinstance(proposal, list):
+        return any(str(item).strip() for item in proposal)
+    return False
+
+
+def _codex_worker_ingest_next_action(
+    project_name: str,
+    run: QueueWorkerRun,
+    status: str,
+    *,
+    patch_proposal_present: bool = False,
+) -> str:
     if status == "completed":
         return (
             "Worker evidence was ingested. Continue through the review gate with: "
             f"devo project approved-queue-run --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-auto-run"
         )
+    if status in {"blocked", "failed"} and patch_proposal_present:
+        return _patch_proposal_manual_review_next_action()
     if status == "blocked":
         return (
             "Worker reported blocked. Do not record review/validation/delivery. "
@@ -10675,13 +10783,24 @@ def _codex_worker_ingest_next_action(project_name: str, run: QueueWorkerRun, sta
     return "Inspect worker result before continuing."
 
 
-def _codex_worker_ingest_note(note: str, work_performed: list[str], raw_copy_path: str, artifact_path: str) -> str:
+def _codex_worker_ingest_note(
+    note: str,
+    work_performed: list[str],
+    raw_copy_path: str,
+    artifact_path: str,
+    *,
+    patch_proposal_present: bool = False,
+    patch_artifact_path: str = "",
+) -> str:
     parts = _record_notes(note=note, artifact_path=None)
     if work_performed:
         parts.append("Work performed: " + "; ".join(work_performed))
     parts.append(f"Raw result copy: {raw_copy_path}")
     if artifact_path:
         parts.append(f"Worker-reported artifact: {artifact_path}")
+    if patch_proposal_present:
+        parts.append(f"Patch proposal artifact: {patch_artifact_path or artifact_path or 'provided inline in raw result'}")
+        parts.append("Patch proposal is not applied work and must be reviewed manually before any normal review/validation/delivery evidence.")
     return " ".join(parts).strip()
 
 
@@ -11000,6 +11119,8 @@ def _render_worker_result_template_json(recorded_by: str | None, now: datetime) 
         "risks": [],
         "recommended_next_action": "",
         "artifact_path": "",
+        "patch_proposal_present": False,
+        "patch_artifact_path": "",
         "dirty_repo_status": "",
         "usage_limit_details": "",
         "failure_details": "",
@@ -11020,6 +11141,8 @@ def _render_worker_result_template_markdown(recorded_by: str | None, now: dateti
             "Risks:",
             "Recommended next action:",
             "Artifact path:",
+            "Patch proposal present:",
+            "Patch artifact path:",
             "Dirty repo status:",
             "Usage-limit details:",
             "Failure details:",

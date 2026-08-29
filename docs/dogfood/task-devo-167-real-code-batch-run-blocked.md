@@ -62,14 +62,15 @@ Review and validation were not recorded because there was no implemented code ch
 
 Before retrying real Codex code edits on DevOrchestrator, diagnose the subprocess write context. Compare the launcher path, wrapper, working directory, Windows security context, and file write permissions from normal PowerShell versus the Codex child process.
 
-If the worker can produce a patch but cannot edit existing files, prefer a future patch-proposal fallback:
+If the worker can produce a patch but cannot edit existing files, use the patch-proposal fallback introduced in TASK-DEVO-169:
 
-1. Codex writes a patch/diff artifact instead of editing source files.
-2. The operator reviews the patch artifact.
-3. A separate trusted/local command applies it only after explicit approval.
-4. Trusted runner remains the only commit/push path.
+1. Codex keeps worker status `blocked` or `failed`.
+2. Codex sets `patch_proposal_present: true` and points `patch_artifact_path` or `.patch`/`.diff` `artifact_path` at the proposal.
+3. The operator reviews the patch artifact manually.
+4. A future separate trusted/local command may apply it only after explicit approval.
+5. Trusted runner remains the only commit/push path.
 
-TASK-DEVO-168 adds safer CLI guidance for this blocked state and documents the diagnostic path. Do not keep retrying `codex-worker-batch-run` blindly after access-denied blocked evidence.
+TASK-DEVO-168 adds safer CLI guidance for this blocked state and documents the diagnostic path. TASK-DEVO-169 preserves patch proposals as evidence/readout metadata without applying them automatically. Do not keep retrying `codex-worker-batch-run` blindly after access-denied blocked evidence.
 
 ## Confirmations
 

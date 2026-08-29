@@ -352,6 +352,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex retry from Codex/sandbox, PersonalOS, automatic review, automatic validation, automatic delivery, direct Codex commit/push, UI, parallel workers, dangerous sandbox bypasses, or automatic patch application.
 - Status: TASK-DEVO-167 blocked safely. Real Codex produced strict JSON twice but could not update existing approved files even though it could inspect them. TASK-DEVO-168 documents the finding and points blocked write-access states toward diagnosis or future patch-proposal fallback before retry/review/validation/delivery.
 
+### TASK-DEVO-169: Patch-Proposal Fallback V1
+
+- Goal: Preserve useful worker implementation intent when source writes are blocked without widening autonomy.
+- Scope: worker-result ingest metadata, consolidated batch-summary guidance, prompt-package instructions, write-access diagnostics docs, and focused fake-worker tests.
+- Not in scope: automatic patch apply, dangerous sandbox bypass, automatic review, automatic validation, delivery creation, trusted runner execution, UI, real Codex execution, or PersonalOS.
+- Status: Completed. Blocked/failed worker JSON can now carry `patch_proposal_present` plus `patch_artifact_path` or a `.patch`/`.diff` `artifact_path`; Devo surfaces the proposal while keeping the result non-successful and telling the operator to review it manually before any normal review/validation/delivery gates.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

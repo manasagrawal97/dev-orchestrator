@@ -50,7 +50,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 - TASK-DEVO-165: Consolidated real-batch position summary - completed; `devo project codex-worker-batch-summary` shows policy, queue, worker, Codex, evidence, delivery, runner, commit, push, and one safe next command read-only
 - TASK-DEVO-166: Real batch position summary dogfood - completed in `docs/dogfood/task-devo-166-real-batch-summary-dogfood.md`; completed policy `POL-0002` now summarizes both items, evidence, delivery, commits, pushed state, and terminal no-action guidance in one read-only view
 - TASK-DEVO-167/TASK-DEVO-168: First narrow real DevOrchestrator code-task batch-run blocked safely; real Codex could inspect files but could not update existing approved files, so Devo now documents write-access diagnostics and points blocked summaries toward diagnosis or patch-proposal fallback before retry/review/validation/delivery
-- Next: resolve the Codex subprocess write-access context or design patch-proposal fallback before retrying live real-code batch-run
+- TASK-DEVO-169: Patch-proposal fallback v1 - completed; blocked/failed Codex worker results can preserve a patch proposal artifact while staying non-success evidence with manual-review-only next action
+- Next: resolve the Codex subprocess write-access context or add a separately approved trusted patch-apply flow before retrying live real-code batch-run
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases

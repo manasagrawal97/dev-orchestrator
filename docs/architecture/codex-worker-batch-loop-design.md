@@ -11,7 +11,7 @@ TASK-DEVO-154 designs the next Codex worker layer before implementation. The goa
 - trusted runner remains the only delivery path
 - unsafe or ambiguous states always stop the loop
 
-This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner. TASK-DEVO-163 records the readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`. TASK-DEVO-164 proves the same one-item-at-a-time flow on a narrow live DevOrchestrator docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` as the read-only position summary for operators. TASK-DEVO-167/168 adds one more boundary: if a real worker can inspect approved files but cannot update existing files, the safe state is blocked diagnosis or patch-proposal fallback, not review, validation, or delivery.
+This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner. TASK-DEVO-163 records the readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`. TASK-DEVO-164 proves the same one-item-at-a-time flow on a narrow live DevOrchestrator docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` as the read-only position summary for operators. TASK-DEVO-167/168 adds one more boundary: if a real worker can inspect approved files but cannot update existing files, the safe state is blocked diagnosis or patch-proposal fallback, not review, validation, or delivery. TASK-DEVO-169 adds that fallback's first safe slice: Devo can ingest and summarize a patch proposal, but it still cannot apply it automatically.
 
 ## 2. Current Proven Flow
 
@@ -127,6 +127,7 @@ The batch loop must stop immediately when any of these occur:
 - result JSON is invalid
 - result status is `failed`, `blocked`, or `usage_limit`
 - worker evidence reports access denied, `Failed to write file`, `UnauthorizedAccessException`, or another existing-file write blocker
+- worker evidence is patch-only; patch proposals must be reviewed and applied through a separate explicit future flow before normal review/validation/delivery
 - subprocess exits non-zero
 - subprocess times out
 - subprocess is cancelled
@@ -224,8 +225,11 @@ Each item needs durable evidence:
 - trusted runner run id
 - commit hash and pushed flag
 - final queue item status
+- patch proposal present/path when the worker could not apply the change
 
 The batch run should summarize these per item without hiding lower-level artifact paths.
+
+Patch proposals are evidence of implementation intent, not evidence that files changed. A blocked or failed worker may set `patch_proposal_present` and provide `patch_artifact_path`, but the queue item must stay before normal review/validation/delivery until the operator applies and validates the patch through a separate approved path.
 
 The read-only batch summary should also join these records after the fact. For a terminal policy it should lead with:
 

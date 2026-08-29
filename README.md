@@ -64,6 +64,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-160 multi-item fake-worker continuation dogfood](docs/dogfood/task-devo-160-multi-item-fake-worker-batch-continuation.md)
 - [TASK-DEVO-162 real Codex multi-item batch dogfood](docs/dogfood/task-devo-162-real-codex-multi-item-batch-dogfood.md)
 - [TASK-DEVO-167 real code batch-run blocked report](docs/dogfood/task-devo-167-real-code-batch-run-blocked.md)
+- [TASK-DEVO-169 patch-proposal fallback](docs/dogfood/task-devo-169-patch-proposal-fallback.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -344,7 +345,7 @@ TASK-DEVO-162 proves real `codex-worker-batch-run` continuation across two dispo
 
 TASK-DEVO-164 then proves that same operating mode on the live DevOrchestrator repo with two docs-only items delivered by trusted runner commits `f9360f7` and `3b6c44d`. TASK-DEVO-165 adds `codex-worker-batch-summary` so operators can see the whole real-batch position and the one safe next command without mentally joining every policy, queue-worker, Codex, review, validation, delivery, runner, commit, and push artifact. TASK-DEVO-166 dogfoods that summary against completed live policy `POL-0002` and confirms the terminal no-action readout is clear.
 
-TASK-DEVO-167 then attempts the first narrow real DevOrchestrator code-task batch-run and blocks safely when the Codex subprocess can inspect files but cannot update existing approved source/test files. TASK-DEVO-168 documents the diagnostic pattern and makes blocked write-access guidance point to diagnosis or future patch-proposal fallback instead of blind retry, review, validation, or delivery.
+TASK-DEVO-167 then attempts the first narrow real DevOrchestrator code-task batch-run and blocks safely when the Codex subprocess can inspect files but cannot update existing approved source/test files. TASK-DEVO-168 documents the diagnostic pattern and makes blocked write-access guidance point to diagnosis or patch-proposal fallback instead of blind retry, review, validation, or delivery. TASK-DEVO-169 adds patch-proposal fallback v1: blocked/failed worker JSON can point at a `.patch` or `.diff` artifact, and Devo surfaces that proposal while keeping the result non-successful and telling the operator not to record normal review/validation/delivery until changes are actually applied and validated.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

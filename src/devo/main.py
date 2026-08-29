@@ -1016,6 +1016,8 @@ def _print_codex_worker_batch_policy_summary(summary: CodexWorkerBatchPolicySumm
             f"validation={item.validation_evidence_status}",
             soft_wrap=True,
         )
+        if item.patch_proposal_present:
+            console.print(f"    patch proposal: yes; artifact={item.patch_artifact_path or 'provided inline in raw result'}", soft_wrap=True)
         console.print(
             f"    delivery: request={item.delivery_request_id or 'none'} ({item.delivery_request_status or 'none'}); "
             f"runner={item.runner_run_id or 'none'} ({item.runner_run_status or 'none'}); "
@@ -1055,6 +1057,8 @@ def _print_codex_worker_ingest_result(result: CodexWorkerIngestResult) -> None:
     console.print(f"Worker evidence Markdown: {_named_path(Path(ingest.worker_evidence_markdown_path)) if ingest.worker_evidence_markdown_path else 'none'}")
     console.print(f"Raw result file: {_named_path(Path(ingest.raw_result_file))}")
     console.print(f"Raw result copy: {_named_path(Path(result.raw_result_copy_path)) if result.raw_result_copy_path else 'not written'}")
+    console.print(f"Patch proposal present: {ingest.patch_proposal_present}")
+    console.print(f"Patch artifact path: {ingest.patch_artifact_path or 'none'}", soft_wrap=True)
     console.print("Changed files:")
     for path in ingest.changed_files or ["none"]:
         console.print(f"  - {path}", soft_wrap=True)
@@ -1091,6 +1095,8 @@ def _print_codex_worker_ingest(ingest: CodexWorkerIngest) -> None:
     console.print(f"Summary: {ingest.summary}", soft_wrap=True)
     console.print(f"Worker evidence id: {ingest.worker_evidence_id or 'none'}")
     console.print(f"Raw result copy: {_named_path(Path(ingest.raw_result_copy_path))}")
+    console.print(f"Patch proposal present: {ingest.patch_proposal_present}")
+    console.print(f"Patch artifact path: {ingest.patch_artifact_path or 'none'}", soft_wrap=True)
     console.print(f"Next action: {ingest.next_action}", soft_wrap=True)
     console.print("Read-only: no worker execution or target project mutation was run.")
 
@@ -1315,6 +1321,8 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
     console.print(f"Action taken: {result.action_taken}")
     console.print("New evidence state:")
     console.print(f"  Worker report status: {result.evidence.worker_report_status or 'none'}")
+    console.print(f"  Patch proposal present: {result.evidence.patch_proposal_present}")
+    console.print(f"  Patch artifact path: {result.evidence.patch_artifact_path or 'none'}", soft_wrap=True)
     console.print(f"  Review status: {result.evidence.worker_review_status or 'none'}")
     console.print(f"  Validation status: {result.evidence.validation_status or 'none'}")
     console.print(f"  Validation passed: {result.evidence.validation_passed}")

@@ -55,15 +55,38 @@ If worker evidence is `blocked` because existing-file writes failed:
 
 ## Patch-Proposal Fallback
 
-If write access remains unreliable, a future safe fallback is patch proposal mode:
+If write access remains unreliable, Devo can now preserve a worker's implementation intent as a patch proposal:
 
-- Codex produces a patch or unified diff artifact instead of editing files.
+- Codex reports `status=blocked` or `status=failed` when it cannot edit files.
+- Codex can include `patch_proposal_present: true`.
+- Codex can point `patch_artifact_path` or `artifact_path` at a `.patch` or `.diff` artifact.
+- Devo ingest and `codex-worker-batch-summary` surface the patch proposal and its path.
 - The patch artifact is reviewed by the operator.
-- A separate trusted/local command applies the patch only after explicit approval.
+- A future separate trusted/local command may apply the patch only after explicit approval.
 - Normal review and validation evidence are still required.
 - Trusted runner remains the only commit/push path.
 
-This fallback should not auto-apply patches inside `codex-worker-batch-run`. Applying a patch is a separate write action and needs its own explicit safety gate.
+This fallback does not auto-apply patches inside `codex-worker-batch-run`. Applying a patch is a separate write action and needs its own explicit safety gate. Do not record normal review, validation, or delivery for a patch-only result until the patch has actually been applied and validated.
+
+Expected worker-result shape:
+
+```json
+{
+  "status": "blocked",
+  "summary": "Could not update existing files; patch proposal produced for manual review.",
+  "work_performed": [],
+  "changed_files": [],
+  "commands_run": ["attempted apply_patch"],
+  "risks": ["write access blocked"],
+  "recommended_next_action": "",
+  "artifact_path": "path/to/proposed.patch",
+  "patch_proposal_present": true,
+  "patch_artifact_path": "path/to/proposed.patch",
+  "dirty_repo_status": "clean",
+  "usage_limit_details": "",
+  "failure_details": "Failed to write file; UnauthorizedAccessException"
+}
+```
 
 ## What Not To Do
 

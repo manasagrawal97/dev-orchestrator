@@ -3095,6 +3095,48 @@ def test_codex_worker_batch_run_blocked_write_access_guides_diagnosis(tmp_path: 
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_batch_run_blocked_patch_proposal_surfaces_manual_review_guidance(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "blocked_write_access_patch")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: paused" in result.output
+    assert "worker result status is blocked" in result.output
+    assert "Review patch proposal manually" in result.output
+    assert "Do not record normal review/validation/delivery until changes are actually applied and validated." in result.output
+    assert "queue-worker-record-review" not in result.output
+    assert "queue-worker-request-delivery" not in result.output
+    ingests = list_codex_worker_ingests("sample", workspace_root=workspace)
+    assert len(ingests) == 1
+    assert ingests[0].status == "blocked"
+    assert ingests[0].patch_proposal_present is True
+    assert ingests[0].patch_artifact_path.endswith("proposed.patch")
+    assert Path(ingests[0].patch_artifact_path).exists()
+    assert ingests[0].recommended_next_action == (
+        "Review patch proposal manually. Do not record normal review/validation/delivery "
+        "until changes are actually applied and validated."
+    )
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_codex_worker_batch_run_reports_no_eligible_item_without_subprocess(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -3246,6 +3288,78 @@ def test_codex_worker_batch_summary_blocked_write_access_guides_resolution(tmp_p
     assert "Recommended command: devo project codex-worker-batch-run" not in result.output
     assert queue_json.read_text(encoding="utf-8") == before_queue
     assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_summary_blocked_patch_proposal_recommends_manual_patch_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "blocked_write_access_patch")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 1, batch_run.output
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before_queue = queue_json.read_text(encoding="utf-8")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "worker=blocked" in result.output
+    assert "patch proposal: yes; artifact=" in result.output
+    assert "proposed.patch" in result.output
+    assert "Review patch proposal manually" in result.output
+    assert "Do not record normal review/validation/delivery until changes are actually applied and validated." in result.output
+    assert "Recommended command: devo project codex-worker-batch-summary --project sample --policy POL-0001" in result.output
+    assert "queue-worker-record-review" not in result.output
+    assert "queue-worker-request-delivery" not in result.output
+    assert queue_json.read_text(encoding="utf-8") == before_queue
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_prompt_includes_patch_proposal_fallback_contract(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    run_result = runner.invoke(
+        app,
+        ["project", "queue-worker-step", "--project", "sample", "--policy", "POL-0001", "--confirm-step"],
+        terminal_width=240,
+    )
+    assert run_result.exit_code == 0, run_result.output
+    prepare = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    prompt = Path(preparation.prompt_path).read_text(encoding="utf-8")
+    template = Path(preparation.worker_result_template_json_path).read_text(encoding="utf-8")
+
+    assert "patch proposal instead of pretending the work completed" in prompt
+    assert "- patch_proposal_present" in prompt
+    assert "- patch_artifact_path" in prompt
+    assert "status must be blocked or failed, not completed" in prompt
+    assert "Patch proposals are review material only" in prompt
+    assert '"patch_proposal_present": false' in template
+    assert '"patch_artifact_path": ""' in template
 
 
 def test_codex_worker_batch_summary_reports_waiting_validation_next_command(tmp_path: Path, monkeypatch) -> None:
@@ -5477,6 +5591,11 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "elif mode == 'blocked_write_access':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'blocked', 'summary': 'apply_patch failed with Failed to write file; direct WriteAllText failed with UnauthorizedAccessException.', 'work_performed': [], 'changed_files': [], 'commands_run': ['attempted apply_patch'], 'risks': ['write access blocked'], 'recommended_next_action': '', 'failure_details': 'Failed to write file; UnauthorizedAccessException'}, indent=2), encoding='utf-8')",
+                "elif mode == 'blocked_write_access_patch':",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    patch_path = result_path.parent / 'proposed.patch'",
+                "    patch_path.write_text('diff --git a/src/feature.py b/src/feature.py\\n--- a/src/feature.py\\n+++ b/src/feature.py\\n@@\\n-old\\n+new\\n', encoding='utf-8')",
+                "    result_path.write_text(json.dumps({'status': 'blocked', 'summary': 'apply_patch failed with Failed to write file; direct WriteAllText failed with UnauthorizedAccessException. Patch proposal written for manual review.', 'work_performed': [], 'changed_files': [], 'commands_run': ['attempted apply_patch'], 'risks': ['write access blocked'], 'recommended_next_action': 'record review anyway', 'artifact_path': str(patch_path), 'patch_proposal_present': True, 'patch_artifact_path': str(patch_path), 'failure_details': 'Failed to write file; UnauthorizedAccessException'}, indent=2), encoding='utf-8')",
                 "elif mode == 'invalid_json':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text('status: completed\\nsummary: fake structured text\\n', encoding='utf-8')",
