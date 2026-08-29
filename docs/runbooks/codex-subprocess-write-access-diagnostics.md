@@ -68,6 +68,8 @@ If write access remains unreliable, Devo can now preserve a worker's implementat
 
 This fallback does not auto-apply patches inside `codex-worker-batch-run`. Applying a patch is a separate write action and needs its own explicit safety gate. Do not record normal review, validation, or delivery for a patch-only result until the patch has actually been applied and validated.
 
+TASK-DEVO-171 designs that future gate in `docs/architecture/reviewed-patch-apply-design.md`. The recommended next slice is read-only patch proposal display plus explicit dry-run checking. A later apply command must require a clean worktree, prove the patch came from ingested worker evidence, enforce policy allowed/forbidden files, record who reviewed/applied it, and still avoid commit, push, normal evidence recording, and queue completion.
+
 Expected worker-result shape:
 
 ```json
@@ -102,3 +104,4 @@ Expected worker-result shape:
 - `docs/runbooks/codex-launcher-setup.md`
 - `docs/runbooks/real-codex-supervised-dry-run.md`
 - `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`
+- `docs/architecture/reviewed-patch-apply-design.md`

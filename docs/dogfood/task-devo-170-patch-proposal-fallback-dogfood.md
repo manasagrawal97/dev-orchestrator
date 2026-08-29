@@ -132,3 +132,5 @@ Suggested boundary:
 - apply through a trusted local command, not Codex subprocess
 - require validation evidence after apply
 - keep trusted runner as the only commit/push path
+
+TASK-DEVO-171 implements that recommendation as design-only in `docs/architecture/reviewed-patch-apply-design.md`. The design recommends TASK-DEVO-172 start with read-only patch proposal show/check commands before any apply command is implemented.

@@ -64,6 +64,7 @@ Devo already has:
 - Real Codex batch-run readiness checkpoint defining safe disposable use, narrow DevOrchestrator use, PersonalOS deferral, manual gates, and trusted-runner-only delivery
 - Live DevOrchestrator real batch-run dogfood on a narrow docs-only policy, plus a dogfooded read-only consolidated batch-position summary for policy/queue/worker/Codex/evidence/delivery/runner/commit/push state and one safe next command
 - Patch-proposal fallback v1 for blocked/failed Codex worker results, preserving proposed `.patch`/`.diff` artifacts as manual-review evidence without automatic apply, validation, delivery, commit, or push; TASK-DEVO-170 dogfoods this with fake blocked evidence and explicit ingest/evidence/summary readouts
+- Reviewed patch-apply design for a future explicit operator patch flow with read-only show/check first, dry-run apply preflight, policy-scope checks, clean-worktree requirements, audit artifacts, and no commit/push or queue completion
 
 These capabilities make Devo a useful local control plane today. TASK-DEVO-085 completed the first full planning-pipeline dogfood run and showed the next gap is operator guidance/input robustness rather than more planning primitives. TASK-DEVO-162 shows the Phase 2 Codex-worker path can continue across multiple real disposable items while keeping review, validation, and trusted delivery gates explicit. TASK-DEVO-164 proves the same real Codex batch-run operating mode on a narrow live DevOrchestrator docs-only batch, TASK-DEVO-165 adds the consolidated read-only batch-position summary, and TASK-DEVO-166 proves that summary gives a clear terminal view for completed live policy `POL-0002`. TASK-DEVO-167 then found a safe blocker for live code edits: the Codex subprocess could inspect approved files but could not update existing files, so TASK-DEVO-168 records diagnostics, TASK-DEVO-169 adds patch-proposal fallback v1 for preserving proposed patches without applying them automatically, and TASK-DEVO-170 dogfoods that fallback with fake blocked evidence.
 
@@ -237,8 +238,11 @@ This keeps ChatGPT as the strategy partner, Codex as the local worker, and Devo 
 90. TASK-DEVO-165: Consolidated real-batch position summary - completed.
 91. TASK-DEVO-166: Real batch position summary dogfood - completed.
 92. TASK-DEVO-167/TASK-DEVO-168: First narrow real DevOrchestrator code-task batch-run blocked safely; write-access diagnostics and patch-proposal fallback guidance added.
-93. Next: diagnose the Codex subprocess write context or design patch-proposal apply/review gates before retrying live code batch-run.
-93. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
+93. TASK-DEVO-169: Patch-proposal fallback v1 - completed.
+94. TASK-DEVO-170: Patch-proposal fallback dogfood - completed.
+95. TASK-DEVO-171: Reviewed patch-apply design - completed.
+96. Next: implement read-only patch proposal show/check before any apply command or live code batch-run retry.
+97. Post-Phase-1 polish: artifact/index compaction, docs consolidation, prompt simplification, progress/read-model polish, UI polish, optional API/model agents, notifications, packaging, advanced UI, and other polish.
 
 ## Intentionally Deprioritized Now
 
