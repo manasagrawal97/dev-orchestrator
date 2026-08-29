@@ -1162,6 +1162,8 @@ def _print_queue_worker_evidence(run: QueueWorkerRun) -> None:
     console.print(f"Worker run exists: {evidence.worker_run_exists}")
     console.print(f"Worker report exists: {evidence.worker_report_imported}")
     console.print(f"Worker report status: {evidence.worker_report_status or 'none'}")
+    console.print(f"Patch proposal present: {evidence.patch_proposal_present}")
+    console.print(f"Patch artifact path: {evidence.patch_artifact_path or 'none'}", soft_wrap=True)
     console.print(f"Review exists: {evidence.worker_review_exists}")
     console.print(f"Review status: {evidence.worker_review_status or 'none'}")
     console.print(f"Validation evidence exists: {evidence.validation_evidence_exists}")
@@ -1348,6 +1350,8 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
 def _queue_worker_next_action_text(run: QueueWorkerRun, evidence, blockers: list[str]) -> str:
     if run.next_action and not blockers:
         return run.next_action
+    if getattr(evidence, "patch_proposal_present", False):
+        return "Review patch proposal manually. Do not record normal review/validation/delivery until changes are actually applied and validated."
     if blockers:
         return "Resolve blockers before continuing this queue-worker run."
     if not evidence.worker_report_imported:

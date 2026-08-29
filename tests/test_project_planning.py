@@ -3134,6 +3134,19 @@ def test_codex_worker_batch_run_blocked_patch_proposal_surfaces_manual_review_gu
         "Review patch proposal manually. Do not record normal review/validation/delivery "
         "until changes are actually applied and validated."
     )
+    evidence = runner.invoke(
+        app,
+        ["project", "queue-worker-evidence", "--project", "sample", "--run", "QWR-0001"],
+        terminal_width=240,
+    )
+    assert evidence.exit_code == 0, evidence.output
+    assert "Patch proposal present: True" in evidence.output
+    assert "Patch artifact path:" in evidence.output
+    assert "proposed.patch" in evidence.output
+    assert "Review patch proposal manually" in evidence.output
+    assert "Do not record normal review/validation/delivery until changes are actually applied and validated." in evidence.output
+    assert "Record review evidence" not in evidence.output
+    assert "Create delivery request" not in evidence.output
     assert _target_snapshot(project_path) == before_target
 
 

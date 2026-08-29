@@ -359,6 +359,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: automatic patch apply, dangerous sandbox bypass, automatic review, automatic validation, delivery creation, trusted runner execution, UI, real Codex execution, or PersonalOS.
 - Status: Completed. Blocked/failed worker JSON can now carry `patch_proposal_present` plus `patch_artifact_path` or a `.patch`/`.diff` `artifact_path`; Devo surfaces the proposal while keeping the result non-successful and telling the operator to review it manually before any normal review/validation/delivery gates.
 
+### TASK-DEVO-170: Patch-Proposal Fallback Dogfood
+
+- Goal: Prove patch-proposal fallback v1 with fake blocked worker evidence before adding any patch-apply flow.
+- Scope: `POL-0003`, retry run `QWR-0005`, fake blocked result JSON, `.patch` artifact, ingest/evidence/summary readout check, dogfood report, and tiny evidence-output wording polish.
+- Not in scope: real Codex execution, patch application, normal review/validation/delivery for patch-only evidence, trusted runner delivery for the fake worker item, UI, parallel workers, or PersonalOS.
+- Status: Completed with PASS verdict. `codex-worker-ingest`, `queue-worker-evidence`, and `codex-worker-batch-summary` show the patch proposal path while keeping the worker result blocked and telling the operator not to record normal review/validation/delivery until changes are actually applied and validated.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

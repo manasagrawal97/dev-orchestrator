@@ -111,7 +111,7 @@ These gates remain manual in the current operating mode:
 - Run or allow the trusted local runner to commit and push.
 - Confirm queue completion before moving to larger scopes.
 
-If worker evidence is `blocked`, review/validation should only be recorded after a real implemented change exists. For write-access blockers, the correct next step is diagnostics or patch-proposal fallback, not delivery. TASK-DEVO-169 adds patch-proposal fallback v1: blocked/failed worker JSON can preserve a proposed `.patch` or `.diff`, but the result still is not completed work and must not proceed through normal review, validation, or delivery until the patch is actually applied and validated.
+If worker evidence is `blocked`, review/validation should only be recorded after a real implemented change exists. For write-access blockers, the correct next step is diagnostics or patch-proposal fallback, not delivery. TASK-DEVO-169 adds patch-proposal fallback v1: blocked/failed worker JSON can preserve a proposed `.patch` or `.diff`, but the result still is not completed work and must not proceed through normal review, validation, or delivery until the patch is actually applied and validated. TASK-DEVO-170 dogfoods that fallback with fake blocked evidence and confirms the ingest, evidence, and batch summary readouts keep the operator on the manual patch-review path.
 
 The real Codex subprocess step may spend Codex usage. Use it only for narrow approved policies where the expected change is worth the usage cost.
 

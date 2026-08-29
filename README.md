@@ -65,6 +65,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-162 real Codex multi-item batch dogfood](docs/dogfood/task-devo-162-real-codex-multi-item-batch-dogfood.md)
 - [TASK-DEVO-167 real code batch-run blocked report](docs/dogfood/task-devo-167-real-code-batch-run-blocked.md)
 - [TASK-DEVO-169 patch-proposal fallback](docs/dogfood/task-devo-169-patch-proposal-fallback.md)
+- [TASK-DEVO-170 patch-proposal fallback dogfood](docs/dogfood/task-devo-170-patch-proposal-fallback-dogfood.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
