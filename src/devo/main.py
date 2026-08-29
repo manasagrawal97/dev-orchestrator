@@ -1022,6 +1022,8 @@ def _print_codex_worker_batch_policy_summary(summary: CodexWorkerBatchPolicySumm
             f"commit={item.commit_hash or 'none'}; pushed={item.pushed if item.pushed is not None else 'unknown'}",
             soft_wrap=True,
         )
+        if item.blockers:
+            console.print(f"    blockers: {'; '.join(item.blockers)}", soft_wrap=True)
         console.print(f"    next: {item.current_safe_next_action or 'unknown'}", soft_wrap=True)
     console.print("Warnings:")
     for warning in summary.warnings or ["none"]:

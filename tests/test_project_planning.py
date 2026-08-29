@@ -3059,6 +3059,42 @@ def test_codex_worker_batch_run_stops_on_unsafe_fake_worker_results(tmp_path: Pa
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_batch_run_blocked_write_access_guides_diagnosis(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "blocked_write_access")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: paused" in result.output
+    assert "worker result status is blocked" in result.output
+    assert "Do not record review/validation/delivery" in result.output
+    assert "diagnose write access" in result.output.lower()
+    assert "patch-proposal fallback" in result.output
+    assert "queue-worker-record-review" not in result.output
+    assert "queue-worker-request-delivery" not in result.output
+    ingests = list_codex_worker_ingests("sample", workspace_root=workspace)
+    assert len(ingests) == 1
+    assert ingests[0].status == "blocked"
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_codex_worker_batch_run_reports_no_eligible_item_without_subprocess(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -3164,6 +3200,50 @@ def test_codex_worker_batch_summary_reports_waiting_review_next_command_and_is_r
     assert "evidence: worker=completed; review=missing; validation=not_provided" in result.output
     assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
     assert "Safety: this summary is read-only." in result.output
+    assert queue_json.read_text(encoding="utf-8") == before_queue
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_summary_blocked_write_access_guides_resolution(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "blocked_write_access")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 1, batch_run.output
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before_queue = queue_json.read_text(encoding="utf-8")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "worker=blocked" in result.output
+    assert "Worker report says blocked." in result.output
+    assert "Failed to write file" in result.output
+    assert "Do not record review/validation/delivery" in result.output
+    assert "Diagnose write access or use patch-proposal fallback before retrying." in result.output
+    assert "Recommended command: devo project codex-worker-batch-summary --project sample --policy POL-0001" in result.output
+    assert "queue-worker-record-review" not in result.output
+    assert "queue-worker-request-delivery" not in result.output
+    assert "Recommended command: devo project codex-worker-batch-run" not in result.output
     assert queue_json.read_text(encoding="utf-8") == before_queue
     assert _target_snapshot(project_path) == before_target
 
@@ -5394,6 +5474,9 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "elif mode == 'usage_limit':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'usage_limit', 'summary': 'fake worker hit usage limit', 'work_performed': [], 'changed_files': [], 'commands_run': [], 'risks': ['usage limit'], 'recommended_next_action': '', 'usage_limit_details': 'usage exhausted'}, indent=2), encoding='utf-8')",
+                "elif mode == 'blocked_write_access':",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'blocked', 'summary': 'apply_patch failed with Failed to write file; direct WriteAllText failed with UnauthorizedAccessException.', 'work_performed': [], 'changed_files': [], 'commands_run': ['attempted apply_patch'], 'risks': ['write access blocked'], 'recommended_next_action': '', 'failure_details': 'Failed to write file; UnauthorizedAccessException'}, indent=2), encoding='utf-8')",
                 "elif mode == 'invalid_json':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text('status: completed\\nsummary: fake structured text\\n', encoding='utf-8')",

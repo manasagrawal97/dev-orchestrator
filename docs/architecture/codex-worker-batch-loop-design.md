@@ -11,7 +11,7 @@ TASK-DEVO-154 designs the next Codex worker layer before implementation. The goa
 - trusted runner remains the only delivery path
 - unsafe or ambiguous states always stop the loop
 
-This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner. TASK-DEVO-163 records the readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`. TASK-DEVO-164 proves the same one-item-at-a-time flow on a narrow live DevOrchestrator docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` as the read-only position summary for operators.
+This document was created as design-only in TASK-DEVO-154. TASK-DEVO-155 implements the first conservative v1 from this design: `devo project codex-worker-batch-run` processes at most one approved queue item per invocation, writes batch-run artifacts, and stops at the review gate after strict JSON ingest. TASK-DEVO-158 proves that v1 with one real Codex subprocess item on disposable `Dogfood158`, followed by manual review/validation evidence and trusted runner delivery. TASK-DEVO-162 proves continuation across two real disposable Codex subprocess items on `Dogfood162`, still one item at a time and still delivered only through the trusted runner. TASK-DEVO-163 records the readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`. TASK-DEVO-164 proves the same one-item-at-a-time flow on a narrow live DevOrchestrator docs-only policy, and TASK-DEVO-165 adds `devo project codex-worker-batch-summary` as the read-only position summary for operators. TASK-DEVO-167/168 adds one more boundary: if a real worker can inspect approved files but cannot update existing files, the safe state is blocked diagnosis or patch-proposal fallback, not review, validation, or delivery.
 
 ## 2. Current Proven Flow
 
@@ -126,6 +126,7 @@ The batch loop must stop immediately when any of these occur:
 - subprocess result file is missing
 - result JSON is invalid
 - result status is `failed`, `blocked`, or `usage_limit`
+- worker evidence reports access denied, `Failed to write file`, `UnauthorizedAccessException`, or another existing-file write blocker
 - subprocess exits non-zero
 - subprocess times out
 - subprocess is cancelled
@@ -332,6 +333,7 @@ Next action:
 - automatic retry after failed/timeout/usage-limit states
 - direct Codex commit or push
 - raw Git commit/push from the batch loop
+- automatic patch application from worker output
 - UI controls
 - AI API/model integration
 - PersonalOS-specific behavior

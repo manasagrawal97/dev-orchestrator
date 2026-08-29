@@ -345,6 +345,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, queue mutation, review/validation recording, delivery request creation by the summary, runner execution, commit, push, UI, parallel workers, or PersonalOS.
 - Status: Completed with PASS verdict. The summary reports both completed queue items, `QWR-0001` and `QWR-0002`, productive Codex batch/worker/ingest IDs, review/validation evidence, delivery requests `REQ-0052` and `REQ-0053`, pushed commits, and terminal no-action guidance.
 
+### TASK-DEVO-167/TASK-DEVO-168: Real Code Batch-Run Write-Access Blocker
+
+- Goal: Attempt the first narrow real Codex code-task batch-run on live DevOrchestrator and harden the blocked-result guidance.
+- Scope: one approved source/test policy, blocked-result dogfood report, write-access diagnostics runbook, and safer next-action text for blocked worker evidence.
+- Not in scope: real Codex retry from Codex/sandbox, PersonalOS, automatic review, automatic validation, automatic delivery, direct Codex commit/push, UI, parallel workers, dangerous sandbox bypasses, or automatic patch application.
+- Status: TASK-DEVO-167 blocked safely. Real Codex produced strict JSON twice but could not update existing approved files even though it could inspect them. TASK-DEVO-168 documents the finding and points blocked write-access states toward diagnosis or future patch-proposal fallback before retry/review/validation/delivery.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

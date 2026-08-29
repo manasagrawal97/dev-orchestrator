@@ -41,6 +41,8 @@ TASK-DEVO-164 then proved the same operating mode on the live DevOrchestrator re
 
 TASK-DEVO-166 dogfooded the read-only consolidated summary against that completed live policy. `devo project codex-worker-batch-summary --project DevOrchestrator --policy POL-0002` reported both completed items, productive Codex batch/worker/ingest artifacts, review and validation evidence, delivery requests, trusted runner runs, pushed commits, and terminal no-action guidance in one view.
 
+TASK-DEVO-167 then attempted a first narrow live DevOrchestrator code-task policy and blocked safely. Real Codex could inspect approved files and produce strict JSON, but the subprocess could not update existing allowed source/test files. TASK-DEVO-168 documents that this is a write-context blocker: do not treat it as implementation evidence, and do not retry blindly without changing the launcher/process permission context or using a future patch-proposal fallback.
+
 ## Safe For Disposable Projects
 
 Real Codex batch-run is safe for disposable dogfood projects when all of these are true:
@@ -79,6 +81,8 @@ Additional guardrails should be used:
 
 TASK-DEVO-164 proved this on a docs-only live DevOrchestrator batch. The recommended ongoing mode is still narrow and operator-gated: inspect the position with `devo project codex-worker-batch-summary --project DevOrchestrator --policy <POL-ID>`, run at most one real Codex item at a time, review manually, validate manually, and deliver only through the trusted runner.
 
+TASK-DEVO-167 shows that live DevOrchestrator code edits have one more readiness condition: the real Codex subprocess must be able to update existing approved files, not merely read them or create new probe files. If worker evidence reports `Failed to write file`, `UnauthorizedAccessException`, access denied, or permission denied, stop for diagnostics before review, validation, or delivery.
+
 ## Not Ready For PersonalOS Or Family-Use Development
 
 Real Codex batch-run is not yet ready as a default PersonalOS/family-use workflow.
@@ -106,6 +110,8 @@ These gates remain manual in the current operating mode:
 - Create or approve the trusted delivery request path.
 - Run or allow the trusted local runner to commit and push.
 - Confirm queue completion before moving to larger scopes.
+
+If worker evidence is `blocked`, review/validation should only be recorded after a real implemented change exists. For write-access blockers, the correct next step is diagnostics or patch-proposal fallback, not delivery.
 
 The real Codex subprocess step may spend Codex usage. Use it only for narrow approved policies where the expected change is worth the usage cost.
 

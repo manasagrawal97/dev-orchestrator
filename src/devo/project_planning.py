@@ -952,6 +952,7 @@ class CodexWorkerBatchItemSummary(BaseModel):
     runner_run_status: str | None = None
     commit_hash: str | None = None
     pushed: bool | None = None
+    blockers: list[str] = Field(default_factory=list)
     current_safe_next_action: str = ""
 
 
@@ -3795,7 +3796,8 @@ def summarize_codex_worker_batch_policy(
         worker_evidence_status = evidence.worker_report_status or (latest_ingest.status if latest_ingest else "missing")
         review_status = evidence.worker_review_status or "missing"
         validation_status = evidence.validation_status or "not_provided"
-        next_action = _codex_worker_batch_item_next_action(project_name, policy.policy_id, item, latest_run, evidence, runner_run)
+        item_blockers = _dedupe([*(latest_run.blockers if latest_run else []), *evidence.blockers])
+        next_action = _codex_worker_batch_item_next_action(project_name, policy.policy_id, item, latest_run, evidence, runner_run, item_blockers)
         item_summaries.append(
             CodexWorkerBatchItemSummary(
                 queue_item_id=item.item_id,
@@ -3817,6 +3819,7 @@ def summarize_codex_worker_batch_policy(
                 runner_run_status=runner_run.status if runner_run else None,
                 commit_hash=runner_run.commit_hash if runner_run else None,
                 pushed=runner_run.pushed if runner_run else None,
+                blockers=item_blockers,
                 current_safe_next_action=next_action,
             )
         )
@@ -4448,6 +4451,7 @@ def summarize_queue_worker_evidence(
     if report and report.status_reported_by_worker != "completed":
         if report.status_reported_by_worker in {"usage_limit", "blocked", "failed", "needs_approval"}:
             blockers.append(f"Worker report says {report.status_reported_by_worker}.")
+            blockers.extend(f"Worker blocker: {blocker}" for blocker in report.blockers)
         else:
             blockers.append(f"Worker report status is not complete: {report.status_reported_by_worker}.")
     if worker_report_imported and not worker_review_exists:
@@ -10503,6 +10507,7 @@ def _codex_worker_batch_item_next_action(
     run: QueueWorkerRun | None,
     evidence: QueueWorkerEvidenceSummary,
     runner_run: Any | None,
+    blockers: list[str] | None = None,
 ) -> str:
     if item.status == "completed":
         return "No action needed."
@@ -10511,6 +10516,10 @@ def _codex_worker_batch_item_next_action(
             f"devo project codex-worker-batch-run --project {project_name} "
             f"--policy {policy_id} --confirm-codex-batch-run"
         )
+    if evidence.worker_report_status == "blocked":
+        return _blocked_worker_result_next_action(blockers or evidence.blockers)
+    if evidence.worker_report_status in {"failed", "usage_limit", "needs_approval", "partial"}:
+        return "Worker result is not completed. Do not record review/validation/delivery; inspect the worker result and resolve the blocker before retrying."
     if run.status == "waiting_worker":
         return (
             f"devo project codex-worker-batch-run --project {project_name} "
@@ -10549,6 +10558,8 @@ def _codex_worker_batch_item_next_action(
 def _codex_worker_batch_recommended_command_from_next_action(project_name: str, policy_id: str, next_action: str) -> str:
     if not next_action or next_action.startswith("No action needed"):
         return "none"
+    if "Do not record review/validation" in next_action or "Diagnose write access" in next_action:
+        return f"devo project codex-worker-batch-summary --project {project_name} --policy {policy_id}"
     if next_action.startswith("devo ") or next_action.startswith(".\\.venv\\Scripts\\devo.exe "):
         return next_action.split("; then ", 1)[0]
     if "queue-worker-record-review" in next_action:
@@ -10558,6 +10569,34 @@ def _codex_worker_batch_recommended_command_from_next_action(project_name: str, 
     if "trusted delivery runner" in next_action or "runner" in next_action:
         return f'.\\.venv\\Scripts\\devo.exe delivery runner-latest --project {project_name}'
     return f"devo project codex-worker-batch-summary --project {project_name} --policy {policy_id}"
+
+
+def _blocked_worker_result_next_action(blockers: list[str] | None = None) -> str:
+    if _looks_like_write_access_blocker(blockers or []):
+        return (
+            "Worker result is blocked by write access. Do not record review/validation/delivery. "
+            "Diagnose write access or use patch-proposal fallback before retrying."
+        )
+    return (
+        "Worker result is blocked. Do not record review/validation/delivery. "
+        "Inspect the worker result and resolve the blocker before retrying; use patch-proposal fallback if the worker cannot edit allowed files."
+    )
+
+
+def _looks_like_write_access_blocker(values: list[str]) -> bool:
+    combined = "\n".join(values).lower()
+    signals = [
+        "failed to write file",
+        "unauthorizedaccessexception",
+        "access denied",
+        "permission denied",
+        "could not update existing files",
+        "cannot update existing files",
+        "denied updates",
+        "filesystem enforcement denied",
+        "write access",
+    ]
+    return any(signal in combined for signal in signals)
 
 
 def _default_queue_worker_commit_message(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> str:
@@ -10625,7 +10664,10 @@ def _codex_worker_ingest_next_action(project_name: str, run: QueueWorkerRun, sta
             f"devo project approved-queue-run --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-auto-run"
         )
     if status == "blocked":
-        return "Worker reported blocked. Resolve the blocker or retry the worker before review/validation/delivery."
+        return (
+            "Worker reported blocked. Do not record review/validation/delivery. "
+            "Inspect the worker result, diagnose write access if file writes failed, or use patch-proposal fallback; retry only after the cause is understood."
+        )
     if status == "failed":
         return "Worker reported failed. Inspect failure details, then retry or cancel the queue-worker run."
     if status == "usage_limit":
