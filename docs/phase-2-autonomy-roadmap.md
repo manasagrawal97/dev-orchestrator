@@ -368,6 +368,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, patch application, normal review/validation/delivery for patch-only evidence, trusted runner delivery for the fake worker item, UI, parallel workers, or PersonalOS.
 - Status: Completed with PASS verdict. `codex-worker-ingest`, `queue-worker-evidence`, and `codex-worker-batch-summary` show the patch proposal path while keeping the worker result blocked and telling the operator not to record normal review/validation/delivery until changes are actually applied and validated.
 
+### TASK-DEVO-172: Patch-Proposal Show/Check V1
+
+- Goal: Make patch proposals inspectable and checkable before any patch apply command exists.
+- Scope: `patch-proposal-show`, explicit `patch-proposal-check --confirm-check`, workspace-only check artifacts, read-model summary, focused tests, and docs.
+- Not in scope: patch application, queue completion, normal review/validation evidence, delivery creation, trusted runner execution, real Codex execution, UI, parallel workers, or PersonalOS.
+- Status: Completed. Operators can now inspect patch proposal evidence and run a non-mutating check that enforces blocked/failed evidence status, clean worktree, policy allowed/forbidden file scope, safe patch paths, and `git apply --check`.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

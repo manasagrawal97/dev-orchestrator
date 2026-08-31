@@ -21,6 +21,7 @@ from .project_onboarding import build_project_onboarding_report
 from .project_planning import (
     calculate_project_progress,
     get_codex_queue_worker_status,
+    get_patch_proposal_summary,
     list_batch_approvals,
     list_codex_handoffs,
     list_codex_run_plans,
@@ -65,6 +66,25 @@ class WorkPackageOverview(BaseModel):
     next_phase: str = "unknown"
     next_command: str | None = None
     stop_conditions_summary: list[str] = Field(default_factory=list)
+
+
+class PatchProposalOverview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = READ_MODEL_SCHEMA_VERSION
+    project_name: str
+    queue_worker_run_id: str
+    worker_evidence_id: str | None = None
+    worker_status: str | None = None
+    patch_proposal_present: bool = False
+    patch_artifact_path: str | None = None
+    patch_artifact_exists: bool = False
+    linked_policy_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    safe_next_action: str = "unknown"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class RunOverview(BaseModel):
@@ -540,6 +560,35 @@ def build_work_package_overview(project_name: str, run_id: str, workspace_root: 
         next_phase=next_step.next_action,
         next_command=next_step.required_command or next_step.suggested_prompt_command,
         stop_conditions_summary=list(next_step.stop_conditions),
+    )
+
+
+def build_patch_proposal_overview(project_name: str, run_id: str, workspace_root: Path | None = None) -> PatchProposalOverview:
+    root = workspace_root or get_workspace_root()
+    try:
+        summary = get_patch_proposal_summary(project_name, run_id, workspace_root=root)
+    except ValueError as exc:
+        return PatchProposalOverview(
+            project_name=project_name,
+            queue_worker_run_id=run_id,
+            patch_proposal_present=False,
+            safe_next_action=f"Patch proposal unavailable: {exc}",
+            blockers=[str(exc)],
+        )
+    return PatchProposalOverview(
+        project_name=summary.project,
+        queue_worker_run_id=summary.queue_worker_run_id,
+        worker_evidence_id=summary.worker_evidence_id,
+        worker_status=summary.worker_status,
+        patch_proposal_present=summary.patch_proposal_present,
+        patch_artifact_path=summary.patch_artifact_path,
+        patch_artifact_exists=summary.patch_artifact_exists,
+        linked_policy_id=summary.linked_policy_id,
+        queue_item_id=summary.queue_item_id,
+        task_id=summary.task_id,
+        safe_next_action=summary.safe_next_action,
+        blockers=list(summary.blockers),
+        warnings=list(summary.warnings),
     )
 
 

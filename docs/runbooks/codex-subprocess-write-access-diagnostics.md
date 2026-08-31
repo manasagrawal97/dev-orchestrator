@@ -60,7 +60,9 @@ If write access remains unreliable, Devo can now preserve a worker's implementat
 - Codex reports `status=blocked` or `status=failed` when it cannot edit files.
 - Codex can include `patch_proposal_present: true`.
 - Codex can point `patch_artifact_path` or `artifact_path` at a `.patch` or `.diff` artifact.
-- Devo ingest and `codex-worker-batch-summary` surface the patch proposal and its path.
+- Devo ingest, `queue-worker-evidence`, and `codex-worker-batch-summary` surface the patch proposal and its path.
+- `devo project patch-proposal-show --project <project> --run <QWR-ID>` inspects the linked proposal without mutation.
+- `devo project patch-proposal-check --project <project> --run <QWR-ID> --confirm-check` writes a workspace-only check artifact and can run `git apply --check` without applying the patch.
 - The patch artifact is reviewed by the operator.
 - A future separate trusted/local command may apply the patch only after explicit approval.
 - Normal review and validation evidence are still required.
@@ -68,7 +70,7 @@ If write access remains unreliable, Devo can now preserve a worker's implementat
 
 This fallback does not auto-apply patches inside `codex-worker-batch-run`. Applying a patch is a separate write action and needs its own explicit safety gate. Do not record normal review, validation, or delivery for a patch-only result until the patch has actually been applied and validated.
 
-TASK-DEVO-171 designs that future gate in `docs/architecture/reviewed-patch-apply-design.md`. The recommended next slice is read-only patch proposal display plus explicit dry-run checking. A later apply command must require a clean worktree, prove the patch came from ingested worker evidence, enforce policy allowed/forbidden files, record who reviewed/applied it, and still avoid commit, push, normal evidence recording, and queue completion.
+TASK-DEVO-171 designs that future gate in `docs/architecture/reviewed-patch-apply-design.md`, and TASK-DEVO-172 implements the read-only show/check slice. A later apply command must require a clean worktree, prove the patch came from ingested worker evidence, enforce policy allowed/forbidden files, record who reviewed/applied it, and still avoid commit, push, normal evidence recording, and queue completion.
 
 Expected worker-result shape:
 

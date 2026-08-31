@@ -67,6 +67,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-167 real code batch-run blocked report](docs/dogfood/task-devo-167-real-code-batch-run-blocked.md)
 - [TASK-DEVO-169 patch-proposal fallback](docs/dogfood/task-devo-169-patch-proposal-fallback.md)
 - [TASK-DEVO-170 patch-proposal fallback dogfood](docs/dogfood/task-devo-170-patch-proposal-fallback-dogfood.md)
+- [TASK-DEVO-172 patch-proposal show/check](docs/dogfood/task-devo-172-patch-proposal-show-check.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -349,7 +350,7 @@ TASK-DEVO-164 then proves that same operating mode on the live DevOrchestrator r
 
 TASK-DEVO-167 then attempts the first narrow real DevOrchestrator code-task batch-run and blocks safely when the Codex subprocess can inspect files but cannot update existing approved source/test files. TASK-DEVO-168 documents the diagnostic pattern and makes blocked write-access guidance point to diagnosis or patch-proposal fallback instead of blind retry, review, validation, or delivery. TASK-DEVO-169 adds patch-proposal fallback v1: blocked/failed worker JSON can point at a `.patch` or `.diff` artifact, and Devo surfaces that proposal while keeping the result non-successful and telling the operator not to record normal review/validation/delivery until changes are actually applied and validated.
 
-TASK-DEVO-171 adds the reviewed patch-apply design in [Reviewed patch-apply design](docs/architecture/reviewed-patch-apply-design.md). Patch apply remains future work: it must be a separate explicit operator action with clean-worktree, evidence-linkage, policy-scope, dry-run, and confirmation gates, and it must not commit, push, record normal review/validation, or complete the queue item by itself.
+TASK-DEVO-171 adds the reviewed patch-apply design in [Reviewed patch-apply design](docs/architecture/reviewed-patch-apply-design.md). TASK-DEVO-172 implements the first safe inspection layer: `devo project patch-proposal-show` and `devo project patch-proposal-check --confirm-check`. The check path writes workspace artifacts and may run `git apply --check`, but it does not apply patches, mutate queue state, record review or validation, create delivery, commit, or push. Patch apply remains future work: it must be a separate explicit operator action with clean-worktree, evidence-linkage, policy-scope, dry-run, and confirmation gates, and it must not commit, push, record normal review/validation, or complete the queue item by itself.
 
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 

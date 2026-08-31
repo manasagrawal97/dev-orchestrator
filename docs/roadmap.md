@@ -53,7 +53,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 - TASK-DEVO-169: Patch-proposal fallback v1 - completed; blocked/failed Codex worker results can preserve a patch proposal artifact while staying non-success evidence with manual-review-only next action
 - TASK-DEVO-170: Patch-proposal fallback dogfood - completed; fake blocked worker evidence with a `.patch` artifact stays blocked and surfaces manual patch-review guidance in ingest, evidence, and batch summary readouts
 - TASK-DEVO-171: Reviewed patch-apply design - completed in `docs/architecture/reviewed-patch-apply-design.md`; patch apply is defined as a separate explicit operator action with clean-worktree, evidence-linkage, policy-scope, dry-run, confirmation, and audit gates, and still cannot commit, push, record normal review/validation, or complete the queue item by itself
-- Next: implement read-only `patch-proposal-show` plus explicit dry-run `patch-proposal-check` before any patch apply command or live real-code batch-run retry
+- TASK-DEVO-172: Patch-proposal show/check v1 - completed; operators can inspect patch proposal evidence and run explicit non-mutating checks that enforce evidence linkage, clean worktree, policy scope, forbidden paths, and `git apply --check`
+- Next: dogfood patch-proposal show/check before implementing any patch apply command or live real-code batch-run retry
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases

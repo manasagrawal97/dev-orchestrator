@@ -139,6 +139,8 @@ from .project_planning import (
     CodexWorkerBatchPolicySummary,
     CodexWorkerIngest,
     CodexWorkerIngestResult,
+    PatchProposalCheckResult,
+    PatchProposalSummary,
     CodexWorkerPreparation,
     CodexWorkerRunPreviewResult,
     CodexWorkerSubprocessConfig,
@@ -169,6 +171,7 @@ from .project_planning import (
     calculate_project_progress,
     build_project_intake_status,
     check_execution_policy,
+    check_patch_proposal,
     cancel_queue_worker_run,
     continue_queue_worker_run,
     create_batch_execution_policy,
@@ -200,6 +203,7 @@ from .project_planning import (
     get_codex_queue_worker_status,
     get_codex_worker_flow_summary,
     get_queue_worker_handoff_checklist,
+    get_patch_proposal_summary,
     get_queue_worker_status_report,
     get_queue_item_completion_readiness,
     get_queue_next_item,
@@ -1099,6 +1103,71 @@ def _print_codex_worker_ingest(ingest: CodexWorkerIngest) -> None:
     console.print(f"Patch artifact path: {ingest.patch_artifact_path or 'none'}", soft_wrap=True)
     console.print(f"Next action: {ingest.next_action}", soft_wrap=True)
     console.print("Read-only: no worker execution or target project mutation was run.")
+
+
+def _print_patch_proposal_summary(summary: PatchProposalSummary) -> None:
+    console.print(f"[bold]Patch proposal: {summary.queue_worker_run_id}[/bold]")
+    console.print(f"Project: {summary.project}")
+    console.print(f"Queue-worker run: {summary.queue_worker_run_id}")
+    console.print(f"Worker evidence id: {summary.worker_evidence_id or 'none'}")
+    console.print(f"Worker status: {summary.worker_status or 'unknown'}")
+    console.print(f"Patch proposal present: {summary.patch_proposal_present}")
+    console.print(f"Patch artifact path: {summary.patch_artifact_path or 'none'}", soft_wrap=True)
+    console.print(f"Patch artifact exists: {summary.patch_artifact_exists}")
+    console.print(f"Linked policy: {summary.linked_policy_id or 'none'}")
+    console.print(f"Queue item: {summary.queue_item_id or 'none'}")
+    console.print(f"Task: {summary.task_id or 'none'}")
+    console.print(f"Ingest: {summary.ingest_id or 'none'}")
+    console.print("Warnings:")
+    for warning in summary.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in summary.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Safe next action: {summary.safe_next_action}", soft_wrap=True)
+    console.print(
+        "Safety: patch-proposal-show is read-only. It does not run git apply, mutate queues, record review/validation/delivery, commit, or push.",
+        soft_wrap=True,
+    )
+
+
+def _print_patch_proposal_check_result(result: PatchProposalCheckResult) -> None:
+    console.print(f"[bold]Patch proposal check: {result.patch_check_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Queue-worker run: {result.queue_worker_run_id}")
+    console.print(f"Worker evidence id: {result.worker_evidence_id or 'none'}")
+    console.print(f"Worker status: {result.worker_status or 'unknown'}")
+    console.print(f"Status: {result.status}")
+    console.print(f"Patch proposal present: {result.patch_proposal_present}")
+    console.print(f"Patch artifact path: {result.patch_artifact_path or 'none'}", soft_wrap=True)
+    console.print(f"Patch artifact exists: {result.patch_artifact_exists}")
+    console.print(f"Linked policy: {result.linked_policy_id or 'none'}")
+    console.print(f"Queue item: {result.queue_item_id or 'none'}")
+    console.print(f"Task: {result.task_id or 'none'}")
+    console.print(f"Patch hash: {result.patch_hash or 'none'}")
+    console.print(f"Before git status: {result.before_git_status}", soft_wrap=True)
+    console.print(f"Dry-run apply supported: {result.dry_run_apply_supported}")
+    console.print(f"Dry-run apply succeeded: {result.dry_run_apply_succeeded}")
+    console.print(f"Dry-run detail: {result.dry_run_apply_detail or 'none'}", soft_wrap=True)
+    console.print("Touched files:")
+    for path in result.touched_files or ["none"]:
+        console.print(f"  - {path}", soft_wrap=True)
+    console.print("Rejected files:")
+    for path in result.rejected_files or ["none"]:
+        console.print(f"  - {path}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Check JSON: {_named_path(Path(result.check_json_path)) if result.check_json_path else 'not written'}")
+    console.print(f"Check Markdown: {_named_path(Path(result.check_markdown_path)) if result.check_markdown_path else 'not written'}")
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print(
+        "Safety: patch-proposal-check is non-mutating. Patch check passed does not mean task completed; it does not apply patches, record review, record validation, create delivery, commit, or push.",
+        soft_wrap=True,
+    )
 
 
 def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
@@ -5179,6 +5248,48 @@ def list_codex_worker_ingest_command(
             soft_wrap=True,
         )
     console.print("Read-only: no worker execution or target project mutation was run.")
+
+
+@project_app.command("patch-proposal-show")
+def show_patch_proposal_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+) -> None:
+    """Show patch proposal evidence for a blocked/failed queue-worker run."""
+    project_name = _resolve_project(project_name)
+    try:
+        summary = get_patch_proposal_summary(project_name, run_id)
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project queue-worker-list --project {project_name}")
+        raise typer.Exit(1) from exc
+    _print_patch_proposal_summary(summary)
+
+
+@project_app.command("patch-proposal-check")
+def check_patch_proposal_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    confirm_check: bool = typer.Option(False, "--confirm-check", help="Confirm non-mutating patch-proposal dry-run check."),
+) -> None:
+    """Run explicit non-mutating checks for a patch proposal."""
+    project_name = _resolve_project(project_name)
+    if not confirm_check:
+        console.print("patch-proposal-check requires --confirm-check.")
+        console.print(
+            "Safety: this command may run git apply --check, but it does not apply patches, mutate queues, record review/validation/delivery, commit, or push.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    try:
+        result = check_patch_proposal(project_name, run_id)
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project patch-proposal-show --project {project_name} --run {run_id}")
+        raise typer.Exit(1) from exc
+    _print_patch_proposal_check_result(result)
+    if result.status != "checked":
+        raise typer.Exit(1)
 
 
 @project_app.command("queue-worker-status")

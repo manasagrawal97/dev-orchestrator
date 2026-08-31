@@ -15,9 +15,9 @@ The key boundary remains:
 
 This document is design-only. It does not implement patch application.
 
-## 2. Proposed Command Model
+## 2. Command Model
 
-Future commands should be project-scoped and tied to a queue-worker run:
+Patch proposal commands are project-scoped and tied to a queue-worker run:
 
 ```powershell
 devo project patch-proposal-show --project <project> --run <QWR-ID>
@@ -25,11 +25,11 @@ devo project patch-proposal-check --project <project> --run <QWR-ID> --confirm-c
 devo project patch-proposal-apply --project <project> --run <QWR-ID> --reviewed-by "Manas" --confirm-apply-patch
 ```
 
-`patch-proposal-show` should be read-only. It displays the linked worker evidence, proposal path, patch hash if available, current queue-worker status, policy scope, and the safe next command.
+`patch-proposal-show` is read-only. It displays the linked worker evidence, proposal path, artifact existence, current worker status, policy, queue item, task, and the safe next command.
 
-`patch-proposal-check` should be an explicit dry-run/preflight command. It must not modify the target repository. It should verify that the patch is known to Devo, applies cleanly in dry-run mode, and touches only allowed files.
+`patch-proposal-check` is an explicit dry-run/preflight command. It requires `--confirm-check`, writes a workspace-only check artifact, and must not modify the target repository. It verifies that the patch is known to Devo, applies cleanly in dry-run mode, and touches only allowed files.
 
-`patch-proposal-apply` should be the first write command. It should require an operator-reviewed patch, an explicit confirmation flag, and a clean pre-apply repository. It should apply the patch only; it must not commit, push, mark review passed, mark validation passed, or complete the queue item.
+`patch-proposal-apply` remains future work. It should be the first write command. It should require an operator-reviewed patch, an explicit confirmation flag, and a clean pre-apply repository. It should apply the patch only; it must not commit, push, mark review passed, mark validation passed, or complete the queue item.
 
 ## 3. Safety Gates
 
@@ -57,7 +57,7 @@ If any gate fails, the command should create a blocked/failed check artifact and
 
 ## 4. State And Artifact Model
 
-Patch proposal checks and applies should create workspace-only artifacts under a future directory such as:
+Patch proposal checks and future applies use workspace-only artifacts under:
 
 ```text
 workspace/projects/<project>/planning/patch-proposals/
@@ -178,9 +178,9 @@ The first implementation should prefer a blocked result over a clever recovery. 
 
 ### Phase A: Read-Only Show And Check
 
-Implement `patch-proposal-show` and `patch-proposal-check`.
+Completed in TASK-DEVO-172.
 
-The check command should parse the patch, list changed files, enforce policy allowed/forbidden paths, verify the patch path came from worker evidence, and run a dry-run apply check without modifying the repo.
+`patch-proposal-show` displays the linked worker evidence and safe next action. `patch-proposal-check --confirm-check` parses the patch, lists changed files, enforces policy allowed/forbidden paths, verifies the patch path came from worker evidence, requires a clean target worktree, and runs `git apply --check` without modifying the repo.
 
 ### Phase B: Explicit Apply
 
@@ -200,9 +200,9 @@ Use real Codex only from normal PowerShell and only against a narrow disposable 
 
 Add read-only UI visibility for patch proposals, checks, and apply artifacts. Do not add UI apply buttons until the safety model has more dogfood evidence.
 
-## 9. Recommendation For TASK-DEVO-172
+## 9. Recommendation After TASK-DEVO-172
 
-TASK-DEVO-172 should start with Phase A only:
+TASK-DEVO-172 completed Phase A only:
 
 - add read-only `patch-proposal-show`
 - add explicit dry-run `patch-proposal-check --confirm-check`
@@ -213,7 +213,7 @@ TASK-DEVO-172 should start with Phase A only:
 - verify that a dry-run apply would succeed
 - add tests with synthetic `.patch` fixtures
 
-Do not implement patch application in TASK-DEVO-172 unless the show/check layer is already proven and separately approved. The smallest safe slice is read-only display plus check artifacts, because it improves operator confidence without creating target repo changes.
+The next step should dogfood show/check against known fake blocked patch evidence. Do not implement patch application until the show/check layer is proven and separately approved. The smallest safe apply slice remains a separate task, because it will create target repo changes.
 
 ## 10. Acceptance Criteria For Future Apply
 

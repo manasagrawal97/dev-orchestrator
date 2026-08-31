@@ -37,6 +37,7 @@ from devo.project_planning import (
     list_execution_queues,
     list_codex_worker_batch_runs,
     list_queue_worker_runs,
+    patch_proposal_check_directory,
     get_queue_worker_handoff_checklist,
     load_batch_approval,
     load_codex_handoff,
@@ -61,7 +62,7 @@ from devo.project_planning import (
     queue_worker_run_artifact_paths,
     request_queue_worker_delivery,
 )
-from devo.read_models import build_project_overview
+from devo.read_models import build_patch_proposal_overview, build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
 
 runner = CliRunner()
@@ -3346,6 +3347,164 @@ def test_codex_worker_batch_summary_blocked_patch_proposal_recommends_manual_pat
     assert _target_snapshot(project_path) == before_target
 
 
+def test_patch_proposal_show_displays_patch_path_and_read_only_guidance(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "blocked_write_access_patch")
+    batch_run = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+    assert batch_run.exit_code == 1, batch_run.output
+    before_target = _target_snapshot(project_path)
+    before_runs = [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)]
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-show", "--project", "sample", "--run", "QWR-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Patch proposal: QWR-0001" in result.output
+    assert "Patch proposal present: True" in result.output
+    assert "proposed.patch" in result.output
+    assert "Patch artifact exists: True" in result.output
+    assert "Safe next action: Run a non-mutating check" in result.output
+    assert "patch-proposal-show is read-only" in result.output
+    assert [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)] == before_runs
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_patch_proposal_show_handles_missing_patch_proposal_safely(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-show", "--project", "sample", "--run", "QWR-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Patch proposal present: False" in result.output
+    assert "No ingested worker evidence exists" in result.output
+    assert "No patch proposal found" in result.output
+
+
+def test_patch_proposal_check_blocks_completed_worker_evidence(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="completed", patch_text=_valid_feature_patch())
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Worker status: completed" in result.output
+    assert "Worker status must be blocked or failed" in result.output
+    assert "does not apply patches" in result.output
+
+
+def test_patch_proposal_check_blocks_missing_patch_file(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    patch_file = _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    patch_file.unlink()
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: blocked" in result.output
+    assert "Patch artifact exists: False" in result.output
+    assert "Patch artifact path does not exist" in result.output
+
+
+def test_patch_proposal_check_blocks_forbidden_file_paths(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_forbidden_env_patch())
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: blocked" in result.output
+    assert "Patch touches forbidden files: .env" in result.output
+    assert ".env" in result.output
+    assert "queue-worker-record-review" not in result.output
+    assert "queue-worker-request-delivery" not in result.output
+
+
+def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_artifact(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old\n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: checked" in result.output
+    assert "Touched files:" in result.output
+    assert "src/feature.py" in result.output
+    assert "Dry-run apply succeeded: True" in result.output
+    assert "Patch check passed. This does not mean the task is completed." in result.output
+    assert "does not apply patches" in result.output
+    assert _target_snapshot(project_path) == before_target
+    checks = sorted(patch_proposal_check_directory("sample", workspace_root=workspace).glob("*/patch-proposal-check.json"))
+    assert len(checks) == 1
+    check_data = json.loads(checks[0].read_text(encoding="utf-8"))
+    assert check_data["status"] == "checked"
+    assert check_data["touched_files"] == ["src/feature.py"]
+
+
+def test_patch_proposal_overview_surfaces_read_model_summary(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    patch_file = _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+
+    overview = build_patch_proposal_overview("sample", "QWR-0001", workspace_root=workspace)
+
+    assert overview.project_name == "sample"
+    assert overview.queue_worker_run_id == "QWR-0001"
+    assert overview.worker_status == "blocked"
+    assert overview.patch_proposal_present is True
+    assert overview.patch_artifact_path == str(patch_file)
+    assert overview.patch_artifact_exists is True
+    assert "patch-proposal-check" in overview.safe_next_action
+
+
 def test_codex_worker_prompt_includes_patch_proposal_fallback_contract(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -5694,6 +5853,71 @@ def _continue_queue_worker_run() -> None:
         terminal_width=240,
     )
     assert result.exit_code == 0 or "Status: waiting_" in result.output, result.output
+
+
+def _ingest_worker_result_with_patch(tmp_path: Path, *, status: str, patch_text: str) -> Path:
+    paths = planning_artifact_paths("sample")
+    patch_dir = paths.planning_dir / "test-patch-proposals"
+    patch_dir.mkdir(parents=True, exist_ok=True)
+    patch_file = patch_dir / f"proposal-{status}.patch"
+    patch_file.write_text(patch_text, encoding="utf-8")
+    result_file = tmp_path / f"worker-result-{status}-patch.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "summary": "Worker could not write existing files and produced a patch proposal." if status != "completed" else "Worker completed but also reported a patch proposal.",
+                "work_performed": ["completed path retained"] if status == "completed" else [],
+                "changed_files": ["src/feature.py"] if status == "completed" else [],
+                "commands_run": ["fake worker"],
+                "risks": ["patch proposal fallback"],
+                "recommended_next_action": "review patch",
+                "artifact_path": str(patch_file),
+                "patch_proposal_present": True,
+                "patch_artifact_path": str(patch_file),
+                "failure_details": "Failed to write file; UnauthorizedAccessException" if status != "completed" else "",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    ingest = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+    assert ingest.exit_code == 0, ingest.output
+    return patch_file
+
+
+def _valid_feature_patch() -> str:
+    return "\n".join(
+        [
+            "diff --git a/src/feature.py b/src/feature.py",
+            "index 3367afd..3e75765 100644",
+            "--- a/src/feature.py",
+            "+++ b/src/feature.py",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "",
+        ]
+    )
+
+
+def _forbidden_env_patch() -> str:
+    return "\n".join(
+        [
+            "diff --git a/.env b/.env",
+            "new file mode 100644",
+            "index 0000000..3b18e51",
+            "--- /dev/null",
+            "+++ b/.env",
+            "@@ -0,0 +1 @@",
+            "+SECRET=not-real",
+            "",
+        ]
+    )
 
 
 def _init_git_repo(project_path: Path) -> None:
