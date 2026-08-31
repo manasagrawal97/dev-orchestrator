@@ -4127,7 +4127,13 @@ def summarize_codex_worker_batch_policy(
         active_item = next((item for item in item_summaries if item.item_status != "completed"), None)
         main_message = plan.selection_reason or "Policy has allowed queue items that are not completed."
         next_action = active_item.current_safe_next_action if active_item else plan.next_action
-        recommended_command = _codex_worker_batch_recommended_command_from_next_action(project_name, policy.policy_id, next_action)
+        if active_item and active_item.patch_proposal_present and active_item.queue_worker_run_id:
+            recommended_command = (
+                f"devo project patch-proposal-show --project {project_name} "
+                f"--run {active_item.queue_worker_run_id}"
+            )
+        else:
+            recommended_command = _codex_worker_batch_recommended_command_from_next_action(project_name, policy.policy_id, next_action)
 
     return CodexWorkerBatchPolicySummary(
         project=project_name,

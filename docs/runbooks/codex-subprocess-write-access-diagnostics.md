@@ -72,6 +72,8 @@ This fallback does not auto-apply patches inside `codex-worker-batch-run`. Apply
 
 TASK-DEVO-171 designs that future gate in `docs/architecture/reviewed-patch-apply-design.md`, and TASK-DEVO-172 implements the read-only show/check slice. A later apply command must require a clean worktree, prove the patch came from ingested worker evidence, enforce policy allowed/forbidden files, record who reviewed/applied it, and still avoid commit, push, normal evidence recording, and queue completion.
 
+TASK-DEVO-173 dogfoods show/check against existing fake blocked evidence. The check command can safely reject a non-applyable proposal while preserving the artifact for review; rejected checks are not evidence that the task is implemented.
+
 Expected worker-result shape:
 
 ```json

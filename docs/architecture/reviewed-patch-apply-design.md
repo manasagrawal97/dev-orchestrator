@@ -182,6 +182,8 @@ Completed in TASK-DEVO-172.
 
 `patch-proposal-show` displays the linked worker evidence and safe next action. `patch-proposal-check --confirm-check` parses the patch, lists changed files, enforces policy allowed/forbidden paths, verifies the patch path came from worker evidence, requires a clean target worktree, and runs `git apply --check` without modifying the repo.
 
+TASK-DEVO-173 dogfoods those commands against the TASK-DEVO-170 fake blocked evidence. The show path is clear and read-only; the check path writes only workspace check artifacts and correctly blocks the older proposal because it is a proposal snippet rather than an applyable unified diff. The next pre-apply proof should use a valid unified diff and still avoid applying it.
+
 ### Phase B: Explicit Apply
 
 Implement `patch-proposal-apply` with a dry-run precheck, clean-worktree requirement, explicit `--confirm-apply-patch`, and apply evidence artifact.

@@ -375,6 +375,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: patch application, queue completion, normal review/validation evidence, delivery creation, trusted runner execution, real Codex execution, UI, parallel workers, or PersonalOS.
 - Status: Completed. Operators can now inspect patch proposal evidence and run a non-mutating check that enforces blocked/failed evidence status, clean worktree, policy allowed/forbidden file scope, safe patch paths, and `git apply --check`.
 
+### TASK-DEVO-173: Patch-Proposal Show/Check Dogfood
+
+- Goal: Prove `patch-proposal-show` and `patch-proposal-check` against existing fake blocked patch evidence before any patch apply command exists.
+- Scope: `QWR-0005`, `POL-0003`, the TASK-DEVO-170 `.patch` artifact, show/check/summary readouts, dogfood report, and one small summary recommended-command polish.
+- Not in scope: real Codex execution, patch application, queue completion, normal review/validation evidence, delivery creation, trusted runner execution, UI, parallel workers, or PersonalOS.
+- Status: Completed with PASS verdict. Show finds the proposal and read-only safety guidance, check writes only a workspace artifact and blocks the older non-applyable proposal, and batch summary now recommends `patch-proposal-show` for patch-only evidence. The next safe slice is a fresh no-apply dogfood with a valid unified diff proposal that passes check.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

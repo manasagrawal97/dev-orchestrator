@@ -3340,7 +3340,7 @@ def test_codex_worker_batch_summary_blocked_patch_proposal_recommends_manual_pat
     assert "proposed.patch" in result.output
     assert "Review patch proposal manually" in result.output
     assert "Do not record normal review/validation/delivery until changes are actually applied and validated." in result.output
-    assert "Recommended command: devo project codex-worker-batch-summary --project sample --policy POL-0001" in result.output
+    assert "Recommended command: devo project patch-proposal-show --project sample --run QWR-0001" in result.output
     assert "queue-worker-record-review" not in result.output
     assert "queue-worker-request-delivery" not in result.output
     assert queue_json.read_text(encoding="utf-8") == before_queue
@@ -3467,6 +3467,7 @@ def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_a
     _create_queue_worker_run(tmp_path)
     _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
     before_target = _target_snapshot(project_path)
+    before_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump()
 
     result = runner.invoke(
         app,
@@ -3487,6 +3488,9 @@ def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_a
     check_data = json.loads(checks[0].read_text(encoding="utf-8"))
     assert check_data["status"] == "checked"
     assert check_data["touched_files"] == ["src/feature.py"]
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump() == before_run
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
 
 
 def test_patch_proposal_overview_surfaces_read_model_summary(tmp_path: Path, monkeypatch) -> None:
