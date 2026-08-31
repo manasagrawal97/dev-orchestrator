@@ -22,6 +22,7 @@ from .project_planning import (
     calculate_project_progress,
     get_codex_queue_worker_status,
     get_patch_proposal_summary,
+    list_patch_proposal_applies,
     list_batch_approvals,
     list_codex_handoffs,
     list_codex_run_plans,
@@ -83,6 +84,22 @@ class PatchProposalOverview(BaseModel):
     queue_item_id: str | None = None
     task_id: str | None = None
     safe_next_action: str = "unknown"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PatchProposalApplyOverview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = READ_MODEL_SCHEMA_VERSION
+    project_name: str
+    queue_worker_run_id: str
+    latest_apply_id: str | None = None
+    latest_apply_status: str = "none"
+    latest_apply_path: str | None = None
+    latest_patch_hash: str | None = None
+    touched_files: list[str] = Field(default_factory=list)
+    safe_next_action: str = "No patch apply artifact found."
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -589,6 +606,39 @@ def build_patch_proposal_overview(project_name: str, run_id: str, workspace_root
         safe_next_action=summary.safe_next_action,
         blockers=list(summary.blockers),
         warnings=list(summary.warnings),
+    )
+
+
+def build_patch_proposal_apply_overview(project_name: str, run_id: str, workspace_root: Path | None = None) -> PatchProposalApplyOverview:
+    root = workspace_root or get_workspace_root()
+    try:
+        applies = [
+            item
+            for item in list_patch_proposal_applies(project_name, workspace_root=root)
+            if item.queue_worker_run_id == run_id
+        ]
+    except ValueError as exc:
+        return PatchProposalApplyOverview(
+            project_name=project_name,
+            queue_worker_run_id=run_id,
+            latest_apply_status="unavailable",
+            safe_next_action=f"Patch apply unavailable: {exc}",
+            blockers=[str(exc)],
+        )
+    if not applies:
+        return PatchProposalApplyOverview(project_name=project_name, queue_worker_run_id=run_id)
+    latest = applies[0]
+    return PatchProposalApplyOverview(
+        project_name=latest.project,
+        queue_worker_run_id=latest.queue_worker_run_id,
+        latest_apply_id=latest.patch_apply_id,
+        latest_apply_status=latest.status,
+        latest_apply_path=latest.apply_json_path,
+        latest_patch_hash=latest.patch_hash,
+        touched_files=list(latest.touched_files),
+        safe_next_action=latest.next_action,
+        blockers=list(latest.blockers),
+        warnings=list(latest.warnings),
     )
 
 

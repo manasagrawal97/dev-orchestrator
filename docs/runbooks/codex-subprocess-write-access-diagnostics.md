@@ -64,15 +64,15 @@ If write access remains unreliable, Devo can now preserve a worker's implementat
 - `devo project patch-proposal-show --project <project> --run <QWR-ID>` inspects the linked proposal without mutation.
 - `devo project patch-proposal-check --project <project> --run <QWR-ID> --confirm-check` writes a workspace-only check artifact and can run `git apply --check` without applying the patch.
 - The patch artifact is reviewed by the operator.
-- A future separate trusted/local command may apply the patch only after explicit approval.
+- `devo project patch-proposal-apply --project <project> --run <QWR-ID> --reviewed-by "Manas" --confirm-apply-patch` can apply a previously checked proposal as an explicit operator action.
 - Normal review and validation evidence are still required.
 - Trusted runner remains the only commit/push path.
 
 This fallback does not auto-apply patches inside `codex-worker-batch-run`. Applying a patch is a separate write action and needs its own explicit safety gate. Do not record normal review, validation, or delivery for a patch-only result until the patch has actually been applied and validated.
 
-TASK-DEVO-171 designs that future gate in `docs/architecture/reviewed-patch-apply-design.md`, and TASK-DEVO-172 implements the read-only show/check slice. A later apply command must require a clean worktree, prove the patch came from ingested worker evidence, enforce policy allowed/forbidden files, record who reviewed/applied it, and still avoid commit, push, normal evidence recording, and queue completion.
+TASK-DEVO-171 designs that gate in `docs/architecture/reviewed-patch-apply-design.md`; TASK-DEVO-172 implements the read-only show/check slice; TASK-DEVO-174 implements explicit reviewed apply. Apply requires a clean worktree, proves the patch came from ingested worker evidence, enforces policy allowed/forbidden files, records who reviewed/applied it, and still avoids commit, push, normal evidence recording, and queue completion.
 
-TASK-DEVO-173 dogfoods show/check against existing fake blocked evidence. The check command can safely reject a non-applyable proposal while preserving the artifact for review; rejected checks are not evidence that the task is implemented.
+TASK-DEVO-173 dogfoods show/check against existing fake blocked evidence. The check command can safely reject a non-applyable proposal while preserving the artifact for review; rejected checks are not evidence that the task is implemented. TASK-DEVO-174 adds apply for checked proposals only; use a disposable or synthetic dogfood before relying on it for live code work.
 
 Expected worker-result shape:
 

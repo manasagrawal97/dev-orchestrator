@@ -113,7 +113,7 @@ These gates remain manual in the current operating mode:
 
 If worker evidence is `blocked`, review/validation should only be recorded after a real implemented change exists. For write-access blockers, the correct next step is diagnostics or patch-proposal fallback, not delivery. TASK-DEVO-169 adds patch-proposal fallback v1: blocked/failed worker JSON can preserve a proposed `.patch` or `.diff`, but the result still is not completed work and must not proceed through normal review, validation, or delivery until the patch is actually applied and validated. TASK-DEVO-170 dogfoods that fallback with fake blocked evidence and confirms the ingest, evidence, and batch summary readouts keep the operator on the manual patch-review path.
 
-TASK-DEVO-171 adds the reviewed patch-apply design in `docs/architecture/reviewed-patch-apply-design.md`. That design keeps patch apply as a separate explicit operator action with clean-worktree, evidence-linkage, policy-scope, dry-run, confirmation, and audit-artifact gates. Applying a patch still must not commit, push, record normal review/validation, or complete a queue item by itself.
+TASK-DEVO-171 adds the reviewed patch-apply design in `docs/architecture/reviewed-patch-apply-design.md`. TASK-DEVO-172 adds show/check and TASK-DEVO-174 adds explicit reviewed apply. The apply path stays a separate operator action with clean-worktree, evidence-linkage, policy-scope, dry-run, confirmation, and audit-artifact gates. Applying a patch still must not commit, push, record normal review/validation, or complete a queue item by itself.
 
 The real Codex subprocess step may spend Codex usage. Use it only for narrow approved policies where the expected change is worth the usage cost.
 
@@ -228,4 +228,4 @@ Do not use real Codex batch-run for:
 
 TASK-DEVO-165 finished the first operator-readout polish by adding a read-only consolidated real-batch position summary. TASK-DEVO-166 proved it against completed live policy `POL-0002`. The summary joins the execution policy, queue item, queue-worker run, Codex preparation/batch/ingest, review, validation, delivery request, runner run, commit, push, and the single safe next command without widening autonomy.
 
-The next implementation should continue with patch proposal show/check or small real-batch readout polish only. The safest TASK-DEVO-172 slice is read-only patch proposal inspection plus explicit dry-run checking before any apply command exists. Do not add automatic review, automatic validation, automatic delivery, direct Codex commit/push, parallel workers, or PersonalOS real-Codex batch execution without a new checkpoint.
+The next implementation should dogfood reviewed patch apply on a disposable or synthetic patch flow before live code use. Do not add automatic review, automatic validation, automatic delivery, direct Codex commit/push, parallel workers, or PersonalOS real-Codex batch execution without a new checkpoint.

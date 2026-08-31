@@ -139,6 +139,7 @@ from .project_planning import (
     CodexWorkerBatchPolicySummary,
     CodexWorkerIngest,
     CodexWorkerIngestResult,
+    PatchProposalApplyResult,
     PatchProposalCheckResult,
     PatchProposalSummary,
     CodexWorkerPreparation,
@@ -172,6 +173,7 @@ from .project_planning import (
     build_project_intake_status,
     check_execution_policy,
     check_patch_proposal,
+    apply_patch_proposal,
     cancel_queue_worker_run,
     continue_queue_worker_run,
     create_batch_execution_policy,
@@ -1168,6 +1170,42 @@ def _print_patch_proposal_check_result(result: PatchProposalCheckResult) -> None
         "Safety: patch-proposal-check is non-mutating. Patch check passed does not mean task completed; it does not apply patches, record review, record validation, create delivery, commit, or push.",
         soft_wrap=True,
     )
+
+
+def _print_patch_proposal_apply_result(result: PatchProposalApplyResult) -> None:
+    console.print(f"[bold]Patch proposal apply: {result.patch_apply_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Queue-worker run: {result.queue_worker_run_id}")
+    console.print(f"Worker evidence id: {result.worker_evidence_id or 'none'}")
+    console.print(f"Worker status: {result.worker_status or 'unknown'}")
+    console.print(f"Status: {result.status}")
+    console.print(f"Reviewed by: {result.reviewed_by}")
+    console.print(f"Patch proposal present: {result.patch_proposal_present}")
+    console.print(f"Patch artifact path: {result.patch_artifact_path or 'none'}", soft_wrap=True)
+    console.print(f"Patch artifact exists: {result.patch_artifact_exists}")
+    console.print(f"Linked policy: {result.linked_policy_id or 'none'}")
+    console.print(f"Queue item: {result.queue_item_id or 'none'}")
+    console.print(f"Task: {result.task_id or 'none'}")
+    console.print(f"Patch check: {result.patch_check_id or 'none'}")
+    console.print(f"Patch hash: {result.patch_hash or 'none'}")
+    console.print(f"Before git status: {result.before_git_status}", soft_wrap=True)
+    console.print(f"After git status: {result.after_git_status}", soft_wrap=True)
+    console.print("Touched files:")
+    for path in result.touched_files or ["none"]:
+        console.print(f"  - {path}", soft_wrap=True)
+    console.print("Rejected files:")
+    for path in result.rejected_files or ["none"]:
+        console.print(f"  - {path}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Apply JSON: {_named_path(Path(result.apply_json_path)) if result.apply_json_path else 'not written'}")
+    console.print(f"Apply Markdown: {_named_path(Path(result.apply_markdown_path)) if result.apply_markdown_path else 'not written'}")
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print(f"Safety: {result.safety_note}", soft_wrap=True)
 
 
 def _print_queue_worker_status_report(report: QueueWorkerStatusReport) -> None:
@@ -5289,6 +5327,36 @@ def check_patch_proposal_command(
         raise typer.Exit(1) from exc
     _print_patch_proposal_check_result(result)
     if result.status != "checked":
+        raise typer.Exit(1)
+
+
+@project_app.command("patch-proposal-apply")
+def apply_patch_proposal_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    reviewed_by: str = typer.Option("", "--reviewed-by", help="Name of the human reviewer who approved applying this patch."),
+    confirm_apply_patch: bool = typer.Option(False, "--confirm-apply-patch", help="Confirm reviewed patch application to the target working tree."),
+) -> None:
+    """Apply a checked patch proposal to the target working tree without staging or delivery."""
+    project_name = _resolve_project(project_name)
+    if not confirm_apply_patch:
+        console.print("patch-proposal-apply requires --confirm-apply-patch.")
+        console.print(
+            "Safety: this command can modify the target working tree, but it does not stage, commit, push, mutate queues, record review/validation/delivery, or complete queue items.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    if not reviewed_by.strip():
+        console.print("patch-proposal-apply requires --reviewed-by with a non-empty human reviewer name.")
+        raise typer.Exit(1)
+    try:
+        result = apply_patch_proposal(project_name, run_id, reviewed_by=reviewed_by)
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project patch-proposal-show --project {project_name} --run {run_id}")
+        raise typer.Exit(1) from exc
+    _print_patch_proposal_apply_result(result)
+    if result.status != "applied":
         raise typer.Exit(1)
 
 

@@ -51,6 +51,7 @@ CODEX_WORKER_SUBPROCESS_RUNS_DIR_NAME = "runs"
 CODEX_WORKER_BATCH_RUNS_DIR_NAME = "batch-runs"
 PATCH_PROPOSALS_DIR_NAME = "patch-proposals"
 PATCH_PROPOSAL_CHECKS_DIR_NAME = "checks"
+PATCH_PROPOSAL_APPLIES_DIR_NAME = "applies"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
 WORKER_REPORTS_DIR_NAME = "reports"
 WORKER_REVIEWS_DIR_NAME = "reviews"
@@ -1033,6 +1034,44 @@ class PatchProposalCheckResult(BaseModel):
     check_json_path: str | None = None
     check_markdown_path: str | None = None
     next_action: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class PatchProposalApplyResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    patch_apply_id: str
+    queue_worker_run_id: str
+    worker_evidence_id: str | None = None
+    worker_status: str | None = None
+    patch_proposal_present: bool = False
+    patch_artifact_path: str | None = None
+    patch_artifact_exists: bool = False
+    linked_policy_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    patch_check_id: str | None = None
+    patch_hash: str | None = None
+    reviewed_by: str
+    status: str = "blocked"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    touched_files: list[str] = Field(default_factory=list)
+    rejected_files: list[str] = Field(default_factory=list)
+    before_git_status: str = "unknown"
+    after_git_status: str = "unknown"
+    apply_stdout: str = ""
+    apply_stderr: str = ""
+    apply_json_path: str | None = None
+    apply_markdown_path: str | None = None
+    next_action: str = ""
+    safety_note: str = (
+        "Patch applied does not mean task completed. Review the actual diff, run validation, "
+        "record normal evidence only after review/validation, and use trusted runner delivery."
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -2362,6 +2401,11 @@ def patch_proposal_check_directory(project_name: str, workspace_root: Path | Non
     return paths.planning_dir / PATCH_PROPOSALS_DIR_NAME / PATCH_PROPOSAL_CHECKS_DIR_NAME
 
 
+def patch_proposal_apply_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    return paths.planning_dir / PATCH_PROPOSALS_DIR_NAME / PATCH_PROPOSAL_APPLIES_DIR_NAME
+
+
 def patch_proposal_check_artifact_paths(
     project_name: str,
     patch_check_id: str,
@@ -2369,6 +2413,54 @@ def patch_proposal_check_artifact_paths(
 ) -> tuple[Path, Path]:
     directory = patch_proposal_check_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(patch_check_id)
     return directory / "patch-proposal-check.json", directory / "patch-proposal-check.md"
+
+
+def patch_proposal_apply_artifact_paths(
+    project_name: str,
+    patch_apply_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    directory = patch_proposal_apply_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(patch_apply_id)
+    return directory / "patch-proposal-apply.json", directory / "patch-proposal-apply.md"
+
+
+def list_patch_proposal_checks(project_name: str, workspace_root: Path | None = None) -> list[PatchProposalCheckResult]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    directory = patch_proposal_check_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    checks: list[PatchProposalCheckResult] = []
+    for path in sorted(directory.glob("*/patch-proposal-check.json")):
+        try:
+            checks.append(PatchProposalCheckResult.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(checks, key=lambda item: item.created_at, reverse=True)
+
+
+def load_patch_proposal_apply(project_name: str, patch_apply_id: str, workspace_root: Path | None = None) -> PatchProposalApplyResult | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = patch_proposal_apply_artifact_paths(project_name, patch_apply_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return PatchProposalApplyResult.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_patch_proposal_applies(project_name: str, workspace_root: Path | None = None) -> list[PatchProposalApplyResult]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    directory = patch_proposal_apply_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    applies: list[PatchProposalApplyResult] = []
+    for path in sorted(directory.glob("*/patch-proposal-apply.json")):
+        try:
+            applies.append(PatchProposalApplyResult.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(applies, key=lambda item: item.created_at, reverse=True)
 
 
 def load_batch_approval(project_name: str, batch_id: str, workspace_root: Path | None = None) -> BatchApproval | None:
@@ -3455,12 +3547,14 @@ def check_patch_proposal(
         patch_text = resolved_patch_path.read_text(encoding="utf-8", errors="replace")
         patch_hash = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
         touched_files, rejected_files = _parse_unified_patch_touched_files(patch_text)
+        if _patch_text_has_binary_marker(patch_text):
+            blockers.append("Binary patches are not supported by patch-proposal-check v1.")
         if rejected_files:
             blockers.append("Patch references unsafe or unsupported paths: " + ", ".join(rejected_files))
         if not touched_files:
             blockers.append("Patch does not reference any target files.")
         if policy:
-            forbidden_patterns = _dedupe([*policy.forbidden_file_patterns, "workspace/**", ".env", ".venv/**"])
+            forbidden_patterns = _dedupe([*policy.forbidden_file_patterns, "workspace/**", ".env", ".venv/**", "PersonalOS", "PersonalOS/**", "Personal OS/**"])
             forbidden = [path for path in touched_files if _matches_any_scope_pattern(path, forbidden_patterns)]
             if forbidden:
                 rejected_files = _dedupe([*rejected_files, *forbidden])
@@ -3525,6 +3619,186 @@ def check_patch_proposal(
     result = result.model_copy(update={"check_json_path": str(json_path), "check_markdown_path": str(markdown_path)})
     _write_model(json_path, result)
     markdown_path.write_text(render_patch_proposal_check_markdown(result), encoding="utf-8")
+    return result
+
+
+def apply_patch_proposal(
+    project_name: str,
+    run_id: str,
+    *,
+    reviewed_by: str,
+    workspace_root: Path | None = None,
+) -> PatchProposalApplyResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    ingest = _latest_ingest_for_queue_worker_run(list_codex_worker_ingests(project_name, workspace_root=root), run.run_id)
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=root)
+    registration = load_registered_project(project_name, workspace_root=root)
+    target_path = Path(registration.path).expanduser().resolve()
+    now = datetime.now(UTC)
+    apply_id = _next_patch_proposal_apply_id(project_name, run.run_id, now, workspace_root=root)
+    cleaned_reviewer = (reviewed_by or "").strip()
+    blockers: list[str] = []
+    warnings: list[str] = []
+    touched_files: list[str] = []
+    rejected_files: list[str] = []
+    patch_hash: str | None = None
+    patch_path_text: str | None = None
+    patch_exists = False
+    before_git_status = "unknown"
+    after_git_status = "unknown"
+    apply_stdout = ""
+    apply_stderr = ""
+    matching_check: PatchProposalCheckResult | None = None
+
+    if not cleaned_reviewer:
+        blockers.append("--reviewed-by is required and must not be empty.")
+    if not ingest:
+        blockers.append("No ingested worker evidence exists for this queue-worker run.")
+    else:
+        patch_path_text = ingest.patch_artifact_path or None
+        if ingest.status not in {"blocked", "failed"}:
+            blockers.append(f"Worker status must be blocked or failed for patch-proposal apply; got {ingest.status}.")
+        if not ingest.patch_proposal_present:
+            blockers.append("No patch proposal is present in the latest ingested worker evidence.")
+        if not patch_path_text:
+            blockers.append("Patch proposal is present but no patch artifact path was provided.")
+
+    try:
+        git_status = _patch_check_git_status(project_name, workspace_root=root)
+        before_git_status = _prepare_git_status_summary(
+            [item.path for item in git_status.staged_files],
+            [item.path for item in git_status.unstaged_files],
+            [item.path for item in git_status.untracked_files],
+        )
+        if not git_status.working_tree_clean:
+            blockers.append("Target repo git worktree must be clean before patch-proposal apply.")
+    except ValueError as exc:
+        blockers.append(f"Could not verify target repo git status: {exc}")
+
+    resolved_patch_path: Path | None = None
+    if patch_path_text:
+        resolved_patch_path = _resolve_patch_artifact_path(project_name, patch_path_text, target_path=target_path, workspace_root=root)
+        if not resolved_patch_path:
+            blockers.append("Patch artifact path could not be resolved inside the target repo or approved workspace artifact area.")
+        else:
+            patch_exists = resolved_patch_path.exists()
+            if not patch_exists:
+                blockers.append("Patch artifact path does not exist.")
+            elif not _path_is_allowed_patch_artifact_location(resolved_patch_path, project_name, target_path, root):
+                blockers.append("Patch artifact path is outside the target repo and approved workspace artifact area.")
+
+    if resolved_patch_path and patch_exists:
+        patch_text = resolved_patch_path.read_text(encoding="utf-8", errors="replace")
+        patch_hash = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
+        touched_files, rejected_files = _parse_unified_patch_touched_files(patch_text)
+        if _patch_text_has_binary_marker(patch_text):
+            blockers.append("Binary patches are not supported by patch-proposal-apply v1.")
+        if rejected_files:
+            blockers.append("Patch references unsafe or unsupported paths: " + ", ".join(rejected_files))
+        if not touched_files:
+            blockers.append("Patch does not reference any target files.")
+        if policy:
+            forbidden_patterns = _dedupe([*policy.forbidden_file_patterns, "workspace/**", ".env", ".venv/**", "PersonalOS", "PersonalOS/**", "Personal OS/**"])
+            forbidden = [path for path in touched_files if _matches_any_scope_pattern(path, forbidden_patterns)]
+            if forbidden:
+                rejected_files = _dedupe([*rejected_files, *forbidden])
+                blockers.append("Patch touches forbidden files: " + ", ".join(forbidden))
+            if policy.allowed_file_patterns:
+                outside_allowed = [path for path in touched_files if not _matches_any_scope_pattern(path, policy.allowed_file_patterns)]
+                if outside_allowed:
+                    rejected_files = _dedupe([*rejected_files, *outside_allowed])
+                    blockers.append("Patch touches files outside policy allowed patterns: " + ", ".join(outside_allowed))
+            else:
+                blockers.append("Execution policy has no allowed file patterns; patch-proposal apply requires explicit allowed file patterns.")
+        else:
+            blockers.append(f"Execution policy not found: {run.policy_id}")
+
+    if patch_hash:
+        matching_checks = [
+            check
+            for check in list_patch_proposal_checks(project_name, workspace_root=root)
+            if check.queue_worker_run_id == run.run_id and check.status == "checked" and check.patch_hash == patch_hash
+        ]
+        matching_check = matching_checks[0] if matching_checks else None
+        if not matching_check:
+            blockers.append("No latest successful patch-proposal-check artifact exists for this run and patch hash.")
+        elif matching_check.patch_artifact_path != patch_path_text:
+            blockers.append("Latest successful patch-proposal-check artifact does not reference the same patch artifact path.")
+        elif sorted(matching_check.touched_files) != sorted(_dedupe(touched_files)):
+            blockers.append("Latest successful patch-proposal-check touched files do not match the current patch.")
+
+    status = "blocked"
+    if resolved_patch_path and patch_exists and not blockers:
+        try:
+            apply = subprocess.run(
+                ["git", "apply", str(resolved_patch_path)],
+                cwd=target_path,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            apply_stdout = (apply.stdout or "").strip()
+            apply_stderr = (apply.stderr or "").strip()
+            if apply.returncode == 0:
+                status = "applied"
+            else:
+                status = "failed"
+                blockers.append("git apply failed: " + (apply_stderr or apply_stdout or f"exit code {apply.returncode}"))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            status = "failed"
+            apply_stderr = str(exc)
+            blockers.append(f"git apply could not complete safely: {exc}")
+
+    try:
+        git_status_after = _patch_check_git_status(project_name, workspace_root=root)
+        after_git_status = _prepare_git_status_summary(
+            [item.path for item in git_status_after.staged_files],
+            [item.path for item in git_status_after.unstaged_files],
+            [item.path for item in git_status_after.untracked_files],
+        )
+        if status == "applied" and git_status_after.staged_files:
+            status = "failed"
+            blockers.append("Patch apply unexpectedly staged files; inspect the repository before continuing.")
+    except ValueError as exc:
+        if status == "applied":
+            status = "failed"
+        blockers.append(f"Could not verify target repo git status after apply: {exc}")
+
+    result = PatchProposalApplyResult(
+        project=project_name,
+        patch_apply_id=apply_id,
+        queue_worker_run_id=run.run_id,
+        worker_evidence_id=ingest.worker_evidence_id if ingest else None,
+        worker_status=ingest.status if ingest else None,
+        patch_proposal_present=ingest.patch_proposal_present if ingest else False,
+        patch_artifact_path=patch_path_text,
+        patch_artifact_exists=patch_exists,
+        linked_policy_id=run.policy_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        patch_check_id=matching_check.patch_check_id if matching_check else None,
+        patch_hash=patch_hash,
+        reviewed_by=cleaned_reviewer,
+        status=status,
+        blockers=_dedupe(blockers),
+        warnings=_dedupe(warnings),
+        touched_files=_dedupe(touched_files),
+        rejected_files=_dedupe(rejected_files),
+        before_git_status=before_git_status,
+        after_git_status=after_git_status,
+        apply_stdout=apply_stdout,
+        apply_stderr=apply_stderr,
+        next_action=_patch_proposal_apply_next_action(status),
+        created_at=now,
+        updated_at=datetime.now(UTC),
+    )
+    json_path, markdown_path = patch_proposal_apply_artifact_paths(project_name, apply_id, workspace_root=root)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    result = result.model_copy(update={"apply_json_path": str(json_path), "apply_markdown_path": str(markdown_path)})
+    _write_model(json_path, result)
+    markdown_path.write_text(render_patch_proposal_apply_markdown(result), encoding="utf-8")
     return result
 
 
@@ -8077,6 +8351,52 @@ def render_patch_proposal_check_markdown(result: PatchProposalCheckResult) -> st
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_patch_proposal_apply_markdown(result: PatchProposalApplyResult) -> str:
+    lines = [
+        f"# Patch Proposal Apply {result.patch_apply_id}",
+        "",
+        f"- Project: `{result.project}`",
+        f"- Queue-worker run: `{result.queue_worker_run_id}`",
+        f"- Worker evidence: `{result.worker_evidence_id or 'none'}`",
+        f"- Worker status: `{result.worker_status or 'unknown'}`",
+        f"- Policy: `{result.linked_policy_id or 'none'}`",
+        f"- Queue item: `{result.queue_item_id or 'none'}`",
+        f"- Task: `{result.task_id or 'none'}`",
+        f"- Patch check: `{result.patch_check_id or 'none'}`",
+        f"- Status: `{result.status}`",
+        f"- Reviewed by: `{result.reviewed_by}`",
+        f"- Patch proposal present: `{result.patch_proposal_present}`",
+        f"- Patch artifact path: `{result.patch_artifact_path or 'none'}`",
+        f"- Patch artifact exists: `{result.patch_artifact_exists}`",
+        f"- Patch hash: `{result.patch_hash or 'none'}`",
+        f"- Before git status: `{result.before_git_status}`",
+        f"- After git status: `{result.after_git_status}`",
+        f"- Created: `{result.created_at.isoformat()}`",
+        "",
+    ]
+    _append_list_section(lines, "Touched Files", result.touched_files)
+    _append_list_section(lines, "Rejected Files", result.rejected_files)
+    _append_list_section(lines, "Warnings", result.warnings)
+    _append_list_section(lines, "Blockers", result.blockers)
+    if result.apply_stdout:
+        lines.extend(["## Apply Stdout", "", "```text", result.apply_stdout, "```", ""])
+    if result.apply_stderr:
+        lines.extend(["## Apply Stderr", "", "```text", result.apply_stderr, "```", ""])
+    lines.extend(
+        [
+            "## Next Action",
+            "",
+            result.next_action,
+            "",
+            "## Safety Note",
+            "",
+            result.safety_note,
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_codex_worker_subprocess_config_markdown(config: CodexWorkerSubprocessConfig) -> str:
     lines = [
         "# Codex Worker Subprocess Config",
@@ -10995,6 +11315,34 @@ def _patch_proposal_check_next_action(status: str) -> str:
     return "Do not apply the patch. Resolve blockers or request a new worker result before any review/validation/delivery."
 
 
+def _patch_proposal_apply_next_action(status: str) -> str:
+    if status == "applied":
+        return (
+            "Patch applied to the working tree only. Inspect git diff, run validation, then record normal review/validation "
+            "only after the actual applied changes are reviewed and validated. Use normal trusted delivery afterward."
+        )
+    if status == "failed":
+        return "Patch apply failed. Inspect blockers and git status; do not record review/validation/delivery until the repository is understood."
+    return "Patch was not applied. Resolve blockers, rerun patch-proposal-check if needed, and do not record review/validation/delivery."
+
+
+def _next_patch_proposal_apply_id(
+    project_name: str,
+    run_id: str,
+    now: datetime,
+    workspace_root: Path | None = None,
+) -> str:
+    base = f"PPA-{now.strftime('%Y%m%d%H%M%S')}-{_normalize_queue_worker_run_id(run_id)}"
+    directory = patch_proposal_apply_directory(project_name, workspace_root=workspace_root)
+    existing = {path.parent.name.upper() for path in directory.glob("*/patch-proposal-apply.json")} if directory.exists() else set()
+    candidate = base
+    index = 2
+    while _safe_artifact_id(candidate).upper() in existing:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
 def _next_patch_proposal_check_id(
     project_name: str,
     run_id: str,
@@ -11010,6 +11358,16 @@ def _next_patch_proposal_check_id(
         candidate = f"{base}-{index}"
         index += 1
     return candidate
+
+
+def _patch_text_has_binary_marker(patch_text: str) -> bool:
+    for raw_line in patch_text.splitlines():
+        line = raw_line.strip()
+        if line == "GIT binary patch" or line.startswith("Binary files "):
+            return True
+        if re.match(r"^(literal|delta) \d+$", line):
+            return True
+    return False
 
 
 def _resolve_patch_artifact_path(

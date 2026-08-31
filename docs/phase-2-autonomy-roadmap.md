@@ -8,7 +8,7 @@ This is practical autonomy, not reckless full automation. Devo should reduce rep
 
 Phase 2 should not try to make Codex or a sandboxed worker directly commit or push. Codex/sandbox prepares work, evidence, and runner requests. A trusted local Devo executor running in the normal Windows user context performs delivery.
 
-TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording. TASK-DEVO-162 confirms that real Codex batch continuation should still be run from normal PowerShell, one item at a time, with Devo stopping at review and validation gates between items. TASK-DEVO-163 records the resulting readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`, TASK-DEVO-164 proves the same operating mode on a narrow live DevOrchestrator docs-only batch, and TASK-DEVO-165 adds the consolidated read-only batch-position summary. TASK-DEVO-171 adds `docs/architecture/reviewed-patch-apply-design.md` so patch proposals remain evidence until a separate reviewed show/check/apply path is implemented.
+TASK-DEVO-152 adds an important operating note for real Codex subprocess dogfood: setup, queue-worker preparation, config, and `codex-worker-run-preview` can be prepared from Codex/sandbox, but launching real Codex from inside Codex is recursive/unclear. TASK-DEVO-153 hardens that boundary before another retry by using the real `codex exec -s workspace-write --output-last-message` shape, stdin prompt passing, strict JSON output guidance, and clearer recovery/next-action wording. TASK-DEVO-162 confirms that real Codex batch continuation should still be run from normal PowerShell, one item at a time, with Devo stopping at review and validation gates between items. TASK-DEVO-163 records the resulting readiness checkpoint in `docs/architecture/real-codex-batch-run-readiness-checkpoint.md`, TASK-DEVO-164 proves the same operating mode on a narrow live DevOrchestrator docs-only batch, and TASK-DEVO-165 adds the consolidated read-only batch-position summary. TASK-DEVO-171 adds `docs/architecture/reviewed-patch-apply-design.md`; TASK-DEVO-172 through TASK-DEVO-174 implement the first show/check/apply slices while keeping patch proposals separate from normal review, validation, delivery, and queue completion.
 
 ## 1. Phase 2 Vision
 
@@ -40,7 +40,7 @@ approve a batch once
 
 The important boundary is that approval is still explicit and bounded. Devo can continue within an approved contract, but it must stop when the contract no longer covers the situation.
 
-Patch-proposal fallback belongs to this same bounded model. A blocked or failed worker may preserve a proposed `.patch` or `.diff`, but that proposal is not completed work. Future patch commands should first add read-only show/check behavior and only later an explicit apply command that requires a clean worktree, policy-scope checks, dry-run success, operator confirmation, and post-apply review/validation before trusted delivery.
+Patch-proposal fallback belongs to this same bounded model. A blocked or failed worker may preserve a proposed `.patch` or `.diff`, but that proposal is not completed work. Patch commands now support read-only show, explicit non-mutating check, and explicit reviewed apply. Apply requires a clean worktree, policy-scope checks, dry-run success, operator confirmation, and post-apply review/validation before trusted delivery.
 
 ## 2. Autonomy Levels
 
@@ -380,7 +380,14 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Goal: Prove `patch-proposal-show` and `patch-proposal-check` against existing fake blocked patch evidence before any patch apply command exists.
 - Scope: `QWR-0005`, `POL-0003`, the TASK-DEVO-170 `.patch` artifact, show/check/summary readouts, dogfood report, and one small summary recommended-command polish.
 - Not in scope: real Codex execution, patch application, queue completion, normal review/validation evidence, delivery creation, trusted runner execution, UI, parallel workers, or PersonalOS.
-- Status: Completed with PASS verdict. Show finds the proposal and read-only safety guidance, check writes only a workspace artifact and blocks the older non-applyable proposal, and batch summary now recommends `patch-proposal-show` for patch-only evidence. The next safe slice is a fresh no-apply dogfood with a valid unified diff proposal that passes check.
+- Status: Completed with PASS verdict. Show finds the proposal and read-only safety guidance, check writes only a workspace artifact and blocks the older non-applyable proposal, and batch summary now recommends `patch-proposal-show` for patch-only evidence. TASK-DEVO-174 follows this with explicit reviewed apply.
+
+### TASK-DEVO-174: Reviewed Patch-Proposal Apply V1
+
+- Goal: Add the first explicit, human-confirmed apply command for a previously checked patch proposal.
+- Scope: `patch-proposal-apply`, apply audit artifacts, policy/path/hash rechecks, read-model summary, focused tests, and docs.
+- Not in scope: real Codex execution, automatic patch apply from batch-run, queue completion, normal review/validation evidence, delivery creation, trusted runner execution by apply, UI, parallel workers, or PersonalOS.
+- Status: Completed. Apply requires `--reviewed-by`, `--confirm-apply-patch`, a clean worktree, blocked/failed worker evidence, a present patch proposal, and a latest successful matching check artifact. It applies the patch to the working tree only, leaves files unstaged, writes an audit artifact, and tells the operator to inspect the diff, validate, then record normal evidence before delivery.
 
 ### Future Spikes
 
