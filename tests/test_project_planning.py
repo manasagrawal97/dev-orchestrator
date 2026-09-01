@@ -3514,8 +3514,8 @@ def test_codex_worker_ingest_materializes_inline_patch_proposal_for_show_and_che
                 "commands_run": ["attempted apply_patch"],
                 "risks": ["write access blocked"],
                 "recommended_next_action": "review patch",
-                "patch_proposal_present": True,
-                "patch_proposal": f"```diff\n{_valid_feature_patch()}```",
+                "patch_artifact_path": "",
+                "patch_proposal_text": f"```diff\n{_valid_feature_patch()}```",
                 "failure_details": "Failed to write file; UnauthorizedAccessException",
             },
             indent=2,
@@ -3926,10 +3926,13 @@ def test_codex_worker_prompt_includes_patch_proposal_fallback_contract(tmp_path:
     assert "patch proposal instead of pretending the work completed" in prompt
     assert "- patch_proposal_present" in prompt
     assert "- patch_artifact_path" in prompt
+    assert "- patch_proposal_text" in prompt
+    assert "put a unified diff directly in patch_proposal_text" in prompt
     assert "status must be blocked or failed, not completed" in prompt
     assert "Patch proposals are review material only" in prompt
     assert '"patch_proposal_present": false' in template
     assert '"patch_artifact_path": ""' in template
+    assert '"patch_proposal_text": ""' in template
 
 
 def test_codex_worker_batch_summary_reports_waiting_validation_next_command(tmp_path: Path, monkeypatch) -> None:

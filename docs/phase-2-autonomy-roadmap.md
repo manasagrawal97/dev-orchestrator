@@ -403,6 +403,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex rerun, automatic patch apply, queue completion, normal review/validation evidence from patch-only output, delivery creation from patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
 - Status: In progress. The first real fallback run produced blocked evidence with an inline patch proposal and no artifact path. Future confirmed ingests now materialize inline patch text under `workspace/projects/<project>/planning/patch-proposals/artifacts/<QWR-ID>/<CWI-ID>.patch`; patch-only evidence remains blocked until an operator checks, applies, reviews, validates, and delivers through the normal gates.
 
+### TASK-DEVO-177: Real Codex Inline Patch Contract Retry
+
+- Goal: Give real Codex an explicit allowed JSON field for inline patch text when it cannot write files or create a patch artifact.
+- Scope: generated prompt/result template contract, canonical `patch_proposal_text` ingest materialization, focused tests, and dogfood report for `POL-0005` / `QWR-0008`.
+- Not in scope: real Codex rerun from Codex/sandbox, patch apply, queue completion, normal review/validation evidence from patch-only output, delivery creation from patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
+- Status: In progress. The retry showed the exact field list only exposed `patch_proposal_present` and `patch_artifact_path`, so the worker had no canonical inline patch field. The prompt/template now include `patch_proposal_text`, and ingest materializes that field into a workspace `.patch` artifact while preserving blocked/failed status.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

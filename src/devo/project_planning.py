@@ -8787,13 +8787,17 @@ def render_codex_worker_preparation_prompt(
             "- artifact_path",
             "- patch_proposal_present",
             "- patch_artifact_path",
+            "- patch_proposal_text",
             "- dirty_repo_status",
             "- usage_limit_details",
             "- failure_details",
             "",
             "Only status=completed should be treated as successful worker evidence.",
             "If you only produce a patch proposal and do not actually change the target files, status must be blocked or failed, not completed.",
-            "When file writes fail but you know the safe change, set patch_proposal_present=true and point patch_artifact_path or artifact_path at the patch/diff artifact if one exists.",
+            "When file writes fail but you know the safe change, set patch_proposal_present=true.",
+            "If a patch/diff artifact exists inside the target repo or approved Devo workspace artifact flow, set patch_artifact_path.",
+            "If no patch artifact exists, put a unified diff directly in patch_proposal_text.",
+            "Do not create patch artifacts outside the target repo or approved Devo workspace artifact flow.",
             "Patch proposals are review material only; they are not approval to record normal review, validation, delivery, commit, or push.",
             "Unknown or missing status is unsafe.",
             "Structured key/value text is not enough; `codex-worker-ingest` accepts strict JSON only.",
@@ -11605,7 +11609,7 @@ def _extract_patch_proposal_path(raw_result: dict[str, Any], artifact_path: str)
 
 
 def _extract_inline_patch_proposal(raw_result: dict[str, Any]) -> str:
-    for key in ("patch_proposal", "patch", "patch_text", "diff"):
+    for key in ("patch_proposal_text", "patch_proposal", "patch", "patch_text", "diff"):
         value = raw_result.get(key)
         if isinstance(value, str) and value.strip():
             return _strip_patch_code_fence(value)
@@ -11627,22 +11631,17 @@ def _strip_patch_code_fence(value: str) -> str:
 def _worker_result_has_patch_proposal(raw_result: dict[str, Any], patch_artifact_path: str) -> bool:
     if patch_artifact_path:
         return True
-    explicit = raw_result.get("patch_proposal_present")
-    if isinstance(explicit, bool):
-        return explicit
-    if isinstance(explicit, str) and explicit.strip().lower() in {"true", "yes", "1"}:
-        return True
-    proposal = raw_result.get("patch_proposal")
-    if isinstance(proposal, str):
-        return bool(proposal.strip())
-    if isinstance(proposal, list):
-        return any(str(item).strip() for item in proposal)
-    for key in ("patch", "patch_text", "diff"):
+    for key in ("patch_proposal_text", "patch_proposal", "patch", "patch_text", "diff"):
         value = raw_result.get(key)
         if isinstance(value, str) and value.strip():
             return True
         if isinstance(value, list) and any(str(item).strip() for item in value):
             return True
+    explicit = raw_result.get("patch_proposal_present")
+    if isinstance(explicit, bool):
+        return explicit
+    if isinstance(explicit, str) and explicit.strip().lower() in {"true", "yes", "1"}:
+        return True
     return False
 
 
@@ -12013,7 +12012,7 @@ def _render_worker_result_template_json(recorded_by: str | None, now: datetime) 
         "artifact_path": "",
         "patch_proposal_present": False,
         "patch_artifact_path": "",
-        "patch_proposal": "",
+        "patch_proposal_text": "",
         "dirty_repo_status": "",
         "usage_limit_details": "",
         "failure_details": "",
@@ -12036,6 +12035,7 @@ def _render_worker_result_template_markdown(recorded_by: str | None, now: dateti
             "Artifact path:",
             "Patch proposal present:",
             "Patch artifact path:",
+            "Patch proposal text:",
             "Dirty repo status:",
             "Usage-limit details:",
             "Failure details:",

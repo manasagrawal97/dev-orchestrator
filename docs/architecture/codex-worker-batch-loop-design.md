@@ -229,7 +229,7 @@ Each item needs durable evidence:
 
 The batch run should summarize these per item without hiding lower-level artifact paths.
 
-Patch proposals are evidence of implementation intent, not evidence that files changed. A blocked or failed worker may set `patch_proposal_present` and provide `patch_artifact_path`, but the queue item must stay before normal review/validation/delivery until the operator applies and validates the patch through a separate approved path.
+Patch proposals are evidence of implementation intent, not evidence that files changed. A blocked or failed worker may set `patch_proposal_present` and provide `patch_artifact_path`; if it cannot create a patch artifact, it should put a unified diff in canonical field `patch_proposal_text` so ingest can materialize a workspace `.patch` artifact. The queue item must stay before normal review/validation/delivery until the operator applies and validates the patch through a separate approved path.
 
 The reviewed apply path is designed separately in `docs/architecture/reviewed-patch-apply-design.md`. TASK-DEVO-172 implements read-only show/check commands and TASK-DEVO-174 implements explicit reviewed apply. Even after apply, normal review, validation, delivery, trusted runner, and queue completion gates still remain.
 
