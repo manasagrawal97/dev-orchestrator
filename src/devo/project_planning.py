@@ -962,6 +962,9 @@ class CodexWorkerBatchItemSummary(BaseModel):
     pushed: bool | None = None
     patch_proposal_present: bool = False
     patch_artifact_path: str | None = None
+    patch_apply_id: str | None = None
+    patch_apply_status: str | None = None
+    patch_apply_path: str | None = None
     blockers: list[str] = Field(default_factory=list)
     current_safe_next_action: str = ""
 
@@ -4334,11 +4337,13 @@ def summarize_codex_worker_batch_policy(
     preparations = list_codex_worker_preparations(project_name, workspace_root=root)
     ingests = list_codex_worker_ingests(project_name, workspace_root=root)
     batch_runs = list_codex_worker_batch_runs(project_name, workspace_root=root)
+    patch_applies = list_patch_proposal_applies(project_name, workspace_root=root)
     item_summaries: list[CodexWorkerBatchItemSummary] = []
     for item in scoped_items:
         latest_run = _latest_queue_worker_run_for_item(runs, policy.policy_id, queue.queue_id, item.item_id)
         latest_preparation = _latest_preparation_for_queue_worker_run(preparations, latest_run.run_id if latest_run else None)
         latest_ingest = _latest_ingest_for_queue_worker_run(ingests, latest_run.run_id if latest_run else None)
+        latest_apply = _latest_patch_proposal_apply_for_queue_worker_run(patch_applies, latest_run.run_id if latest_run else None)
         latest_batch_run = _latest_codex_worker_batch_run_for_item(
             batch_runs,
             policy.policy_id,
@@ -4358,7 +4363,16 @@ def summarize_codex_worker_batch_policy(
         review_status = evidence.worker_review_status or "missing"
         validation_status = evidence.validation_status or "not_provided"
         item_blockers = _dedupe([*(latest_run.blockers if latest_run else []), *evidence.blockers])
-        next_action = _codex_worker_batch_item_next_action(project_name, policy.policy_id, item, latest_run, evidence, runner_run, item_blockers)
+        next_action = _codex_worker_batch_item_next_action(
+            project_name,
+            policy.policy_id,
+            item,
+            latest_run,
+            evidence,
+            runner_run,
+            item_blockers,
+            patch_apply=latest_apply,
+        )
         item_summaries.append(
             CodexWorkerBatchItemSummary(
                 queue_item_id=item.item_id,
@@ -4382,6 +4396,9 @@ def summarize_codex_worker_batch_policy(
                 pushed=runner_run.pushed if runner_run else None,
                 patch_proposal_present=evidence.patch_proposal_present,
                 patch_artifact_path=evidence.patch_artifact_path,
+                patch_apply_id=latest_apply.patch_apply_id if latest_apply else None,
+                patch_apply_status=latest_apply.status if latest_apply else None,
+                patch_apply_path=latest_apply.apply_json_path if latest_apply else None,
                 blockers=item_blockers,
                 current_safe_next_action=next_action,
             )
@@ -4401,7 +4418,9 @@ def summarize_codex_worker_batch_policy(
         active_item = next((item for item in item_summaries if item.item_status != "completed"), None)
         main_message = plan.selection_reason or "Policy has allowed queue items that are not completed."
         next_action = active_item.current_safe_next_action if active_item else plan.next_action
-        if active_item and active_item.patch_proposal_present and active_item.queue_worker_run_id:
+        if active_item and active_item.patch_apply_status == "applied" and active_item.queue_worker_run_id:
+            recommended_command = _queue_worker_record_applied_patch_worker_result_next_action(project_name, active_item.queue_worker_run_id)
+        elif active_item and active_item.patch_proposal_present and active_item.queue_worker_run_id:
             recommended_command = (
                 f"devo project patch-proposal-show --project {project_name} "
                 f"--run {active_item.queue_worker_run_id}"
@@ -10610,6 +10629,14 @@ def _queue_worker_record_worker_result_next_action(project_name: str, run_id: st
     )
 
 
+def _queue_worker_record_applied_patch_worker_result_next_action(project_name: str, run_id: str | None) -> str:
+    run_fragment = run_id or "<QWR-ID>"
+    return (
+        f"devo project queue-worker-record-worker-result --project {project_name} --run {run_fragment} "
+        "--status completed --summary \"<summary>\" --files-changed \"<files>\" --confirm-record"
+    )
+
+
 def _queue_worker_record_review_next_action(project_name: str, run_id: str | None) -> str:
     run_fragment = run_id or "<QWR-ID>"
     return (
@@ -11142,6 +11169,17 @@ def _latest_ingest_for_queue_worker_run(
     return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
 
 
+def _latest_patch_proposal_apply_for_queue_worker_run(
+    applies: list[PatchProposalApplyResult],
+    run_id: str | None,
+) -> PatchProposalApplyResult | None:
+    if not run_id:
+        return None
+    normalized_run = _normalize_queue_worker_run_id(run_id)
+    candidates = [item for item in applies if _normalize_queue_worker_run_id(item.queue_worker_run_id) == normalized_run]
+    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+
+
 def _latest_codex_worker_batch_run_for_item(
     batch_runs: list[CodexWorkerBatchRun],
     policy_id: str,
@@ -11180,6 +11218,7 @@ def _codex_worker_batch_item_next_action(
     evidence: QueueWorkerEvidenceSummary,
     runner_run: Any | None,
     blockers: list[str] | None = None,
+    patch_apply: PatchProposalApplyResult | None = None,
 ) -> str:
     if item.status == "completed":
         return "No action needed."
@@ -11189,6 +11228,11 @@ def _codex_worker_batch_item_next_action(
             f"--policy {policy_id} --confirm-codex-batch-run"
         )
     if evidence.worker_report_status == "blocked":
+        if patch_apply and patch_apply.status == "applied":
+            return (
+                "Patch proposal has been applied to the working tree only. Inspect git diff, run validation, "
+                "then record normal worker/review/validation evidence before delivery."
+            )
         return _blocked_worker_result_next_action(
             blockers or evidence.blockers,
             patch_proposal_present=evidence.patch_proposal_present,
@@ -11310,7 +11354,7 @@ def _patch_proposal_check_next_action(status: str) -> str:
     if status == "checked":
         return (
             "Patch check passed. This does not mean the task is completed. "
-            "Future explicit patch apply or manual operator review is required before normal review/validation/delivery."
+            "Run explicit patch-proposal-apply only after human review, then review the actual diff and validate before normal review/validation/delivery."
         )
     return "Do not apply the patch. Resolve blockers or request a new worker result before any review/validation/delivery."
 

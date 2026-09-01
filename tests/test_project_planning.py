@@ -3482,6 +3482,7 @@ def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_a
     assert "src/feature.py" in result.output
     assert "Dry-run apply succeeded: True" in result.output
     assert "Patch check passed. This does not mean the task is completed." in result.output
+    assert "Run explicit patch-proposal-apply only after human review" in result.output
     assert "does not apply patches" in result.output
     assert _target_snapshot(project_path) == before_target
     checks = sorted(patch_proposal_check_directory("sample", workspace_root=workspace).glob("*/patch-proposal-check.json"))
@@ -3759,6 +3760,16 @@ def test_patch_proposal_apply_succeeds_for_policy_scoped_patch_without_staging_o
     assert apply_data["status"] == "applied"
     assert apply_data["reviewed_by"] == "Manas"
     assert apply_data["touched_files"] == ["src/feature.py"]
+    summary = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+    assert summary.exit_code == 0, summary.output
+    assert "patch apply: PPA-" in summary.output
+    assert "Patch proposal has been applied to the working tree only" in summary.output
+    assert "queue-worker-record-worker-result --project sample --run QWR-0001" in summary.output
+    assert "Items: 0/1 completed" in summary.output
 
 
 def test_patch_proposal_apply_overview_surfaces_latest_apply_artifact(tmp_path: Path, monkeypatch) -> None:

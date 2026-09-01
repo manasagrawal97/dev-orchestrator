@@ -389,6 +389,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, automatic patch apply from batch-run, queue completion, normal review/validation evidence, delivery creation, trusted runner execution by apply, UI, parallel workers, or PersonalOS.
 - Status: Completed. Apply requires `--reviewed-by`, `--confirm-apply-patch`, a clean worktree, blocked/failed worker evidence, a present patch proposal, and a latest successful matching check artifact. It applies the patch to the working tree only, leaves files unstaged, writes an audit artifact, and tells the operator to inspect the diff, validate, then record normal evidence before delivery.
 
+### TASK-DEVO-175: Patch-Proposal Apply Dogfood
+
+- Goal: Prove reviewed apply with a fake safe patch before live source-code use.
+- Scope: one docs-only policy, fake blocked worker result, valid unified diff proposal, show/check/apply commands, dogfood report, focused summary/check wording polish, and focused tests.
+- Not in scope: real Codex execution, automatic patch apply from batch-run, queue completion by apply, normal review/validation evidence by apply, delivery creation by apply, direct commit/push, UI, parallel workers, or PersonalOS.
+- Status: Completed. `patch-proposal-apply` applies the checked dogfood report patch to the working tree only, leaves files unstaged, preserves blocked queue/review/validation/delivery state, and the summary now surfaces apply artifacts plus the post-apply evidence next action.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

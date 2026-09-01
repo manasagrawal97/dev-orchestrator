@@ -1024,6 +1024,11 @@ def _print_codex_worker_batch_policy_summary(summary: CodexWorkerBatchPolicySumm
         )
         if item.patch_proposal_present:
             console.print(f"    patch proposal: yes; artifact={item.patch_artifact_path or 'provided inline in raw result'}", soft_wrap=True)
+        if item.patch_apply_id:
+            console.print(
+                f"    patch apply: {item.patch_apply_id} ({item.patch_apply_status or 'unknown'}); artifact={item.patch_apply_path or 'none'}",
+                soft_wrap=True,
+            )
         console.print(
             f"    delivery: request={item.delivery_request_id or 'none'} ({item.delivery_request_status or 'none'}); "
             f"runner={item.runner_run_id or 'none'} ({item.runner_run_status or 'none'}); "

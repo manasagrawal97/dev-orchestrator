@@ -56,7 +56,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 - TASK-DEVO-172: Patch-proposal show/check v1 - completed; operators can inspect patch proposal evidence and run explicit non-mutating checks that enforce evidence linkage, clean worktree, policy scope, forbidden paths, and `git apply --check`
 - TASK-DEVO-173: Patch-proposal show/check dogfood - completed in `docs/dogfood/task-devo-173-patch-proposal-show-check-dogfood.md`; existing fake blocked evidence is inspectable and checkable, check artifacts stay workspace-only, and summary guidance now points to `patch-proposal-show`
 - TASK-DEVO-174: Reviewed patch-proposal apply v1 - completed; `patch-proposal-apply` requires a prior matching check, explicit reviewer/confirmation, clean worktree, policy-scope rechecks, and writes an apply artifact while avoiding staging, commit, push, review, validation, delivery, and queue completion
-- Next: dogfood reviewed patch apply on a disposable/synthetic patch flow before using it on live code work
+- TASK-DEVO-175: Patch-proposal apply dogfood with fake safe patch - completed in `docs/dogfood/task-devo-175-patch-proposal-apply-dogfood.md`; fake blocked evidence plus a checked docs-only patch proved apply changes the working tree only and leaves normal gates separate
+- Next: complete the post-apply evidence and trusted-delivery continuation dogfood before using patch apply on live source-code work
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
