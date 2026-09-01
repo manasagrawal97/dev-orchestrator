@@ -396,6 +396,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex execution, automatic patch apply from batch-run, queue completion by apply, normal review/validation evidence by apply, delivery creation by apply, direct commit/push, UI, parallel workers, or PersonalOS.
 - Status: Completed. `patch-proposal-apply` applies the checked dogfood report patch to the working tree only, leaves files unstaged, preserves blocked queue/review/validation/delivery state, and the summary now surfaces apply artifacts plus the post-apply evidence next action.
 
+### TASK-DEVO-176: Real Codex Patch-Proposal Materialization
+
+- Goal: Preserve useful real Codex patch intent when a worker returns the proposal inline in JSON instead of as a `.patch` artifact path.
+- Scope: confirmed ingest-time materialization of inline patch text, show/check compatibility, focused tests, and dogfood documentation for `POL-0005` / `QWR-0007`.
+- Not in scope: real Codex rerun, automatic patch apply, queue completion, normal review/validation evidence from patch-only output, delivery creation from patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
+- Status: In progress. The first real fallback run produced blocked evidence with an inline patch proposal and no artifact path. Future confirmed ingests now materialize inline patch text under `workspace/projects/<project>/planning/patch-proposals/artifacts/<QWR-ID>/<CWI-ID>.patch`; patch-only evidence remains blocked until an operator checks, applies, reviews, validates, and delivers through the normal gates.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

@@ -60,6 +60,7 @@ If write access remains unreliable, Devo can now preserve a worker's implementat
 - Codex reports `status=blocked` or `status=failed` when it cannot edit files.
 - Codex can include `patch_proposal_present: true`.
 - Codex can point `patch_artifact_path` or `artifact_path` at a `.patch` or `.diff` artifact.
+- If Codex returns inline patch text instead of a path, confirmed `codex-worker-ingest` materializes it under `workspace/projects/<project>/planning/patch-proposals/artifacts/<QWR-ID>/<CWI-ID>.patch` and stores that as the patch artifact path.
 - Devo ingest, `queue-worker-evidence`, and `codex-worker-batch-summary` surface the patch proposal and its path.
 - `devo project patch-proposal-show --project <project> --run <QWR-ID>` inspects the linked proposal without mutation.
 - `devo project patch-proposal-check --project <project> --run <QWR-ID> --confirm-check` writes a workspace-only check artifact and can run `git apply --check` without applying the patch.
@@ -88,11 +89,14 @@ Expected worker-result shape:
   "artifact_path": "path/to/proposed.patch",
   "patch_proposal_present": true,
   "patch_artifact_path": "path/to/proposed.patch",
+  "patch_proposal": "",
   "dirty_repo_status": "clean",
   "usage_limit_details": "",
   "failure_details": "Failed to write file; UnauthorizedAccessException"
 }
 ```
+
+If `patch_artifact_path` is unavailable, `patch_proposal` may contain the unified diff text directly. It will be materialized during confirmed ingest. Dry-run ingest does not materialize the patch because dry-run must remain non-mutating.
 
 ## What Not To Do
 

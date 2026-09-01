@@ -50,6 +50,7 @@ CODEX_WORKER_RUN_PREVIEWS_DIR_NAME = "run-previews"
 CODEX_WORKER_SUBPROCESS_RUNS_DIR_NAME = "runs"
 CODEX_WORKER_BATCH_RUNS_DIR_NAME = "batch-runs"
 PATCH_PROPOSALS_DIR_NAME = "patch-proposals"
+PATCH_PROPOSAL_ARTIFACTS_DIR_NAME = "artifacts"
 PATCH_PROPOSAL_CHECKS_DIR_NAME = "checks"
 PATCH_PROPOSAL_APPLIES_DIR_NAME = "applies"
 WORKER_RUN_INDEX_JSON = "worker-run-index.json"
@@ -2409,6 +2410,22 @@ def patch_proposal_apply_directory(project_name: str, workspace_root: Path | Non
     return paths.planning_dir / PATCH_PROPOSALS_DIR_NAME / PATCH_PROPOSAL_APPLIES_DIR_NAME
 
 
+def patch_proposal_materialized_artifact_path(
+    project_name: str,
+    run_id: str,
+    ingest_id: str,
+    workspace_root: Path | None = None,
+) -> Path:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    return (
+        paths.planning_dir
+        / PATCH_PROPOSALS_DIR_NAME
+        / PATCH_PROPOSAL_ARTIFACTS_DIR_NAME
+        / _safe_artifact_id(run_id)
+        / f"{_safe_artifact_id(ingest_id)}.patch"
+    )
+
+
 def patch_proposal_check_artifact_paths(
     project_name: str,
     patch_check_id: str,
@@ -3310,6 +3327,15 @@ def create_codex_worker_ingest(
     raw_copy_string = str(raw_copy_path)
     evidence_artifact = artifact_path or raw_copy_string
     recommended_next_action = str(raw_result.get("recommended_next_action") or "").strip()
+    materialized_patch_path = ""
+    if patch_proposal_present and not patch_artifact_path and not dry_run:
+        inline_patch = _extract_inline_patch_proposal(raw_result)
+        if inline_patch:
+            materialized_path = patch_proposal_materialized_artifact_path(project_name, run.run_id, ingest_id, workspace_root=root)
+            materialized_path.parent.mkdir(parents=True, exist_ok=True)
+            materialized_path.write_text(inline_patch, encoding="utf-8")
+            materialized_patch_path = str(materialized_path)
+            patch_artifact_path = materialized_patch_path
     if result_status in {"blocked", "failed"} and patch_proposal_present:
         recommended_next_action = _patch_proposal_manual_review_next_action()
     elif not recommended_next_action:
@@ -3326,6 +3352,8 @@ def create_codex_worker_ingest(
         warnings.append(f"Worker result status is {result_status}; this is non-success evidence and must not advance as successful work.")
     if patch_proposal_present:
         warnings.append("Patch proposal is present; it is review material only and must not be treated as applied work.")
+    if materialized_patch_path:
+        warnings.append("Inline patch proposal was materialized as a workspace artifact; it is still not applied work.")
     ingest = CodexWorkerIngest(
         project=project_name,
         ingest_id=ingest_id,
@@ -3405,6 +3433,7 @@ def create_codex_worker_ingest(
             artifact_path,
             patch_proposal_present=patch_proposal_present,
             patch_artifact_path=patch_artifact_path,
+            materialized_patch_path=materialized_patch_path,
         ),
         workspace_root=root,
     )
@@ -11575,6 +11604,26 @@ def _extract_patch_proposal_path(raw_result: dict[str, Any], artifact_path: str)
     return ""
 
 
+def _extract_inline_patch_proposal(raw_result: dict[str, Any]) -> str:
+    for key in ("patch_proposal", "patch", "patch_text", "diff"):
+        value = raw_result.get(key)
+        if isinstance(value, str) and value.strip():
+            return _strip_patch_code_fence(value)
+        if isinstance(value, list):
+            lines = [str(item) for item in value if str(item).strip()]
+            if lines:
+                return _strip_patch_code_fence("\n".join(lines))
+    return ""
+
+
+def _strip_patch_code_fence(value: str) -> str:
+    text = value.strip()
+    fence = re.match(r"^```(?:diff|patch)?\s*\n(?P<body>.*)\n```\s*$", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        text = fence.group("body").strip()
+    return text.rstrip() + "\n" if text else ""
+
+
 def _worker_result_has_patch_proposal(raw_result: dict[str, Any], patch_artifact_path: str) -> bool:
     if patch_artifact_path:
         return True
@@ -11588,6 +11637,12 @@ def _worker_result_has_patch_proposal(raw_result: dict[str, Any], patch_artifact
         return bool(proposal.strip())
     if isinstance(proposal, list):
         return any(str(item).strip() for item in proposal)
+    for key in ("patch", "patch_text", "diff"):
+        value = raw_result.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and any(str(item).strip() for item in value):
+            return True
     return False
 
 
@@ -11625,6 +11680,7 @@ def _codex_worker_ingest_note(
     *,
     patch_proposal_present: bool = False,
     patch_artifact_path: str = "",
+    materialized_patch_path: str = "",
 ) -> str:
     parts = _record_notes(note=note, artifact_path=None)
     if work_performed:
@@ -11634,6 +11690,8 @@ def _codex_worker_ingest_note(
         parts.append(f"Worker-reported artifact: {artifact_path}")
     if patch_proposal_present:
         parts.append(f"Patch proposal artifact: {patch_artifact_path or artifact_path or 'provided inline in raw result'}")
+        if materialized_patch_path:
+            parts.append("Inline patch proposal was materialized as a workspace artifact; it is still not applied work.")
         parts.append("Patch proposal is not applied work and must be reviewed manually before any normal review/validation/delivery evidence.")
     return " ".join(parts).strip()
 
@@ -11955,6 +12013,7 @@ def _render_worker_result_template_json(recorded_by: str | None, now: datetime) 
         "artifact_path": "",
         "patch_proposal_present": False,
         "patch_artifact_path": "",
+        "patch_proposal": "",
         "dirty_repo_status": "",
         "usage_limit_details": "",
         "failure_details": "",

@@ -61,6 +61,8 @@ Patch proposal checks and future applies use workspace-only artifacts under:
 
 ```text
 workspace/projects/<project>/planning/patch-proposals/
+  artifacts/<QWR-ID>/
+    <CWI-ID>.patch
   checks/<PPC-ID>/
     patch-proposal-check.json
     patch-proposal-check.md
@@ -68,6 +70,8 @@ workspace/projects/<project>/planning/patch-proposals/
     patch-proposal-apply.json
     patch-proposal-apply.md
 ```
+
+The `artifacts/` directory is used when confirmed worker-result ingest materializes inline patch proposal text into a workspace `.patch` file. That materialized file is still only proposal evidence; it is not applied work.
 
 The check artifact should contain:
 

@@ -3495,6 +3495,81 @@ def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_a
     assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
 
 
+def test_codex_worker_ingest_materializes_inline_patch_proposal_for_show_and_check(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old\n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    result_file = tmp_path / "worker-result-inline-patch.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "summary": "Worker could not write existing files and provided an inline patch proposal.",
+                "work_performed": [],
+                "changed_files": [],
+                "commands_run": ["attempted apply_patch"],
+                "risks": ["write access blocked"],
+                "recommended_next_action": "review patch",
+                "patch_proposal_present": True,
+                "patch_proposal": f"```diff\n{_valid_feature_patch()}```",
+                "failure_details": "Failed to write file; UnauthorizedAccessException",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    before_target = _target_snapshot(project_path)
+    before_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump()
+
+    ingest = runner.invoke(
+        app,
+        ["project", "codex-worker-ingest", "--project", "sample", "--run", "QWR-0001", "--result-file", str(result_file), "--confirm-ingest"],
+        terminal_width=240,
+    )
+
+    assert ingest.exit_code == 0, ingest.output
+    assert "Patch proposal present: True" in ingest.output
+    assert "Patch artifact path:" in ingest.output
+    assert "provided inline in raw result" not in ingest.output
+    assert "Inline patch proposal was materialized as a workspace artifact" in ingest.output
+    ingested = list_codex_worker_ingests("sample", workspace_root=workspace)[0]
+    assert ingested.status == "blocked"
+    assert ingested.patch_proposal_present is True
+    assert ingested.patch_artifact_path is not None
+    materialized_patch = Path(ingested.patch_artifact_path)
+    assert materialized_patch.exists()
+    assert materialized_patch.suffix == ".patch"
+    assert workspace in materialized_patch.parents
+    assert materialized_patch.read_text(encoding="utf-8") == _valid_feature_patch()
+
+    show = runner.invoke(
+        app,
+        ["project", "patch-proposal-show", "--project", "sample", "--run", "QWR-0001"],
+        terminal_width=240,
+    )
+    check = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert show.exit_code == 0, show.output
+    assert str(materialized_patch) in show.output
+    assert "Patch artifact exists: True" in show.output
+    assert check.exit_code == 0, check.output
+    assert "Status: checked" in check.output
+    assert str(materialized_patch) in check.output
+    assert "src/feature.py" in check.output
+    assert _target_snapshot(project_path) == before_target
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump() == before_run
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
 def test_patch_proposal_apply_blocks_without_confirm(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)
