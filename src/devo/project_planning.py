@@ -1292,6 +1292,33 @@ class RoughGoalIntakePlan(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class RoughGoalIntakeMaterialization(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    intake_id: str
+    status: str = "materialized"
+    created_task_ids: list[str] = Field(default_factory=list)
+    batch_id: str
+    queue_id: str
+    policy_id: str
+    allowed_file_patterns: list[str] = Field(default_factory=list)
+    forbidden_file_patterns: list[str] = Field(default_factory=list)
+    validation_notes: list[str] = Field(default_factory=list)
+    delivery_notes: list[str] = Field(default_factory=list)
+    risk_notes: list[str] = Field(default_factory=list)
+    backlog_path: str
+    batch_path: str
+    queue_path: str
+    policy_path: str
+    next_commands: list[str] = Field(default_factory=list)
+    safety_note: str = (
+        "Draft planning artifacts only. No approvals, Codex run, validation, delivery request, commit, or push were created."
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class QueueItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2499,6 +2526,15 @@ def rough_goal_intake_artifact_paths(
 ) -> tuple[Path, Path]:
     directory = rough_goal_intake_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(intake_id)
     return directory / "intake-plan.json", directory / "intake-plan.md"
+
+
+def rough_goal_intake_materialization_artifact_paths(
+    project_name: str,
+    intake_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    directory = rough_goal_intake_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(intake_id)
+    return directory / "materialization.json", directory / "materialization.md"
 
 
 def patch_proposal_check_directory(project_name: str, workspace_root: Path | None = None) -> Path:
@@ -6336,6 +6372,152 @@ def create_rough_goal_intake_plan(
     return plan, json_path, markdown_path
 
 
+def load_rough_goal_intake_plan(
+    project_name: str,
+    intake_id: str,
+    workspace_root: Path | None = None,
+) -> RoughGoalIntakePlan | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = rough_goal_intake_artifact_paths(project_name, intake_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return RoughGoalIntakePlan.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def materialize_rough_goal_intake_plan(
+    project_name: str,
+    intake_id: str,
+    *,
+    workspace_root: Path | None = None,
+) -> tuple[RoughGoalIntakeMaterialization, ProjectBacklog, ProjectBatch, ExecutionQueue, BatchExecutionPolicy, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    intake = load_rough_goal_intake_plan(project_name, intake_id, workspace_root=root)
+    if not intake:
+        msg = f"Rough goal intake not found: {intake_id}"
+        raise ValueError(msg)
+    materialization_json, materialization_markdown = rough_goal_intake_materialization_artifact_paths(
+        project_name, intake.intake_id, workspace_root=root
+    )
+    if materialization_json.exists() or materialization_markdown.exists():
+        msg = (
+            f"Rough goal intake already materialized: {intake.intake_id}. "
+            "Review the existing materialization artifact instead of creating duplicates."
+        )
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    existing_backlog = load_project_backlog(project_name, workspace_root=root)
+    existing_tasks = list(existing_backlog.tasks) if existing_backlog else []
+    new_tasks = _materialized_backlog_tasks_from_intake(intake, existing_tasks, now)
+    if not new_tasks:
+        msg = f"Rough goal intake has no candidate tasks to materialize: {intake.intake_id}"
+        raise ValueError(msg)
+    backlog = _with_backlog_counts(
+        ProjectBacklog(
+            project=project_name,
+            title=existing_backlog.title if existing_backlog else f"{project_name} Intake Backlog",
+            blueprint_reference=existing_backlog.blueprint_reference if existing_backlog else f"rough-goal-intake:{intake.intake_id}",
+            status="draft",
+            tasks=[*existing_tasks, *new_tasks],
+            created_at=existing_backlog.created_at if existing_backlog else now,
+            updated_at=now,
+        )
+    )
+    paths.planning_dir.mkdir(parents=True, exist_ok=True)
+    _write_model(paths.backlog_json, backlog)
+    paths.backlog_markdown.write_text(render_project_backlog_markdown(backlog), encoding="utf-8")
+    batch_id = _next_batch_id(project_name, workspace_root=root)
+    batch = _build_batch_from_tasks(
+        project_name=project_name,
+        batch_id=batch_id,
+        title=intake.suggested_batch_draft.title or _short_title(intake.normalized_goal_summary, "Rough goal intake batch"),
+        tasks=new_tasks,
+        backlog=backlog,
+        source_backlog_reference=str(paths.backlog_json),
+        now=now,
+    )
+    batch_json, _batch_markdown = _write_project_batch(project_name, batch, workspace_root=root)
+    queue_id = _next_queue_id(project_name, workspace_root=root)
+    queue = ExecutionQueue(
+        project=project_name,
+        queue_id=queue_id,
+        title=f"Draft execution queue for {batch.title}",
+        source_batch_id=batch.batch_id,
+        source_backlog_reference=str(paths.backlog_json),
+        status="draft",
+        items=[
+            QueueItem(
+                item_id=f"QI{index:03d}",
+                task_id=task.id,
+                title=task.title,
+                lane=task.lane,
+                risk_level=task.risk_level,
+                status="pending",
+                batch_id=batch.batch_id,
+                dependencies=task.dependencies,
+                acceptance_criteria=task.acceptance_criteria,
+                validation_expectations=task.validation_expectations,
+                notes=[f"Materialized from rough goal intake {intake.intake_id}."],
+            )
+            for index, task in enumerate(new_tasks, start=1)
+        ],
+        pause_reason=None,
+        resume_hint="Review and approve the batch/policy before starting this draft queue.",
+        created_at=now,
+        updated_at=now,
+    )
+    queue, queue_json, _queue_markdown = _write_execution_queue(project_name, queue, workspace_root=root)
+    policy, policy_json, _policy_markdown = create_batch_execution_policy(
+        project_name,
+        batch_id=batch.batch_id,
+        queue_id=queue.queue_id,
+        title=f"Execution policy draft for {batch.title}",
+        allowed_task_ids=[task.id for task in new_tasks],
+        allowed_file_patterns=intake.suggested_policy_draft.allowed_file_patterns,
+        forbidden_file_patterns=intake.suggested_policy_draft.forbidden_file_patterns,
+        max_tasks=max(1, len(new_tasks)),
+        max_tasks_per_run=1,
+        max_changed_files_per_task=max(1, intake.suggested_policy_draft.max_changed_files_per_task),
+        validation_commands=intake.suggested_policy_draft.validation_commands,
+        auto_delivery_allowed=False,
+        auto_push_allowed=False,
+        note=f"Draft materialized from rough goal intake {intake.intake_id}.",
+        workspace_root=root,
+    )
+    materialization = RoughGoalIntakeMaterialization(
+        project=project_name,
+        intake_id=intake.intake_id,
+        created_task_ids=[task.id for task in new_tasks],
+        batch_id=batch.batch_id,
+        queue_id=queue.queue_id,
+        policy_id=policy.policy_id,
+        allowed_file_patterns=policy.allowed_file_patterns,
+        forbidden_file_patterns=policy.forbidden_file_patterns,
+        validation_notes=intake.validation_notes,
+        delivery_notes=intake.delivery_notes,
+        risk_notes=intake.risk_notes,
+        backlog_path=str(paths.backlog_json),
+        batch_path=str(batch_json),
+        queue_path=str(queue_json),
+        policy_path=str(policy_json),
+        next_commands=[
+            f"devo project backlog-show --project {project_name}",
+            f"devo project batch-show --project {project_name} --batch {batch.batch_id}",
+            f"devo project queue-show --project {project_name} --queue {queue.queue_id}",
+            f"devo project execution-policy-show --project {project_name} --policy {policy.policy_id}",
+            f"devo project batch-approval-request --project {project_name} --batch {batch.batch_id} --note \"<review note>\"",
+            f"devo project execution-policy-request --project {project_name} --policy {policy.policy_id} --note \"<policy note>\"",
+        ],
+        created_at=now,
+    )
+    materialization_json.parent.mkdir(parents=True, exist_ok=True)
+    _write_model(materialization_json, materialization)
+    materialization_markdown.write_text(render_rough_goal_intake_materialization_markdown(materialization), encoding="utf-8")
+    return materialization, backlog, batch, queue, policy, materialization_json, materialization_markdown
+
+
 def render_rough_goal_intake_plan_markdown(plan: RoughGoalIntakePlan) -> str:
     lines = [
         f"# Rough Goal Intake: {plan.intake_id}",
@@ -6424,6 +6606,42 @@ def render_rough_goal_intake_plan_markdown(plan: RoughGoalIntakePlan) -> str:
             "## Safety Note",
             "",
             "This intake bundle is planning material only. It does not create a real backlog, batch, queue, policy, approval, Codex run, validation run, delivery request, commit, or push. Review and translate the draft before approving execution.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_rough_goal_intake_materialization_markdown(materialization: RoughGoalIntakeMaterialization) -> str:
+    lines = [
+        f"# Rough Goal Intake Materialization: {materialization.intake_id}",
+        "",
+        f"- Project: `{materialization.project}`",
+        f"- Intake id: `{materialization.intake_id}`",
+        f"- Status: `{materialization.status}`",
+        f"- Batch id: `{materialization.batch_id}`",
+        f"- Queue id: `{materialization.queue_id}`",
+        f"- Policy id: `{materialization.policy_id}`",
+        f"- Backlog path: `{materialization.backlog_path}`",
+        f"- Batch path: `{materialization.batch_path}`",
+        f"- Queue path: `{materialization.queue_path}`",
+        f"- Policy path: `{materialization.policy_path}`",
+        f"- Created: `{materialization.created_at.isoformat()}`",
+        "",
+    ]
+    _append_list_section(lines, "Created / Linked Draft Task IDs", materialization.created_task_ids)
+    _append_list_section(lines, "Allowed File Patterns", materialization.allowed_file_patterns)
+    _append_list_section(lines, "Forbidden File Patterns", materialization.forbidden_file_patterns)
+    _append_list_section(lines, "Validation Notes", materialization.validation_notes)
+    _append_list_section(lines, "Delivery Notes", materialization.delivery_notes)
+    _append_list_section(lines, "Risk Notes", materialization.risk_notes)
+    _append_list_section(lines, "Next Commands", materialization.next_commands)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            materialization.safety_note,
+            "Artifacts remain draft/review-only until the operator explicitly approves the batch and execution policy.",
             "",
         ]
     )
@@ -12553,6 +12771,71 @@ def _text_has_any_heading(text: str, headings: tuple[str, ...]) -> bool:
 
 def _strip_leading_task_id(value: str) -> str:
     return re.sub(r"^(T\d+|TASK[-_A-Za-z0-9]*|[-*])\s*[:.)-]\s*", "", value.strip(), flags=re.IGNORECASE).strip() or value.strip()
+
+
+def _materialized_backlog_tasks_from_intake(
+    intake: RoughGoalIntakePlan,
+    existing_tasks: list[BacklogTask],
+    now: datetime,
+) -> list[BacklogTask]:
+    next_ids = _next_backlog_task_ids(existing_tasks, len(intake.candidate_tasks))
+    lane = _materialized_task_lane(intake.project)
+    forbidden_scope = _dedupe([*intake.do_not_touch, *intake.suggested_policy_draft.forbidden_file_patterns])
+    tasks: list[BacklogTask] = []
+    for task_id, candidate in zip(next_ids, intake.candidate_tasks, strict=False):
+        tasks.append(
+            BacklogTask(
+                id=task_id,
+                title=_short_title(candidate.title, f"Materialized task {task_id}"),
+                summary=candidate.summary or candidate.title,
+                lane=lane,
+                risk_level=candidate.risk_level if candidate.risk_level in ALLOWED_RISK_LEVELS else "medium",
+                status="draft",
+                acceptance_criteria=[
+                    "Review the materialized draft task before approval.",
+                    f"Keep changes inside intake {intake.intake_id} allowed scope.",
+                ],
+                validation_expectations=candidate.validation or intake.validation_notes,
+                allowed_scope=candidate.allowed_files or intake.suggested_allowed_files,
+                forbidden_scope=forbidden_scope,
+                notes=[
+                    f"Materialized from rough goal intake {intake.intake_id}.",
+                    *intake.parsed_scope_notes[:5],
+                    *intake.delivery_notes[:5],
+                    *intake.risk_notes[:5],
+                ],
+                source=f"rough-goal-intake:{intake.intake_id}",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return tasks
+
+
+def _next_backlog_task_ids(existing_tasks: list[BacklogTask], count: int) -> list[str]:
+    existing = {task.id.strip().upper() for task in existing_tasks}
+    max_index = 0
+    for task_id in existing:
+        match = re.fullmatch(r"T(\d+)", task_id)
+        if match:
+            max_index = max(max_index, int(match.group(1)))
+    ids: list[str] = []
+    index = max_index + 1
+    while len(ids) < count:
+        candidate = f"T{index:03d}"
+        if candidate not in existing:
+            ids.append(candidate)
+            existing.add(candidate)
+        index += 1
+    return ids
+
+
+def _materialized_task_lane(project_name: str) -> str:
+    if project_name == "DevOrchestrator" and "devo-internal-source" in BUILT_IN_LANES:
+        return "devo-internal-source"
+    if "low-risk-ui-maintenance" in BUILT_IN_LANES:
+        return "low-risk-ui-maintenance"
+    return next(iter(BUILT_IN_LANES), "manual")
 
 
 def _with_timed_note(notes: list[str], note: str, label: str, now: datetime) -> list[str]:

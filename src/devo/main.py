@@ -131,6 +131,7 @@ from .project_planning import (
     ProjectBlueprint,
     ProjectBrief,
     RoughGoalIntakePlan,
+    RoughGoalIntakeMaterialization,
     CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
@@ -212,6 +213,7 @@ from .project_planning import (
     get_queue_item_completion_readiness,
     get_queue_next_item,
     import_refined_backlog,
+    materialize_rough_goal_intake_plan,
     attach_codex_worker_review_evidence,
     list_execution_queues,
     list_execution_policies,
@@ -1610,6 +1612,47 @@ def _print_rough_goal_intake_plan(plan: RoughGoalIntakePlan, json_path: Path | N
         console.print(f"Recommended next action: {plan.recommended_next_commands[0]}", soft_wrap=True)
     console.print(
         "Safety: intake-plan writes planning guidance only. It does not create/approve a batch, queue, policy, Codex run, validation, delivery request, commit, or push.",
+        soft_wrap=True,
+    )
+
+
+def _print_rough_goal_intake_materialization(
+    materialization: RoughGoalIntakeMaterialization,
+    json_path: Path | None = None,
+    markdown_path: Path | None = None,
+) -> None:
+    console.print(f"[bold]Rough goal intake materialized: {materialization.intake_id}[/bold]")
+    console.print(f"Project: {materialization.project}")
+    console.print(f"Status: {materialization.status}")
+    console.print(
+        f"Created/linked task ids: {', '.join(materialization.created_task_ids) if materialization.created_task_ids else 'none'}",
+        soft_wrap=True,
+    )
+    console.print(f"Batch: {materialization.batch_id}")
+    console.print(f"Queue: {materialization.queue_id}")
+    console.print(f"Policy: {materialization.policy_id}")
+    console.print(
+        f"Allowed files: {', '.join(materialization.allowed_file_patterns) if materialization.allowed_file_patterns else 'needs review'}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Do-not-touch / forbidden: {', '.join(materialization.forbidden_file_patterns) if materialization.forbidden_file_patterns else 'none recorded'}",
+        soft_wrap=True,
+    )
+    if materialization.risk_notes:
+        console.print("Risk notes:")
+        for note in materialization.risk_notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    if materialization.next_commands:
+        console.print("Next commands:")
+        for command in materialization.next_commands:
+            console.print(f"  {command}", soft_wrap=True)
+    console.print(
+        "Safety: created artifacts are draft/review-only. No approvals, Codex run, validation, delivery request, commit, or push were created.",
         soft_wrap=True,
     )
 
@@ -4186,6 +4229,37 @@ def create_project_intake_plan_command(
         console.print("[yellow]Preview only; no workspace artifacts were written.[/yellow]")
         console.print("Add --confirm-create to write JSON and Markdown intake artifacts.")
     _print_rough_goal_intake_plan(plan, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("intake-materialize")
+def materialize_project_intake_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    intake_id: str = typer.Option(..., "--intake", help="Rough-goal intake ID to materialize."),
+    confirm_materialize: bool = typer.Option(
+        False,
+        "--confirm-materialize",
+        help="Create draft planning artifacts from a reviewed intake.",
+    ),
+) -> None:
+    """Materialize a reviewed rough-goal intake into draft backlog, batch, queue, and policy artifacts."""
+    project_name = _resolve_project(project_name)
+    if not confirm_materialize:
+        console.print("[yellow]Preview only; no workspace artifacts were written.[/yellow]")
+        console.print("Add --confirm-materialize to create draft backlog, batch, queue, and policy artifacts.")
+        console.print(
+            "Safety: materialization creates draft/review-only artifacts. It does not approve, run Codex, validate, deliver, commit, or push.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
+    try:
+        materialization, _backlog, _batch, _queue, _policy, json_path, markdown_path = materialize_rough_goal_intake_plan(
+            project_name,
+            intake_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    console.print(f"[green]Intake materialized[/green] {project_name}")
+    _print_rough_goal_intake_materialization(materialization, json_path=json_path, markdown_path=markdown_path)
 
 
 @project_app.command("brief-create")

@@ -70,6 +70,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-172 patch-proposal show/check](docs/dogfood/task-devo-172-patch-proposal-show-check.md)
 - [TASK-DEVO-173 patch-proposal show/check dogfood](docs/dogfood/task-devo-173-patch-proposal-show-check-dogfood.md)
 - [TASK-DEVO-174 reviewed patch apply v1](docs/dogfood/task-devo-174-reviewed-patch-apply-v1.md)
+- [TASK-DEVO-182 intake materialize dogfood](docs/dogfood/task-devo-182-intake-materialize-dogfood.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -164,9 +165,10 @@ devo project intake-prompt --project MyProject --idea "Rough project idea"
 devo project intake-prompt --project MyProject --idea "Rough project idea" --write
 devo project intake-plan --project MyProject --from-file E:\path\to\goal.md
 devo project intake-plan --project MyProject --from-file E:\path\to\goal.md --confirm-create
+devo project intake-materialize --project MyProject --intake INTAKE-0001 --confirm-materialize
 ```
 
-The intake commands are workspace/read-only helpers around the existing Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Codex handoff path. `intake-status` summarizes planning artifacts, task/batch/queue/handoff counts, progress percentages, and the next command. `intake-next` prints only the next action. `intake-template --write` and `intake-prompt --write` create `intake-template.md` and `intake-prompt.md` under `workspace/projects/<project>/planning/`. `intake-plan` parses a rough Markdown goal file into a deterministic planning bundle with candidate tasks, draft batch/queue/policy suggestions, allowed files, risk notes, and next commands; it previews by default and writes `workspace/projects/<project>/planning/intakes/<INTAKE-ID>/` only with `--confirm-create`. These commands do not call AI, approve work, create queues, run Codex, run validation, commit, push, or modify the target project.
+The intake commands are workspace/read-only helpers around the existing Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Codex handoff path. `intake-status` summarizes planning artifacts, task/batch/queue/handoff counts, progress percentages, and the next command. `intake-next` prints only the next action. `intake-template --write` and `intake-prompt --write` create `intake-template.md` and `intake-prompt.md` under `workspace/projects/<project>/planning/`. `intake-plan` parses a rough Markdown goal file into a deterministic planning bundle with candidate tasks, draft batch/queue/policy suggestions, allowed files, risk notes, and next commands; it previews by default and writes `workspace/projects/<project>/planning/intakes/<INTAKE-ID>/` only with `--confirm-create`. After review, `intake-materialize` converts that intake into draft backlog tasks, a draft batch, a draft queue, and a draft execution policy while preserving allowed files, do-not-touch notes, validation notes, delivery notes, and risk notes. These commands do not call AI, approve work, run Codex, run validation, create delivery requests, commit, push, or modify the target project.
 
 Create the first planning artifacts from a final project brief:
 
