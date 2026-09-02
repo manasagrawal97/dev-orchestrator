@@ -29,6 +29,7 @@ BACKLOG_MD = "backlog.md"
 BACKLOG_REFINEMENT_PROMPT_MD = "backlog-refinement-prompt.md"
 INTAKE_TEMPLATE_MD = "intake-template.md"
 INTAKE_PROMPT_MD = "intake-prompt.md"
+INTAKES_DIR_NAME = "intakes"
 BATCHES_DIR_NAME = "batches"
 BATCH_INDEX_JSON = "batch-index.json"
 BATCH_APPROVALS_DIR_NAME = "approvals"
@@ -1211,6 +1212,86 @@ class ProjectIntakeStatus(BaseModel):
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class RoughGoalTaskDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    title: str
+    summary: str
+    allowed_files: list[str] = Field(default_factory=list)
+    validation: list[str] = Field(default_factory=list)
+    risk_level: str = "low"
+
+
+class RoughGoalBatchDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggested_batch_id: str
+    title: str
+    task_ids: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class RoughGoalQueueItemDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    item_id: str
+    task_id: str
+    title: str
+
+
+class RoughGoalQueueDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggested_queue_id: str
+    batch_id: str
+    items: list[RoughGoalQueueItemDraft] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class RoughGoalPolicyDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    suggested_policy_id: str
+    batch_id: str
+    queue_id: str
+    allowed_task_ids: list[str] = Field(default_factory=list)
+    allowed_queue_item_ids: list[str] = Field(default_factory=list)
+    allowed_file_patterns: list[str] = Field(default_factory=list)
+    forbidden_file_patterns: list[str] = Field(default_factory=list)
+    validation_commands: list[str] = Field(default_factory=list)
+    risk_level: str = "low"
+    max_tasks: int = 1
+    max_tasks_per_run: int = 1
+    max_changed_files_per_task: int = 3
+    notes: list[str] = Field(default_factory=list)
+
+
+class RoughGoalIntakePlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    intake_id: str
+    source_file: str
+    normalized_goal_summary: str
+    parsed_scope_notes: list[str] = Field(default_factory=list)
+    parsed_context_notes: list[str] = Field(default_factory=list)
+    candidate_tasks: list[RoughGoalTaskDraft] = Field(default_factory=list)
+    suggested_batch_draft: RoughGoalBatchDraft
+    suggested_queue_draft: RoughGoalQueueDraft
+    suggested_policy_draft: RoughGoalPolicyDraft
+    suggested_allowed_files: list[str] = Field(default_factory=list)
+    do_not_touch: list[str] = Field(default_factory=list)
+    validation_notes: list[str] = Field(default_factory=list)
+    delivery_notes: list[str] = Field(default_factory=list)
+    missing_sections: list[str] = Field(default_factory=list)
+    risk_notes: list[str] = Field(default_factory=list)
+    recommended_next_commands: list[str] = Field(default_factory=list)
+    preview_only: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class QueueItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1757,6 +1838,7 @@ class PlanningArtifactPaths(BaseModel):
     backlog_json: Path
     backlog_markdown: Path
     backlog_refinement_prompt: Path
+    intakes_dir: Path
     batches_dir: Path
     batch_approvals_dir: Path
     batch_index_json: Path
@@ -1782,6 +1864,7 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         backlog_json=planning_dir / BACKLOG_JSON,
         backlog_markdown=planning_dir / BACKLOG_MD,
         backlog_refinement_prompt=planning_dir / BACKLOG_REFINEMENT_PROMPT_MD,
+        intakes_dir=planning_dir / INTAKES_DIR_NAME,
         batches_dir=planning_dir / BATCHES_DIR_NAME,
         batch_approvals_dir=planning_dir / BATCHES_DIR_NAME / BATCH_APPROVALS_DIR_NAME,
         batch_index_json=planning_dir / BATCHES_DIR_NAME / BATCH_INDEX_JSON,
@@ -2402,6 +2485,20 @@ def codex_worker_batch_run_artifact_paths(
         directory / "codex-worker-batch-run.json",
         directory / "codex-worker-batch-run.md",
     )
+
+
+def rough_goal_intake_directory(project_name: str, workspace_root: Path | None = None) -> Path:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    return paths.intakes_dir
+
+
+def rough_goal_intake_artifact_paths(
+    project_name: str,
+    intake_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    directory = rough_goal_intake_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(intake_id)
+    return directory / "intake-plan.json", directory / "intake-plan.md"
 
 
 def patch_proposal_check_directory(project_name: str, workspace_root: Path | None = None) -> Path:
@@ -6208,6 +6305,131 @@ def build_project_intake_status(project_name: str, workspace_root: Path | None =
     )
 
 
+def create_rough_goal_intake_plan(
+    project_name: str,
+    source_file: Path,
+    *,
+    confirm_create: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[RoughGoalIntakePlan, Path | None, Path | None]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    if not source_file.exists() or not source_file.is_file():
+        msg = f"Rough goal file not found: {source_file}"
+        raise ValueError(msg)
+    text = _read_planning_text_file(source_file)
+    intake_id = _next_rough_goal_intake_id(project_name, workspace_root=root) if confirm_create else "INTAKE-PREVIEW"
+    plan = _build_rough_goal_intake_plan(
+        project_name=project_name,
+        source_file=source_file,
+        text=text,
+        intake_id=intake_id,
+        preview_only=not confirm_create,
+        workspace_root=root,
+    )
+    if not confirm_create:
+        return plan, None, None
+    json_path, markdown_path = rough_goal_intake_artifact_paths(project_name, intake_id, workspace_root=root)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_model(json_path, plan)
+    markdown_path.write_text(render_rough_goal_intake_plan_markdown(plan), encoding="utf-8")
+    return plan, json_path, markdown_path
+
+
+def render_rough_goal_intake_plan_markdown(plan: RoughGoalIntakePlan) -> str:
+    lines = [
+        f"# Rough Goal Intake: {plan.intake_id}",
+        "",
+        f"- Project: `{plan.project}`",
+        f"- Intake id: `{plan.intake_id}`",
+        f"- Source file: `{plan.source_file}`",
+        f"- Preview only: `{plan.preview_only}`",
+        f"- Created: `{plan.created_at.isoformat()}`",
+        "",
+        "## Normalized Goal Summary",
+        "",
+        plan.normalized_goal_summary or "No goal summary could be extracted.",
+        "",
+    ]
+    _append_list_section(lines, "Parsed Context Notes", plan.parsed_context_notes)
+    _append_list_section(lines, "Parsed Scope Notes", plan.parsed_scope_notes)
+    lines.extend(["## Candidate Tasks", ""])
+    for task in plan.candidate_tasks:
+        lines.extend(
+            [
+                f"### {task.task_id}: {task.title}",
+                "",
+                task.summary or "No summary recorded.",
+                "",
+                f"- Risk: `{task.risk_level}`",
+                f"- Allowed files: `{', '.join(task.allowed_files) if task.allowed_files else 'needs review'}`",
+                f"- Validation: `{', '.join(task.validation) if task.validation else 'needs review'}`",
+                "",
+            ]
+        )
+    if not plan.candidate_tasks:
+        lines.extend(["No candidate tasks recorded.", ""])
+    lines.extend(
+        [
+            "## Suggested Batch Draft",
+            "",
+            f"- Suggested batch id: `{plan.suggested_batch_draft.suggested_batch_id}`",
+            f"- Title: {plan.suggested_batch_draft.title}",
+            f"- Task ids: `{', '.join(plan.suggested_batch_draft.task_ids) if plan.suggested_batch_draft.task_ids else 'none'}`",
+            "",
+        ]
+    )
+    _append_list_section(lines, "Batch Notes", plan.suggested_batch_draft.notes)
+    lines.extend(
+        [
+            "## Suggested Queue Draft",
+            "",
+            f"- Suggested queue id: `{plan.suggested_queue_draft.suggested_queue_id}`",
+            f"- Batch id: `{plan.suggested_queue_draft.batch_id}`",
+            "",
+        ]
+    )
+    if plan.suggested_queue_draft.items:
+        for item in plan.suggested_queue_draft.items:
+            lines.append(f"- `{item.item_id}` -> `{item.task_id}`: {item.title}")
+    else:
+        lines.append("- No queue items drafted.")
+    lines.append("")
+    _append_list_section(lines, "Queue Notes", plan.suggested_queue_draft.notes)
+    lines.extend(
+        [
+            "## Suggested Policy Draft",
+            "",
+            f"- Suggested policy id: `{plan.suggested_policy_draft.suggested_policy_id}`",
+            f"- Batch id: `{plan.suggested_policy_draft.batch_id}`",
+            f"- Queue id: `{plan.suggested_policy_draft.queue_id}`",
+            f"- Risk: `{plan.suggested_policy_draft.risk_level}`",
+            f"- Max tasks: `{plan.suggested_policy_draft.max_tasks}`",
+            f"- Max tasks per run: `{plan.suggested_policy_draft.max_tasks_per_run}`",
+            f"- Max changed files per task: `{plan.suggested_policy_draft.max_changed_files_per_task}`",
+            "",
+        ]
+    )
+    _append_list_section(lines, "Policy Allowed Tasks", plan.suggested_policy_draft.allowed_task_ids)
+    _append_list_section(lines, "Policy Allowed Queue Items", plan.suggested_policy_draft.allowed_queue_item_ids)
+    _append_list_section(lines, "Suggested Allowed Files", plan.suggested_allowed_files)
+    _append_list_section(lines, "Forbidden Files / Do Not Touch", plan.suggested_policy_draft.forbidden_file_patterns)
+    _append_list_section(lines, "Validation Notes", plan.validation_notes)
+    _append_list_section(lines, "Delivery Notes", plan.delivery_notes)
+    _append_list_section(lines, "Missing Sections", plan.missing_sections)
+    _append_list_section(lines, "Risk / Blocker Notes", plan.risk_notes)
+    _append_list_section(lines, "Recommended Next Commands", plan.recommended_next_commands)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            "This intake bundle is planning material only. It does not create a real backlog, batch, queue, policy, approval, Codex run, validation run, delivery request, commit, or push. Review and translate the draft before approving execution.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_intake_template(project_name: str) -> str:
     return "\n".join(
         [
@@ -9448,6 +9670,17 @@ def _next_policy_id(project_name: str, workspace_root: Path | None = None) -> st
         index += 1
 
 
+def _next_rough_goal_intake_id(project_name: str, workspace_root: Path | None = None) -> str:
+    directory = rough_goal_intake_directory(project_name, workspace_root=workspace_root)
+    existing = {_safe_artifact_id(path.name).upper() for path in directory.glob("INTAKE-*") if path.is_dir()} if directory.exists() else set()
+    index = 1
+    while True:
+        candidate = f"INTAKE-{index:04d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
 def _next_queue_worker_run_id(project_name: str, workspace_root: Path | None = None) -> str:
     existing = {_normalize_queue_worker_run_id(run.run_id) for run in list_queue_worker_runs(project_name, workspace_root=workspace_root)}
     index = 1
@@ -12160,6 +12393,166 @@ def _clean_string_list(values: list[str]) -> list[str]:
             if value and value not in cleaned:
                 cleaned.append(value)
     return cleaned
+
+
+def _build_rough_goal_intake_plan(
+    *,
+    project_name: str,
+    source_file: Path,
+    text: str,
+    intake_id: str,
+    preview_only: bool,
+    workspace_root: Path,
+) -> RoughGoalIntakePlan:
+    expected_sections: dict[str, tuple[str, ...]] = {
+        "Goal": ("goal", "problem / goal", "problem/goal"),
+        "Context": ("context",),
+        "Scope": ("scope",),
+        "Tasks": ("tasks",),
+        "Allowed files": ("allowed files", "allowed file", "exact files", "known files / areas"),
+        "Do not touch": ("do not touch", "forbidden files", "forbidden"),
+        "Validation": ("validation", "validation expectations"),
+        "Delivery notes": ("delivery notes", "delivery expectations"),
+    }
+    missing_sections = [
+        label for label, aliases in expected_sections.items() if not _text_has_any_heading(text, aliases)
+    ]
+    goal_summary = _extract_section(text, expected_sections["Goal"]) or _summarize_text(text)
+    context_notes = _extract_list_section(text, expected_sections["Context"])
+    scope_notes = _extract_list_section(text, expected_sections["Scope"])
+    task_notes = _extract_list_section(text, expected_sections["Tasks"])
+    allowed_files = _clean_string_list(_extract_list_section(text, expected_sections["Allowed files"]))
+    do_not_touch = _clean_string_list(_extract_list_section(text, expected_sections["Do not touch"]))
+    validation_notes = _extract_list_section(text, expected_sections["Validation"])
+    delivery_notes = _extract_list_section(text, expected_sections["Delivery notes"])
+    if not task_notes:
+        task_notes = ["Review the rough goal and create the smallest safe implementation slice."]
+    batch_id = _next_batch_id(project_name, workspace_root=workspace_root)
+    queue_id = _next_queue_id(project_name, workspace_root=workspace_root)
+    policy_id = _next_policy_id(project_name, workspace_root=workspace_root)
+    risk_level = "medium" if missing_sections or not allowed_files else "low"
+    candidate_tasks = [
+        RoughGoalTaskDraft(
+            task_id=f"T{index:03d}",
+            title=_short_title(_strip_leading_task_id(task), f"Candidate task {index}"),
+            summary=_strip_leading_task_id(task),
+            allowed_files=allowed_files,
+            validation=validation_notes,
+            risk_level=risk_level,
+        )
+        for index, task in enumerate(task_notes[:10], start=1)
+    ]
+    queue_items = [
+        RoughGoalQueueItemDraft(item_id=f"QI{index:03d}", task_id=task.task_id, title=task.title)
+        for index, task in enumerate(candidate_tasks, start=1)
+    ]
+    standard_forbidden = [".env", ".venv/**", "workspace/**", "ui/node_modules/**", "ui/dist/**", "pt-*"]
+    forbidden_files = _dedupe([*do_not_touch, *standard_forbidden])
+    risk_notes = [
+        "Human review is required before creating real backlog, batch, queue, policy, approval, or worker artifacts.",
+        "This deterministic intake may miss nuance from rough prose; review all candidate tasks and file scopes.",
+    ]
+    if missing_sections:
+        risk_notes.append(f"Missing optional headings: {', '.join(missing_sections)}.")
+    if not allowed_files:
+        risk_notes.append("Allowed files were not specified; fill exact policy file patterns before approval.")
+    if not validation_notes:
+        risk_notes.append("Validation was not specified; choose concrete checks before approving execution.")
+    task_ids = [task.task_id for task in candidate_tasks]
+    queue_item_ids = [item.item_id for item in queue_items]
+    next_commands = _rough_goal_intake_next_commands(
+        project_name=project_name,
+        source_file=source_file,
+        intake_id=intake_id,
+        preview_only=preview_only,
+        batch_id=batch_id,
+        queue_id=queue_id,
+        policy_id=policy_id,
+        task_ids=task_ids,
+    )
+    return RoughGoalIntakePlan(
+        project=project_name,
+        intake_id=intake_id,
+        source_file=str(source_file),
+        normalized_goal_summary=goal_summary,
+        parsed_scope_notes=scope_notes,
+        parsed_context_notes=context_notes,
+        candidate_tasks=candidate_tasks,
+        suggested_batch_draft=RoughGoalBatchDraft(
+            suggested_batch_id=batch_id,
+            title=_short_title(goal_summary, "Rough goal implementation batch"),
+            task_ids=task_ids,
+            notes=["Draft only. Create real batch artifacts only after reviewed tasks exist in Devo planning."],
+        ),
+        suggested_queue_draft=RoughGoalQueueDraft(
+            suggested_queue_id=queue_id,
+            batch_id=batch_id,
+            items=queue_items,
+            notes=["Draft only. Create a real execution queue only after batch approval."],
+        ),
+        suggested_policy_draft=RoughGoalPolicyDraft(
+            suggested_policy_id=policy_id,
+            batch_id=batch_id,
+            queue_id=queue_id,
+            allowed_task_ids=task_ids,
+            allowed_queue_item_ids=queue_item_ids,
+            allowed_file_patterns=allowed_files,
+            forbidden_file_patterns=forbidden_files,
+            validation_commands=validation_notes,
+            risk_level=risk_level,
+            max_tasks=len(task_ids) or 1,
+            max_tasks_per_run=1,
+            max_changed_files_per_task=max(1, min(3, len(allowed_files) or 1)),
+            notes=[
+                "Draft only. Request and approve a real execution policy explicitly before any worker run.",
+                "Keep worker execution one queue item at a time.",
+            ],
+        ),
+        suggested_allowed_files=allowed_files,
+        do_not_touch=do_not_touch,
+        validation_notes=validation_notes,
+        delivery_notes=delivery_notes,
+        missing_sections=missing_sections,
+        risk_notes=risk_notes,
+        recommended_next_commands=next_commands,
+        preview_only=preview_only,
+    )
+
+
+def _rough_goal_intake_next_commands(
+    *,
+    project_name: str,
+    source_file: Path,
+    intake_id: str,
+    preview_only: bool,
+    batch_id: str,
+    queue_id: str,
+    policy_id: str,
+    task_ids: list[str],
+) -> list[str]:
+    if preview_only:
+        return [
+            f"devo project intake-plan --project {project_name} --from-file {source_file} --confirm-create",
+            "Review the preview before writing the workspace intake artifact.",
+        ]
+    joined_tasks = " ".join(task_ids) if task_ids else "<taskIds>"
+    return [
+        f"Review workspace/projects/{project_name}/planning/intakes/{intake_id}/intake-plan.md",
+        "Translate approved candidate tasks into real backlog/task artifacts before creating a batch.",
+        f'devo project batch-create --project {project_name} --title "<reviewed batch title>" --tasks {joined_tasks}',
+        f"devo project queue-create --project {project_name} --batch {batch_id} --confirm-create",
+        f"devo project execution-policy-create --project {project_name} --batch {batch_id} --queue {queue_id} --title \"<reviewed policy title>\"",
+        f"devo project codex-worker-batch-summary --project {project_name} --policy {policy_id}",
+    ]
+
+
+def _text_has_any_heading(text: str, headings: tuple[str, ...]) -> bool:
+    normalized = {heading.lower() for heading in headings}
+    return any((_normalize_heading(line) or "") in normalized for line in _clean_planning_text(text).splitlines())
+
+
+def _strip_leading_task_id(value: str) -> str:
+    return re.sub(r"^(T\d+|TASK[-_A-Za-z0-9]*|[-*])\s*[:.)-]\s*", "", value.strip(), flags=re.IGNORECASE).strip() or value.strip()
 
 
 def _with_timed_note(notes: list[str], note: str, label: str, now: datetime) -> list[str]:

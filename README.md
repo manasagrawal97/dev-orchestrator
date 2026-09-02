@@ -162,9 +162,11 @@ devo project intake-template --project MyProject
 devo project intake-template --project MyProject --write
 devo project intake-prompt --project MyProject --idea "Rough project idea"
 devo project intake-prompt --project MyProject --idea "Rough project idea" --write
+devo project intake-plan --project MyProject --from-file E:\path\to\goal.md
+devo project intake-plan --project MyProject --from-file E:\path\to\goal.md --confirm-create
 ```
 
-The intake commands are workspace/read-only helpers around the existing Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Codex handoff path. `intake-status` summarizes planning artifacts, task/batch/queue/handoff counts, progress percentages, and the next command. `intake-next` prints only the next action. `intake-template --write` and `intake-prompt --write` create `intake-template.md` and `intake-prompt.md` under `workspace/projects/<project>/planning/`; they do not call AI, approve work, create queues, run Codex, run validation, commit, push, or modify the target project.
+The intake commands are workspace/read-only helpers around the existing Project Brief -> Blueprint -> Backlog -> Batch -> Queue -> Codex handoff path. `intake-status` summarizes planning artifacts, task/batch/queue/handoff counts, progress percentages, and the next command. `intake-next` prints only the next action. `intake-template --write` and `intake-prompt --write` create `intake-template.md` and `intake-prompt.md` under `workspace/projects/<project>/planning/`. `intake-plan` parses a rough Markdown goal file into a deterministic planning bundle with candidate tasks, draft batch/queue/policy suggestions, allowed files, risk notes, and next commands; it previews by default and writes `workspace/projects/<project>/planning/intakes/<INTAKE-ID>/` only with `--confirm-create`. These commands do not call AI, approve work, create queues, run Codex, run validation, commit, push, or modify the target project.
 
 Create the first planning artifacts from a final project brief:
 

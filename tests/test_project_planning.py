@@ -844,6 +844,110 @@ def test_intake_prompt_prints_idea_and_writes_workspace_artifact_only(tmp_path: 
     assert _target_snapshot(project_path) == before_target
 
 
+def test_intake_plan_from_markdown_creates_json_and_markdown_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Intake plan created" in result.output
+    assert "Rough goal intake: INTAKE-0001" in result.output
+    assert "Recommended next action" in result.output
+    assert "does not create/approve a batch, queue, policy" in result.output
+    intake_dir = planning_artifact_paths("sample", workspace_root=workspace).intakes_dir / "INTAKE-0001"
+    json_path = intake_dir / "intake-plan.json"
+    markdown_path = intake_dir / "intake-plan.md"
+    assert json_path.exists()
+    assert markdown_path.exists()
+    data = json.loads(json_path.read_text(encoding="utf-8"))
+    assert data["intake_id"] == "INTAKE-0001"
+    assert data["normalized_goal_summary"] == "Create a sheetless intake command for rough goals."
+    assert data["candidate_tasks"][0]["title"] == "Parse rough goal headings"
+    assert data["candidate_tasks"][1]["title"] == "Write intake planning bundle"
+    assert data["suggested_allowed_files"] == ["src/devo/project_planning.py", "src/devo/main.py", "tests/test_project_planning.py"]
+    assert "PersonalOS" in data["do_not_touch"]
+    assert data["suggested_policy_draft"]["allowed_task_ids"] == ["T001", "T002"]
+    assert data["suggested_policy_draft"]["allowed_queue_item_ids"] == ["QI001", "QI002"]
+    assert data["preview_only"] is False
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "## Suggested Policy Draft" in markdown
+    assert "planning material only" in markdown
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_intake_plan_preview_does_not_write_artifacts(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file)],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Preview only; no workspace artifacts were written" in result.output
+    assert "INTAKE-PREVIEW" in result.output
+    assert not planning_artifact_paths("sample", workspace_root=workspace).intakes_dir.exists()
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_intake_plan_without_headings_creates_conservative_artifact_with_warnings(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = tmp_path / "rough-no-headings.md"
+    goal_file.write_text("Please make Devo turn a rough conversation into a safe first work plan.\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads((planning_artifact_paths("sample", workspace_root=workspace).intakes_dir / "INTAKE-0001" / "intake-plan.json").read_text(encoding="utf-8"))
+    assert "Goal" in data["missing_sections"]
+    assert "Allowed files" in data["missing_sections"]
+    assert data["candidate_tasks"][0]["task_id"] == "T001"
+    assert data["suggested_allowed_files"] == []
+    assert data["suggested_policy_draft"]["risk_level"] == "medium"
+    assert "Allowed files were not specified" in " ".join(data["risk_notes"])
+
+
+def test_intake_plan_rejects_missing_project(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "missing", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "missing" in result.output
+
+
+def test_intake_plan_rejects_missing_input_file(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(tmp_path / "missing.md"), "--confirm-create"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Rough goal file not found" in result.output
+    assert not planning_artifact_paths("sample", workspace_root=workspace).intakes_dir.exists()
+
+
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _create_approved_batch(tmp_path)
@@ -6710,6 +6814,44 @@ Build a local planning dashboard for controlled work.
 
 ## Validation
 - Run focused tests
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _rough_goal_file(tmp_path: Path) -> Path:
+    path = tmp_path / "rough-goal.md"
+    path.write_text(
+        """# Goal
+Create a sheetless intake command for rough goals.
+
+# Context
+- Manas wants less manual planning setup.
+
+# Scope
+- Deterministic local parsing only.
+- Workspace-only artifacts.
+
+# Tasks
+- T001: Parse rough goal headings
+- T002: Write intake planning bundle
+
+# Allowed files
+- src/devo/project_planning.py
+- src/devo/main.py
+- tests/test_project_planning.py
+
+# Do not touch
+- PersonalOS
+- backup/restore
+
+# Validation
+- py_compile touched Python
+- focused pytest
+
+# Delivery notes
+- Use trusted runner only.
 """,
         encoding="utf-8",
     )

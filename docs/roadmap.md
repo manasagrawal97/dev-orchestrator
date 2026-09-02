@@ -61,7 +61,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 - TASK-DEVO-177: Real Codex inline patch retry contract polish - in progress; the retry showed the generated exact worker-result field list lacked an inline patch text field, so `patch_proposal_text` is now the canonical field and confirmed ingest materializes it into workspace `.patch` artifacts
 - TASK-DEVO-178: Real Codex inline patch compatibility polish - in progress; real Codex now returns `patch_proposal_text` and Devo materializes it, but the first inline patch was not `git apply` compatible, so the worker prompt/check guidance now requires complete git-apply-compatible unified diffs
 - TASK-DEVO-179: Whitespace-tolerant patch check/apply polish - in progress; strict check remains default, while explicit `--ignore-whitespace --confirm-ignore-whitespace` mode records same-run/same-hash/same-mode check/apply artifacts for patches that only apply with Git whitespace tolerance
-- Next: resume `QWR-0010` through explicit whitespace-tolerant check/apply, then complete post-apply evidence and trusted-delivery continuation before using patch apply on broader live source-code work
+- TASK-DEVO-181: Rough Goal Intake MVP - completed; `devo project intake-plan` turns a rough Markdown goal into a workspace-only intake planning bundle with candidate tasks, draft batch/queue/policy suggestions, allowed files, risk notes, and next commands
+- Next: add a reviewed intake-to-backlog draft path or intake review command so rough-goal bundles can become real task artifacts without manual spreadsheet work
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases

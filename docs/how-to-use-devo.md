@@ -81,9 +81,13 @@ devo project intake-status --project MyProject
 devo project intake-next --project MyProject
 devo project intake-template --project MyProject --write
 devo project intake-prompt --project MyProject --idea "Rough project idea" --write
+devo project intake-plan --project MyProject --from-file E:\path\to\goal.md
+devo project intake-plan --project MyProject --from-file E:\path\to\goal.md --confirm-create
 ```
 
 `intake-status` summarizes the whole planning path: Project Brief, Blueprint, Backlog, task counts, latest Batch approval, latest Queue, latest Handoff, progress percentages, and the exact next command. `intake-next` prints only the next action and command for quick handoff. `intake-template` gives the operator a standard Markdown shape for the raw idea, while `intake-prompt` creates a copyable planning prompt that asks Codex/ChatGPT to produce a brief draft, blueprint outline, candidate backlog/tasks, batch suggestion, risks, non-goals, and validation expectations.
+
+`intake-plan` is the sheetless rough-goal intake MVP. It reads a local Markdown file and prefers these optional headings: `# Goal`, `# Context`, `# Scope`, `# Tasks`, `# Allowed files`, `# Do not touch`, `# Validation`, and `# Delivery notes`. Without `--confirm-create`, it previews the normalized goal, candidate tasks, suggested batch/queue/policy drafts, allowed files, missing sections, risk notes, and next commands without writing artifacts. With `--confirm-create`, it writes JSON and Markdown under `workspace/projects/<project>/planning/intakes/<INTAKE-ID>/`. The result is planning material only: review it, translate approved candidates into real backlog/tasks, then explicitly create/approve batches, queues, and policies with the existing Devo commands.
 
 These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.
 

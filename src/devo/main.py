@@ -130,6 +130,7 @@ from .project_planning import (
     ProjectBatch,
     ProjectBlueprint,
     ProjectBrief,
+    RoughGoalIntakePlan,
     CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
@@ -177,6 +178,7 @@ from .project_planning import (
     cancel_queue_worker_run,
     continue_queue_worker_run,
     create_batch_execution_policy,
+    create_rough_goal_intake_plan,
     create_project_batch,
     create_project_backlog,
     create_project_blueprint,
@@ -1577,6 +1579,39 @@ def _print_project_intake_status(status: ProjectIntakeStatus) -> None:
         console.print("Helpful commands:")
         for command in status.helper_commands:
             console.print(f"  {command}", soft_wrap=True)
+
+
+def _print_rough_goal_intake_plan(plan: RoughGoalIntakePlan, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
+    console.print(f"[bold]Rough goal intake: {plan.intake_id}[/bold]")
+    console.print(f"Project: {plan.project}")
+    console.print(f"Preview only: {plan.preview_only}")
+    console.print(f"Goal: {plan.normalized_goal_summary}", soft_wrap=True)
+    console.print(f"Candidate tasks: {len(plan.candidate_tasks)}")
+    for task in plan.candidate_tasks:
+        console.print(f"  - {task.task_id} | risk={task.risk_level} | {task.title}", soft_wrap=True)
+    console.print(
+        f"Suggested batch: {plan.suggested_batch_draft.suggested_batch_id} | "
+        f"queue: {plan.suggested_queue_draft.suggested_queue_id} | "
+        f"policy: {plan.suggested_policy_draft.suggested_policy_id}",
+        soft_wrap=True,
+    )
+    console.print(f"Suggested allowed files: {', '.join(plan.suggested_allowed_files) if plan.suggested_allowed_files else 'needs review'}", soft_wrap=True)
+    if plan.missing_sections:
+        console.print(f"Missing sections: {', '.join(plan.missing_sections)}", soft_wrap=True)
+    if plan.risk_notes:
+        console.print("Risk/blocker notes:")
+        for note in plan.risk_notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    if plan.recommended_next_commands:
+        console.print(f"Recommended next action: {plan.recommended_next_commands[0]}", soft_wrap=True)
+    console.print(
+        "Safety: intake-plan writes planning guidance only. It does not create/approve a batch, queue, policy, Codex run, validation, delivery request, commit, or push.",
+        soft_wrap=True,
+    )
 
 
 def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
@@ -4127,6 +4162,30 @@ def show_project_intake_prompt_command(
         console.print(render_intake_prompt(project_name, idea=idea), soft_wrap=True)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--project") from exc
+
+
+@project_app.command("intake-plan")
+def create_project_intake_plan_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    from_file: Path = typer.Option(..., "--from-file", help="Rough markdown goal file to parse."),
+    confirm_create: bool = typer.Option(False, "--confirm-create", help="Write workspace-only intake artifacts."),
+) -> None:
+    """Turn a rough markdown goal into a deterministic workspace-only intake planning bundle."""
+    project_name = _resolve_project(project_name)
+    try:
+        plan, json_path, markdown_path = create_rough_goal_intake_plan(
+            project_name,
+            from_file,
+            confirm_create=confirm_create,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--from-file") from exc
+    if confirm_create:
+        console.print(f"[green]Intake plan created[/green] {project_name}")
+    else:
+        console.print("[yellow]Preview only; no workspace artifacts were written.[/yellow]")
+        console.print("Add --confirm-create to write JSON and Markdown intake artifacts.")
+    _print_rough_goal_intake_plan(plan, json_path=json_path, markdown_path=markdown_path)
 
 
 @project_app.command("brief-create")
