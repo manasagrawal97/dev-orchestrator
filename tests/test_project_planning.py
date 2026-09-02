@@ -3495,6 +3495,35 @@ def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_a
     assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
 
 
+def test_patch_proposal_check_blocks_corrupt_patch_with_fresh_result_guidance(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old\n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_corrupt_feature_patch())
+    before_target = _target_snapshot(project_path)
+    before_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: blocked" in result.output
+    assert "git apply --check failed" in result.output
+    assert "Request a fresh worker result with a valid git-apply-compatible unified diff in patch_proposal_text" in result.output
+    assert "do not manually force apply" in result.output
+    assert "queue-worker-record-review" not in result.output
+    assert "queue-worker-request-delivery" not in result.output
+    assert _target_snapshot(project_path) == before_target
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump() == before_run
+
+
 def test_codex_worker_ingest_materializes_inline_patch_proposal_for_show_and_check(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -3927,7 +3956,13 @@ def test_codex_worker_prompt_includes_patch_proposal_fallback_contract(tmp_path:
     assert "- patch_proposal_present" in prompt
     assert "- patch_artifact_path" in prompt
     assert "- patch_proposal_text" in prompt
-    assert "put a unified diff directly in patch_proposal_text" in prompt
+    assert "put a valid git-apply-compatible unified diff directly in patch_proposal_text" in prompt
+    assert "diff --git a/... b/..." in prompt
+    assert "--- a/..." in prompt
+    assert "+++ b/..." in prompt
+    assert "correct hunk line numbers and line counts" in prompt
+    assert "Do not return a rough patch, snippet diff, absolute-path diff, or incomplete hunk" in prompt
+    assert "If you cannot produce a valid git-apply-compatible unified diff" in prompt
     assert "status must be blocked or failed, not completed" in prompt
     assert "Patch proposals are review material only" in prompt
     assert '"patch_proposal_present": false' in template
@@ -6325,6 +6360,21 @@ def _valid_feature_patch() -> str:
             "--- a/src/feature.py",
             "+++ b/src/feature.py",
             "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "",
+        ]
+    )
+
+
+def _corrupt_feature_patch() -> str:
+    return "\n".join(
+        [
+            "diff --git a/src/feature.py b/src/feature.py",
+            "index 3367afd..3e75765 100644",
+            "--- a/src/feature.py",
+            "+++ b/src/feature.py",
+            "@@ -1,3 +1,2 @@",
             "-old",
             "+new",
             "",

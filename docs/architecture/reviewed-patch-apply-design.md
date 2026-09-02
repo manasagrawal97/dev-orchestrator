@@ -71,7 +71,7 @@ workspace/projects/<project>/planning/patch-proposals/
     patch-proposal-apply.md
 ```
 
-The `artifacts/` directory is used when confirmed worker-result ingest materializes inline patch proposal text into a workspace `.patch` file. The canonical worker-result field for inline patch text is `patch_proposal_text`; older aliases may remain readable for compatibility. That materialized file is still only proposal evidence; it is not applied work.
+The `artifacts/` directory is used when confirmed worker-result ingest materializes inline patch proposal text into a workspace `.patch` file. The canonical worker-result field for inline patch text is `patch_proposal_text`; older aliases may remain readable for compatibility. That materialized file is still only proposal evidence; it is not applied work. Inline patch text must be a complete `git apply`-compatible unified diff with `diff --git` headers, repo-relative file headers, and correct hunk counts; snippet-style proposals should stay blocked and be replaced by a fresh worker result.
 
 The check artifact should contain:
 

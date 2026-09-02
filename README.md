@@ -358,6 +358,8 @@ TASK-DEVO-173 dogfoods show/check against the existing fake blocked `QWR-0005` e
 
 TASK-DEVO-174 adds `devo project patch-proposal-apply --reviewed-by "Manas" --confirm-apply-patch`. Apply requires a prior successful matching check artifact, re-verifies patch hash and policy scope, writes a workspace apply artifact, and leaves changed files unstaged. It still does not record review/validation, create delivery, commit, push, or complete the queue item.
 
+TASK-DEVO-176 through TASK-DEVO-178 harden the real Codex write-blocked fallback. Confirmed ingest can materialize inline `patch_proposal_text` into a workspace `.patch` artifact, but that text must be a complete `git apply`-compatible unified diff. If `patch-proposal-check` reports a corrupt patch, do not apply or force-edit around it; request a fresh worker result with a valid patch proposal and keep normal review/validation/delivery gates closed.
+
 The assisted path is dogfooded in [TASK-DEVO-132 Queue-worker assisted E2E](docs/dogfood/task-devo-132-queue-worker-assisted-e2e.md), the live three-task sandbox attempt is recorded in [TASK-DEVO-136 Live three-task assisted dogfood](docs/dogfood/task-devo-136-live-three-task-assisted-dogfood.md), the follow-up friction polish is recorded in [TASK-DEVO-137 Queue-worker friction polish](docs/dogfood/task-devo-137-queue-worker-friction-polish.md), and the polished known-good delivery path is recorded in [TASK-DEVO-138 Polished assisted dogfood](docs/dogfood/task-devo-138-polished-assisted-known-good-delivery.md).
 
 Generate Codex-ready handoff prompts from queue items, backlog tasks, or batches:

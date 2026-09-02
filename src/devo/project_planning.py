@@ -3642,7 +3642,7 @@ def check_patch_proposal(
         dry_run_apply_supported=dry_run_supported,
         dry_run_apply_succeeded=dry_run_succeeded,
         dry_run_apply_detail=dry_run_detail,
-        next_action=_patch_proposal_check_next_action(status),
+        next_action=_patch_proposal_check_next_action(status, blockers=blockers, dry_run_detail=dry_run_detail),
         created_at=now,
         updated_at=now,
     )
@@ -8796,7 +8796,11 @@ def render_codex_worker_preparation_prompt(
             "If you only produce a patch proposal and do not actually change the target files, status must be blocked or failed, not completed.",
             "When file writes fail but you know the safe change, set patch_proposal_present=true.",
             "If a patch/diff artifact exists inside the target repo or approved Devo workspace artifact flow, set patch_artifact_path.",
-            "If no patch artifact exists, put a unified diff directly in patch_proposal_text.",
+            "If no patch artifact exists, put a valid git-apply-compatible unified diff directly in patch_proposal_text.",
+            "The patch_proposal_text value must include complete `diff --git a/... b/...` headers, `--- a/...` and `+++ b/...` file headers, correct hunk line numbers and line counts, and enough context/removal/addition lines to satisfy every hunk header.",
+            "Do not return a rough patch, snippet diff, absolute-path diff, or incomplete hunk in patch_proposal_text.",
+            "Patch proposal paths must be repo-relative and must touch only policy-allowed files.",
+            "If you cannot produce a valid git-apply-compatible unified diff, set patch_proposal_present=false and explain why in failure_details.",
             "Do not create patch artifacts outside the target repo or approved Devo workspace artifact flow.",
             "Patch proposals are review material only; they are not approval to record normal review, validation, delivery, commit, or push.",
             "Unknown or missing status is unsafe.",
@@ -11383,11 +11387,18 @@ def _patch_proposal_show_next_action(ingest: CodexWorkerIngest, *, patch_exists:
     )
 
 
-def _patch_proposal_check_next_action(status: str) -> str:
+def _patch_proposal_check_next_action(status: str, blockers: list[str] | None = None, dry_run_detail: str = "") -> str:
     if status == "checked":
         return (
             "Patch check passed. This does not mean the task is completed. "
             "Run explicit patch-proposal-apply only after human review, then review the actual diff and validate before normal review/validation/delivery."
+        )
+    combined = " ".join([*(blockers or []), dry_run_detail]).lower()
+    if "corrupt patch" in combined or "patch fragment without header" in combined:
+        return (
+            "Do not apply the patch. git apply --check reported a malformed or corrupt patch. "
+            "Request a fresh worker result with a valid git-apply-compatible unified diff in patch_proposal_text; "
+            "do not manually force apply or edit source files outside the reviewed patch flow."
         )
     return "Do not apply the patch. Resolve blockers or request a new worker result before any review/validation/delivery."
 

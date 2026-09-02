@@ -59,7 +59,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 - TASK-DEVO-175: Patch-proposal apply dogfood with fake safe patch - completed in `docs/dogfood/task-devo-175-patch-proposal-apply-dogfood.md`; fake blocked evidence plus a checked docs-only patch proved apply changes the working tree only and leaves normal gates separate
 - TASK-DEVO-176: Real Codex patch-proposal dogfood/materialization bridge - in progress; real Codex produced blocked strict JSON with an inline patch proposal but no patch artifact path, so confirmed ingest now materializes inline patch text into workspace `.patch` artifacts for show/check/apply while leaving patch-only evidence blocked
 - TASK-DEVO-177: Real Codex inline patch retry contract polish - in progress; the retry showed the generated exact worker-result field list lacked an inline patch text field, so `patch_proposal_text` is now the canonical field and confirmed ingest materializes it into workspace `.patch` artifacts
-- Next: retry the real patch-proposal dogfood with `patch_proposal_text`, then complete post-apply evidence and trusted-delivery continuation before using patch apply on broader live source-code work
+- TASK-DEVO-178: Real Codex inline patch compatibility polish - in progress; real Codex now returns `patch_proposal_text` and Devo materializes it, but the first inline patch was not `git apply` compatible, so the worker prompt/check guidance now requires complete git-apply-compatible unified diffs
+- Next: retry the real patch-proposal dogfood with the stricter patch contract, then complete post-apply evidence and trusted-delivery continuation before using patch apply on broader live source-code work
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases

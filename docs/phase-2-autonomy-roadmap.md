@@ -410,6 +410,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: real Codex rerun from Codex/sandbox, patch apply, queue completion, normal review/validation evidence from patch-only output, delivery creation from patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
 - Status: In progress. The retry showed the exact field list only exposed `patch_proposal_present` and `patch_artifact_path`, so the worker had no canonical inline patch field. The prompt/template now include `patch_proposal_text`, and ingest materializes that field into a workspace `.patch` artifact while preserving blocked/failed status.
 
+### TASK-DEVO-178: Real Codex Inline Patch Compatibility
+
+- Goal: Prove the `patch_proposal_text` fallback end to end and tighten the contract when the first real inline patch is not applyable.
+- Scope: generated prompt/result contract wording, corrupt-patch check guidance, focused tests, and dogfood report for `POL-0005` / `QWR-0009`.
+- Not in scope: running real Codex from Codex/sandbox, manually applying patches, automatic patch apply, queue completion, normal review/validation evidence from invalid patch-only output, delivery creation from invalid patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
+- Status: In progress. Real Codex returned blocked evidence with `patch_proposal_text`, and Devo materialized it into a workspace `.patch`; `patch-proposal-check` blocked safely because `git apply --check` reported a corrupt patch. The prompt/check guidance now requires complete git-apply-compatible unified diffs and recommends a fresh worker result for corrupt patches.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

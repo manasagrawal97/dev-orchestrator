@@ -60,7 +60,7 @@ If write access remains unreliable, Devo can now preserve a worker's implementat
 - Codex reports `status=blocked` or `status=failed` when it cannot edit files.
 - Codex can include `patch_proposal_present: true`.
 - Codex can point `patch_artifact_path` or `artifact_path` at a `.patch` or `.diff` artifact.
-- If Codex cannot create a patch artifact but knows the safe change, it should put a unified diff in canonical field `patch_proposal_text`.
+- If Codex cannot create a patch artifact but knows the safe change, it should put a valid git-apply-compatible unified diff in canonical field `patch_proposal_text`.
 - If Codex returns inline patch text instead of a path, confirmed `codex-worker-ingest` materializes it under `workspace/projects/<project>/planning/patch-proposals/artifacts/<QWR-ID>/<CWI-ID>.patch` and stores that as the patch artifact path.
 - Devo ingest, `queue-worker-evidence`, and `codex-worker-batch-summary` surface the patch proposal and its path.
 - `devo project patch-proposal-show --project <project> --run <QWR-ID>` inspects the linked proposal without mutation.
@@ -97,7 +97,9 @@ Expected worker-result shape:
 }
 ```
 
-If `patch_artifact_path` is unavailable, `patch_proposal_text` may contain the unified diff text directly. It will be materialized during confirmed ingest. Dry-run ingest does not materialize the patch because dry-run must remain non-mutating. Older aliases such as `patch_proposal`, `patch_text`, or `diff` may still be readable, but `patch_proposal_text` is the documented field.
+If `patch_artifact_path` is unavailable, `patch_proposal_text` may contain the unified diff text directly. It must be a real `git apply`-compatible patch with `diff --git` headers, `--- a/...` and `+++ b/...` file headers, repo-relative paths, correct hunk line numbers and counts, and complete hunk bodies. It will be materialized during confirmed ingest. Dry-run ingest does not materialize the patch because dry-run must remain non-mutating. Older aliases such as `patch_proposal`, `patch_text`, or `diff` may still be readable, but `patch_proposal_text` is the documented field.
+
+If `patch-proposal-check` reports `git apply --check failed` or `corrupt patch`, do not apply the patch and do not hand-edit source as a workaround. Request a fresh worker result with a valid git-apply-compatible unified diff in `patch_proposal_text`, then rerun show/check before any reviewed apply.
 
 ## What Not To Do
 
