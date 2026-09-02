@@ -1152,6 +1152,13 @@ def _print_patch_proposal_check_result(result: PatchProposalCheckResult) -> None
     console.print(f"Queue item: {result.queue_item_id or 'none'}")
     console.print(f"Task: {result.task_id or 'none'}")
     console.print(f"Patch hash: {result.patch_hash or 'none'}")
+    console.print(f"Patch apply mode: {result.patch_apply_mode}")
+    console.print(f"Git apply check args: {' '.join(result.git_apply_check_args) if result.git_apply_check_args else 'none'}", soft_wrap=True)
+    if result.patch_apply_mode == "ignore_whitespace":
+        console.print(
+            "Whitespace-tolerant check mode was used explicitly. This is still review material only and does not complete work.",
+            soft_wrap=True,
+        )
     console.print(f"Before git status: {result.before_git_status}", soft_wrap=True)
     console.print(f"Dry-run apply supported: {result.dry_run_apply_supported}")
     console.print(f"Dry-run apply succeeded: {result.dry_run_apply_succeeded}")
@@ -1193,6 +1200,13 @@ def _print_patch_proposal_apply_result(result: PatchProposalApplyResult) -> None
     console.print(f"Task: {result.task_id or 'none'}")
     console.print(f"Patch check: {result.patch_check_id or 'none'}")
     console.print(f"Patch hash: {result.patch_hash or 'none'}")
+    console.print(f"Patch apply mode: {result.patch_apply_mode}")
+    console.print(f"Git apply args: {' '.join(result.git_apply_args) if result.git_apply_args else 'none'}", soft_wrap=True)
+    if result.patch_apply_mode == "ignore_whitespace":
+        console.print(
+            "Whitespace-tolerant apply mode was used explicitly after a matching whitespace-tolerant check.",
+            soft_wrap=True,
+        )
     console.print(f"Before git status: {result.before_git_status}", soft_wrap=True)
     console.print(f"After git status: {result.after_git_status}", soft_wrap=True)
     console.print("Touched files:")
@@ -5314,6 +5328,8 @@ def check_patch_proposal_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
     confirm_check: bool = typer.Option(False, "--confirm-check", help="Confirm non-mutating patch-proposal dry-run check."),
+    ignore_whitespace: bool = typer.Option(False, "--ignore-whitespace", help="Use explicit whitespace-tolerant git apply --check mode."),
+    confirm_ignore_whitespace: bool = typer.Option(False, "--confirm-ignore-whitespace", help="Confirm explicit whitespace-tolerant patch check mode."),
 ) -> None:
     """Run explicit non-mutating checks for a patch proposal."""
     project_name = _resolve_project(project_name)
@@ -5324,8 +5340,15 @@ def check_patch_proposal_command(
             soft_wrap=True,
         )
         raise typer.Exit(1)
+    if ignore_whitespace != confirm_ignore_whitespace:
+        console.print("Whitespace-tolerant patch check requires both --ignore-whitespace and --confirm-ignore-whitespace.")
+        console.print(
+            "Default patch-proposal-check remains strict. Whitespace-tolerant check is explicit, non-mutating, and audited.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
     try:
-        result = check_patch_proposal(project_name, run_id)
+        result = check_patch_proposal(project_name, run_id, ignore_whitespace=ignore_whitespace)
     except ValueError as exc:
         console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
         console.print(f"Suggested next command: devo project patch-proposal-show --project {project_name} --run {run_id}")
@@ -5341,6 +5364,8 @@ def apply_patch_proposal_command(
     run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
     reviewed_by: str = typer.Option("", "--reviewed-by", help="Name of the human reviewer who approved applying this patch."),
     confirm_apply_patch: bool = typer.Option(False, "--confirm-apply-patch", help="Confirm reviewed patch application to the target working tree."),
+    ignore_whitespace: bool = typer.Option(False, "--ignore-whitespace", help="Use explicit whitespace-tolerant git apply mode."),
+    confirm_ignore_whitespace: bool = typer.Option(False, "--confirm-ignore-whitespace", help="Confirm explicit whitespace-tolerant patch apply mode."),
 ) -> None:
     """Apply a checked patch proposal to the target working tree without staging or delivery."""
     project_name = _resolve_project(project_name)
@@ -5354,8 +5379,15 @@ def apply_patch_proposal_command(
     if not reviewed_by.strip():
         console.print("patch-proposal-apply requires --reviewed-by with a non-empty human reviewer name.")
         raise typer.Exit(1)
+    if ignore_whitespace != confirm_ignore_whitespace:
+        console.print("Whitespace-tolerant patch apply requires both --ignore-whitespace and --confirm-ignore-whitespace.")
+        console.print(
+            "Default patch-proposal-apply remains strict and requires a same-mode successful patch-proposal-check artifact.",
+            soft_wrap=True,
+        )
+        raise typer.Exit(1)
     try:
-        result = apply_patch_proposal(project_name, run_id, reviewed_by=reviewed_by)
+        result = apply_patch_proposal(project_name, run_id, reviewed_by=reviewed_by, ignore_whitespace=ignore_whitespace)
     except ValueError as exc:
         console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
         console.print(f"Suggested next command: devo project patch-proposal-show --project {project_name} --run {run_id}")

@@ -3495,6 +3495,84 @@ def test_patch_proposal_check_allows_policy_scoped_patch_and_writes_only_check_a
     assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
 
 
+def test_patch_proposal_check_whitespace_mode_is_explicit_and_audited(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old   \n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    _mock_git_apply_whitespace_only(monkeypatch, project_path)
+    before_target = _target_snapshot(project_path)
+
+    strict = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+
+    assert strict.exit_code == 1, strict.output
+    assert "Patch apply mode: strict" in strict.output
+    assert "Git apply check args: git apply --check <patch>" in strict.output
+    assert "explicit non-mutating whitespace-tolerant check" in strict.output
+    assert "--ignore-whitespace --confirm-ignore-whitespace" in strict.output
+    assert _target_snapshot(project_path) == before_target
+
+    explicit = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-check",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--confirm-check",
+            "--ignore-whitespace",
+            "--confirm-ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+
+    assert explicit.exit_code == 0, explicit.output
+    assert "Status: checked" in explicit.output
+    assert "Patch apply mode: ignore_whitespace" in explicit.output
+    assert "Git apply check args: git apply --check --ignore-space-change --ignore-whitespace <patch>" in explicit.output
+    assert "Whitespace-tolerant check mode was used explicitly" in explicit.output
+    assert _target_snapshot(project_path) == before_target
+    checks = sorted(patch_proposal_check_directory("sample", workspace_root=workspace).glob("*/patch-proposal-check.json"))
+    modes = [json.loads(path.read_text(encoding="utf-8"))["patch_apply_mode"] for path in checks]
+    assert "strict" in modes
+    assert "ignore_whitespace" in modes
+
+
+def test_patch_proposal_check_rejects_half_confirmed_whitespace_mode(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-check",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--confirm-check",
+            "--ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "requires both --ignore-whitespace and" in result.output
+    assert "--confirm-ignore-whitespace" in result.output
+    assert "Default patch-proposal-check remains strict" in result.output
+
+
 def test_patch_proposal_check_blocks_corrupt_patch_with_fresh_result_guidance(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -3749,6 +3827,95 @@ def test_patch_proposal_apply_blocks_missing_successful_check_artifact(tmp_path:
     assert "No latest successful patch-proposal-check artifact exists" in result.output
 
 
+def test_patch_proposal_apply_blocks_whitespace_mode_without_same_mode_check(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    project_path = tmp_path / "target-project"
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old\n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    check = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+    assert check.exit_code == 0, check.output
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-apply",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-apply-patch",
+            "--ignore-whitespace",
+            "--confirm-ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "patch apply mode ignore_whitespace" in result.output
+    assert "Patch apply mode: ignore_whitespace" in result.output
+
+
+def test_patch_proposal_apply_blocks_strict_mode_after_only_whitespace_check(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+    project_path = tmp_path / "target-project"
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old   \n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    _mock_git_apply_whitespace_only(monkeypatch, project_path)
+    check = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-check",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--confirm-check",
+            "--ignore-whitespace",
+            "--confirm-ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+    assert check.exit_code == 0, check.output
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-apply",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-apply-patch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "patch apply mode strict" in result.output
+    assert "Patch apply mode: strict" in result.output
+
+
 def test_patch_proposal_apply_blocks_if_patch_hash_changed_after_check(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     project_path = tmp_path / "target-project"
@@ -3784,7 +3951,7 @@ def test_patch_proposal_apply_blocks_if_patch_hash_changed_after_check(tmp_path:
     )
 
     assert result.exit_code == 1, result.output
-    assert "No latest successful patch-proposal-check artifact exists for this run and patch hash." in result.output
+    assert "No latest successful patch-proposal-check artifact exists for this run, patch hash, and patch apply mode strict." in result.output
 
 
 def test_patch_proposal_apply_blocks_forbidden_file_paths(tmp_path: Path, monkeypatch) -> None:
@@ -3874,6 +4041,72 @@ def test_patch_proposal_apply_succeeds_for_policy_scoped_patch_without_staging_o
     assert "Patch proposal has been applied to the working tree only" in summary.output
     assert "queue-worker-record-worker-result --project sample --run QWR-0001" in summary.output
     assert "Items: 0/1 completed" in summary.output
+
+
+def test_patch_proposal_apply_whitespace_mode_succeeds_after_matching_check_without_staging(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old   \n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    _mock_git_apply_whitespace_only(monkeypatch, project_path)
+    check = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-check",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--confirm-check",
+            "--ignore-whitespace",
+            "--confirm-ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+    assert check.exit_code == 0, check.output
+    before_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-apply",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-apply-patch",
+            "--ignore-whitespace",
+            "--confirm-ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: applied" in result.output
+    assert "Patch apply mode: ignore_whitespace" in result.output
+    assert "Git apply args: git apply --ignore-space-change --ignore-whitespace <patch>" in result.output
+    assert "Whitespace-tolerant apply mode was used explicitly" in result.output
+    assert (project_path / "src" / "feature.py").read_text(encoding="utf-8") == "new\n"
+    status = _git(project_path, "status", "--short", capture=True).stdout
+    assert " M src/feature.py" in status
+    assert not status.startswith("M  src/feature.py")
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).model_dump() == before_run
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    applies = sorted(patch_proposal_apply_directory("sample", workspace_root=workspace).glob("*/patch-proposal-apply.json"))
+    assert len(applies) == 1
+    apply_data = json.loads(applies[0].read_text(encoding="utf-8"))
+    assert apply_data["status"] == "applied"
+    assert apply_data["patch_apply_mode"] == "ignore_whitespace"
+    assert apply_data["git_apply_args"] == ["git", "apply", "--ignore-space-change", "--ignore-whitespace", "<patch>"]
 
 
 def test_patch_proposal_apply_overview_surfaces_latest_apply_artifact(tmp_path: Path, monkeypatch) -> None:
@@ -6407,6 +6640,25 @@ def _init_git_repo(project_path: Path) -> None:
 
 def _git(cwd: Path, *args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=capture, text=True)
+
+
+def _mock_git_apply_whitespace_only(monkeypatch, project_path: Path) -> None:
+    original_run = subprocess.run
+
+    def fake_run(args, *run_args, **run_kwargs):
+        arg_list = list(args) if isinstance(args, (list, tuple)) else []
+        if len(arg_list) >= 2 and arg_list[:2] == ["git", "apply"]:
+            stderr = "error: patch failed: src/feature.py:1\nerror: src/feature.py: patch does not apply\n"
+            ignore_whitespace = "--ignore-space-change" in arg_list and "--ignore-whitespace" in arg_list
+            if "--check" in arg_list:
+                return subprocess.CompletedProcess(args, 0 if ignore_whitespace else 1, "", "" if ignore_whitespace else stderr)
+            if ignore_whitespace:
+                (project_path / "src" / "feature.py").write_text("new\n", encoding="utf-8")
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return subprocess.CompletedProcess(args, 1, "", stderr)
+        return original_run(args, *run_args, **run_kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
 
 
 def _create_queue(tmp_path: Path) -> None:

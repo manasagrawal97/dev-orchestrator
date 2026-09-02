@@ -417,6 +417,13 @@ The next work should start with Levels 1-3. Do not jump directly to Level 5. The
 - Not in scope: running real Codex from Codex/sandbox, manually applying patches, automatic patch apply, queue completion, normal review/validation evidence from invalid patch-only output, delivery creation from invalid patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
 - Status: In progress. Real Codex returned blocked evidence with `patch_proposal_text`, and Devo materialized it into a workspace `.patch`; `patch-proposal-check` blocked safely because `git apply --check` reported a corrupt patch. The prompt/check guidance now requires complete git-apply-compatible unified diffs and recommends a fresh worker result for corrupt patches.
 
+### TASK-DEVO-179: Whitespace-Tolerant Patch Check/Apply
+
+- Goal: Add explicit audited check/apply mode for materialized patches that fail strict `git apply` but pass Git whitespace-tolerant diagnostics.
+- Scope: `--ignore-whitespace --confirm-ignore-whitespace` flags for `patch-proposal-check` and `patch-proposal-apply`, artifact fields for patch apply mode and git args, same-run/same-hash/same-mode apply gating, focused tests, and dogfood report for `POL-0005` / `QWR-0010`.
+- Not in scope: automatic fallback, applying the real `QWR-0010` patch in this implementation task, real Codex rerun from Codex/sandbox, normal evidence/delivery from patch-only output, direct commit/push, UI, parallel workers, or PersonalOS.
+- Status: In progress. Strict remains the default; whitespace-tolerant mode is explicit, non-mutating for check, working-tree-only for apply, and audited in artifacts.
+
 ### Future Spikes
 
 - Compare Devo architecture against ECC / Everything Claude Code as a benchmark only; do not copy ECC or make Devo Claude-Code-only.

@@ -1031,6 +1031,8 @@ class PatchProposalCheckResult(BaseModel):
     touched_files: list[str] = Field(default_factory=list)
     rejected_files: list[str] = Field(default_factory=list)
     patch_hash: str | None = None
+    patch_apply_mode: str = "strict"
+    git_apply_check_args: list[str] = Field(default_factory=list)
     before_git_status: str = "unknown"
     dry_run_apply_supported: bool = False
     dry_run_apply_succeeded: bool = False
@@ -1059,6 +1061,8 @@ class PatchProposalApplyResult(BaseModel):
     task_id: str | None = None
     patch_check_id: str | None = None
     patch_hash: str | None = None
+    patch_apply_mode: str = "strict"
+    git_apply_args: list[str] = Field(default_factory=list)
     reviewed_by: str
     status: str = "blocked"
     blockers: list[str] = Field(default_factory=list)
@@ -3517,6 +3521,7 @@ def get_patch_proposal_summary(
 def check_patch_proposal(
     project_name: str,
     run_id: str,
+    ignore_whitespace: bool = False,
     workspace_root: Path | None = None,
 ) -> PatchProposalCheckResult:
     root = workspace_root or get_workspace_root()
@@ -3539,6 +3544,13 @@ def check_patch_proposal(
     dry_run_succeeded = False
     dry_run_detail = ""
     before_git_status = "unknown"
+    patch_apply_mode = "ignore_whitespace" if ignore_whitespace else "strict"
+    git_apply_check_args = ["git", "apply", "--check"]
+    if ignore_whitespace:
+        git_apply_check_args.extend(["--ignore-space-change", "--ignore-whitespace"])
+        warnings.append(
+            "Whitespace-tolerant patch check mode was used explicitly; this remains non-mutating review material and does not complete work."
+        )
 
     if not ingest:
         blockers.append("No ingested worker evidence exists for this queue-worker run.")
@@ -3604,8 +3616,9 @@ def check_patch_proposal(
     if resolved_patch_path and patch_exists and not blockers:
         dry_run_supported = True
         try:
+            check_args = [*git_apply_check_args, str(resolved_patch_path)]
             check = subprocess.run(
-                ["git", "apply", "--check", str(resolved_patch_path)],
+                check_args,
                 cwd=target_path,
                 capture_output=True,
                 text=True,
@@ -3638,11 +3651,20 @@ def check_patch_proposal(
         touched_files=_dedupe(touched_files),
         rejected_files=_dedupe(rejected_files),
         patch_hash=patch_hash,
+        patch_apply_mode=patch_apply_mode,
+        git_apply_check_args=[*git_apply_check_args, "<patch>"],
         before_git_status=before_git_status,
         dry_run_apply_supported=dry_run_supported,
         dry_run_apply_succeeded=dry_run_succeeded,
         dry_run_apply_detail=dry_run_detail,
-        next_action=_patch_proposal_check_next_action(status, blockers=blockers, dry_run_detail=dry_run_detail),
+        next_action=_patch_proposal_check_next_action(
+            status,
+            blockers=blockers,
+            dry_run_detail=dry_run_detail,
+            patch_apply_mode=patch_apply_mode,
+            project_name=project_name,
+            run_id=run.run_id,
+        ),
         created_at=now,
         updated_at=now,
     )
@@ -3659,6 +3681,7 @@ def apply_patch_proposal(
     run_id: str,
     *,
     reviewed_by: str,
+    ignore_whitespace: bool = False,
     workspace_root: Path | None = None,
 ) -> PatchProposalApplyResult:
     root = workspace_root or get_workspace_root()
@@ -3683,6 +3706,13 @@ def apply_patch_proposal(
     apply_stdout = ""
     apply_stderr = ""
     matching_check: PatchProposalCheckResult | None = None
+    patch_apply_mode = "ignore_whitespace" if ignore_whitespace else "strict"
+    git_apply_args = ["git", "apply"]
+    if ignore_whitespace:
+        git_apply_args.extend(["--ignore-space-change", "--ignore-whitespace"])
+        warnings.append(
+            "Whitespace-tolerant patch apply mode was used explicitly after a matching whitespace-tolerant check."
+        )
 
     if not cleaned_reviewer:
         blockers.append("--reviewed-by is required and must not be empty.")
@@ -3751,11 +3781,17 @@ def apply_patch_proposal(
         matching_checks = [
             check
             for check in list_patch_proposal_checks(project_name, workspace_root=root)
-            if check.queue_worker_run_id == run.run_id and check.status == "checked" and check.patch_hash == patch_hash
+            if check.queue_worker_run_id == run.run_id
+            and check.status == "checked"
+            and check.patch_hash == patch_hash
+            and check.patch_apply_mode == patch_apply_mode
         ]
         matching_check = matching_checks[0] if matching_checks else None
         if not matching_check:
-            blockers.append("No latest successful patch-proposal-check artifact exists for this run and patch hash.")
+            blockers.append(
+                "No latest successful patch-proposal-check artifact exists for this run, patch hash, and patch apply mode "
+                f"{patch_apply_mode}."
+            )
         elif matching_check.patch_artifact_path != patch_path_text:
             blockers.append("Latest successful patch-proposal-check artifact does not reference the same patch artifact path.")
         elif sorted(matching_check.touched_files) != sorted(_dedupe(touched_files)):
@@ -3764,8 +3800,9 @@ def apply_patch_proposal(
     status = "blocked"
     if resolved_patch_path and patch_exists and not blockers:
         try:
+            apply_args = [*git_apply_args, str(resolved_patch_path)]
             apply = subprocess.run(
-                ["git", "apply", str(resolved_patch_path)],
+                apply_args,
                 cwd=target_path,
                 capture_output=True,
                 text=True,
@@ -3812,6 +3849,8 @@ def apply_patch_proposal(
         task_id=run.selected_task_id,
         patch_check_id=matching_check.patch_check_id if matching_check else None,
         patch_hash=patch_hash,
+        patch_apply_mode=patch_apply_mode,
+        git_apply_args=[*git_apply_args, "<patch>"],
         reviewed_by=cleaned_reviewer,
         status=status,
         blockers=_dedupe(blockers),
@@ -8373,6 +8412,8 @@ def render_patch_proposal_check_markdown(result: PatchProposalCheckResult) -> st
         f"- Patch artifact path: `{result.patch_artifact_path or 'none'}`",
         f"- Patch artifact exists: `{result.patch_artifact_exists}`",
         f"- Patch hash: `{result.patch_hash or 'none'}`",
+        f"- Patch apply mode: `{result.patch_apply_mode}`",
+        f"- Git apply check args: `{' '.join(result.git_apply_check_args) if result.git_apply_check_args else 'none'}`",
         f"- Before git status: `{result.before_git_status}`",
         f"- Dry-run apply supported: `{result.dry_run_apply_supported}`",
         f"- Dry-run apply succeeded: `{result.dry_run_apply_succeeded}`",
@@ -8417,6 +8458,8 @@ def render_patch_proposal_apply_markdown(result: PatchProposalApplyResult) -> st
         f"- Patch artifact path: `{result.patch_artifact_path or 'none'}`",
         f"- Patch artifact exists: `{result.patch_artifact_exists}`",
         f"- Patch hash: `{result.patch_hash or 'none'}`",
+        f"- Patch apply mode: `{result.patch_apply_mode}`",
+        f"- Git apply args: `{' '.join(result.git_apply_args) if result.git_apply_args else 'none'}`",
         f"- Before git status: `{result.before_git_status}`",
         f"- After git status: `{result.after_git_status}`",
         f"- Created: `{result.created_at.isoformat()}`",
@@ -11387,7 +11430,14 @@ def _patch_proposal_show_next_action(ingest: CodexWorkerIngest, *, patch_exists:
     )
 
 
-def _patch_proposal_check_next_action(status: str, blockers: list[str] | None = None, dry_run_detail: str = "") -> str:
+def _patch_proposal_check_next_action(
+    status: str,
+    blockers: list[str] | None = None,
+    dry_run_detail: str = "",
+    patch_apply_mode: str = "strict",
+    project_name: str | None = None,
+    run_id: str | None = None,
+) -> str:
     if status == "checked":
         return (
             "Patch check passed. This does not mean the task is completed. "
@@ -11399,6 +11449,14 @@ def _patch_proposal_check_next_action(status: str, blockers: list[str] | None = 
             "Do not apply the patch. git apply --check reported a malformed or corrupt patch. "
             "Request a fresh worker result with a valid git-apply-compatible unified diff in patch_proposal_text; "
             "do not manually force apply or edit source files outside the reviewed patch flow."
+        )
+    if patch_apply_mode == "strict" and "git apply --check failed" in combined and project_name and run_id:
+        return (
+            "Do not apply the patch from the failed strict check. If manual diagnostics show this is whitespace-only drift, "
+            "run an explicit non-mutating whitespace-tolerant check: "
+            f"devo project patch-proposal-check --project {project_name} --run {run_id} "
+            "--confirm-check --ignore-whitespace --confirm-ignore-whitespace. "
+            "A separate matching whitespace-tolerant apply command is still required after human review."
         )
     return "Do not apply the patch. Resolve blockers or request a new worker result before any review/validation/delivery."
 

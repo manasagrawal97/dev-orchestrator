@@ -101,6 +101,15 @@ If `patch_artifact_path` is unavailable, `patch_proposal_text` may contain the u
 
 If `patch-proposal-check` reports `git apply --check failed` or `corrupt patch`, do not apply the patch and do not hand-edit source as a workaround. Request a fresh worker result with a valid git-apply-compatible unified diff in `patch_proposal_text`, then rerun show/check before any reviewed apply.
 
+If strict `git apply --check` fails but a separate manual diagnostic shows the patch applies with Git whitespace tolerance, Devo supports an explicit audited mode:
+
+```powershell
+.\.venv\Scripts\devo.exe project patch-proposal-check --project <project> --run <QWR-ID> --confirm-check --ignore-whitespace --confirm-ignore-whitespace
+.\.venv\Scripts\devo.exe project patch-proposal-apply --project <project> --run <QWR-ID> --reviewed-by "Manas" --confirm-apply-patch --ignore-whitespace --confirm-ignore-whitespace
+```
+
+This is never automatic. The apply command requires a latest successful check artifact for the same queue-worker run, same patch hash, and same patch apply mode. Strict apply cannot reuse a whitespace-tolerant check, and whitespace-tolerant apply cannot reuse a strict check.
+
 ## What Not To Do
 
 - Do not use `shell=True` to bypass launcher problems.

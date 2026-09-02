@@ -31,6 +31,8 @@ devo project patch-proposal-apply --project <project> --run <QWR-ID> --reviewed-
 
 `patch-proposal-apply` is implemented as a v1 write command in TASK-DEVO-174. It requires an operator-reviewed patch, an explicit confirmation flag, a non-empty reviewer, a clean pre-apply repository, and a latest successful matching check artifact. It applies the patch only; it must not commit, push, mark review passed, mark validation passed, or complete the queue item.
 
+TASK-DEVO-179 adds an explicit whitespace-tolerant mode for cases where strict `git apply --check` fails but manual diagnostics show `git apply --check --ignore-space-change --ignore-whitespace` succeeds. This mode is never automatic. Check and apply both require `--ignore-whitespace --confirm-ignore-whitespace`, and apply requires a latest successful check for the same queue-worker run, same patch hash, and same patch apply mode.
+
 ## 3. Safety Gates
 
 The apply command must require all of these gates before writing:
@@ -81,6 +83,8 @@ The check artifact should contain:
 - linked worker evidence id
 - patch artifact path
 - patch hash
+- patch apply mode: `strict` or `ignore_whitespace`
+- exact `git apply --check` arguments used
 - status: `checked`, `blocked`, or `failed`
 - policy id and queue item id
 - changed files detected from the patch
@@ -102,6 +106,8 @@ The apply artifact should contain:
 - linked worker evidence id
 - patch artifact path
 - patch hash
+- patch apply mode: `strict` or `ignore_whitespace`
+- exact `git apply` arguments used
 - status: `applied`, `blocked`, or `failed`
 - changed files
 - rejected files
