@@ -994,7 +994,6 @@ def _print_codex_worker_batch_run_result(result: CodexWorkerBatchRunResult) -> N
 
 def _print_codex_worker_batch_policy_summary(summary: CodexWorkerBatchPolicySummary) -> None:
     console.print(f"[bold]Codex worker batch summary: {summary.project}[/bold]")
-    console.print(f"Project: {summary.project}")
     console.print(f"Policy: {summary.policy_id}")
     console.print(f"Policy status: {summary.policy_status}")
     console.print(f"Batch: {summary.batch_id or 'none'}")

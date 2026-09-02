@@ -3250,6 +3250,7 @@ def test_codex_worker_batch_summary_reports_waiting_review_next_command_and_is_r
 
     assert result.exit_code == 0, result.output
     assert "Codex worker batch summary: sample" in result.output
+    assert "Project: sample" not in result.output
     assert "QI001 / T001" in result.output
     assert "qwr=QWR-0001 (waiting_review)" in result.output
     assert "batch-run=CWBR-0001" in result.output
