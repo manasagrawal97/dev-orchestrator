@@ -92,6 +92,8 @@ devo project intake-materialize --project MyProject --intake INTAKE-0001 --confi
 
 After the intake is reviewed, `intake-materialize` creates the real draft planning artifacts from it: draft backlog tasks, a draft batch, a draft execution queue, and a draft execution policy. It preserves allowed file patterns, do-not-touch notes, validation notes, delivery notes, and risk notes, then prints the exact review/approval commands. The materialized artifacts are still review-only until the operator explicitly requests and grants batch/policy approval.
 
+If the materialized policy is broader than the next safe slice, leave it as a draft and create a narrower execution policy from the materialized batch and queue. For example, use one task id from the materialized queue with exact allowed files, then request and approve only that smaller policy before running any queue-worker command.
+
 These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.
 
 ## Project Brief And Blueprint

@@ -3479,6 +3479,31 @@ def test_codex_worker_batch_run_reports_no_eligible_item_without_subprocess(tmp_
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_batch_summary_for_draft_policy_recommends_approval_not_worker_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001", request=False, approve=False)
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before_queue = queue_json.read_text(encoding="utf-8")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Policy status: draft" in result.output
+    assert "Policy status is draft" in result.output
+    assert "Next action: Policy is draft. Request policy approval before worker execution" in result.output
+    assert "Recommended command: devo project execution-policy-request --project sample --policy POL-0001" in result.output
+    assert "next: Policy is draft. Request policy approval before worker execution" in result.output
+    assert "Recommended command: devo project codex-worker-batch-run" not in result.output
+    assert "next: devo project codex-worker-batch-run" not in result.output
+    assert queue_json.read_text(encoding="utf-8") == before_queue
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_codex_worker_batch_summary_reports_waiting_review_next_command_and_is_read_only(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)

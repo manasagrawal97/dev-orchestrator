@@ -4618,16 +4618,35 @@ def summarize_codex_worker_batch_policy(
         blockers = _dedupe([*blockers, *plan.blockers])
         active_item = next((item for item in item_summaries if item.item_status != "completed"), None)
         main_message = plan.selection_reason or "Policy has allowed queue items that are not completed."
-        next_action = active_item.current_safe_next_action if active_item else plan.next_action
-        if active_item and active_item.patch_apply_status == "applied" and active_item.queue_worker_run_id:
+        if policy.status == "draft":
+            next_action = (
+                f"Policy is draft. Request policy approval before worker execution: "
+                f"devo project execution-policy-request --project {project_name} --policy {policy.policy_id} --note \"<note>\""
+            )
+            recommended_command = f"devo project execution-policy-request --project {project_name} --policy {policy.policy_id} --note \"<note>\""
+            for item_summary in item_summaries:
+                item_summary.current_safe_next_action = next_action
+        elif policy.status == "requested":
+            next_action = (
+                f"Policy approval is pending. Approve or reject before worker execution: "
+                f"devo project execution-policy-approve --project {project_name} --policy {policy.policy_id} --approver \"<name>\" --note \"<note>\""
+            )
+            recommended_command = (
+                f"devo project execution-policy-approve --project {project_name} "
+                f"--policy {policy.policy_id} --approver \"<name>\" --note \"<note>\""
+            )
+            for item_summary in item_summaries:
+                item_summary.current_safe_next_action = next_action
+        else:
+            next_action = active_item.current_safe_next_action if active_item else plan.next_action
+            recommended_command = _codex_worker_batch_recommended_command_from_next_action(project_name, policy.policy_id, next_action)
+        if active_item and policy.status == "approved" and active_item.patch_apply_status == "applied" and active_item.queue_worker_run_id:
             recommended_command = _queue_worker_record_applied_patch_worker_result_next_action(project_name, active_item.queue_worker_run_id)
-        elif active_item and active_item.patch_proposal_present and active_item.queue_worker_run_id:
+        elif active_item and policy.status == "approved" and active_item.patch_proposal_present and active_item.queue_worker_run_id:
             recommended_command = (
                 f"devo project patch-proposal-show --project {project_name} "
                 f"--run {active_item.queue_worker_run_id}"
             )
-        else:
-            recommended_command = _codex_worker_batch_recommended_command_from_next_action(project_name, policy.policy_id, next_action)
 
     return CodexWorkerBatchPolicySummary(
         project=project_name,
