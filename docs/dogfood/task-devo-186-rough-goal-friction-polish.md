@@ -19,12 +19,15 @@ Before this polish, those tasks could still be recommended as the next slice bec
 
 `intake-next-slice` now deprioritizes already-performed setup/review tasks when the intake and materialization artifacts already exist. It keeps those tasks visible in the output under "Deprioritized already-performed setup tasks" and recommends the next actual follow-up task when one is available.
 
+The generated narrow `execution-policy-create` command now also includes one `--validation-command` flag for each validation note preserved by `intake-materialize`. That keeps the next policy slice from silently dropping validation expectations.
+
 The command remains read-only. It does not mark tasks completed, approve policies, create queue-worker runs, run Codex, validate, create delivery requests, commit, or push.
 
 ## Validation
 
 - `.\.venv\Scripts\python -m py_compile src/devo/main.py src/devo/project_planning.py`
 - `.\.venv\Scripts\python -m pytest -q tests/test_project_planning.py -k intake_next_slice`
+- `.\.venv\Scripts\python -m pytest -q tests/test_project_planning.py -k codex_worker_batch_summary`
 
 ## Result
 

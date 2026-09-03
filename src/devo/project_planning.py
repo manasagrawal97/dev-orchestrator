@@ -6540,6 +6540,10 @@ def recommend_rough_goal_intake_next_slice(
     if recommended_task and recommended_item and suggested_files:
         allowed_file_flags = " ".join(f'--allowed-file "{pattern}"' for pattern in suggested_files)
         forbidden_file_flags = " ".join(f'--forbidden-file "{pattern}"' for pattern in materialization.forbidden_file_patterns)
+        validation_command_flags = " ".join(
+            f'--validation-command "{command}"' for command in materialization.validation_notes
+        )
+        validation_command_segment = f"{validation_command_flags} " if validation_command_flags else ""
         next_commands.extend(
             [
                 (
@@ -6548,6 +6552,7 @@ def recommend_rough_goal_intake_next_slice(
                     f"--allowed-task {recommended_task.id} {allowed_file_flags} {forbidden_file_flags} "
                     "--max-tasks 1 --max-tasks-per-run 1 "
                     f"--max-changed-files-per-task {max(1, min(3, len(suggested_files)))} "
+                    f"{validation_command_segment}"
                     '--note "Narrow policy from materialized intake next-slice recommendation."'
                 ),
                 f"devo project execution-policy-request --project {project_name} --policy <newPolicyId> --note \"Reviewed narrow slice from {intake_id}.\"",

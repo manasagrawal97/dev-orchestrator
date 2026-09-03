@@ -1159,6 +1159,8 @@ def test_intake_next_slice_recommends_low_risk_task_from_materialized_intake(tmp
     assert "Broad policy warning" in result.output
     assert "execution-policy-create --project sample --batch B001 --queue Q001" in result.output
     assert "--allowed-task T001" in result.output
+    assert '--validation-command "py_compile touched Python"' in result.output
+    assert '--validation-command "focused pytest"' in result.output
     assert "execution-policy-request --project sample --policy <newPolicyId>" in result.output
     assert "execution-policy-approve --project sample --policy <newPolicyId>" in result.output
     assert "No approvals, worker run, Codex run, validation, delivery request, commit, or push were created" in result.output
@@ -1230,6 +1232,7 @@ def test_intake_next_slice_deprioritizes_already_performed_workflow_setup_tasks(
     assert "T002: intake has already been reviewed enough to materialize" in result.output
     assert "T003: intake quality has already been checked enough to materialize" in result.output
     assert "--allowed-task T004" in result.output
+    assert '--validation-command "git diff --check"' in result.output
     assert _target_snapshot(project_path) == before_target
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
 
