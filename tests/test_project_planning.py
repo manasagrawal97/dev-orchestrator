@@ -973,6 +973,7 @@ def test_intake_materialize_creates_draft_planning_artifacts(tmp_path: Path, mon
     assert "Policy: POL-0001" in result.output
     assert "batch-approval-request" in result.output
     assert "execution-policy-request" in result.output
+    assert "intake-next-slice --project sample --intake INTAKE-0001" in result.output
     assert "draft/review-only" in result.output
     assert "No approvals, Codex run, validation, delivery request, commit, or push were created" in result.output
 
@@ -1119,6 +1120,134 @@ def test_intake_materialize_rerun_blocks_without_duplicate_artifacts(tmp_path: P
     assert len(list_project_batches("sample", workspace_root=workspace)) == 1
     assert len(list_execution_queues("sample", workspace_root=workspace)) == 1
     assert len(list_execution_policies("sample", workspace_root=workspace)) == 1
+
+
+def test_intake_next_slice_recommends_low_risk_task_from_materialized_intake(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+    created = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+    materialized = runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    )
+    assert materialized.exit_code == 0, materialized.output
+    materialization_before = (
+        planning_artifact_paths("sample", workspace_root=workspace).intakes_dir / "INTAKE-0001" / "materialization.json"
+    ).read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-next-slice", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Rough goal intake next slice: INTAKE-0001" in result.output
+    assert "Recommended task: T001 | risk=low | Parse rough goal headings" in result.output
+    assert "Recommended queue item: QI001" in result.output
+    assert "Batch: B001" in result.output
+    assert "Queue: Q001" in result.output
+    assert "Materialized policy: POL-0001 | draft" in result.output
+    assert "Suggested narrow allowed files: src/devo/project_planning.py, src/devo/main.py, tests/test_project_planning.py" in result.output
+    assert "Broad policy warning" in result.output
+    assert "execution-policy-create --project sample --batch B001 --queue Q001" in result.output
+    assert "--allowed-task T001" in result.output
+    assert "execution-policy-request --project sample --policy <newPolicyId>" in result.output
+    assert "execution-policy-approve --project sample --policy <newPolicyId>" in result.output
+    assert "No approvals, worker run, Codex run, validation, delivery request, commit, or push were created" in result.output
+    assert _target_snapshot(project_path) == before_target
+    assert (
+        planning_artifact_paths("sample", workspace_root=workspace).intakes_dir / "INTAKE-0001" / "materialization.json"
+    ).read_text(encoding="utf-8") == materialization_before
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+
+
+def test_intake_next_slice_skips_completed_materialized_task(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    updated_items = [item.model_copy(update={"status": "completed"}) if item.task_id == "T001" else item for item in queue.items]
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(queue.model_copy(update={"items": updated_items}).model_dump_json(indent=2), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-next-slice", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Recommended task: T002 | risk=low | Write intake planning bundle" in result.output
+    assert "Recommended queue item: QI002" in result.output
+
+
+def test_intake_next_slice_rejects_missing_project(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-next-slice", "--project", "missing", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "missing" in result.output
+
+
+def test_intake_next_slice_rejects_missing_intake(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-next-slice", "--project", "sample", "--intake", "INTAKE-404"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Rough goal intake not found" in result.output
+
+
+def test_intake_next_slice_handles_missing_materialization_with_clear_blocker(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+    created = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-next-slice", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Rough goal intake is not materialized" in result.output
+    assert "intake-materialize" in result.output
+    assert "confirm-materialize" in result.output
+    assert not planning_artifact_paths("sample", workspace_root=workspace).queue_worker_runs_dir.exists()
+    assert _target_snapshot(project_path) == before_target
 
 
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:

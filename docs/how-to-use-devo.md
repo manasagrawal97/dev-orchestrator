@@ -84,6 +84,7 @@ devo project intake-prompt --project MyProject --idea "Rough project idea" --wri
 devo project intake-plan --project MyProject --from-file E:\path\to\goal.md
 devo project intake-plan --project MyProject --from-file E:\path\to\goal.md --confirm-create
 devo project intake-materialize --project MyProject --intake INTAKE-0001 --confirm-materialize
+devo project intake-next-slice --project MyProject --intake INTAKE-0001
 ```
 
 `intake-status` summarizes the whole planning path: Project Brief, Blueprint, Backlog, task counts, latest Batch approval, latest Queue, latest Handoff, progress percentages, and the exact next command. `intake-next` prints only the next action and command for quick handoff. `intake-template` gives the operator a standard Markdown shape for the raw idea, while `intake-prompt` creates a copyable planning prompt that asks Codex/ChatGPT to produce a brief draft, blueprint outline, candidate backlog/tasks, batch suggestion, risks, non-goals, and validation expectations.
@@ -92,7 +93,9 @@ devo project intake-materialize --project MyProject --intake INTAKE-0001 --confi
 
 After the intake is reviewed, `intake-materialize` creates the real draft planning artifacts from it: draft backlog tasks, a draft batch, a draft execution queue, and a draft execution policy. It preserves allowed file patterns, do-not-touch notes, validation notes, delivery notes, and risk notes, then prints the exact review/approval commands. The materialized artifacts are still review-only until the operator explicitly requests and grants batch/policy approval.
 
-If the materialized policy is broader than the next safe slice, leave it as a draft and create a narrower execution policy from the materialized batch and queue. For example, use one task id from the materialized queue with exact allowed files, then request and approve only that smaller policy before running any queue-worker command.
+After materialization, run `intake-next-slice` before approval. It inspects the intake receipt plus the linked batch, queue, policy, and backlog tasks, then recommends the smallest low-risk next slice. If the materialized policy is broader than that slice, leave it as a draft and create a narrower execution policy from the materialized batch and queue. For example, use one task id from the materialized queue with exact allowed files, then request and approve only that smaller policy before running any queue-worker command.
+
+`intake-next-slice` is read-only. It does not approve the batch or policy, create queue-worker runs, run Codex, validate, create delivery requests, commit, or push.
 
 These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.
 

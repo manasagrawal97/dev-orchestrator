@@ -1319,6 +1319,34 @@ class RoughGoalIntakeMaterialization(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class RoughGoalNextSliceRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    intake_id: str
+    status: str = "ready"
+    recommended_task_id: str | None = None
+    recommended_task_title: str = ""
+    recommended_task_risk: str = "unknown"
+    recommended_queue_item_id: str | None = None
+    batch_id: str
+    queue_id: str
+    policy_id: str
+    policy_status: str = "unknown"
+    broad_policy_warning: str = ""
+    suggested_narrow_allowed_files: list[str] = Field(default_factory=list)
+    do_not_touch_notes: list[str] = Field(default_factory=list)
+    validation_notes: list[str] = Field(default_factory=list)
+    delivery_notes: list[str] = Field(default_factory=list)
+    risk_notes: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_commands: list[str] = Field(default_factory=list)
+    safety_note: str = (
+        "Read-only recommendation only. No approvals, worker run, Codex run, validation, delivery request, commit, or push were created."
+    )
+
+
 class QueueItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -6404,6 +6432,146 @@ def load_rough_goal_intake_plan(
     return RoughGoalIntakePlan.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def load_rough_goal_intake_materialization(
+    project_name: str,
+    intake_id: str,
+    workspace_root: Path | None = None,
+) -> RoughGoalIntakeMaterialization | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = rough_goal_intake_materialization_artifact_paths(project_name, intake_id, workspace_root=root)
+    if not json_path.exists():
+        return None
+    return RoughGoalIntakeMaterialization.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def recommend_rough_goal_intake_next_slice(
+    project_name: str,
+    intake_id: str,
+    *,
+    workspace_root: Path | None = None,
+) -> RoughGoalNextSliceRecommendation:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    intake = load_rough_goal_intake_plan(project_name, intake_id, workspace_root=root)
+    if not intake:
+        msg = f"Rough goal intake not found: {intake_id}"
+        raise ValueError(msg)
+    materialization = load_rough_goal_intake_materialization(project_name, intake_id, workspace_root=root)
+    if not materialization:
+        msg = (
+            f"Rough goal intake is not materialized: {intake_id}. "
+            f"Run: devo project intake-materialize --project {project_name} --intake {intake_id} --confirm-materialize"
+        )
+        raise ValueError(msg)
+
+    blockers: list[str] = []
+    batch = load_project_batch(project_name, materialization.batch_id, workspace_root=root)
+    queue = load_execution_queue(project_name, materialization.queue_id, workspace_root=root)
+    policy = load_execution_policy(project_name, materialization.policy_id, workspace_root=root)
+    if not batch:
+        blockers.append(f"Materialized batch artifact is missing: {materialization.batch_id}")
+    if not queue:
+        blockers.append(f"Materialized queue artifact is missing: {materialization.queue_id}")
+    if not policy:
+        blockers.append(f"Materialized policy artifact is missing: {materialization.policy_id}")
+
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    task_by_id = {task.id.strip().upper(): task for task in (backlog.tasks if backlog else [])}
+    queue_item_by_task = {
+        item.task_id.strip().upper(): item
+        for item in (queue.items if queue else [])
+        if item.task_id.strip().upper() in {task_id.upper() for task_id in materialization.created_task_ids}
+    }
+    created_task_ids = [task_id.strip().upper() for task_id in materialization.created_task_ids]
+    candidates: list[tuple[int, int, BacklogTask, QueueItem | None]] = []
+    for order, task_id in enumerate(created_task_ids):
+        task = task_by_id.get(task_id)
+        if not task:
+            blockers.append(f"Materialized task artifact is missing from backlog: {task_id}")
+            continue
+        item = queue_item_by_task.get(task_id)
+        if item and item.status in {"completed", "cancelled"}:
+            continue
+        if task.status in {"completed", "cancelled"}:
+            continue
+        candidates.append((RISK_ORDER.get(task.risk_level, 99), order, task, item))
+
+    recommended_task: BacklogTask | None = None
+    recommended_item: QueueItem | None = None
+    if candidates:
+        _risk, _order, recommended_task, recommended_item = sorted(candidates, key=lambda value: (value[0], value[1]))[0]
+    elif not blockers:
+        blockers.append("No incomplete materialized task is available for the next slice.")
+
+    suggested_files = _dedupe(
+        [
+            *(recommended_task.allowed_scope if recommended_task else []),
+            *(materialization.allowed_file_patterns if not recommended_task or not recommended_task.allowed_scope else []),
+        ]
+    )
+    if not suggested_files:
+        blockers.append("No allowed files are recorded for the recommended slice.")
+
+    broad_warning = ""
+    if policy:
+        broad_reasons: list[str] = []
+        if len(policy.allowed_task_ids) > 1 or policy.max_tasks > 1:
+            broad_reasons.append("covers multiple tasks")
+        if len(policy.allowed_queue_item_ids) > 1:
+            broad_reasons.append("covers multiple queue items")
+        if broad_reasons and policy.status == "draft":
+            broad_warning = (
+                f"Materialized policy {policy.policy_id} is broad ({', '.join(broad_reasons)}) and should remain draft "
+                "unless the operator intentionally approves the whole batch."
+            )
+
+    next_commands: list[str] = [
+        f"devo project batch-show --project {project_name} --batch {materialization.batch_id}",
+        f"devo project queue-show --project {project_name} --queue {materialization.queue_id}",
+        f"devo project execution-policy-show --project {project_name} --policy {materialization.policy_id}",
+    ]
+    if recommended_task and recommended_item and suggested_files:
+        allowed_file_flags = " ".join(f'--allowed-file "{pattern}"' for pattern in suggested_files)
+        forbidden_file_flags = " ".join(f'--forbidden-file "{pattern}"' for pattern in materialization.forbidden_file_patterns)
+        next_commands.extend(
+            [
+                (
+                    f'devo project execution-policy-create --project {project_name} --batch {materialization.batch_id} '
+                    f"--queue {materialization.queue_id} --title \"Narrow slice for {recommended_task.id}\" "
+                    f"--allowed-task {recommended_task.id} {allowed_file_flags} {forbidden_file_flags} "
+                    "--max-tasks 1 --max-tasks-per-run 1 "
+                    f"--max-changed-files-per-task {max(1, min(3, len(suggested_files)))} "
+                    '--note "Narrow policy from materialized intake next-slice recommendation."'
+                ),
+                f"devo project execution-policy-request --project {project_name} --policy <newPolicyId> --note \"Reviewed narrow slice from {intake_id}.\"",
+                f"devo project execution-policy-approve --project {project_name} --policy <newPolicyId> --approver \"<name>\" --note \"Approved one materialized intake slice.\"",
+            ]
+        )
+
+    return RoughGoalNextSliceRecommendation(
+        project=project_name,
+        intake_id=intake.intake_id,
+        status="blocked" if blockers and not recommended_task else "ready",
+        recommended_task_id=recommended_task.id if recommended_task else None,
+        recommended_task_title=recommended_task.title if recommended_task else "",
+        recommended_task_risk=recommended_task.risk_level if recommended_task else "unknown",
+        recommended_queue_item_id=recommended_item.item_id if recommended_item else None,
+        batch_id=materialization.batch_id,
+        queue_id=materialization.queue_id,
+        policy_id=materialization.policy_id,
+        policy_status=policy.status if policy else "missing",
+        broad_policy_warning=broad_warning,
+        suggested_narrow_allowed_files=suggested_files,
+        do_not_touch_notes=materialization.forbidden_file_patterns,
+        validation_notes=materialization.validation_notes,
+        delivery_notes=materialization.delivery_notes,
+        risk_notes=materialization.risk_notes,
+        blockers=blockers,
+        next_commands=next_commands,
+    )
+
+
 def materialize_rough_goal_intake_plan(
     project_name: str,
     intake_id: str,
@@ -6526,6 +6694,7 @@ def materialize_rough_goal_intake_plan(
             f"devo project batch-show --project {project_name} --batch {batch.batch_id}",
             f"devo project queue-show --project {project_name} --queue {queue.queue_id}",
             f"devo project execution-policy-show --project {project_name} --policy {policy.policy_id}",
+            f"devo project intake-next-slice --project {project_name} --intake {intake.intake_id}",
             f"devo project batch-approval-request --project {project_name} --batch {batch.batch_id} --note \"<review note>\"",
             f"devo project execution-policy-request --project {project_name} --policy {policy.policy_id} --note \"<policy note>\"",
         ],

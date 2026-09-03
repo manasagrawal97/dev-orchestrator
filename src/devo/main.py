@@ -132,6 +132,7 @@ from .project_planning import (
     ProjectBrief,
     RoughGoalIntakePlan,
     RoughGoalIntakeMaterialization,
+    RoughGoalNextSliceRecommendation,
     CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
@@ -214,6 +215,7 @@ from .project_planning import (
     get_queue_next_item,
     import_refined_backlog,
     materialize_rough_goal_intake_plan,
+    recommend_rough_goal_intake_next_slice,
     attach_codex_worker_review_evidence,
     list_execution_queues,
     list_execution_policies,
@@ -1655,6 +1657,52 @@ def _print_rough_goal_intake_materialization(
         "Safety: created artifacts are draft/review-only. No approvals, Codex run, validation, delivery request, commit, or push were created.",
         soft_wrap=True,
     )
+
+
+def _print_rough_goal_next_slice(recommendation: RoughGoalNextSliceRecommendation) -> None:
+    console.print(f"[bold]Rough goal intake next slice: {recommendation.intake_id}[/bold]")
+    console.print(f"Project: {recommendation.project}")
+    console.print(f"Status: {recommendation.status}")
+    console.print(f"Batch: {recommendation.batch_id}")
+    console.print(f"Queue: {recommendation.queue_id}")
+    console.print(f"Materialized policy: {recommendation.policy_id} | {recommendation.policy_status}")
+    if recommendation.recommended_task_id:
+        console.print(
+            f"Recommended task: {recommendation.recommended_task_id} | "
+            f"risk={recommendation.recommended_task_risk} | {recommendation.recommended_task_title}",
+            soft_wrap=True,
+        )
+        console.print(f"Recommended queue item: {recommendation.recommended_queue_item_id or 'unknown'}")
+    else:
+        console.print("Recommended task: none")
+    if recommendation.broad_policy_warning:
+        console.print(f"[yellow]Broad policy warning:[/yellow] {recommendation.broad_policy_warning}", soft_wrap=True)
+    console.print(
+        "Suggested narrow allowed files: "
+        + (", ".join(recommendation.suggested_narrow_allowed_files) if recommendation.suggested_narrow_allowed_files else "needs review"),
+        soft_wrap=True,
+    )
+    if recommendation.do_not_touch_notes:
+        console.print("Do-not-touch / forbidden:")
+        for note in recommendation.do_not_touch_notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    if recommendation.validation_notes:
+        console.print("Validation notes:")
+        for note in recommendation.validation_notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    if recommendation.risk_notes:
+        console.print("Risk notes:")
+        for note in recommendation.risk_notes:
+            console.print(f"  - {note}", soft_wrap=True)
+    if recommendation.blockers:
+        console.print("Blockers:")
+        for blocker in recommendation.blockers:
+            console.print(f"  - {blocker}", soft_wrap=True)
+    if recommendation.next_commands:
+        console.print("Exact next commands:")
+        for command in recommendation.next_commands:
+            console.print(f"  {command}", soft_wrap=True)
+    console.print(f"Safety: {recommendation.safety_note}", soft_wrap=True)
 
 
 def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
@@ -4260,6 +4308,20 @@ def materialize_project_intake_command(
         raise typer.BadParameter(str(exc), param_hint="--intake") from exc
     console.print(f"[green]Intake materialized[/green] {project_name}")
     _print_rough_goal_intake_materialization(materialization, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("intake-next-slice")
+def recommend_project_intake_next_slice_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    intake_id: str = typer.Option(..., "--intake", help="Materialized rough-goal intake ID to inspect."),
+) -> None:
+    """Recommend the smallest safe next slice from a materialized rough-goal intake."""
+    project_name = _resolve_project(project_name)
+    try:
+        recommendation = recommend_rough_goal_intake_next_slice(project_name, intake_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    _print_rough_goal_next_slice(recommendation)
 
 
 @project_app.command("brief-create")

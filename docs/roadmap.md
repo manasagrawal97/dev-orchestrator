@@ -63,7 +63,8 @@ Phase 1 MVP is complete and recorded in `docs/phase-1-mvp-checkpoint.md`. The ac
 - TASK-DEVO-179: Whitespace-tolerant patch check/apply polish - in progress; strict check remains default, while explicit `--ignore-whitespace --confirm-ignore-whitespace` mode records same-run/same-hash/same-mode check/apply artifacts for patches that only apply with Git whitespace tolerance
 - TASK-DEVO-181: Rough Goal Intake MVP - completed; `devo project intake-plan` turns a rough Markdown goal into a workspace-only intake planning bundle with candidate tasks, draft batch/queue/policy suggestions, allowed files, risk notes, and next commands
 - TASK-DEVO-182: Intake materialization MVP - completed; `devo project intake-materialize` converts a reviewed rough-goal intake into draft backlog tasks, a draft batch, a draft queue, and a draft execution policy without approving, executing, validating, delivering, committing, pushing, or editing target files
-- Next: dogfood the materialized draft approval path or add a small review helper so rough-goal bundles can move into explicit batch/policy approval without manual spreadsheet work
+- TASK-DEVO-184: Materialized-intake next-slice guidance - completed; `devo project intake-next-slice` reads materialized intake artifacts, recommends the smallest low-risk slice, warns when the broad draft policy should remain unapproved, and prints exact narrow-policy commands without approving or running anything
+- Next: dogfood `intake-next-slice` as the standard bridge between intake materialization and one approved execution policy
 - Future live delivery dogfood should use normal PowerShell with `.\.venv\Scripts\devo.exe`; retry real Codex launcher only after readiness
 
 ## Updated Roadmap Phases
