@@ -1199,6 +1199,41 @@ def test_intake_next_slice_skips_completed_materialized_task(tmp_path: Path, mon
     assert "Recommended queue item: QI002" in result.output
 
 
+def test_intake_next_slice_deprioritizes_already_performed_workflow_setup_tasks(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file_with_performed_setup_tasks(tmp_path)
+    before_target = _target_snapshot(project_path)
+    created = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+    materialized = runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    )
+    assert materialized.exit_code == 0, materialized.output
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-next-slice", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Recommended task: T004 | risk=medium | Document friction for the next task" in result.output
+    assert "Recommended queue item: QI004" in result.output
+    assert "Deprioritized already-performed setup tasks:" in result.output
+    assert "T001: intake-plan artifacts already exist" in result.output
+    assert "T002: intake has already been reviewed enough to materialize" in result.output
+    assert "T003: intake quality has already been checked enough to materialize" in result.output
+    assert "--allowed-task T004" in result.output
+    assert _target_snapshot(project_path) == before_target
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+
+
 def test_intake_next_slice_rejects_missing_project(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
 
@@ -7179,6 +7214,40 @@ Create a sheetless intake command for rough goals.
 
 # Delivery notes
 - Use trusted runner only.
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _rough_goal_file_with_performed_setup_tasks(tmp_path: Path) -> Path:
+    path = tmp_path / "rough-goal-with-setup.md"
+    path.write_text(
+        """# Goal
+Dogfood rough-goal intake on a real next Devo task.
+
+# Scope
+- Use the materialized intake artifacts as the source of truth.
+
+# Tasks
+- T001: Run intake-plan with this file
+- T002: Review generated intake JSON/Markdown
+- T003: Check whether it gives useful candidate tasks, batch/queue/policy suggestions, allowed files, risk notes, and next commands
+- T004: Document friction for the next task
+
+# Allowed files
+- docs/dogfood/example.md
+- docs/how-to-use-devo.md
+
+# Do not touch
+- PersonalOS
+- UI
+
+# Validation
+- git diff --check
+
+# Delivery notes
+- Use Devo delivery workflow only.
 """,
         encoding="utf-8",
     )

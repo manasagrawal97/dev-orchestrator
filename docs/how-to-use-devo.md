@@ -95,6 +95,8 @@ After the intake is reviewed, `intake-materialize` creates the real draft planni
 
 After materialization, run `intake-next-slice` before approval. It inspects the intake receipt plus the linked batch, queue, policy, and backlog tasks, then recommends the smallest low-risk next slice. If the materialized policy is broader than that slice, leave it as a draft and create a narrower execution policy from the materialized batch and queue. For example, use one task id from the materialized queue with exact allowed files, then request and approve only that smaller policy before running any queue-worker command.
 
+`intake-next-slice` also deprioritizes workflow setup tasks when the artifacts already prove they happened. For example, after an intake has been created and materialized, tasks such as "run intake-plan" or "review generated intake JSON/Markdown" are shown as already-performed setup instead of being treated as the best next implementation slice.
+
 `intake-next-slice` is read-only. It does not approve the batch or policy, create queue-worker runs, run Codex, validate, create delivery requests, commit, or push.
 
 These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.

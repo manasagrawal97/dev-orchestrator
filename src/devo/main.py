@@ -1694,6 +1694,10 @@ def _print_rough_goal_next_slice(recommendation: RoughGoalNextSliceRecommendatio
         console.print("Risk notes:")
         for note in recommendation.risk_notes:
             console.print(f"  - {note}", soft_wrap=True)
+    if recommendation.deprioritized_setup_tasks:
+        console.print("Deprioritized already-performed setup tasks:")
+        for note in recommendation.deprioritized_setup_tasks:
+            console.print(f"  - {note}", soft_wrap=True)
     if recommendation.blockers:
         console.print("Blockers:")
         for blocker in recommendation.blockers:

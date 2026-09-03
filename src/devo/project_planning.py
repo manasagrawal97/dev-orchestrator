@@ -1340,6 +1340,7 @@ class RoughGoalNextSliceRecommendation(BaseModel):
     validation_notes: list[str] = Field(default_factory=list)
     delivery_notes: list[str] = Field(default_factory=list)
     risk_notes: list[str] = Field(default_factory=list)
+    deprioritized_setup_tasks: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     next_commands: list[str] = Field(default_factory=list)
     safety_note: str = (
@@ -6485,6 +6486,7 @@ def recommend_rough_goal_intake_next_slice(
     }
     created_task_ids = [task_id.strip().upper() for task_id in materialization.created_task_ids]
     candidates: list[tuple[int, int, BacklogTask, QueueItem | None]] = []
+    deprioritized_setup_tasks: list[str] = []
     for order, task_id in enumerate(created_task_ids):
         task = task_by_id.get(task_id)
         if not task:
@@ -6495,7 +6497,11 @@ def recommend_rough_goal_intake_next_slice(
             continue
         if task.status in {"completed", "cancelled"}:
             continue
-        candidates.append((RISK_ORDER.get(task.risk_level, 99), order, task, item))
+        setup_reason = _performed_intake_setup_task_reason(task, intake, materialization)
+        setup_penalty = 50 if setup_reason else 0
+        if setup_reason:
+            deprioritized_setup_tasks.append(f"{task.id}: {setup_reason}")
+        candidates.append((RISK_ORDER.get(task.risk_level, 99) + setup_penalty, order, task, item))
 
     recommended_task: BacklogTask | None = None
     recommended_item: QueueItem | None = None
@@ -6567,9 +6573,43 @@ def recommend_rough_goal_intake_next_slice(
         validation_notes=materialization.validation_notes,
         delivery_notes=materialization.delivery_notes,
         risk_notes=materialization.risk_notes,
+        deprioritized_setup_tasks=deprioritized_setup_tasks,
         blockers=blockers,
         next_commands=next_commands,
     )
+
+
+def _performed_intake_setup_task_reason(
+    task: BacklogTask,
+    intake: RoughGoalIntakePlan,
+    materialization: RoughGoalIntakeMaterialization,
+) -> str:
+    text = " ".join([task.title, task.summary, *task.notes]).casefold()
+    if not materialization.status:
+        return ""
+    setup_patterns = [
+        ("run intake-plan", "intake-plan artifacts already exist"),
+        ("run the intake-plan", "intake-plan artifacts already exist"),
+        ("create intake plan", "intake-plan artifacts already exist"),
+        ("create the intake plan", "intake-plan artifacts already exist"),
+        ("review generated intake", "intake has already been reviewed enough to materialize"),
+        ("review the generated intake", "intake has already been reviewed enough to materialize"),
+        ("review intake json", "intake has already been reviewed enough to materialize"),
+        ("review intake markdown", "intake has already been reviewed enough to materialize"),
+        ("review generated intake json/markdown", "intake has already been reviewed enough to materialize"),
+        ("check whether it gives useful candidate tasks", "intake quality has already been checked enough to materialize"),
+        ("check whether it gives useful", "intake quality has already been checked enough to materialize"),
+        ("candidate tasks, batch/queue/policy", "intake quality has already been checked enough to materialize"),
+        ("materialize intake", "materialization artifacts already exist"),
+        ("materialize the intake", "materialization artifacts already exist"),
+        ("convert intake into draft", "materialization artifacts already exist"),
+    ]
+    for pattern, reason in setup_patterns:
+        if pattern in text:
+            return reason
+    if intake.intake_id.casefold() in text and "review" in text and ("json" in text or "markdown" in text):
+        return "intake has already been reviewed enough to materialize"
+    return ""
 
 
 def materialize_rough_goal_intake_plan(
