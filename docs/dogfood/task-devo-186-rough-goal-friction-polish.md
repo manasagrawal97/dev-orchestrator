@@ -21,6 +21,8 @@ Before this polish, those tasks could still be recommended as the next slice bec
 
 The generated narrow `execution-policy-create` command now also includes one `--validation-command` flag for each validation note preserved by `intake-materialize`. That keeps the next policy slice from silently dropping validation expectations.
 
+`codex-worker-batch-summary` also now treats queue-worker blockers as the leading operator signal. If the current item has unresolved blockers, the summary points to inspecting/resolving that queue-worker run instead of repeating `codex-worker-batch-run`.
+
 The command remains read-only. It does not mark tasks completed, approve policies, create queue-worker runs, run Codex, validate, create delivery requests, commit, or push.
 
 ## Validation

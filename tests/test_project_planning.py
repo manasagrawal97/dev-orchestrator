@@ -20,6 +20,7 @@ from devo.project_planning import (
     BacklogTask,
     CodexWorkerReport,
     ProjectBacklog,
+    QueueWorkerRun,
     build_project_intake_status,
     calculate_project_progress,
     create_execution_queue_from_batch,
@@ -3770,6 +3771,45 @@ def test_codex_worker_batch_summary_blocked_write_access_guides_resolution(tmp_p
     assert "Recommended command: devo project codex-worker-batch-summary --project sample --policy POL-0001" in result.output
     assert "queue-worker-record-review" not in result.output
     assert "queue-worker-request-delivery" not in result.output
+    assert "Recommended command: devo project codex-worker-batch-run" not in result.output
+    assert queue_json.read_text(encoding="utf-8") == before_queue
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_summary_blocked_queue_worker_run_guides_blocker_resolution(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    run_json, _run_markdown = queue_worker_run_artifact_paths("sample", "QWR-0001", workspace_root=workspace)
+    run_json.parent.mkdir(parents=True, exist_ok=True)
+    blocked_run = QueueWorkerRun(
+        project="sample",
+        run_id="QWR-0001",
+        policy_id="POL-0001",
+        batch_id="B001",
+        queue_id="Q001",
+        selected_queue_item_id="QI001",
+        selected_task_id="T001",
+        status="blocked",
+        blockers=["Selected queue item QI001 has unresolved scope blockers."],
+        next_action="devo project codex-worker-batch-run --project sample --policy POL-0001 --confirm-codex-batch-run",
+    )
+    run_json.write_text(blocked_run.model_dump_json(indent=2), encoding="utf-8")
+    before_queue = queue_json.read_text(encoding="utf-8")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "qwr=QWR-0001 (blocked)" in result.output
+    assert "Selected queue item QI001 has unresolved scope blockers." in result.output
+    assert "Resolve blockers before running another Codex worker command." in result.output
+    assert "Recommended command: devo project queue-worker-show --project sample --run QWR-0001" in result.output
     assert "Recommended command: devo project codex-worker-batch-run" not in result.output
     assert queue_json.read_text(encoding="utf-8") == before_queue
     assert _target_snapshot(project_path) == before_target
