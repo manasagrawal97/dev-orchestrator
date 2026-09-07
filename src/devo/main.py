@@ -4328,6 +4328,44 @@ def recommend_project_intake_next_slice_command(
     _print_rough_goal_next_slice(recommendation)
 
 
+@project_app.command("intake-policy-create-next")
+def create_project_intake_next_policy_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    intake_id: str = typer.Option(..., "--intake", help="Materialized rough-goal intake ID to inspect."),
+    confirm_create_policy: bool = typer.Option(
+        False,
+        "--confirm-create-policy",
+        help="Create the next narrow draft policy when implementation is available.",
+    ),
+) -> None:
+    """Preview the next narrow policy command for a materialized rough-goal intake."""
+    project_name = _resolve_project(project_name)
+    try:
+        recommendation = recommend_rough_goal_intake_next_slice(project_name, intake_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    if not confirm_create_policy:
+        console.print("[yellow]Preview only; no policy artifacts were written.[/yellow]")
+        console.print("Review the recommended slice, then use the printed execution-policy-create command when ready.", soft_wrap=True)
+        _print_rough_goal_next_slice(recommendation)
+        console.print(
+            "Safety: this command does not approve policies, run queue workers, run Codex, validate, create delivery requests, commit, or push.",
+            soft_wrap=True,
+        )
+        return
+    console.print("[red]Policy creation is not implemented for this safe slice.[/red]")
+    console.print(
+        "No policy artifacts were written. Use the printed execution-policy-create command manually, or implement the create-next service in a later approved task.",
+        soft_wrap=True,
+    )
+    _print_rough_goal_next_slice(recommendation)
+    console.print(
+        "Safety: no policy approval, worker run, Codex run, validation, delivery request, commit, or push was created.",
+        soft_wrap=True,
+    )
+    raise typer.Exit(1)
+
+
 @project_app.command("brief-create")
 def create_brief_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),

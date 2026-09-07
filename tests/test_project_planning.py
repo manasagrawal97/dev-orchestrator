@@ -1289,6 +1289,86 @@ def test_intake_next_slice_handles_missing_materialization_with_clear_blocker(tm
     assert _target_snapshot(project_path) == before_target
 
 
+def test_intake_policy_create_next_previews_next_policy_command_without_mutation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    policies_before = [policy.model_dump() for policy in list_execution_policies("sample", workspace_root=workspace)]
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_before = queue_json.read_text(encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["project", "intake-policy-create-next", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Preview only; no policy artifacts were written." in result.output
+    assert "Rough goal intake next slice: INTAKE-0001" in result.output
+    assert "execution-policy-create --project sample --batch B001 --queue Q001" in result.output
+    assert "--allowed-task T001" in result.output
+    assert "does not approve policies, run queue workers, run Codex, validate, create delivery requests, commit, or push" in result.output
+    assert [policy.model_dump() for policy in list_execution_policies("sample", workspace_root=workspace)] == policies_before
+    assert all(policy.status == "draft" for policy in list_execution_policies("sample", workspace_root=workspace))
+    assert queue_json.read_text(encoding="utf-8") == queue_before
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_intake_policy_create_next_confirm_fails_safely_until_creation_service_exists(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    policies_before = [policy.model_dump() for policy in list_execution_policies("sample", workspace_root=workspace)]
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "intake-policy-create-next",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-create-policy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Policy creation is not implemented for this safe slice." in result.output
+    assert "No policy artifacts were written." in result.output
+    assert "execution-policy-create --project sample --batch B001 --queue Q001" in result.output
+    assert "no policy approval, worker run, Codex run, validation, delivery request, commit, or push was created" in result.output
+    assert [policy.model_dump() for policy in list_execution_policies("sample", workspace_root=workspace)] == policies_before
+    assert all(policy.status == "draft" for policy in list_execution_policies("sample", workspace_root=workspace))
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _create_approved_batch(tmp_path)
