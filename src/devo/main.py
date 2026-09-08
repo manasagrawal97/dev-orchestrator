@@ -90,6 +90,7 @@ from .delivery import (
     load_delivery_report,
     load_delivery_runner_request,
     load_delivery_runner_run,
+    resolve_delivery_runner_run_for_request,
     prepare_delivery_report,
     preview_delivery_commit,
     preview_delivery_push,
@@ -3008,7 +3009,8 @@ def _print_delivery_latest_summary(summary: DeliveryLatestSummary) -> None:
 def _print_delivery_runner_request(request: DeliveryRunnerRequest, latest_run: DeliveryRunnerRun | None = None) -> None:
     console.print(f"Project: {request.project}")
     console.print(f"Runner request: {request.request_id}")
-    console.print(f"Status: {request.status}")
+    request_status = "completed" if latest_run and latest_run.status == "completed" and latest_run.pushed else request.status
+    console.print(f"Status: {request_status}")
     console.print(f"Target repo: {request.target_repo_path}", soft_wrap=True)
     console.print(f"Commit message: {request.intended_commit_message}", soft_wrap=True)
     console.print(f"Expected changed files: {len(request.expected_changed_files)}")
@@ -3199,8 +3201,9 @@ def _print_delivery_runner_latest(project_name: str, request: DeliveryRunnerRequ
         console.print(f"Current git status: {summary.current_git_status_summary}")
         console.print(f"Runner next action: {summary.latest_runner_next_action}", soft_wrap=True)
         return
-    latest_run = load_delivery_runner_run(project_name, request.request_id)
-    console.print(f"Latest runner request: {request.request_id} | {request.status}")
+    latest_run = resolve_delivery_runner_run_for_request(project_name, request.request_id)
+    request_status = "completed" if latest_run and latest_run.status == "completed" and latest_run.pushed else request.status
+    console.print(f"Latest runner request: {request.request_id} | {request_status}")
     console.print(f"Expected changed files: {len(request.expected_changed_files)}")
     console.print(f"Warnings count: {len(request.warnings)}")
     console.print(f"Blockers count: {len(request.blockers)}")
@@ -3259,9 +3262,10 @@ def list_delivery_runner_requests_command(
         console.print("  none")
         return
     for request in requests:
-        latest_run = load_delivery_runner_run(resolved_project, request.request_id)
+        latest_run = resolve_delivery_runner_run_for_request(resolved_project, request.request_id)
+        request_status = "completed" if latest_run and latest_run.status == "completed" and latest_run.pushed else request.status
         console.print(
-            f"  {request.request_id} | {request.status} | files {len(request.expected_changed_files)} | "
+            f"  {request.request_id} | {request_status} | files {len(request.expected_changed_files)} | "
             f"run {latest_run.status if latest_run else 'none'} | {request.updated_at.isoformat()}",
             soft_wrap=True,
         )
@@ -3287,7 +3291,7 @@ def show_delivery_runner_request_command(
     request = load_delivery_runner_request(resolved_project, request_id)
     if not request:
         raise typer.BadParameter(f"Delivery runner request not found: {request_id}", param_hint="--request")
-    latest_run = load_delivery_runner_run(resolved_project, request.request_id)
+    latest_run = resolve_delivery_runner_run_for_request(resolved_project, request.request_id)
     _print_delivery_runner_request(request, latest_run=latest_run)
 
 

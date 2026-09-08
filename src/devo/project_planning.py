@@ -4586,9 +4586,9 @@ def summarize_codex_worker_batch_policy(
         delivery_request_id = evidence.delivery_request_id or (latest_run.delivery_request_id if latest_run else None)
         runner_run = None
         if delivery_request_id:
-            from .delivery import load_delivery_runner_run
+            from .delivery import resolve_delivery_runner_run_for_request
 
-            runner_run = load_delivery_runner_run(project_name, delivery_request_id, workspace_root=root)
+            runner_run = resolve_delivery_runner_run_for_request(project_name, delivery_request_id, workspace_root=root)
         worker_evidence_status = evidence.worker_report_status or (latest_ingest.status if latest_ingest else "missing")
         review_status = evidence.worker_review_status or "missing"
         validation_status = evidence.validation_status or "not_provided"
@@ -5265,10 +5265,12 @@ def summarize_queue_worker_evidence(
     latest_ingest = _latest_ingest_for_queue_worker_run(list_codex_worker_ingests(project_name, workspace_root=root), run.run_id)
     review = load_codex_worker_review(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
     delivery_request = None
+    delivery_runner_run = None
     if run.delivery_request_id:
-        from .delivery import load_delivery_runner_request
+        from .delivery import load_delivery_runner_request, resolve_delivery_runner_run_for_request
 
         delivery_request = load_delivery_runner_request(project_name, run.delivery_request_id, workspace_root=root)
+        delivery_runner_run = resolve_delivery_runner_run_for_request(project_name, run.delivery_request_id, workspace_root=root)
 
     handoff_exists = handoff is not None
     worker_run_exists = worker_run is not None
@@ -5280,6 +5282,8 @@ def summarize_queue_worker_evidence(
     validation_passed = validation_status == "passed"
     delivery_request_exists = delivery_request is not None
     delivery_status = delivery_request.status if delivery_request else run.delivery_request_status
+    if delivery_runner_run and delivery_runner_run.status == "completed" and delivery_runner_run.commit_hash and delivery_runner_run.pushed:
+        delivery_status = "completed"
     delivery_completed = delivery_status == "completed"
     patch_proposal_present = bool(latest_ingest and latest_ingest.patch_proposal_present)
     patch_artifact_path = latest_ingest.patch_artifact_path if latest_ingest and latest_ingest.patch_artifact_path else None
@@ -11693,9 +11697,9 @@ def _step_queue_worker_delivery_requested(
     warnings = _dedupe([*policy_warnings, *evidence.warnings])
     runner_run = None
     if run.delivery_request_id:
-        from .delivery import load_delivery_runner_run
+        from .delivery import resolve_delivery_runner_run_for_request
 
-        runner_run = load_delivery_runner_run(project_name, run.delivery_request_id, workspace_root=workspace_root)
+        runner_run = resolve_delivery_runner_run_for_request(project_name, run.delivery_request_id, workspace_root=workspace_root)
     allowed_waiting_statuses = {None, "requested"}
     if evidence.delivery_request_exists and evidence.delivery_request_status not in {*allowed_waiting_statuses, "completed"}:
         blockers.append(f"Linked delivery request status is unsafe: {evidence.delivery_request_status}.")

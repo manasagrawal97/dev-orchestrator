@@ -31,6 +31,8 @@ from devo.delivery import (
     run_delivery_runner_watch,
     run_delivery_commit_diagnostics,
     run_delivery_readiness_check,
+    write_delivery_runner_request,
+    write_delivery_runner_run,
 )
 from devo.main import app
 from devo.project_planning import (
@@ -989,6 +991,63 @@ def test_delivery_runner_watch_completes_guarded_commit_and_push(tmp_path: Path,
     assert _git(repo, "status", "--short", capture=True).stdout.strip() == ""
     remote_ref = _git(repo, "ls-remote", "origin", "refs/heads/main", capture=True).stdout
     assert watch.commit_hash in remote_ref
+
+
+def test_delivery_latest_and_runner_show_reconcile_completed_watch_over_later_blocked_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, repo = _workspace(tmp_path, monkeypatch)
+    (repo / "changed.txt").write_text("changed\n", encoding="utf-8")
+    runner.invoke(app, ["delivery", "runner-request", "--project", "sample", "--message", "feat: trusted watch"], terminal_width=240)
+
+    watch, _watch_json, _watch_md = run_delivery_runner_watch(
+        "sample",
+        approver="Manas",
+        once=True,
+        confirm_runner_watch=True,
+        workspace_root=workspace,
+    )
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    completed_run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert completed_run is not None
+    assert watch.status == "completed"
+    assert watch.commit_hash
+    assert watch.pushed is True
+
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "requested", "next_action": "stale requested artifact"}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        completed_run.model_copy(
+            update={
+                "run_id": "RUN-20990101000000-req-0001",
+                "runner_context": "devo delivery runner-run",
+                "delivery_report_id": None,
+                "commit_hash": None,
+                "pushed": False,
+                "status": "blocked",
+                "blockers": ["Expected files were already committed."],
+                "next_action": "Resolve runner blockers before retrying.",
+            }
+        ),
+        workspace_root=workspace,
+    )
+
+    summary = build_delivery_latest_summary("sample", workspace_root=workspace)
+    latest = runner.invoke(app, ["delivery", "runner-latest", "--project", "sample"], terminal_width=240)
+    shown = runner.invoke(app, ["delivery", "runner-show", "--project", "sample", "--request", "REQ-0001"], terminal_width=240)
+
+    assert summary.latest_runner_request_status == "completed"
+    assert summary.latest_runner_run_id == watch.selected_run_id
+    assert summary.latest_runner_run_status == "completed"
+    assert summary.latest_runner_commit_hash == watch.commit_hash
+    assert summary.latest_runner_pushed is True
+    assert latest.exit_code == 0, latest.output
+    assert "Latest runner request: REQ-0001 | completed" in latest.output
+    assert f"Latest runner run: {watch.selected_run_id} | completed" in latest.output
+    assert shown.exit_code == 0, shown.output
+    assert "Status: completed" in shown.output
+    assert f"Latest runner run: {watch.selected_run_id} | completed" in shown.output
 
 
 def test_delivery_runner_watch_stops_after_one_request(tmp_path: Path, monkeypatch) -> None:

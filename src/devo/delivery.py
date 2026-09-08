@@ -1940,6 +1940,35 @@ def load_delivery_runner_run(
     return DeliveryRunnerRun.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def resolve_delivery_runner_run_for_request(
+    project_name: str,
+    request_id: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerRun | None:
+    root = workspace_root or get_workspace_root()
+    latest_run = load_delivery_runner_run(project_name, request_id, workspace_root=root)
+    if latest_run and latest_run.status == "completed" and latest_run.commit_hash and latest_run.pushed:
+        return latest_run
+    completed_watch = _latest_completed_runner_watch_for_request(project_name, request_id, workspace_root=root)
+    if completed_watch:
+        return DeliveryRunnerRun(
+            project=project_name,
+            request_id=request_id,
+            run_id=completed_watch.selected_run_id or completed_watch.watch_id,
+            started_at=completed_watch.started_at,
+            completed_at=completed_watch.completed_at,
+            runner_context="devo delivery runner-watch",
+            delivery_report_id=completed_watch.delivery_id,
+            commit_hash=completed_watch.commit_hash,
+            pushed=completed_watch.pushed,
+            status="completed",
+            warnings=list(completed_watch.warnings),
+            steps_run=list(completed_watch.steps_run),
+            next_action=_runner_next_action(project_name, request_id, "completed", [], completed_watch.commit_hash, completed_watch.pushed),
+        )
+    return latest_run
+
+
 def write_delivery_runner_watch(
     watch: DeliveryRunnerWatch,
     workspace_root: Path | None = None,
@@ -2768,10 +2797,13 @@ def build_delivery_latest_summary(project_name: str, workspace_root: Path | None
     latest_push = push_results[0] if push_results else None
     latest_runner_request = runner_requests[0] if runner_requests else None
     latest_runner_run = (
-        load_delivery_runner_run(project_name, latest_runner_request.request_id, workspace_root=root)
+        resolve_delivery_runner_run_for_request(project_name, latest_runner_request.request_id, workspace_root=root)
         if latest_runner_request
         else None
     )
+    latest_runner_request_status = latest_runner_request.status if latest_runner_request else None
+    if latest_runner_request and latest_runner_run and latest_runner_run.status == "completed" and latest_runner_run.pushed:
+        latest_runner_request_status = "completed"
     latest_pushed_report = next((report for report in reports if report.pushed), None)
     latest_pushed_push = next((push for push in push_results if push.pushed), None)
     latest_pushed_delivery_id = latest_pushed_push.delivery_id if latest_pushed_push else latest_pushed_report.delivery_id if latest_pushed_report else None
@@ -2816,7 +2848,7 @@ def build_delivery_latest_summary(project_name: str, workspace_root: Path | None
         latest_pushed_delivery_id=latest_pushed_delivery_id,
         latest_pushed_at=latest_pushed_at,
         latest_runner_request_id=latest_runner_request.request_id if latest_runner_request else None,
-        latest_runner_request_status=latest_runner_request.status if latest_runner_request else None,
+        latest_runner_request_status=latest_runner_request_status,
         latest_runner_run_id=latest_runner_run.run_id if latest_runner_run else None,
         latest_runner_run_status=latest_runner_run.status if latest_runner_run else None,
         latest_runner_commit_hash=latest_runner_run.commit_hash if latest_runner_run else None,
@@ -3383,7 +3415,52 @@ def _finish_runner_watch(
     watch.warnings = _dedupe(warnings)
     watch.steps_run = _dedupe(steps)
     watch.next_action = next_action or _runner_watch_next_action(watch.status, watch.blockers)
+    _reconcile_runner_request_from_watch(watch, workspace_root=workspace_root)
     return write_delivery_runner_watch(watch, workspace_root=workspace_root)
+
+
+def _latest_completed_runner_watch_for_request(
+    project_name: str,
+    request_id: str,
+    workspace_root: Path | None = None,
+) -> DeliveryRunnerWatch | None:
+    normalized_request = request_id.strip().upper()
+    watches = [
+        watch
+        for watch in list_delivery_runner_watches(project_name, workspace_root=workspace_root)
+        if _runner_watch_has_trusted_completion(watch)
+        and (watch.selected_request_id or "").strip().upper() == normalized_request
+    ]
+    return sorted(watches, key=lambda item: item.completed_at or item.started_at, reverse=True)[0] if watches else None
+
+
+def _runner_watch_has_trusted_completion(watch: DeliveryRunnerWatch) -> bool:
+    return bool(
+        watch.status == "completed"
+        and watch.selected_request_id
+        and watch.delivery_id
+        and watch.commit_hash
+        and watch.pushed
+    )
+
+
+def _reconcile_runner_request_from_watch(watch: DeliveryRunnerWatch, workspace_root: Path) -> None:
+    if not _runner_watch_has_trusted_completion(watch):
+        return
+    request = load_delivery_runner_request(watch.project, watch.selected_request_id or "", workspace_root=workspace_root)
+    if not request or request.status == "completed":
+        return
+    now = watch.completed_at or datetime.now(UTC)
+    updated = request.model_copy(
+        update={
+            "status": "completed",
+            "updated_at": now,
+            "blockers": [],
+            "warnings": _dedupe([*request.warnings, *watch.warnings]),
+            "next_action": _runner_next_action(watch.project, request.request_id, "completed", [], watch.commit_hash, watch.pushed),
+        }
+    )
+    write_delivery_runner_request(updated, workspace_root=workspace_root)
 
 
 def _pending_runner_requests(project_name: str, workspace_root: Path) -> list[DeliveryRunnerRequest]:

@@ -12,6 +12,8 @@ from devo.delivery import (
     DeliveryRunnerRun,
     DeliveryRunnerScheduleStatus,
     load_delivery_runner_request,
+    load_delivery_runner_run,
+    run_delivery_runner_watch,
     write_delivery_runner_request,
     write_delivery_runner_run,
 )
@@ -5917,6 +5919,88 @@ def test_queue_worker_loop_completes_delivered_run_then_starts_next_item(tmp_pat
     second_item = next(entry for entry in queue.items if entry.item_id == "QI002")
     assert first_item.status == "completed"
     assert second_item.status == "pending"
+
+
+def test_queue_worker_loop_reconciles_completed_runner_watch_over_later_blocked_runner_run(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(project_path, "remote", "add", "origin", str(remote))
+    branch = _git(project_path, "branch", "--show-current", capture=True).stdout.strip()
+    _git(project_path, "push", "-u", "origin", branch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    created = runner.invoke(app, ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"], terminal_width=240)
+    assert created.exit_code == 0, created.output
+    _import_worker_report(tmp_path)
+    _record_worker_review(status="reviewed_passed")
+    _attach_validation(status="passed")
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('watched delivery')\n", encoding="utf-8")
+    requested = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--message", "feat: watched queue delivery", "--confirm-loop"],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+
+    watch, _watch_json, _watch_md = run_delivery_runner_watch(
+        "sample",
+        approver="Manas",
+        once=True,
+        confirm_runner_watch=True,
+        workspace_root=workspace,
+    )
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    completed_run = load_delivery_runner_run("sample", "REQ-0001", workspace_root=workspace)
+    assert watch.status == "completed"
+    assert watch.commit_hash
+    assert watch.pushed is True
+    assert request is not None
+    assert completed_run is not None
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "requested", "next_action": "stale requested artifact"}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        completed_run.model_copy(
+            update={
+                "run_id": "RUN-20990101000000-req-0001",
+                "runner_context": "devo delivery runner-run",
+                "delivery_report_id": None,
+                "commit_hash": None,
+                "pushed": False,
+                "status": "blocked",
+                "blockers": ["Expected files were already committed."],
+                "next_action": "Resolve runner blockers before retrying.",
+            }
+        ),
+        workspace_root=workspace,
+    )
+
+    summary = runner.invoke(
+        app,
+        ["project", "codex-worker-batch-summary", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--run", "QWR-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert summary.exit_code == 0, summary.output
+    assert f"delivery: request=REQ-0001 (completed); runner={watch.selected_run_id} (completed)" in summary.output
+    assert f"commit={watch.commit_hash}" in summary.output
+    assert "pushed=True" in summary.output
+    assert result.exit_code == 0, result.output
+    assert "Step 1: marked queue-worker run completed" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert run is not None and run.status == "completed"
+    assert run.delivery_request_status == "completed"
+    assert queue is not None
+    assert queue.items[0].status == "completed"
 
 
 def test_approved_queue_run_continue_next_starts_next_item_after_specified_completion(tmp_path: Path, monkeypatch) -> None:
