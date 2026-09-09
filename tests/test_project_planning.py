@@ -25,6 +25,7 @@ from devo.project_planning import (
     QueueWorkerRun,
     build_project_intake_status,
     calculate_project_progress,
+    create_rough_goal_intake_next_policy,
     create_execution_queue_from_batch,
     codex_worker_batch_run_directory,
     codex_worker_config_artifact_path,
@@ -7502,3 +7503,38 @@ def _target_snapshot(project_path: Path) -> dict[str, str]:
         for path in project_path.rglob("*")
         if path.is_file() and ".git" not in path.relative_to(project_path).parts
     }
+
+
+def test_intake_policy_create_next_preserves_recommended_scope(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    before_target = _target_snapshot(project_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+
+    recommendation, policy, json_path, markdown_path = create_rough_goal_intake_next_policy(
+        "sample",
+        "INTAKE-0001",
+        workspace_root=workspace,
+    )
+
+    assert policy.status == "draft"
+    assert policy.allowed_task_ids == [recommendation.recommended_task_id] == ["T001"]
+    assert policy.allowed_queue_item_ids == [recommendation.recommended_queue_item_id] == ["QI001"]
+    assert policy.allowed_file_patterns == recommendation.suggested_narrow_allowed_files
+    assert policy.forbidden_file_patterns == recommendation.do_not_touch_notes
+    assert policy.validation_commands == recommendation.validation_notes
+    assert json_path.exists()
+    assert markdown_path.exists()
+    assert all(created_policy.status == "draft" for created_policy in list_execution_policies("sample", workspace_root=workspace))
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
