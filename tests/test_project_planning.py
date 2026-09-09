@@ -13,6 +13,7 @@ from devo.delivery import (
     DeliveryRunnerScheduleStatus,
     load_delivery_runner_request,
     load_delivery_runner_run,
+    list_delivery_runner_requests,
     run_delivery_runner_watch,
     write_delivery_runner_request,
     write_delivery_runner_run,
@@ -1330,7 +1331,7 @@ def test_intake_policy_create_next_previews_next_policy_command_without_mutation
     assert _target_snapshot(project_path) == before_target
 
 
-def test_intake_policy_create_next_confirm_fails_safely_until_creation_service_exists(tmp_path: Path, monkeypatch) -> None:
+def test_intake_policy_create_next_confirm_creates_one_draft_narrow_policy(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     goal_file = _rough_goal_file(tmp_path)
     before_target = _target_snapshot(project_path)
@@ -1345,6 +1346,7 @@ def test_intake_policy_create_next_confirm_fails_safely_until_creation_service_e
         terminal_width=240,
     ).exit_code == 0
     policies_before = [policy.model_dump() for policy in list_execution_policies("sample", workspace_root=workspace)]
+    policy_ids_before = {policy["policy_id"] for policy in policies_before}
 
     result = runner.invoke(
         app,
@@ -1360,15 +1362,35 @@ def test_intake_policy_create_next_confirm_fails_safely_until_creation_service_e
         terminal_width=240,
     )
 
-    assert result.exit_code != 0
-    assert "Policy creation is not implemented for this safe slice." in result.output
-    assert "No policy artifacts were written." in result.output
-    assert "execution-policy-create --project sample --batch B001 --queue Q001" in result.output
-    assert "no policy approval, worker run, Codex run, validation, delivery request, commit, or push was created" in result.output
-    assert [policy.model_dump() for policy in list_execution_policies("sample", workspace_root=workspace)] == policies_before
-    assert all(policy.status == "draft" for policy in list_execution_policies("sample", workspace_root=workspace))
+    assert result.exit_code == 0, result.output
+    assert "Draft intake policy created" in result.output
+    assert "Rough goal intake next slice: INTAKE-0001" in result.output
+    assert "Execution policy: POL-0002" in result.output
+    assert "Status: draft" in result.output
+    assert "JSON:" in result.output
+    assert "Markdown:" in result.output
+    assert "execution-policy-request --project sample --policy POL-0002" in result.output
+    assert "execution-policy-approve --project sample --policy POL-0002" in result.output
+    assert "created policy is draft only" in result.output
+    assert "No policy approval, worker run, Codex run, validation, delivery request, commit, or push was created" in result.output
+    policies_after = list_execution_policies("sample", workspace_root=workspace)
+    new_policies = [policy for policy in policies_after if policy.policy_id not in policy_ids_before]
+    assert len(new_policies) == 1
+    created_policy = new_policies[0]
+    assert created_policy.policy_id == "POL-0002"
+    assert created_policy.status == "draft"
+    assert created_policy.allowed_task_ids == ["T001"]
+    assert created_policy.allowed_queue_item_ids == ["QI001"]
+    assert created_policy.allowed_file_patterns == ["src/devo/project_planning.py", "src/devo/main.py", "tests/test_project_planning.py"]
+    assert created_policy.forbidden_file_patterns == ["PersonalOS", "UI"]
+    assert created_policy.validation_commands == ["py_compile touched Python", "focused pytest"]
+    assert created_policy.max_tasks == 1
+    assert created_policy.max_tasks_per_run == 1
+    assert created_policy.max_changed_files_per_task == 3
+    assert all(policy.status == "draft" for policy in policies_after)
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
     assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
     assert _target_snapshot(project_path) == before_target
 
 

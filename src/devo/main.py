@@ -182,6 +182,7 @@ from .project_planning import (
     continue_queue_worker_run,
     create_batch_execution_policy,
     create_rough_goal_intake_plan,
+    create_rough_goal_intake_next_policy,
     create_project_batch,
     create_project_backlog,
     create_project_blueprint,
@@ -4357,17 +4358,23 @@ def create_project_intake_next_policy_command(
             soft_wrap=True,
         )
         return
-    console.print("[red]Policy creation is not implemented for this safe slice.[/red]")
-    console.print(
-        "No policy artifacts were written. Use the printed execution-policy-create command manually, or implement the create-next service in a later approved task.",
-        soft_wrap=True,
-    )
+    try:
+        recommendation, policy, json_path, markdown_path = create_rough_goal_intake_next_policy(project_name, intake_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    console.print(f"[green]Draft intake policy created[/green] {project_name}")
     _print_rough_goal_next_slice(recommendation)
+    _print_execution_policy(policy, json_path=json_path, markdown_path=markdown_path)
+    console.print("Exact next commands:")
+    console.print(f"  devo project execution-policy-request --project {project_name} --policy {policy.policy_id} --note \"Reviewed narrow slice from {intake_id}.\"", soft_wrap=True)
     console.print(
-        "Safety: no policy approval, worker run, Codex run, validation, delivery request, commit, or push was created.",
+        f"  devo project execution-policy-approve --project {project_name} --policy {policy.policy_id} --approver \"<name>\" --note \"Approved one materialized intake slice.\"",
         soft_wrap=True,
     )
-    raise typer.Exit(1)
+    console.print(
+        "Safety: created policy is draft only. No policy approval, worker run, Codex run, validation, delivery request, commit, or push was created.",
+        soft_wrap=True,
+    )
 
 
 @project_app.command("brief-create")
