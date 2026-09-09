@@ -6596,6 +6596,41 @@ def recommend_rough_goal_intake_next_slice(
     )
 
 
+def create_rough_goal_intake_next_policy(
+    project_name: str,
+    intake_id: str,
+    *,
+    workspace_root: Path | None = None,
+) -> tuple[RoughGoalNextSliceRecommendation, BatchExecutionPolicy, Path, Path]:
+    """Create a draft execution policy for the current safe intake slice."""
+    root = workspace_root or get_workspace_root()
+    recommendation = recommend_rough_goal_intake_next_slice(project_name, intake_id, workspace_root=root)
+    if recommendation.status != "ready":
+        blocker_summary = "; ".join(recommendation.blockers) or "No safe next slice is available."
+        raise ValueError(f"Cannot create the next intake policy: {blocker_summary}")
+    if not recommendation.recommended_task_id or not recommendation.recommended_queue_item_id:
+        raise ValueError("Cannot create the next intake policy: the recommendation does not identify a task and queue item.")
+    if not recommendation.suggested_narrow_allowed_files:
+        raise ValueError("Cannot create the next intake policy: the recommendation has no allowed files.")
+
+    policy, json_path, markdown_path = create_batch_execution_policy(
+        project_name,
+        batch_id=recommendation.batch_id,
+        queue_id=recommendation.queue_id,
+        title=f"Narrow slice for {recommendation.recommended_task_id}",
+        allowed_task_ids=[recommendation.recommended_task_id],
+        allowed_file_patterns=recommendation.suggested_narrow_allowed_files,
+        forbidden_file_patterns=recommendation.do_not_touch_notes,
+        max_tasks=1,
+        max_tasks_per_run=1,
+        max_changed_files_per_task=max(1, min(3, len(recommendation.suggested_narrow_allowed_files))),
+        validation_commands=recommendation.validation_notes,
+        note="Narrow policy from materialized intake next-slice recommendation.",
+        workspace_root=root,
+    )
+    return recommendation, policy, json_path, markdown_path
+
+
 def _performed_intake_setup_task_reason(
     task: BacklogTask,
     intake: RoughGoalIntakePlan,
