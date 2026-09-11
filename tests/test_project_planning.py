@@ -4022,6 +4022,115 @@ def test_patch_proposal_show_handles_missing_patch_proposal_safely(tmp_path: Pat
     assert "No patch proposal found" in result.output
 
 
+def test_patch_proposal_accept_help_lists_shell_command() -> None:
+    result = runner.invoke(app, ["project", "patch-proposal-accept", "--help"], terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert "patch-proposal-accept" in result.output
+    assert "--confirm-accept-patch" in result.output
+    assert "--ignore-whitespace" in result.output
+    assert "--confirm-ignore-whitespace" in result.output
+
+
+def test_patch_proposal_accept_preview_is_read_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+    before_runs = [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)]
+    before_requests = [request.model_dump() for request in list_delivery_runner_requests("sample", workspace_root=workspace)]
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-accept",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Patch proposal accept: QWR-0001" in result.output
+    assert "Preview only" in result.output
+    assert "requires --confirm-accept-patch" in result.output
+    assert "patch-proposal-show" in result.output
+    assert "patch-proposal-check" in result.output
+    assert "patch-proposal-apply" in result.output
+    assert "does not apply patches" in result.output
+    assert [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)] == before_runs
+    assert [request.model_dump() for request in list_delivery_runner_requests("sample", workspace_root=workspace)] == before_requests
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_patch_proposal_accept_confirmed_shell_fails_without_mutation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+    before_runs = [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)]
+    before_requests = [request.model_dump() for request in list_delivery_runner_requests("sample", workspace_root=workspace)]
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-accept",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-accept-patch",
+            "--ignore-whitespace",
+            "--confirm-ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Patch proposal accept service is not implemented for this safe slice" in result.output
+    assert "No patch was accepted or applied" in result.output
+    assert "No workflow evidence, delivery request" in result.output
+    assert "commit, or push was created" in result.output
+    assert [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)] == before_runs
+    assert [request.model_dump() for request in list_delivery_runner_requests("sample", workspace_root=workspace)] == before_requests
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_patch_proposal_accept_ignore_whitespace_requires_confirmation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    before_target = _target_snapshot(project_path)
+    before_runs = [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)]
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-accept",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--ignore-whitespace",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "--ignore-whitespace requires --confirm-ignore-whitespace" in result.output
+    assert "no patch was applied" in result.output
+    assert [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)] == before_runs
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_patch_proposal_check_blocks_completed_worker_evidence(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)

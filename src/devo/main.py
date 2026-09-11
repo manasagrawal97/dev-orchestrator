@@ -5644,6 +5644,52 @@ def apply_patch_proposal_command(
         raise typer.Exit(1)
 
 
+@project_app.command("patch-proposal-accept")
+def accept_patch_proposal_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    reviewed_by: str = typer.Option("", "--reviewed-by", help="Name of the human reviewer for the future accept step."),
+    confirm_accept_patch: bool = typer.Option(False, "--confirm-accept-patch", help="Confirm accepting a reviewed patch proposal."),
+    ignore_whitespace: bool = typer.Option(False, "--ignore-whitespace", help="Request future whitespace-tolerant accept behavior."),
+    confirm_ignore_whitespace: bool = typer.Option(False, "--confirm-ignore-whitespace", help="Confirm future whitespace-tolerant accept behavior."),
+) -> None:
+    """Preview the future reviewed patch-proposal accept flow without mutating state."""
+    project_name = _resolve_project(project_name)
+    if ignore_whitespace and not confirm_ignore_whitespace:
+        console.print("patch-proposal-accept --ignore-whitespace requires --confirm-ignore-whitespace.")
+        console.print(
+            "Safety: no patch was applied, no worker/review/validation/delivery state was recorded, and no commit or push was created.",
+            soft_wrap=True,
+        )
+        console.print(f"Suggested next command: devo project patch-proposal-check --project {project_name} --run {run_id} --confirm-check")
+        raise typer.Exit(1)
+
+    console.print(f"Patch proposal accept: {run_id}")
+    console.print(f"Project: {project_name}")
+    console.print(f"Queue-worker run: {run_id}")
+    console.print(f"Reviewed by: {reviewed_by.strip() or 'not provided'}")
+    console.print(f"Whitespace-tolerant accept requested: {ignore_whitespace}")
+    console.print(
+        "Safety: this shell command does not apply patches, record worker results, record review, record validation, create delivery requests, commit, or push.",
+        soft_wrap=True,
+    )
+    console.print("Existing safe commands:")
+    console.print(f"  devo project patch-proposal-show --project {project_name} --run {run_id}")
+    console.print(f"  devo project patch-proposal-check --project {project_name} --run {run_id} --confirm-check")
+    console.print(
+        f"  devo project patch-proposal-apply --project {project_name} --run {run_id} --reviewed-by \"{reviewed_by.strip() or '<reviewer>'}\" --confirm-apply-patch"
+    )
+
+    if not confirm_accept_patch:
+        console.print("Preview only: patch-proposal-accept requires --confirm-accept-patch before any future accept service can run.")
+        return
+
+    console.print("Patch proposal accept service is not implemented for this safe slice.")
+    console.print("Later TASK-DEVO-189 work will implement the evidence/state transition after reviewed patch application.")
+    console.print("No patch was accepted or applied. No workflow evidence, delivery request, commit, or push was created.")
+    raise typer.Exit(1)
+
+
 @project_app.command("queue-worker-status")
 def status_queue_worker_run_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
