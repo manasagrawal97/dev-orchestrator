@@ -1085,6 +1085,33 @@ class PatchProposalApplyResult(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class PatchProposalAcceptResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    queue_worker_run_id: str
+    status: str = "blocked"
+    worker_evidence_id: str | None = None
+    patch_apply_id: str | None = None
+    patch_check_id: str | None = None
+    patch_hash: str | None = None
+    patch_apply_mode: str = "strict"
+    patch_artifact_path: str | None = None
+    reviewed_by: str
+    worker_result_json_path: str | None = None
+    worker_result_markdown_path: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    safety_note: str = (
+        "Patch proposal accept records completed worker-result evidence only after a checked patch is applied to the working tree. "
+        "It does not record review, record validation, create delivery requests, commit, or push."
+    )
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class QueueWorkerRunIndexEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -4033,6 +4060,212 @@ def apply_patch_proposal(
     _write_model(json_path, result)
     markdown_path.write_text(render_patch_proposal_apply_markdown(result), encoding="utf-8")
     return result
+
+
+def accept_patch_proposal(
+    project_name: str,
+    run_id: str,
+    *,
+    reviewed_by: str,
+    ignore_whitespace: bool = False,
+    workspace_root: Path | None = None,
+) -> PatchProposalAcceptResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    now = datetime.now(UTC)
+    cleaned_reviewer = (reviewed_by or "").strip()
+    patch_apply_mode = "ignore_whitespace" if ignore_whitespace else "strict"
+    blockers: list[str] = []
+    warnings: list[str] = []
+    patch_hash: str | None = None
+    patch_artifact_path: str | None = None
+    patch_check: PatchProposalCheckResult | None = None
+    patch_apply: PatchProposalApplyResult | None = None
+
+    if not cleaned_reviewer:
+        blockers.append("--reviewed-by is required and must not be empty.")
+
+    ingest = _latest_ingest_for_queue_worker_run(list_codex_worker_ingests(project_name, workspace_root=root), run.run_id)
+    if not ingest:
+        blockers.append("No ingested worker evidence exists for this queue-worker run.")
+    else:
+        patch_artifact_path = ingest.patch_artifact_path or None
+        if ingest.status not in {"blocked", "failed"}:
+            blockers.append(f"Worker status must be blocked or failed for patch-proposal accept; got {ingest.status}.")
+        if not ingest.patch_proposal_present:
+            blockers.append("No patch proposal is present in the latest ingested worker evidence.")
+        if not patch_artifact_path:
+            blockers.append("Patch proposal is present but no patch artifact path was provided.")
+
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=root)
+    if not policy:
+        blockers.append(f"Execution policy not found: {run.policy_id}")
+    else:
+        if run.selected_task_id and run.selected_task_id not in policy.allowed_task_ids:
+            blockers.append(f"Selected task {run.selected_task_id} is not allowed by policy {policy.policy_id}.")
+        if run.selected_queue_item_id and run.selected_queue_item_id not in policy.allowed_queue_item_ids:
+            blockers.append(f"Selected queue item {run.selected_queue_item_id} is not allowed by policy {policy.policy_id}.")
+
+    queue = load_execution_queue(project_name, run.queue_id, workspace_root=root) if run.queue_id else None
+    queue_item = _find_queue_item(queue.items, run.selected_queue_item_id) if queue and run.selected_queue_item_id else None
+    if not queue:
+        blockers.append(f"Execution queue not found: {run.queue_id or 'none'}")
+    elif not queue_item:
+        blockers.append(f"Queue item not found: {run.selected_queue_item_id or 'none'}")
+    elif run.selected_task_id and queue_item.task_id != run.selected_task_id:
+        blockers.append(
+            f"Queue item/task mismatch: queue item {queue_item.item_id} points to {queue_item.task_id}, "
+            f"but run selected {run.selected_task_id}."
+        )
+
+    if patch_artifact_path:
+        registration = load_registered_project(project_name, workspace_root=root)
+        target_path = Path(registration.path).expanduser().resolve()
+        resolved_patch_path = _resolve_patch_artifact_path(project_name, patch_artifact_path, target_path=target_path, workspace_root=root)
+        if not resolved_patch_path or not resolved_patch_path.exists():
+            blockers.append("Patch artifact path does not exist or could not be resolved safely.")
+        else:
+            patch_text = resolved_patch_path.read_text(encoding="utf-8", errors="replace")
+            patch_hash = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
+
+    if patch_hash:
+        matching_checks = [
+            check
+            for check in list_patch_proposal_checks(project_name, workspace_root=root)
+            if check.queue_worker_run_id == run.run_id
+            and check.status == "checked"
+            and check.patch_hash == patch_hash
+            and check.patch_apply_mode == patch_apply_mode
+        ]
+        patch_check = matching_checks[0] if matching_checks else None
+        if not patch_check:
+            blockers.append(
+                "No latest successful patch-proposal-check artifact exists for this run, patch hash, and patch apply mode "
+                f"{patch_apply_mode}."
+            )
+        else:
+            matching_applies = [
+                item
+                for item in list_patch_proposal_applies(project_name, workspace_root=root)
+                if item.queue_worker_run_id == run.run_id
+                and item.status == "applied"
+                and item.patch_hash == patch_hash
+                and item.patch_apply_mode == patch_apply_mode
+                and item.patch_check_id == patch_check.patch_check_id
+            ]
+            if matching_applies:
+                patch_apply = matching_applies[0]
+                blockers.append(
+                    "A matching applied patch artifact already exists. To avoid double-apply ambiguity, inspect the repository and existing apply artifact before accepting."
+                )
+
+    if blockers:
+        return PatchProposalAcceptResult(
+            project=project_name,
+            queue_worker_run_id=run.run_id,
+            status="blocked",
+            worker_evidence_id=ingest.worker_evidence_id if ingest else None,
+            patch_apply_id=patch_apply.patch_apply_id if patch_apply else None,
+            patch_check_id=patch_check.patch_check_id if patch_check else None,
+            patch_hash=patch_hash,
+            patch_apply_mode=patch_apply_mode,
+            patch_artifact_path=patch_artifact_path,
+            reviewed_by=cleaned_reviewer,
+            blockers=_dedupe(blockers),
+            warnings=_dedupe(warnings),
+            next_action="Resolve blockers before accepting the patch proposal. Do not record review/validation/delivery yet.",
+            created_at=now,
+            updated_at=datetime.now(UTC),
+        )
+
+    patch_apply = apply_patch_proposal(
+        project_name,
+        run.run_id,
+        reviewed_by=cleaned_reviewer,
+        ignore_whitespace=ignore_whitespace,
+        workspace_root=root,
+    )
+    if patch_apply.status != "applied":
+        return PatchProposalAcceptResult(
+            project=project_name,
+            queue_worker_run_id=run.run_id,
+            status="failed" if patch_apply.status == "failed" else "blocked",
+            worker_evidence_id=ingest.worker_evidence_id if ingest else None,
+            patch_apply_id=patch_apply.patch_apply_id,
+            patch_check_id=patch_apply.patch_check_id,
+            patch_hash=patch_apply.patch_hash,
+            patch_apply_mode=patch_apply.patch_apply_mode,
+            patch_artifact_path=patch_apply.patch_artifact_path,
+            reviewed_by=cleaned_reviewer,
+            blockers=_dedupe(patch_apply.blockers),
+            warnings=_dedupe([*warnings, *patch_apply.warnings]),
+            next_action="Patch apply did not complete safely. Inspect blockers and do not record review/validation/delivery.",
+            created_at=now,
+            updated_at=datetime.now(UTC),
+        )
+
+    original_status = ingest.status if ingest else "unknown"
+    summary = (
+        "Patch proposal was checked, applied to the working tree, and accepted as completed worker-result evidence. "
+        f"Original worker status: {original_status}. Patch apply: {patch_apply.patch_apply_id}."
+    )
+    risks = [
+        "Patch proposal fallback was used; operator must still inspect the actual diff.",
+        f"original_worker_status={original_status}",
+        f"patch_artifact_path={patch_apply.patch_artifact_path or 'none'}",
+        f"patch_check_id={patch_apply.patch_check_id or 'none'}",
+        f"patch_apply_id={patch_apply.patch_apply_id}",
+        f"patch_hash={patch_apply.patch_hash or 'none'}",
+        f"patch_apply_mode={patch_apply.patch_apply_mode}",
+        f"reviewed_by={cleaned_reviewer}",
+    ]
+    evidence = record_queue_worker_worker_result(
+        project_name,
+        run.run_id,
+        status="completed",
+        summary=summary,
+        artifact_path=patch_apply.apply_markdown_path or patch_apply.apply_json_path,
+        commands_run=f"devo project patch-proposal-accept --project {project_name} --run {run.run_id} --reviewed-by \"{cleaned_reviewer}\" --confirm-accept-patch",
+        files_changed=", ".join(patch_apply.touched_files),
+        risks=", ".join(risks),
+        recommended_next_action=(
+            f"Advance to review with: devo project queue-worker-loop --project {project_name} --policy {run.policy_id} "
+            f"--run {run.run_id} --confirm-loop"
+        ),
+        recorded_by=cleaned_reviewer,
+        note=(
+            "Patch-proposal accept recorded completed worker-result evidence after reviewed patch application. "
+            f"Original worker status: {original_status}; patch artifact: {patch_apply.patch_artifact_path}; "
+            f"patch check: {patch_apply.patch_check_id}; patch apply: {patch_apply.patch_apply_id}; "
+            f"patch hash: {patch_apply.patch_hash}; apply mode: {patch_apply.patch_apply_mode}; reviewed by: {cleaned_reviewer}."
+        ),
+        workspace_root=root,
+    )
+    return PatchProposalAcceptResult(
+        project=project_name,
+        queue_worker_run_id=run.run_id,
+        status="accepted",
+        worker_evidence_id=evidence.evidence_record.evidence_id if evidence.evidence_record else None,
+        patch_apply_id=patch_apply.patch_apply_id,
+        patch_check_id=patch_apply.patch_check_id,
+        patch_hash=patch_apply.patch_hash,
+        patch_apply_mode=patch_apply.patch_apply_mode,
+        patch_artifact_path=patch_apply.patch_artifact_path,
+        reviewed_by=cleaned_reviewer,
+        worker_result_json_path=evidence.record_json_path,
+        worker_result_markdown_path=evidence.record_markdown_path,
+        warnings=_dedupe([*warnings, *patch_apply.warnings, *evidence.warnings]),
+        blockers=_dedupe(evidence.blockers),
+        next_action=(
+            f"Run queue-worker-loop: devo project queue-worker-loop --project {project_name} --policy {run.policy_id} --run {run.run_id} --confirm-loop\n"
+            f"Then record review: devo project queue-worker-record-review --project {project_name} --run {run.run_id} --status passed --summary \"<summary>\" --confirm-record\n"
+            f"Then record validation: devo project queue-worker-record-validation --project {project_name} --run {run.run_id} --status passed --summary \"<summary>\" --confirm-record\n"
+            "After validation, create and run trusted delivery through the existing queue-worker delivery runner flow."
+        ),
+        created_at=now,
+        updated_at=datetime.now(UTC),
+    )
 
 
 def create_codex_worker_preparation(

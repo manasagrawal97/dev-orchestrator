@@ -143,6 +143,7 @@ from .project_planning import (
     CodexWorkerBatchPolicySummary,
     CodexWorkerIngest,
     CodexWorkerIngestResult,
+    PatchProposalAcceptResult,
     PatchProposalApplyResult,
     PatchProposalCheckResult,
     PatchProposalSummary,
@@ -177,6 +178,7 @@ from .project_planning import (
     build_project_intake_status,
     check_execution_policy,
     check_patch_proposal,
+    accept_patch_proposal,
     apply_patch_proposal,
     cancel_queue_worker_run,
     continue_queue_worker_run,
@@ -1230,6 +1232,30 @@ def _print_patch_proposal_apply_result(result: PatchProposalApplyResult) -> None
         console.print(f"  - {blocker}", soft_wrap=True)
     console.print(f"Apply JSON: {_named_path(Path(result.apply_json_path)) if result.apply_json_path else 'not written'}")
     console.print(f"Apply Markdown: {_named_path(Path(result.apply_markdown_path)) if result.apply_markdown_path else 'not written'}")
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print(f"Safety: {result.safety_note}", soft_wrap=True)
+
+
+def _print_patch_proposal_accept_result(result: PatchProposalAcceptResult) -> None:
+    console.print(f"[bold]Patch proposal accept: {result.queue_worker_run_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Queue-worker run: {result.queue_worker_run_id}")
+    console.print(f"Status: {result.status}")
+    console.print(f"Reviewed by: {result.reviewed_by or 'none'}")
+    console.print(f"Worker evidence id: {result.worker_evidence_id or 'none'}")
+    console.print(f"Patch apply: {result.patch_apply_id or 'none'}")
+    console.print(f"Patch check: {result.patch_check_id or 'none'}")
+    console.print(f"Patch hash: {result.patch_hash or 'none'}")
+    console.print(f"Patch apply mode: {result.patch_apply_mode}")
+    console.print(f"Patch artifact path: {result.patch_artifact_path or 'none'}", soft_wrap=True)
+    console.print(f"Worker result JSON: {_named_path(Path(result.worker_result_json_path)) if result.worker_result_json_path else 'not written'}")
+    console.print(f"Worker result Markdown: {_named_path(Path(result.worker_result_markdown_path)) if result.worker_result_markdown_path else 'not written'}")
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
     console.print(f"Safety: {result.safety_note}", soft_wrap=True)
 
@@ -5684,10 +5710,15 @@ def accept_patch_proposal_command(
         console.print("Preview only: patch-proposal-accept requires --confirm-accept-patch before any future accept service can run.")
         return
 
-    console.print("Patch proposal accept service is not implemented for this safe slice.")
-    console.print("Later TASK-DEVO-189 work will implement the evidence/state transition after reviewed patch application.")
-    console.print("No patch was accepted or applied. No workflow evidence, delivery request, commit, or push was created.")
-    raise typer.Exit(1)
+    try:
+        result = accept_patch_proposal(project_name, run_id, reviewed_by=reviewed_by, ignore_whitespace=ignore_whitespace)
+    except ValueError as exc:
+        console.print(f"[yellow]{exc}[/yellow]", soft_wrap=True)
+        console.print(f"Suggested next command: devo project patch-proposal-show --project {project_name} --run {run_id}")
+        raise typer.Exit(1) from exc
+    _print_patch_proposal_accept_result(result)
+    if result.status != "accepted":
+        raise typer.Exit(1)
 
 
 @project_app.command("queue-worker-status")

@@ -67,6 +67,7 @@ from devo.project_planning import (
     queue_artifact_paths,
     queue_worker_run_artifact_paths,
     request_queue_worker_delivery,
+    summarize_queue_worker_evidence,
 )
 from devo.read_models import build_patch_proposal_apply_overview, build_patch_proposal_overview, build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -4093,10 +4094,10 @@ def test_patch_proposal_accept_confirmed_shell_fails_without_mutation(tmp_path: 
     )
 
     assert result.exit_code == 1, result.output
-    assert "Patch proposal accept service is not implemented for this safe slice" in result.output
-    assert "No patch was accepted or applied" in result.output
-    assert "No workflow evidence, delivery request" in result.output
-    assert "commit, or push was created" in result.output
+    assert "Status: blocked" in result.output
+    assert "No ingested worker evidence exists" in result.output
+    assert "No patch proposal is present" not in result.output
+    assert "does not record review" in result.output
     assert [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)] == before_runs
     assert [request.model_dump() for request in list_delivery_runner_requests("sample", workspace_root=workspace)] == before_requests
     assert _target_snapshot(project_path) == before_target
@@ -4129,6 +4130,126 @@ def test_patch_proposal_accept_ignore_whitespace_requires_confirmation(tmp_path:
     assert "no patch was applied" in result.output
     assert [run.model_dump() for run in list_queue_worker_runs("sample", workspace_root=workspace)] == before_runs
     assert _target_snapshot(project_path) == before_target
+
+
+def test_patch_proposal_accept_refuses_when_no_patch_proposal_exists(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_without_patch(tmp_path, status="blocked")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-accept",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-accept-patch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: blocked" in result.output
+    assert "No patch proposal is present in the latest ingested worker evidence" in result.output
+    assert _target_snapshot(project_path) == before_target
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_patch_proposal_accept_refuses_without_matching_successful_check(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old\n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-accept",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-accept-patch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Status: blocked" in result.output
+    assert "No latest successful patch-proposal-check artifact exists" in result.output
+    assert _target_snapshot(project_path) == before_target
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_patch_proposal_accept_applies_checked_patch_and_records_worker_result_only(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("old\n", encoding="utf-8")
+    _git(project_path, "add", "src/feature.py")
+    _git(project_path, "commit", "-m", "add feature")
+    _create_queue_worker_run(tmp_path)
+    _ingest_worker_result_with_patch(tmp_path, status="blocked", patch_text=_valid_feature_patch())
+    check = runner.invoke(
+        app,
+        ["project", "patch-proposal-check", "--project", "sample", "--run", "QWR-0001", "--confirm-check"],
+        terminal_width=240,
+    )
+    assert check.exit_code == 0, check.output
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "patch-proposal-accept",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reviewed-by",
+            "Manas",
+            "--confirm-accept-patch",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: accepted" in result.output
+    assert "Patch apply: PPA-" in result.output
+    assert "Worker evidence id: qwr-0001-worker-result" in result.output
+    assert "queue-worker-loop --project sample --policy POL-0001 --run QWR-0001 --confirm-loop" in result.output
+    assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
+    assert "queue-worker-record-validation --project sample --run QWR-0001" in result.output
+    assert (project_path / "src" / "feature.py").read_text(encoding="utf-8") == "new\n"
+    status = _git(project_path, "status", "--short", capture=True).stdout
+    assert status == " M src/feature.py\n"
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    assert report.status_reported_by_worker == "completed"
+    assert "Original worker status: blocked" in report.summary
+    assert "patch_apply_id=PPA-" in ", ".join(report.evidence_record.risks)
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    evidence = summarize_queue_worker_evidence("sample", load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace), workspace_root=workspace)
+    assert evidence.worker_report_imported is True
+    assert evidence.worker_review_exists is False
+    assert evidence.validation_evidence_exists is False
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
 
 
 def test_patch_proposal_check_blocks_completed_worker_evidence(tmp_path: Path, monkeypatch) -> None:
