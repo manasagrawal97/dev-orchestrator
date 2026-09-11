@@ -1382,7 +1382,10 @@ def test_intake_policy_create_next_confirm_creates_one_draft_narrow_policy(tmp_p
     assert created_policy.allowed_task_ids == ["T001"]
     assert created_policy.allowed_queue_item_ids == ["QI001"]
     assert created_policy.allowed_file_patterns == ["src/devo/project_planning.py", "src/devo/main.py", "tests/test_project_planning.py"]
-    assert created_policy.forbidden_file_patterns == ["PersonalOS", "UI"]
+    assert "PersonalOS" in created_policy.forbidden_file_patterns
+    assert "backup/restore" in created_policy.forbidden_file_patterns
+    assert ".env" in created_policy.forbidden_file_patterns
+    assert "workspace/**" in created_policy.forbidden_file_patterns
     assert created_policy.validation_commands == ["py_compile touched Python", "focused pytest"]
     assert created_policy.max_tasks == 1
     assert created_policy.max_tasks_per_run == 1
