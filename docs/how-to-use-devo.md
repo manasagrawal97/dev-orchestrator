@@ -85,6 +85,8 @@ devo project intake-plan --project MyProject --from-file E:\path\to\goal.md
 devo project intake-plan --project MyProject --from-file E:\path\to\goal.md --confirm-create
 devo project intake-materialize --project MyProject --intake INTAKE-0001 --confirm-materialize
 devo project intake-next-slice --project MyProject --intake INTAKE-0001
+devo project intake-policy-create-next --project MyProject --intake INTAKE-0001
+devo project intake-policy-create-next --project MyProject --intake INTAKE-0001 --confirm-create-policy
 ```
 
 `intake-status` summarizes the whole planning path: Project Brief, Blueprint, Backlog, task counts, latest Batch approval, latest Queue, latest Handoff, progress percentages, and the exact next command. `intake-next` prints only the next action and command for quick handoff. `intake-template` gives the operator a standard Markdown shape for the raw idea, while `intake-prompt` creates a copyable planning prompt that asks Codex/ChatGPT to produce a brief draft, blueprint outline, candidate backlog/tasks, batch suggestion, risks, non-goals, and validation expectations.
@@ -97,7 +99,9 @@ After materialization, run `intake-next-slice` before approval. It inspects the 
 
 `intake-next-slice` also deprioritizes workflow setup tasks when the artifacts already prove they happened. For example, after an intake has been created and materialized, tasks such as "run intake-plan" or "review generated intake JSON/Markdown" are shown as already-performed setup instead of being treated as the best next implementation slice.
 
-`intake-next-slice` is read-only. It does not approve the batch or policy, create queue-worker runs, run Codex, validate, create delivery requests, commit, or push.
+`intake-policy-create-next` is the next convenience step after reviewing `intake-next-slice`. In preview mode it is read-only and prints the policy it would create. With `--confirm-create-policy`, it creates one narrow draft execution policy for the recommended task and queue item, preserving the recommended allowed task, queue item, allowed files, forbidden files, validation commands, and notes from the materialized intake.
+
+`intake-next-slice` and preview mode for `intake-policy-create-next` are read-only. Confirmed `intake-policy-create-next` creates only a draft policy. It does not request approval, approve anything, create queue-worker runs, run Codex, validate, create delivery requests, commit, or push.
 
 These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.
 
