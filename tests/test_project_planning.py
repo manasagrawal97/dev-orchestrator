@@ -2328,6 +2328,207 @@ def test_queue_worker_record_review_and_validation_write_evidence(tmp_path: Path
     assert "Validation passed. Run approved-queue-run to create delivery request" in validation.output
 
 
+def test_queue_worker_run_validation_preview_lists_commands_without_recording(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+    before_target = _target_snapshot(project_path)
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-run-validation", "--project", "sample", "--policy", "POL-0001", "--run", "QWR-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Queue worker validation run: QWR-0001" in result.output
+    assert "Dry run: True" in result.output
+    assert "cmd /c echo ok" in result.output
+    assert "SKIP" in result.output
+    assert "Validation evidence id: none" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump() == review_before
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_run_validation_rejects_unapproved_policy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    json_path, _markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(policy.model_copy(update={"status": "draft"}).model_dump_json(indent=2), encoding="utf-8")
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-run-validation",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--confirm-run-validation",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Execution policy must be approved before running validation, not draft" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump() == review_before
+
+
+def test_queue_worker_run_validation_rejects_missing_worker_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-run-validation",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--confirm-run-validation",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Completed worker result evidence is required before validation can run." in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_run_validation_rejects_missing_passed_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+    _import_worker_report(tmp_path)
+    _continue_queue_worker_run()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-run-validation",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--confirm-run-validation",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Passed worker review evidence is required before validation can run." in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_run_validation_rejects_policy_run_mismatch(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+    _create_execution_policy(tmp_path, validation_commands=["cmd /c echo other"])
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-run-validation",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0002",
+            "--run",
+            "QWR-0001",
+            "--confirm-run-validation",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "belongs to policy POL-0001, not POL-0002" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump() == review_before
+
+
+def test_queue_worker_run_validation_records_failed_evidence_when_command_fails(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo failing && exit 1", "cmd /c echo skipped"])
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-run-validation",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--confirm-run-validation",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Overall status: failed" in result.output
+    assert "FAIL | exit=1 | cmd /c echo failing && exit 1" in result.output
+    assert "cmd /c echo skipped" in result.output
+    assert "OK | exit=0 | cmd /c echo skipped" not in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review.validation_evidence.validation_status == "failed"
+    assert review.validation_evidence.evidence_record.status == "failed"
+    assert "cmd /c echo failing && exit 1" in review.validation_evidence.commands_reported
+    assert "cmd /c echo skipped" not in review.validation_evidence.commands_reported
+    assert "Automatic validation failed" in review.validation_evidence.validation_summary
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_queue_worker_run_validation_records_passed_evidence_without_delivery(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-run-validation",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--confirm-run-validation",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Overall status: passed" in result.output
+    assert "OK | exit=0 | cmd /c echo ok" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review.validation_evidence.validation_status == "passed"
+    assert review.validation_evidence.evidence_record.status == "passed"
+    assert review.validation_evidence.evidence_record.recorded_by == "devo queue-worker-run-validation"
+    assert any(
+        "Validation evidence was recorded from queue-worker-run-validation" in warning
+        for warning in review.validation_evidence.warnings
+    )
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    assert _git(project_path, "status", "--short", capture=True).stdout == ""
+
+
 def test_queue_worker_record_commands_reject_unknown_missing_and_unsafe_states(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)
@@ -7215,6 +7416,7 @@ def _create_execution_policy(
     tmp_path: Path,
     *,
     allowed_task: str = "T001",
+    validation_commands: list[str] | None = None,
     request: bool = True,
     approve: bool = True,
     expires_at: str | None = None,
@@ -7235,13 +7437,13 @@ def _create_execution_policy(
         "src/**",
         "--forbidden-file",
         ".env",
-        "--validation-command",
-        "pytest",
         "--max-tasks",
         "5",
         "--max-tasks-per-run",
         "1",
     ]
+    for command in validation_commands or ["pytest"]:
+        args.extend(["--validation-command", command])
     for task_id in [value.strip() for value in allowed_task.split(",") if value.strip()]:
         args.extend(["--allowed-task", task_id])
     if expires_at:
@@ -7257,8 +7459,8 @@ def _create_execution_policy(
         assert approved.exit_code == 0, approved.output
 
 
-def _create_queue_worker_run(tmp_path: Path) -> None:
-    _create_execution_policy(tmp_path, allowed_task="T001")
+def _create_queue_worker_run(tmp_path: Path, *, validation_commands: list[str] | None = None) -> None:
+    _create_execution_policy(tmp_path, allowed_task="T001", validation_commands=validation_commands)
     result = runner.invoke(
         app,
         ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
@@ -7274,6 +7476,14 @@ def _create_ready_queue_worker_run(tmp_path: Path) -> None:
     _record_worker_review(status="reviewed_passed")
     _continue_queue_worker_run()
     _attach_validation(status="passed")
+    _continue_queue_worker_run()
+
+
+def _create_reviewed_queue_worker_run(tmp_path: Path, *, validation_commands: list[str] | None = None) -> None:
+    _create_queue_worker_run(tmp_path, validation_commands=validation_commands)
+    _import_worker_report(tmp_path)
+    _continue_queue_worker_run()
+    _record_worker_review(status="reviewed_passed")
     _continue_queue_worker_run()
 
 

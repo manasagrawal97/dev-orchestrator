@@ -105,6 +105,19 @@ After materialization, run `intake-next-slice` before approval. It inspects the 
 
 These commands are local-first and planning-only. They do not call AI, approve implementation, create execution queues, run Codex, execute target commands, validate, commit, push, or modify the target repository.
 
+## Automatic Validation Evidence
+
+After a queue-worker run has completed worker-result evidence and passed review evidence, Devo can run the approved policy validation commands and record validation evidence:
+
+```powershell
+devo project queue-worker-run-validation --project MyProject --policy POL-0001 --run QWR-0001
+devo project queue-worker-run-validation --project MyProject --policy POL-0001 --run QWR-0001 --confirm-run-validation
+```
+
+Preview mode loads the project, policy, run, and current evidence state, then prints the validation commands without running anything. Confirmed mode requires an approved policy, matching queue-worker run, completed worker result, and passed review. It runs each policy validation command from the target repo root, captures bounded stdout/stderr tails and exit codes, records passed validation evidence only if every command exits 0, and records failed validation evidence on the first failing command.
+
+This command does not create delivery requests, run the trusted runner, stage, commit, or push. After passing validation evidence is recorded, continue with the normal queue-worker loop or approved queue run to create the trusted delivery request.
+
 ## Project Brief And Blueprint
 
 The first planning pipeline artifacts are Project Brief, Blueprint, Backlog, Tasks, and planning Batches.

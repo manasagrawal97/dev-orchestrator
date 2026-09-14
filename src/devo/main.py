@@ -163,6 +163,7 @@ from .project_planning import (
     QueueWorkerRun,
     QueueWorkerStepResult,
     QueueWorkerStatusReport,
+    QueueWorkerValidationRunResult,
     QueueItemCompletionReadiness,
     WorkerReview,
     WorkerReportValidationResult,
@@ -278,6 +279,7 @@ from .project_planning import (
     run_queue_worker_once,
     retry_queue_worker_run,
     fail_queue_worker_run,
+    run_queue_worker_policy_validation,
     summarize_queue_worker_evidence,
     summarize_codex_worker_batch_policy,
     run_codex_worker_preflight,
@@ -1504,6 +1506,41 @@ def _print_queue_worker_evidence_record_result(result: QueueWorkerEvidenceRecord
         "Safety: this command records workspace evidence only. It does not run Codex, validation, review, runner-watch, commit, push, or delivery.",
         soft_wrap=True,
     )
+
+
+def _print_queue_worker_validation_run_result(result: QueueWorkerValidationRunResult) -> None:
+    console.print(f"[bold]Queue worker validation run: {result.run_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Policy: {result.policy_id}")
+    console.print(f"Dry run: {result.dry_run}")
+    console.print(f"Overall status: {result.overall_status}")
+    console.print(f"Current worker status: {result.current_worker_status or 'none'}")
+    console.print(f"Current review status: {result.current_review_status or 'none'}")
+    console.print(f"Current validation status: {result.current_validation_status or 'none'}")
+    console.print("Validation commands:")
+    for command in result.commands_planned or ["none"]:
+        console.print(f"  - {command}", soft_wrap=True)
+    console.print("Command results:")
+    for item in result.command_results or []:
+        status = "SKIP" if item.skipped else ("OK" if item.passed else "FAIL")
+        console.print(f"  - {status} | exit={item.exit_code if item.exit_code is not None else 'none'} | {item.command}", soft_wrap=True)
+        if item.stdout_tail:
+            console.print(f"    stdout tail: {item.stdout_tail}", soft_wrap=True)
+        if item.stderr_tail:
+            console.print(f"    stderr tail: {item.stderr_tail}", soft_wrap=True)
+    if not result.command_results:
+        console.print("  - none")
+    console.print(f"Validation evidence id: {result.validation_evidence_id or 'none'}")
+    console.print(f"Validation evidence JSON: {_named_path(Path(result.validation_evidence_json_path)) if result.validation_evidence_json_path else 'none'}")
+    console.print(f"Validation evidence Markdown: {_named_path(Path(result.validation_evidence_markdown_path)) if result.validation_evidence_markdown_path else 'none'}")
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print(f"Safety: {result.safety_note}", soft_wrap=True)
 
 
 def _queue_worker_next_action_text(run: QueueWorkerRun, evidence, blockers: list[str]) -> str:
@@ -5863,6 +5900,29 @@ def record_queue_worker_validation_command(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_queue_worker_evidence_record_result(result)
+
+
+@project_app.command("queue-worker-run-validation")
+def run_queue_worker_validation_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Approved execution policy id."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    confirm_run_validation: bool = typer.Option(False, "--confirm-run-validation", help="Confirm running approved policy validation commands."),
+) -> None:
+    """Run approved policy validation commands and record validation evidence."""
+    project_name = _resolve_project(project_name)
+    try:
+        result = run_queue_worker_policy_validation(
+            project_name,
+            policy_id,
+            run_id,
+            confirm_run_validation=confirm_run_validation,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_validation_run_result(result)
+    if result.blockers or result.overall_status in {"blocked", "failed"}:
+        raise typer.Exit(1)
 
 
 @project_app.command("queue-worker-continue")

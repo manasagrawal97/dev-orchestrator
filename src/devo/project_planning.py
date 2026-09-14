@@ -597,6 +597,42 @@ class QueueWorkerEvidenceRecordResult(BaseModel):
     blockers: list[str] = Field(default_factory=list)
 
 
+class QueueWorkerValidationCommandResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str
+    exit_code: int | None = None
+    stdout_tail: str = ""
+    stderr_tail: str = ""
+    passed: bool = False
+    skipped: bool = False
+
+
+class QueueWorkerValidationRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    run_id: str
+    dry_run: bool = True
+    commands_planned: list[str] = Field(default_factory=list)
+    command_results: list[QueueWorkerValidationCommandResult] = Field(default_factory=list)
+    overall_status: str = "blocked"
+    validation_evidence_id: str | None = None
+    validation_evidence_json_path: str | None = None
+    validation_evidence_markdown_path: str | None = None
+    current_worker_status: str | None = None
+    current_review_status: str | None = None
+    current_validation_status: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    safety_note: str = (
+        "queue-worker-run-validation may run approved validation commands only with explicit confirmation. "
+        "It records validation evidence, but does not create delivery requests, run the trusted runner, stage, commit, or push."
+    )
+
+
 class CodexWorkerPreparation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -5800,6 +5836,7 @@ def record_queue_worker_validation(
     recommended_next_action: str | None = None,
     recorded_by: str | None = None,
     note: str | None = None,
+    automated: bool = False,
     workspace_root: Path | None = None,
 ) -> QueueWorkerEvidenceRecordResult:
     root = workspace_root or get_workspace_root()
@@ -5829,7 +5866,12 @@ def record_queue_worker_validation(
     cleaned_artifact = _clean_optional_path(artifact_path)
     if cleaned_artifact and cleaned_artifact not in evidence_paths:
         evidence_paths.append(cleaned_artifact)
-    warnings = [*review.validation_evidence.warnings, "Validation evidence was recorded manually; Devo did not run validation automatically."]
+    recording_warning = (
+        "Validation evidence was recorded from queue-worker-run-validation; Devo ran the approved policy validation commands."
+        if automated
+        else "Validation evidence was recorded manually; Devo did not run validation automatically."
+    )
+    warnings = [*review.validation_evidence.warnings, recording_warning]
     if normalized_status == "blocked":
         warnings.append("Validation was recorded as blocked.")
     if normalized_status == "not_run":
@@ -5905,6 +5947,189 @@ def record_queue_worker_validation(
         next_action=next_action,
         warnings=evidence.warnings,
         blockers=evidence.blockers,
+    )
+
+
+def run_queue_worker_policy_validation(
+    project_name: str,
+    policy_id: str,
+    run_id: str,
+    *,
+    confirm_run_validation: bool = False,
+    workspace_root: Path | None = None,
+) -> QueueWorkerValidationRunResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    policy = _require_execution_policy(project_name, policy_id, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    registration = load_registered_project(project_name, workspace_root=root)
+    target_path = Path(registration.path).expanduser().resolve()
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    commands = list(policy.validation_commands)
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    if run.policy_id != policy.policy_id:
+        blockers.append(f"Queue-worker run {run.run_id} belongs to policy {run.policy_id}, not {policy.policy_id}.")
+    if policy.queue_id and run.queue_id and policy.queue_id != run.queue_id:
+        blockers.append(f"Queue-worker run queue {run.queue_id} does not match policy queue {policy.queue_id}.")
+    if run.selected_task_id and policy.allowed_task_ids and run.selected_task_id not in policy.allowed_task_ids:
+        blockers.append(f"Selected task {run.selected_task_id} is not allowed by policy {policy.policy_id}.")
+    if run.selected_queue_item_id and policy.allowed_queue_item_ids and run.selected_queue_item_id not in policy.allowed_queue_item_ids:
+        blockers.append(f"Selected queue item {run.selected_queue_item_id} is not allowed by policy {policy.policy_id}.")
+    queue = load_execution_queue(project_name, run.queue_id, workspace_root=root) if run.queue_id else None
+    queue_item = _find_queue_item(queue.items, run.selected_queue_item_id) if queue and run.selected_queue_item_id else None
+    if run.queue_id and not queue:
+        blockers.append(f"Execution queue not found: {run.queue_id}")
+    if run.selected_queue_item_id and queue and not queue_item:
+        blockers.append(f"Queue item not found: {run.selected_queue_item_id}")
+    if queue_item and run.selected_task_id and queue_item.task_id != run.selected_task_id:
+        blockers.append(
+            f"Queue item/task mismatch: queue item {queue_item.item_id} points to {queue_item.task_id}, "
+            f"but run selected {run.selected_task_id}."
+        )
+    if not commands:
+        blockers.append("Approved execution policy has no validation commands.")
+
+    preview_next = (
+        f"Review planned validation commands, then rerun with: devo project queue-worker-run-validation --project {project_name} "
+        f"--policy {policy.policy_id} --run {run.run_id} --confirm-run-validation"
+    )
+    if not confirm_run_validation:
+        return QueueWorkerValidationRunResult(
+            project=project_name,
+            policy_id=policy.policy_id,
+            run_id=run.run_id,
+            dry_run=True,
+            commands_planned=commands,
+            command_results=[QueueWorkerValidationCommandResult(command=command, skipped=True) for command in commands],
+            overall_status="preview" if not blockers else "blocked",
+            current_worker_status=evidence.worker_report_status,
+            current_review_status=evidence.worker_review_status,
+            current_validation_status=evidence.validation_status,
+            blockers=_dedupe(blockers),
+            warnings=_dedupe(warnings),
+            next_action=preview_next if not blockers else "Resolve blockers before running validation commands.",
+        )
+
+    if policy.status != "approved":
+        blockers.append(f"Execution policy must be approved before running validation, not {policy.status}.")
+    if run.status != "waiting_validation":
+        blockers.append(f"Queue-worker run must be waiting_validation before automatic validation, not {run.status}.")
+    if not evidence.worker_report_imported or evidence.worker_report_status != "completed":
+        blockers.append("Completed worker result evidence is required before validation can run.")
+    if not evidence.worker_review_passed:
+        blockers.append("Passed worker review evidence is required before validation can run.")
+    if not target_path.exists():
+        blockers.append(f"Target repo path does not exist: {target_path}")
+
+    forbidden_commands = [command for command in commands if _validation_command_is_forbidden_mutation(command)]
+    if forbidden_commands:
+        blockers.append("Validation command contains a forbidden delivery/git mutation: " + "; ".join(forbidden_commands))
+
+    if blockers:
+        return QueueWorkerValidationRunResult(
+            project=project_name,
+            policy_id=policy.policy_id,
+            run_id=run.run_id,
+            dry_run=False,
+            commands_planned=commands,
+            command_results=[QueueWorkerValidationCommandResult(command=command, skipped=True) for command in commands],
+            overall_status="blocked",
+            current_worker_status=evidence.worker_report_status,
+            current_review_status=evidence.worker_review_status,
+            current_validation_status=evidence.validation_status,
+            blockers=_dedupe(blockers),
+            warnings=_dedupe(warnings),
+            next_action="Resolve blockers before running validation commands. No validation evidence was recorded.",
+        )
+
+    command_results: list[QueueWorkerValidationCommandResult] = []
+    for command in commands:
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=target_path,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            result = QueueWorkerValidationCommandResult(
+                command=command,
+                exit_code=completed.returncode,
+                stdout_tail=_validation_output_tail(completed.stdout),
+                stderr_tail=_validation_output_tail(completed.stderr),
+                passed=completed.returncode == 0,
+            )
+        except subprocess.TimeoutExpired as exc:
+            result = QueueWorkerValidationCommandResult(
+                command=command,
+                exit_code=None,
+                stdout_tail=_validation_output_tail(exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout),
+                stderr_tail=_validation_output_tail(exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr),
+                passed=False,
+            )
+            warnings.append(f"Validation command timed out after 120 seconds: {command}")
+        except OSError as exc:
+            result = QueueWorkerValidationCommandResult(
+                command=command,
+                exit_code=None,
+                stderr_tail=_validation_output_tail(str(exc)),
+                passed=False,
+            )
+        command_results.append(result)
+        if not result.passed:
+            break
+
+    all_passed = bool(command_results) and all(item.passed for item in command_results)
+    validation_status = "passed" if all_passed else "failed"
+    summary = (
+        f"Automatic validation {'passed' if all_passed else 'failed'}: "
+        f"{sum(1 for item in command_results if item.passed)}/{len(command_results)} executed command(s) passed."
+    )
+    note_lines = ["Automatic queue-worker validation command results:"]
+    for item in command_results:
+        note_lines.append(f"- {item.command} -> exit {item.exit_code if item.exit_code is not None else 'none'}")
+        if item.stdout_tail:
+            note_lines.append(f"  stdout tail: {item.stdout_tail}")
+        if item.stderr_tail:
+            note_lines.append(f"  stderr tail: {item.stderr_tail}")
+    evidence_result = record_queue_worker_validation(
+        project_name,
+        run.run_id,
+        status=validation_status,
+        summary=summary,
+        commands_run=", ".join(item.command for item in command_results),
+        risks="automatic validation evidence; review command output before delivery",
+        recommended_next_action=(
+            f"Run approved-queue-run to create delivery request: devo project approved-queue-run --project {project_name} "
+            f"--policy {policy.policy_id} --run {run.run_id} --confirm-auto-run"
+            if all_passed
+            else "Resolve validation failure before delivery."
+        ),
+        recorded_by="devo queue-worker-run-validation",
+        note="\n".join(note_lines),
+        automated=True,
+        workspace_root=root,
+    )
+    return QueueWorkerValidationRunResult(
+        project=project_name,
+        policy_id=policy.policy_id,
+        run_id=run.run_id,
+        dry_run=False,
+        commands_planned=commands,
+        command_results=command_results,
+        overall_status=validation_status,
+        validation_evidence_id=evidence_result.evidence_record.evidence_id if evidence_result.evidence_record else None,
+        validation_evidence_json_path=evidence_result.record_json_path,
+        validation_evidence_markdown_path=evidence_result.record_markdown_path,
+        current_worker_status=evidence_result.evidence.worker_report_status,
+        current_review_status=evidence_result.evidence.worker_review_status,
+        current_validation_status=evidence_result.evidence.validation_status,
+        blockers=_dedupe(evidence_result.blockers),
+        warnings=_dedupe([*warnings, *evidence_result.warnings]),
+        next_action=evidence_result.next_action,
     )
 
 
@@ -12384,6 +12609,33 @@ def _patch_proposal_manual_review_next_action() -> str:
         "Review patch proposal manually. Do not record normal review/validation/delivery "
         "until changes are actually applied and validated."
     )
+
+
+def _validation_output_tail(value: str | None, *, max_chars: int = 2000) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def _validation_command_is_forbidden_mutation(command: str) -> bool:
+    normalized = re.sub(r"\s+", " ", command.strip().lower())
+    forbidden_patterns = [
+        r"\bgit\s+add\b",
+        r"\bgit\s+commit\b",
+        r"\bgit\s+push\b",
+        r"\bdevo\s+delivery\s+commit\b",
+        r"\bdevo\s+delivery\s+push\b",
+        r"\bdevo\s+delivery\s+runner-run\b",
+        r"\bdevo\s+delivery\s+runner-watch\b",
+        r"\bdevo\.exe\s+delivery\s+commit\b",
+        r"\bdevo\.exe\s+delivery\s+push\b",
+        r"\bdevo\.exe\s+delivery\s+runner-run\b",
+        r"\bdevo\.exe\s+delivery\s+runner-watch\b",
+    ]
+    return any(re.search(pattern, normalized) for pattern in forbidden_patterns)
 
 
 def _patch_proposal_show_next_action(ingest: CodexWorkerIngest, *, patch_exists: bool) -> str:
