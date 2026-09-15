@@ -2762,6 +2762,229 @@ def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatc
     assert run.status == "delivery_requested"
 
 
+def test_queue_worker_loop_without_auto_validation_still_stops_at_validation_gate(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-validation: disabled" in result.output
+    assert "Stop reason: validation evidence is not passing" in result.output
+    assert "Validation status: provided" in result.output
+    assert "queue-worker-record-validation --project sample --run QWR-0001" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.validation_evidence.validation_status == "provided"
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_queue_worker_loop_auto_validation_dry_run_does_not_execute_commands(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    marker = tmp_path / "validation-ran.txt"
+    command = f'cmd /c echo ran > "{marker}"'
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=[command])
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-validation",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-validation: enabled" in result.output
+    assert "Automatic validation runs:" in result.output
+    assert "not run (dry-run preview)" in result.output
+    assert "Stop reason: automatic validation preview" in result.output
+    assert not marker.exists()
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump() == review_before
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_queue_worker_loop_auto_validation_passes_then_creates_delivery_request(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('auto validated')\n", encoding="utf-8")
+    head_before = _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip()
+
+    def unexpected_runner(*_args, **_kwargs):
+        pytest.fail("queue-worker-loop must not invoke the trusted runner")
+
+    monkeypatch.setattr("devo.delivery.run_delivery_runner_request", unexpected_runner)
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--message",
+            "feat: auto validation",
+            "--auto-validation",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-validation: enabled" in result.output
+    assert "run=QWR-0001 status=passed" in result.output
+    assert "OK | exit=0 | cmd /c echo ok" in result.output
+    assert "created delivery runner request REQ-0001" in result.output
+    assert "Stop reason: waiting for trusted runner" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.validation_evidence.validation_status == "passed"
+    assert review.validation_evidence.evidence_record is not None
+    assert review.validation_evidence.evidence_record.recorded_by == "devo queue-worker-run-validation"
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert request.status == "requested"
+    assert _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip() == head_before
+    _git(project_path, "diff", "--cached", "--quiet")
+    assert _git(project_path, "status", "--short", capture=True).stdout.strip() == "?? src/"
+
+
+def test_queue_worker_loop_auto_validation_failure_records_evidence_and_stops(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo failing && exit 1"])
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('not delivered')\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-validation",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "run=QWR-0001 status=failed" in result.output
+    assert "FAIL | exit=1 | cmd /c echo failing && exit 1" in result.output
+    assert "Stop reason: automatic validation failed" in result.output
+    assert "Automatic validation failed; delivery request was not created." in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.validation_evidence.validation_status == "failed"
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    _git(project_path, "diff", "--cached", "--quiet")
+
+
+def test_queue_worker_loop_auto_validation_blocker_stops_before_delivery(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["git commit -m unsafe"])
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-validation",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "run=QWR-0001 status=blocked" in result.output
+    assert "Stop reason: automatic validation blocked" in result.output
+    assert "Validation command contains a forbidden delivery/git mutation" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump() == review_before
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_queue_worker_loop_auto_validation_does_not_bypass_pending_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path, validation_commands=["cmd /c echo should-not-run"])
+    _import_worker_report(tmp_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-validation",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: worker review missing" in result.output
+    assert "Automatic validation runs:\n  - not run" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_queue_worker_loop_auto_validation_does_not_bypass_policy_approval(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    marker = tmp_path / "unapproved-validation-ran.txt"
+    command = f'cmd /c echo ran > "{marker}"'
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=[command])
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    policy_json, _policy_markdown = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    policy_json.write_text(policy.model_copy(update={"status": "draft"}).model_dump_json(indent=2), encoding="utf-8")
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-validation",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Stop reason: policy no longer valid" in result.output
+    assert not marker.exists()
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace).model_dump() == review_before
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
 @pytest.mark.parametrize(
     ("validation_status", "expected_exit", "expected_run_status"),
     [

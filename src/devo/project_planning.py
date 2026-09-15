@@ -558,23 +558,6 @@ class QueueWorkerLoopStep(BaseModel):
     next_action: str = ""
 
 
-class QueueWorkerLoopResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    project: str
-    policy_id: str
-    run_id: str | None = None
-    dry_run: bool = False
-    max_steps: int = 10
-    steps_attempted: int = 0
-    steps: list[QueueWorkerLoopStep] = Field(default_factory=list)
-    stop_reason: str = ""
-    warnings: list[str] = Field(default_factory=list)
-    blockers: list[str] = Field(default_factory=list)
-    next_action: str = ""
-    mutated: bool = False
-
-
 class QueueWorkerEvidenceRecordResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -631,6 +614,25 @@ class QueueWorkerValidationRunResult(BaseModel):
         "queue-worker-run-validation may run approved validation commands only with explicit confirmation. "
         "It records validation evidence, but does not create delivery requests, run the trusted runner, stage, commit, or push."
     )
+
+
+class QueueWorkerLoopResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    run_id: str | None = None
+    dry_run: bool = False
+    auto_validation: bool = False
+    max_steps: int = 10
+    steps_attempted: int = 0
+    steps: list[QueueWorkerLoopStep] = Field(default_factory=list)
+    validation_runs: list[QueueWorkerValidationRunResult] = Field(default_factory=list)
+    stop_reason: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    mutated: bool = False
 
 
 class CodexWorkerPreparation(BaseModel):
@@ -6353,6 +6355,7 @@ def loop_queue_worker_run(
     note: str = "",
     max_steps: int = 10,
     dry_run: bool = False,
+    auto_validation: bool = False,
     stop_on_waiting_worker: bool = True,
     stop_on_delivery_request: bool = True,
     workspace_root: Path | None = None,
@@ -6365,6 +6368,7 @@ def loop_queue_worker_run(
         raise ValueError(msg)
 
     steps: list[QueueWorkerLoopStep] = []
+    validation_runs: list[QueueWorkerValidationRunResult] = []
     warnings: list[str] = []
     blockers: list[str] = []
     stop_reason = ""
@@ -6414,6 +6418,37 @@ def loop_queue_worker_run(
             next_action = _queue_worker_record_review_next_action(project_name, current_run_id)
             break
         if step.new_status == "waiting_validation":
+            if auto_validation and dry_run:
+                stop_reason = "automatic validation preview"
+                next_action = (
+                    "Dry-run did not execute validation commands. Run confirmed auto-validation with: "
+                    f"devo project queue-worker-loop --project {project_name} --policy {normalized_policy_id} "
+                    f"--run {current_run_id or '<QWR-ID>'} --auto-validation --confirm-loop"
+                )
+                break
+            if auto_validation:
+                validation_run = run_queue_worker_policy_validation(
+                    project_name,
+                    normalized_policy_id,
+                    current_run_id or "",
+                    confirm_run_validation=True,
+                    workspace_root=root,
+                )
+                validation_runs.append(validation_run)
+                warnings = _dedupe([*warnings, *validation_run.warnings])
+                blockers = _dedupe([*blockers, *validation_run.blockers])
+                next_action = validation_run.next_action
+                if validation_run.overall_status == "passed":
+                    mutated = True
+                    continue
+                if validation_run.overall_status == "failed":
+                    stop_reason = "automatic validation failed"
+                    blockers = _dedupe([*blockers, "Automatic validation failed; delivery request was not created."])
+                    break
+                stop_reason = "automatic validation blocked"
+                if not validation_run.blockers:
+                    blockers = _dedupe([*blockers, "Automatic validation was blocked; delivery request was not created."])
+                break
             validation_status = _validation_nonpassing_status_from_loop_step(step)
             if validation_status:
                 stop_reason = "validation evidence is not passing"
@@ -6475,9 +6510,11 @@ def loop_queue_worker_run(
         policy_id=normalized_policy_id,
         run_id=current_run_id or (steps[-1].run_id if steps else None),
         dry_run=dry_run,
+        auto_validation=auto_validation,
         max_steps=max_steps,
         steps_attempted=len(steps),
         steps=steps,
+        validation_runs=validation_runs,
         stop_reason=stop_reason or "stopped",
         warnings=warnings,
         blockers=blockers,
