@@ -28,7 +28,10 @@ The long-term product vision is documented in [Company-model vision](docs/devo-c
 
 Durable project direction is tracked in GitHub docs so DevOrchestrator can recover even if chat context is unavailable:
 
+- [AI handoff for future ChatGPT/Codex model migration](docs/ai-handoff.md)
 - [Current state](docs/current-state.md)
+- [Decision log](docs/decision-log.md)
+- [Recovery and backup](docs/recovery-and-backup.md)
 - [Devo vision](docs/devo-vision.md)
 - [Company-model vision](docs/devo-company-model.md)
 - [Codex worker launch integration design](docs/architecture/codex-worker-launch-integration-design.md)
@@ -73,6 +76,7 @@ Durable project direction is tracked in GitHub docs so DevOrchestrator can recov
 - [TASK-DEVO-182 intake materialize dogfood](docs/dogfood/task-devo-182-intake-materialize-dogfood.md)
 - [TASK-DEVO-184 intake next-slice guidance](docs/dogfood/task-devo-184-intake-next-slice-guidance.md)
 - [TASK-DEVO-187 intake policy create next](docs/dogfood/task-devo-187-intake-policy-create-next.md)
+- [Model migration handoff hardening](docs/dogfood/model-migration-handoff.md)
 - [TASK-DEVO-099 real Codex dry-run report](docs/dogfood/devo-real-codex-dry-run-099.md)
 - [TASK-DEVO-101 real Codex dry-run retry report](docs/dogfood/devo-real-codex-dry-run-retry-101.md)
 - [PersonalOS operating model](docs/personal-os-operating-model.md)
@@ -106,11 +110,12 @@ With `--project`, doctor also checks project registration, project path, Git sta
 ## If Context Is Lost
 
 1. Clone the repo from `https://github.com/manasagrawal97/dev-orchestrator`.
-2. Read [docs/current-state.md](docs/current-state.md).
-3. Read [docs/roadmap.md](docs/roadmap.md).
-4. Run `powershell.exe -ExecutionPolicy Bypass -File .\scripts\recovery\check-devo-recovery-status.ps1`.
-5. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for the latest compact workspace state.
-6. Continue from the next planned task.
+2. Read [docs/ai-handoff.md](docs/ai-handoff.md) first.
+3. Then read [docs/current-state.md](docs/current-state.md), [docs/usability-roadmap.md](docs/usability-roadmap.md), [docs/how-to-use-devo.md](docs/how-to-use-devo.md), [docs/decision-log.md](docs/decision-log.md), and [docs/recovery-and-backup.md](docs/recovery-and-backup.md).
+4. Inspect the latest Git log and the latest Devo queue/policy status.
+5. Run `powershell.exe -ExecutionPolicy Bypass -File .\scripts\recovery\check-devo-recovery-status.ps1` if recovering a machine or workspace.
+6. Run `devo report handoff --project DevOrchestrator` or `devo report project --project DevOrchestrator` for the latest compact workspace state.
+7. Continue from the next approved/pending task unless Manas redirects.
 
 ## Setup
 

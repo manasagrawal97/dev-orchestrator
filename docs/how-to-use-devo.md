@@ -17,8 +17,11 @@ Longer term, Devo should work like a local software-development company operatin
 
 For the plain-language product model, read:
 
+- [AI handoff](ai-handoff.md)
 - [Devo vision](devo-vision.md)
 - [Company-model vision](devo-company-model.md)
+- [Decision log](decision-log.md)
+- [Recovery and backup](recovery-and-backup.md)
 - [Codex worker adapter design](codex-worker-adapter-design.md)
 - [Real Codex batch-run readiness checkpoint](architecture/real-codex-batch-run-readiness-checkpoint.md)
 - [Reviewed patch-apply design](architecture/reviewed-patch-apply-design.md)
@@ -35,6 +38,12 @@ For the plain-language product model, read:
 - [UI/API architecture](ui-architecture.md)
 - [UI MVP specification](ui-mvp-spec.md)
 - [PersonalOS operating model](personal-os-operating-model.md)
+
+## Future Model Handoff
+
+If a future ChatGPT/Codex model starts without reliable conversation context, it should read [AI handoff](ai-handoff.md) first. Then read [Current state](current-state.md), [Usability roadmap](usability-roadmap.md), this guide, [Decision log](decision-log.md), and [Recovery and backup](recovery-and-backup.md).
+
+The durable priority is supervised Codex CLI automation before UI/dashboard polish. The next automation target after TASK-DEVO-190 is TASK-DEVO-191: optional `queue-worker-loop --auto-validation` for `POL-0029` / `QWR-0027`. Continue from the next approved/pending task unless Manas redirects.
 
 ## Typical Lifecycle
 

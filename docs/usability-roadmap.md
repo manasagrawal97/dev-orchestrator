@@ -121,6 +121,8 @@ TASK-DEVO-181 shifts the next usability slice back to Manas's planning burden. `
 
 TASK-DEVO-190 starts the Supervised Auto Mode foundation with `devo project queue-worker-run-validation --project <project> --policy <POL-ID> --run <QWR-ID> --confirm-run-validation`. Preview mode prints approved policy validation commands without running them. Confirmed mode runs those commands from the target repo root only after approved policy, completed worker evidence, passed review evidence, and run/policy linkage are present, then records passed or failed validation evidence. It still does not create delivery requests, run trusted delivery, stage, commit, push, approve anything, or start the next item.
 
+The current model-migration hardening pass records the product priority in `docs/ai-handoff.md`: supervised Codex CLI automation comes before UI/dashboard polish. TASK-DEVO-191 is the next automation slice and should add optional `queue-worker-loop --auto-validation` behavior for the already planned/approved `POL-0029` / `QWR-0027` path. After that, the intended sequence is deterministic auto-review, Codex worker auto-run/auto-ingest hardening, bulk bounded approval, and a supervised `auto-run-approved` sequential loop.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.
