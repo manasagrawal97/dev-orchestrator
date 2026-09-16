@@ -15,12 +15,14 @@ from devo.delivery import (
     load_delivery_runner_run,
     list_delivery_runner_requests,
     run_delivery_runner_watch,
+    run_delivery_readiness_check,
     write_delivery_runner_request,
     write_delivery_runner_run,
 )
 from devo.main import app
 from devo.project_planning import (
     BacklogTask,
+    CodexWorkerIngest,
     CodexWorkerReport,
     ProjectBacklog,
     QueueWorkerRun,
@@ -30,6 +32,7 @@ from devo.project_planning import (
     create_execution_queue_from_batch,
     codex_worker_batch_run_directory,
     codex_worker_config_artifact_path,
+    codex_worker_ingest_artifact_paths,
     codex_worker_run_preview_directory,
     codex_worker_subprocess_run_directory,
     execution_policy_artifact_paths,
@@ -68,6 +71,7 @@ from devo.project_planning import (
     queue_worker_run_artifact_paths,
     request_queue_worker_delivery,
     summarize_queue_worker_evidence,
+    worker_report_artifact_paths,
 )
 from devo.read_models import build_patch_proposal_apply_overview, build_patch_proposal_overview, build_project_overview
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -8191,6 +8195,336 @@ def _target_snapshot(project_path: Path) -> dict[str, str]:
         for path in project_path.rglob("*")
         if path.is_file() and ".git" not in path.relative_to(project_path).parts
     }
+
+
+def _set_auto_review_policy(
+    workspace: Path,
+    *,
+    status: str = "approved",
+    risk_level: str = "low",
+    allowed_files: list[str] | None = None,
+    forbidden_files: list[str] | None = None,
+    max_changed_files: int = 20,
+) -> None:
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    policy = policy.model_copy(
+        update={
+            "status": status,
+            "risk_level": risk_level,
+            "allowed_file_patterns": allowed_files or ["src/**"],
+            "forbidden_file_patterns": forbidden_files or [".env"],
+            "max_changed_files_per_task": max_changed_files,
+            "max_total_changed_files": max_changed_files,
+        }
+    )
+    json_path, _markdown_path = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    json_path.write_text(policy.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _setup_auto_review_candidate(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    report_status: str = "completed",
+) -> tuple[Path, Path]:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_auto_review_policy(workspace)
+    _import_worker_report(tmp_path, status=report_status)
+    _continue_queue_worker_run()
+    return workspace, project_path
+
+
+def _write_auto_review_change(project_path: Path, path: str = "src/feature.py", content: str = "implemented = True\n") -> None:
+    target = project_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def _run_auto_review(*, confirm: bool = False, policy: str = "POL-0001"):
+    args = ["project", "queue-worker-run-review", "--project", "sample", "--policy", policy, "--run", "QWR-0001"]
+    if confirm:
+        args.append("--confirm-run-review")
+    return runner.invoke(app, args, terminal_width=240)
+
+
+def test_queue_worker_auto_review_preview_is_read_only_and_records_no_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _write_auto_review_change(project_path)
+    before_workspace = sorted(path.relative_to(workspace) for path in workspace.rglob("*"))
+    before_head = _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip()
+
+    result = _run_auto_review()
+
+    assert result.exit_code == 0, result.output
+    assert "Queue worker deterministic review: QWR-0001" in result.output
+    assert "Dry run: True" in result.output
+    assert "Overall status: ready" in result.output
+    assert "does not prove semantic" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+    assert sorted(path.relative_to(workspace) for path in workspace.rglob("*")) == before_workspace
+    assert _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip() == before_head
+    assert _git(project_path, "diff", "--cached", "--name-only", capture=True).stdout == ""
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_unapproved_policy_without_mutation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _write_auto_review_change(project_path)
+    _set_auto_review_policy(workspace, status="draft")
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "approved status is required" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_policy_run_mismatch(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _write_auto_review_change(project_path)
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    run_json, _run_markdown = queue_worker_run_artifact_paths("sample", "QWR-0001", workspace_root=workspace)
+    run_json.write_text(run.model_copy(update={"policy_id": "POL-9999"}).model_dump_json(indent=2), encoding="utf-8")
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "belongs to POL-9999; expected POL-0001" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_missing_and_failed_worker_results(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_auto_review_policy(workspace)
+    _write_auto_review_change(project_path)
+
+    missing = _run_auto_review(confirm=True)
+
+    assert missing.exit_code == 1, missing.output
+    assert "Imported worker-result evidence is missing" in missing.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+    _import_worker_report(tmp_path, status="blocked")
+    blocked = _run_auto_review(confirm=True)
+    assert blocked.exit_code == 1, blocked.output
+    assert "Worker result must be completed; current status is blocked" in blocked.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_patch_proposal_only_evidence(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _write_auto_review_change(project_path)
+    ingest = CodexWorkerIngest(
+        project="sample",
+        ingest_id="CWI-AUTO-REVIEW",
+        queue_worker_run_id="QWR-0001",
+        policy_id="POL-0001",
+        queue_id="Q001",
+        queue_item_id="QI001",
+        task_id="T001",
+        worker_run_id="WR001",
+        status="blocked",
+        summary="Patch proposal only.",
+        patch_proposal_present=True,
+        patch_artifact_path="proposal.patch",
+        raw_result_file="worker-result.json",
+        raw_result_copy_path="raw-result-copy.json",
+    )
+    ingest_json, _ingest_markdown, _raw_copy = codex_worker_ingest_artifact_paths("sample", ingest.ingest_id, workspace_root=workspace)
+    ingest_json.parent.mkdir(parents=True, exist_ok=True)
+    ingest_json.write_text(ingest.model_dump_json(indent=2), encoding="utf-8")
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "Patch-proposal-only evidence cannot pass deterministic review" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+@pytest.mark.parametrize(
+    ("changed_path", "allowed", "forbidden", "expected"),
+    [
+        ("outside.txt", ["src/**"], [".env"], "outside policy allowed scope"),
+        (".env", [".env"], [".env"], "Forbidden changed files detected"),
+    ],
+)
+def test_queue_worker_auto_review_blocks_outside_or_forbidden_files(
+    tmp_path: Path,
+    monkeypatch,
+    changed_path: str,
+    allowed: list[str],
+    forbidden: list[str],
+    expected: str,
+) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _set_auto_review_policy(workspace, allowed_files=allowed, forbidden_files=forbidden)
+    _write_auto_review_change(project_path, changed_path)
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert expected in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_limit_and_worker_git_mismatch(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _set_auto_review_policy(workspace, max_changed_files=1)
+    _write_auto_review_change(project_path)
+    _write_auto_review_change(project_path, "src/extra.py")
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "exceeds effective policy limit 1" in result.output
+    assert "do not match Git changes" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_staged_files(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _write_auto_review_change(project_path)
+    _git(project_path, "add", "src/feature.py")
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "Staged files are not allowed before trusted delivery" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_blocks_real_secret_signal(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    token = "sk-proj-" + "1234567890abcdef1234567890abcdef"
+    _write_auto_review_change(
+        project_path,
+        content=f"OPENAI_API_KEY={token}\n",
+    )
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "FAIL | canonical delivery safety classification" in result.output
+    assert "Secret-risk files or signals are staged/changed" in result.output
+    assert "PASS | canonical delivery safety classification" not in result.output
+    readiness, _json_path, _markdown_path = run_delivery_readiness_check("sample", write=False, workspace_root=workspace)
+    assert readiness.secrets_risk_files == ["src/feature.py"]
+    assert readiness.blockers
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_allows_harmless_test_fixture_per_delivery_safety(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _set_auto_review_policy(workspace, allowed_files=["tests/**"])
+    _write_auto_review_change(project_path, "tests/test_fixture.py", "OPENAI_API_KEY=redacted\n")
+    report_json, _report_markdown = worker_report_artifact_paths("sample", "WR001", workspace_root=workspace)
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    report_json.write_text(report.model_copy(update={"changed_files": ["tests/test_fixture.py"]}).model_dump_json(indent=2), encoding="utf-8")
+
+    readiness, _json_path, _markdown_path = run_delivery_readiness_check("sample", write=False, workspace_root=workspace)
+    result = _run_auto_review(confirm=True)
+
+    assert readiness.secrets_risk_files == []
+    assert readiness.blockers == []
+    assert result.exit_code == 0, result.output
+    assert "PASS | canonical delivery safety classification" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "reviewed_passed"
+
+
+def test_queue_worker_auto_review_allows_documentation_secret_terms_as_warning(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _set_auto_review_policy(workspace, allowed_files=["docs/**"])
+    _write_auto_review_change(
+        project_path,
+        "docs/safety.md",
+        "Do not commit secrets, .env files, API keys, tokens, or passwords. Use <api-key> or your-token-here.\n",
+    )
+    report_json, _report_markdown = worker_report_artifact_paths("sample", "WR001", workspace_root=workspace)
+    report = load_codex_worker_report("sample", "WR001", workspace_root=workspace)
+    assert report is not None
+    report_json.write_text(report.model_copy(update={"changed_files": ["docs/safety.md"]}).model_dump_json(indent=2), encoding="utf-8")
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 0, result.output
+    assert "Documentation-only secret terms" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "reviewed_passed"
+
+
+def test_queue_worker_auto_review_blocks_unsupported_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _set_auto_review_policy(workspace, risk_level="high")
+    _write_auto_review_change(project_path)
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 1, result.output
+    assert "supports low-risk policies only; policy risk is high" in result.output
+    assert load_codex_worker_review("sample", "WR001", workspace_root=workspace) is None
+
+
+def test_queue_worker_auto_review_confirmed_pass_records_only_deterministic_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+    _write_auto_review_change(project_path)
+    before_head = _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip()
+
+    result = _run_auto_review(confirm=True)
+
+    assert result.exit_code == 0, result.output
+    assert "Overall status: passed" in result.output
+    assert "Review evidence id: qwr-0001-review" in result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "reviewed_passed"
+    assert review.evidence_record is not None
+    assert review.evidence_record.recorded_by == "devo queue-worker-run-review"
+    assert "Deterministic policy/scope review passed" in review.evidence_record.summary
+    assert "does not prove semantic or architectural correctness" in review.evidence_record.summary
+    assert review.validation_evidence.validation_status != "passed"
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    assert _git(project_path, "diff", "--cached", "--name-only", capture=True).stdout == ""
+    assert _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip() == before_head
+
+
+def test_queue_worker_auto_review_manual_review_command_remains_available(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _setup_auto_review_candidate(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "passed",
+            "--summary",
+            "Human review passed.",
+            "--recorded-by",
+            "Manas",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    assert review.evidence_record is not None
+    assert review.evidence_record.recorded_by == "Manas"
 
 
 def test_intake_policy_create_next_preserves_recommended_scope(tmp_path: Path, monkeypatch) -> None:

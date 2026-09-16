@@ -123,6 +123,8 @@ TASK-DEVO-190 starts the Supervised Auto Mode foundation with `devo project queu
 
 The model-migration handoff records the product priority in `docs/ai-handoff.md`: supervised Codex CLI automation comes before UI/dashboard polish. TASK-DEVO-191 adds optional `queue-worker-loop --auto-validation` behavior: the default remains manual, explicit confirmed mode runs approved policy validation only after worker completion and passed review, and failed or blocked validation stops before delivery. The loop may create the existing delivery request after validation passes, but it never runs the trusted runner, stages, commits, or pushes. Remaining gaps are deterministic auto-review, Codex worker auto-run/auto-ingest hardening, bulk bounded approval, and a supervised `auto-run-approved` sequential loop.
 
+TASK-DEVO-192 adds the first deterministic review helper with `queue-worker-run-review`. It can auto-record review evidence only for approved low-risk work when objective policy linkage, completed worker evidence, exact worker/Git file agreement, allowed and forbidden scope, changed-file limits, unstaged state, and the canonical trusted-delivery safety classification pass. First dogfood keeps harmless fixtures/placeholders and documentation terms aligned with delivery safety while real secret signals still block. It deliberately does not claim semantic or architectural correctness, and it leaves manual review, validation, delivery, trusted runner, commit, and push as separate gates. The next automation work should compose these proven narrow services without widening their authority.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

@@ -163,6 +163,7 @@ from .project_planning import (
     QueueWorkerRun,
     QueueWorkerStepResult,
     QueueWorkerStatusReport,
+    QueueWorkerReviewRunResult,
     QueueWorkerValidationRunResult,
     QueueItemCompletionReadiness,
     WorkerReview,
@@ -279,6 +280,7 @@ from .project_planning import (
     run_queue_worker_once,
     retry_queue_worker_run,
     fail_queue_worker_run,
+    run_queue_worker_policy_review,
     run_queue_worker_policy_validation,
     summarize_queue_worker_evidence,
     summarize_codex_worker_batch_policy,
@@ -1554,6 +1556,33 @@ def _print_queue_worker_validation_run_result(result: QueueWorkerValidationRunRe
     console.print(f"Validation evidence id: {result.validation_evidence_id or 'none'}")
     console.print(f"Validation evidence JSON: {_named_path(Path(result.validation_evidence_json_path)) if result.validation_evidence_json_path else 'none'}")
     console.print(f"Validation evidence Markdown: {_named_path(Path(result.validation_evidence_markdown_path)) if result.validation_evidence_markdown_path else 'none'}")
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+    console.print(f"Safety: {result.safety_note}", soft_wrap=True)
+
+
+def _print_queue_worker_review_run_result(result: QueueWorkerReviewRunResult) -> None:
+    console.print(f"[bold]Queue worker deterministic review: {result.run_id}[/bold]")
+    console.print(f"Project: {result.project}")
+    console.print(f"Policy: {result.policy_id}")
+    console.print(f"Dry run: {result.dry_run}")
+    console.print(f"Overall status: {result.overall_status}")
+    console.print("Deterministic checks:")
+    for check in result.checks:
+        console.print(f"  - {check.status} | {check.name} | {check.detail}", soft_wrap=True)
+    console.print(f"Actual changed files: {', '.join(result.actual_changed_files) if result.actual_changed_files else 'none'}", soft_wrap=True)
+    console.print(
+        f"Worker-reported changed files: {', '.join(result.worker_reported_changed_files) if result.worker_reported_changed_files else 'none'}",
+        soft_wrap=True,
+    )
+    console.print(f"Review evidence id: {result.review_evidence_id or 'none'}")
+    console.print(f"Review evidence JSON: {_named_path(Path(result.review_evidence_json_path)) if result.review_evidence_json_path else 'none'}")
+    console.print(f"Review evidence Markdown: {_named_path(Path(result.review_evidence_markdown_path)) if result.review_evidence_markdown_path else 'none'}")
     console.print("Warnings:")
     for warning in result.warnings or ["none"]:
         console.print(f"  - {warning}", soft_wrap=True)
@@ -5943,6 +5972,33 @@ def run_queue_worker_validation_command(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_queue_worker_validation_run_result(result)
     if result.blockers or result.overall_status in {"blocked", "failed"}:
+        raise typer.Exit(1)
+
+
+@project_app.command("queue-worker-run-review")
+def run_queue_worker_review_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_id: str = typer.Option(..., "--policy", help="Approved low-risk execution policy id."),
+    run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    confirm_run_review: bool = typer.Option(
+        False,
+        "--confirm-run-review",
+        help="Confirm recording passed deterministic review evidence when every required check passes.",
+    ),
+) -> None:
+    """Check completed worker evidence deterministically; this is not semantic code review."""
+    project_name = _resolve_project(project_name)
+    try:
+        result = run_queue_worker_policy_review(
+            project_name,
+            policy_id,
+            run_id,
+            confirm_run_review=confirm_run_review,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    _print_queue_worker_review_run_result(result)
+    if result.blockers or result.overall_status == "blocked":
         raise typer.Exit(1)
 
 

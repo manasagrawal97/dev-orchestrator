@@ -116,6 +116,23 @@ These commands are local-first and planning-only. They do not call AI, approve i
 
 ## Automatic Validation Evidence
 
+Before validation, a completed low-risk worker run can be checked against its approved policy and current Git state:
+
+```powershell
+devo project queue-worker-run-review --project MyProject --policy POL-0001 --run QWR-0001
+devo project queue-worker-run-review --project MyProject --policy POL-0001 --run QWR-0001 --confirm-run-review
+```
+
+Preview mode is read-only. Confirmed mode records passed review evidence only when the policy is approved and low risk, queue/item/task linkage matches, worker evidence is completed rather than blocked or patch-only, Git and worker changed-file lists agree exactly, all files are allowed and none forbidden, limits are respected, nothing is staged, and existing delivery secret-risk checks find no blocker. Documentation-only secret terminology remains warning-only under the existing scanner.
+
+This helper is deterministic scope and evidence review, not semantic code review. It does not prove architecture, business logic, code quality, or correctness; use `queue-worker-record-review` for explicit human review when needed. It also does not run validation, create delivery, invoke the trusted runner, stage, commit, or push.
+
+When recording worker evidence manually, `--files-changed` accepts one comma-separated value. Do not repeat this scalar option, because only its final occurrence is retained:
+
+```powershell
+devo project queue-worker-record-worker-result --project MyProject --run QWR-0001 --status completed --summary "<summary>" --files-changed "src/devo/main.py,src/devo/project_planning.py,tests/test_project_planning.py" --confirm-record
+```
+
 After a queue-worker run has completed worker-result evidence and passed review evidence, Devo can run the approved policy validation commands and record validation evidence:
 
 ```powershell

@@ -591,6 +591,39 @@ class QueueWorkerValidationCommandResult(BaseModel):
     skipped: bool = False
 
 
+class QueueWorkerReviewCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    status: str
+    detail: str
+    required: bool = True
+
+
+class QueueWorkerReviewRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    run_id: str
+    dry_run: bool = True
+    overall_status: str = "blocked"
+    checks: list[QueueWorkerReviewCheck] = Field(default_factory=list)
+    actual_changed_files: list[str] = Field(default_factory=list)
+    worker_reported_changed_files: list[str] = Field(default_factory=list)
+    review_evidence_id: str | None = None
+    review_evidence_json_path: str | None = None
+    review_evidence_markdown_path: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    safety_note: str = (
+        "queue-worker-run-review performs deterministic policy, scope, evidence, Git-state, changed-file-limit, "
+        "and supported secret-risk checks only. It does not prove semantic, architectural, business-logic, or "
+        "code-quality correctness, run validation, create delivery, stage, commit, or push."
+    )
+
+
 class QueueWorkerValidationRunResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -5949,6 +5982,213 @@ def record_queue_worker_validation(
         next_action=next_action,
         warnings=evidence.warnings,
         blockers=evidence.blockers,
+    )
+
+
+def run_queue_worker_policy_review(
+    project_name: str,
+    policy_id: str,
+    run_id: str,
+    *,
+    confirm_run_review: bool = False,
+    workspace_root: Path | None = None,
+) -> QueueWorkerReviewRunResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    policy = _require_execution_policy(project_name, policy_id, root)
+    run = _require_queue_worker_run(project_name, run_id, root)
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=root)
+    report = load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
+    checks: list[QueueWorkerReviewCheck] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    def add_check(name: str, passed: bool, detail: str, *, warning: bool = False) -> None:
+        checks.append(
+            QueueWorkerReviewCheck(
+                name=name,
+                status="WARN" if warning else ("PASS" if passed else "FAIL"),
+                detail=detail,
+                required=not warning,
+            )
+        )
+        if warning:
+            warnings.append(detail)
+        elif not passed:
+            blockers.append(detail)
+
+    add_check(
+        "policy approved",
+        policy.status == "approved",
+        f"Execution policy {policy.policy_id} is {policy.status}; approved status is required.",
+    )
+    add_check(
+        "policy/run linkage",
+        run.policy_id == policy.policy_id,
+        f"Queue-worker run {run.run_id} belongs to {run.policy_id}; expected {policy.policy_id}.",
+    )
+    linkage_blockers, linkage_warnings, _policy_summary = _queue_worker_recheck_selected_run(project_name, run, root)
+    add_check(
+        "queue/item/task linkage",
+        not linkage_blockers,
+        "Queue, queue item, and task linkage match the approved policy."
+        if not linkage_blockers
+        else "Queue/item/task linkage failed: " + " ".join(linkage_blockers),
+    )
+    warnings.extend(linkage_warnings)
+    add_check(
+        "supported risk",
+        policy.risk_level == "low",
+        f"Deterministic automatic review v1 supports low-risk policies only; policy risk is {policy.risk_level}.",
+    )
+    add_check(
+        "review gate",
+        run.status == "waiting_review",
+        f"Queue-worker run must be waiting_review; current status is {run.status}.",
+    )
+    add_check(
+        "worker result exists",
+        report is not None and evidence.worker_report_imported,
+        "Imported worker-result evidence exists." if report else "Imported worker-result evidence is missing.",
+    )
+    worker_completed = bool(report and report.status_reported_by_worker == "completed")
+    add_check(
+        "worker result completed",
+        worker_completed,
+        "Worker result status is completed."
+        if worker_completed
+        else f"Worker result must be completed; current status is {report.status_reported_by_worker if report else 'missing'}.",
+    )
+    add_check(
+        "no patch-only evidence",
+        not evidence.patch_proposal_present,
+        "No patch-only proposal is linked to this run."
+        if not evidence.patch_proposal_present
+        else "Patch-proposal-only evidence cannot pass deterministic review; use the reviewed patch proposal flow first.",
+    )
+
+    from .delivery import run_delivery_readiness_check
+
+    readiness, _json_path, _markdown_path = run_delivery_readiness_check(project_name, write=False, workspace_root=root)
+    actual_changed_files = _dedupe([path.replace("\\", "/") for path in readiness.changed_files])
+    worker_changed_files = _dedupe([path.replace("\\", "/") for path in (report.changed_files if report else [])])
+    add_check(
+        "actual changes present",
+        bool(actual_changed_files),
+        f"Git reports {len(actual_changed_files)} changed file(s)." if actual_changed_files else "Git reports no changed files to review.",
+    )
+    outside_allowed = [path for path in actual_changed_files if not _matches_any_scope_pattern(path, policy.allowed_file_patterns)]
+    add_check(
+        "allowed file scope",
+        not outside_allowed,
+        "All actual changed files match policy allowed-file scope."
+        if not outside_allowed
+        else "Actual changed files outside policy allowed scope: " + ", ".join(outside_allowed),
+    )
+    forbidden = [path for path in actual_changed_files if _matches_any_scope_pattern(path, policy.forbidden_file_patterns)]
+    forbidden = _dedupe([*forbidden, *readiness.forbidden_changed_files])
+    add_check(
+        "forbidden file scope",
+        not forbidden,
+        "No actual changed file matches forbidden scope."
+        if not forbidden
+        else "Forbidden changed files detected: " + ", ".join(forbidden),
+    )
+    effective_limit = min(policy.max_changed_files_per_task, policy.max_total_changed_files)
+    add_check(
+        "changed-file limit",
+        len(actual_changed_files) <= effective_limit,
+        f"Actual changed-file count {len(actual_changed_files)} is within effective limit {effective_limit}."
+        if len(actual_changed_files) <= effective_limit
+        else f"Actual changed-file count {len(actual_changed_files)} exceeds effective policy limit {effective_limit}.",
+    )
+    changed_files_match = set(worker_changed_files) == set(actual_changed_files)
+    add_check(
+        "worker/actual changed files match",
+        changed_files_match,
+        "Worker-reported changed files exactly match Git changes."
+        if changed_files_match
+        else (
+            "Worker-reported changed files do not match Git changes: "
+            f"reported={worker_changed_files or ['none']}; actual={actual_changed_files or ['none']}."
+        ),
+    )
+    add_check(
+        "unstaged working tree",
+        not readiness.staged_files,
+        "No staged files exist."
+        if not readiness.staged_files
+        else "Staged files are not allowed before trusted delivery: " + ", ".join(readiness.staged_files),
+    )
+    for path in readiness.secret_warning_files:
+        add_check("documentation secret-term warning", True, f"Documentation-only secret terms require awareness: {path}", warning=True)
+    add_check(
+        "canonical delivery safety classification",
+        not readiness.blockers,
+        "Existing trusted delivery safety classification found no blockers."
+        if not readiness.blockers
+        else "Existing trusted delivery safety blockers: " + " ".join(readiness.blockers),
+    )
+
+    blockers = _dedupe(blockers)
+    warnings = _dedupe([*warnings, *readiness.warnings])
+    preview_command = (
+        f"devo project queue-worker-run-review --project {project_name} --policy {policy.policy_id} "
+        f"--run {run.run_id} --confirm-run-review"
+    )
+    common = {
+        "project": project_name,
+        "policy_id": policy.policy_id,
+        "run_id": run.run_id,
+        "checks": checks,
+        "actual_changed_files": actual_changed_files,
+        "worker_reported_changed_files": worker_changed_files,
+        "warnings": warnings,
+        "blockers": blockers,
+    }
+    if not confirm_run_review:
+        return QueueWorkerReviewRunResult(
+            **common,
+            dry_run=True,
+            overall_status="ready" if not blockers else "blocked",
+            next_action=preview_command if not blockers else "Resolve deterministic review blockers or use queue-worker-record-review for explicit human review.",
+        )
+    if blockers:
+        return QueueWorkerReviewRunResult(
+            **common,
+            dry_run=False,
+            overall_status="blocked",
+            next_action="Resolve deterministic review blockers. No passed review evidence was recorded.",
+        )
+
+    summary = (
+        "Deterministic policy/scope review passed. This verifies objective policy, repository-scope, worker-evidence, "
+        "staging, changed-file-limit, and supported safety checks only. It does not prove semantic or architectural correctness."
+    )
+    evidence_result = record_queue_worker_review(
+        project_name,
+        run.run_id,
+        status="passed",
+        summary=summary,
+        commands_run="git status and deterministic policy/scope checks",
+        files_changed=", ".join(actual_changed_files),
+        risks="deterministic checks only; semantic and architectural correctness not proven",
+        recommended_next_action=(
+            f"Advance to validation: devo project queue-worker-loop --project {project_name} "
+            f"--policy {policy.policy_id} --run {run.run_id} --confirm-loop"
+        ),
+        recorded_by="devo queue-worker-run-review",
+        note="Automatic deterministic review; no semantic or architectural correctness claim.",
+        workspace_root=root,
+    )
+    return QueueWorkerReviewRunResult(
+        **{**common, "blockers": []},
+        dry_run=False,
+        overall_status="passed",
+        review_evidence_id=evidence_result.evidence_record.evidence_id if evidence_result.evidence_record else None,
+        review_evidence_json_path=evidence_result.record_json_path,
+        review_evidence_markdown_path=evidence_result.record_markdown_path,
+        next_action=evidence_result.next_action,
     )
 
 
