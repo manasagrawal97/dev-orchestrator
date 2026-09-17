@@ -156,6 +156,8 @@ from .project_planning import (
     CodexRunPlan,
     CodexWorkerReport,
     ExecutionPolicyCheckResult,
+    ExecutionPolicyApprovalBundle,
+    ExecutionPolicyApprovalBundleCheck,
     QueueWorkerEvidenceRecordResult,
     QueueWorkerHandoffChecklist,
     QueueWorkerLoopResult,
@@ -171,6 +173,7 @@ from .project_planning import (
     WorkerRun,
     approve_codex_run_plan,
     approve_execution_policy,
+    approve_execution_policy_approval_bundle,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -179,6 +182,7 @@ from .project_planning import (
     calculate_project_progress,
     build_project_intake_status,
     check_execution_policy,
+    check_execution_policy_approval_bundle,
     check_patch_proposal,
     accept_patch_proposal,
     apply_patch_proposal,
@@ -225,6 +229,7 @@ from .project_planning import (
     attach_codex_worker_review_evidence,
     list_execution_queues,
     list_execution_policies,
+    load_execution_policy_approval_bundle,
     list_queue_worker_runs,
     list_batch_approvals,
     list_codex_handoffs,
@@ -253,6 +258,7 @@ from .project_planning import (
     load_project_brief,
     loop_queue_worker_run,
     planning_artifact_paths,
+    plan_execution_policy_approval_bundle,
     plan_queue_worker_run,
     pause_queue_worker_run,
     pause_execution_queue,
@@ -263,6 +269,7 @@ from .project_planning import (
     reject_project_batch,
     reject_execution_policy,
     request_execution_policy,
+    request_execution_policy_approval_bundle,
     request_batch_approval,
     request_queue_worker_delivery,
     review_project_batch,
@@ -705,6 +712,54 @@ def _print_execution_policy_check(result: ExecutionPolicyCheckResult) -> None:
     console.print(f"[bold]Execution policy check: {result.policy_id}[/bold]")
     console.print(f"Status: {result.status}")
     console.print(f"Usable: {result.usable}")
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print(f"Next action: {result.next_action}", soft_wrap=True)
+
+
+def _print_execution_policy_approval_bundle(
+    bundle: ExecutionPolicyApprovalBundle,
+    json_path: Path | None = None,
+    markdown_path: Path | None = None,
+) -> None:
+    console.print(f"[bold]Execution-policy approval bundle: {bundle.bundle_id}[/bold]")
+    console.print(f"Status: {bundle.status}")
+    console.print(f"Policies: {', '.join(bundle.policy_ids)}", soft_wrap=True)
+    console.print(f"Bound: {len(bundle.policy_ids)} of max {bundle.max_policies} policies")
+    console.print(f"Total max tasks: {bundle.total_max_tasks}")
+    console.print(f"Total max changed files: {bundle.total_max_changed_files}")
+    console.print(f"Requested: {bundle.requested_at.isoformat()}")
+    console.print(f"Updated: {bundle.updated_at.isoformat()}")
+    console.print(f"Approved: {bundle.approved_at.isoformat() if bundle.approved_at else 'none'}")
+    console.print(f"Approver: {bundle.approver or 'none'}")
+    console.print(f"Request note: {bundle.request_note or 'none'}", soft_wrap=True)
+    console.print(f"Approval note: {bundle.approval_note or 'none'}", soft_wrap=True)
+    console.print("Pinned policy references:")
+    for policy_id in bundle.policy_ids:
+        tasks = ", ".join(bundle.policy_task_ids.get(policy_id, [])) or "none"
+        items = ", ".join(bundle.policy_queue_item_ids.get(policy_id, [])) or "none"
+        fingerprint = bundle.policy_scope_fingerprints.get(policy_id, "missing")
+        console.print(f"  - {policy_id}: tasks={tasks}; queue_items={items}; fingerprint={fingerprint}", soft_wrap=True)
+    console.print(f"Next action: {bundle.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+
+
+def _print_execution_policy_approval_bundle_check(result: ExecutionPolicyApprovalBundleCheck) -> None:
+    label = result.bundle_id or "request preview"
+    console.print(f"[bold]Execution-policy approval bundle check: {label}[/bold]")
+    console.print(f"Status: {result.status}")
+    console.print(f"Eligible: {result.eligible}")
+    console.print(f"Policies: {', '.join(result.policy_ids) if result.policy_ids else 'none'}", soft_wrap=True)
+    console.print(f"Bound: {len(result.policy_ids)} of max {result.max_policies} policies")
+    console.print(f"Total max tasks: {result.total_max_tasks}")
+    console.print(f"Total max changed files: {result.total_max_changed_files}")
     console.print("Blockers:")
     for blocker in result.blockers or ["none"]:
         console.print(f"  - {blocker}", soft_wrap=True)
@@ -5146,6 +5201,130 @@ def check_execution_policy_command(
     _print_execution_policy_check(result)
     if not result.usable:
         raise typer.Exit(1)
+
+
+@project_app.command("execution-policy-approval-bundle-request")
+def request_execution_policy_approval_bundle_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    policy_ids: list[str] | None = typer.Option(
+        None,
+        "--policy",
+        help="Requested execution policy id. Repeatable or comma-separated; at least two distinct policies are required.",
+    ),
+    max_policies: int = typer.Option(5, "--max-policies", help="Hard bundle policy-count bound, from 2 through 10."),
+    note: str = typer.Option("", "--note", help="Human review/request note."),
+    confirm_request: bool = typer.Option(
+        False,
+        "--confirm-request",
+        help="Create the workspace approval-bundle request after reviewing the preview.",
+    ),
+) -> None:
+    """Preview or request one bounded bundle for existing requested policies."""
+    project_name = _resolve_project(project_name)
+    plan = plan_execution_policy_approval_bundle(
+        project_name,
+        policy_ids or [],
+        max_policies=max_policies,
+    )
+    _print_execution_policy_approval_bundle_check(plan)
+    if not plan.eligible:
+        raise typer.Exit(1)
+    if not confirm_request:
+        console.print("[yellow]Preview only. No approval-bundle artifact was created and no policy was approved.[/yellow]")
+        console.print(
+            "Suggested next command: devo project execution-policy-approval-bundle-request "
+            f"--project {project_name} "
+            + " ".join(f"--policy {policy_id}" for policy_id in plan.policy_ids)
+            + f" --max-policies {max_policies} --confirm-request",
+            soft_wrap=True,
+        )
+        return
+    try:
+        bundle, json_path, markdown_path = request_execution_policy_approval_bundle(
+            project_name,
+            plan.policy_ids,
+            max_policies=max_policies,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--policy") from exc
+    console.print(f"[green]Execution-policy approval bundle requested[/green] {project_name}")
+    _print_execution_policy_approval_bundle(bundle, json_path=json_path, markdown_path=markdown_path)
+    console.print("No execution policy was approved and no queue worker was started.")
+
+
+@project_app.command("execution-policy-approval-bundle-show")
+def show_execution_policy_approval_bundle_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    bundle_id: str = typer.Option(..., "--bundle", help="Execution-policy approval bundle id."),
+) -> None:
+    """Show a bounded execution-policy approval bundle without mutating it."""
+    project_name = _resolve_project(project_name)
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id)
+    if not bundle:
+        console.print(f"[yellow]Execution-policy approval bundle not found: {bundle_id}[/yellow]")
+        raise typer.Exit(1)
+    _print_execution_policy_approval_bundle(bundle)
+
+
+@project_app.command("execution-policy-approval-bundle-check")
+def check_execution_policy_approval_bundle_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    bundle_id: str = typer.Option(..., "--bundle", help="Execution-policy approval bundle id."),
+) -> None:
+    """Recheck child policy state and scope fingerprints before bundle approval."""
+    project_name = _resolve_project(project_name)
+    result = check_execution_policy_approval_bundle(project_name, bundle_id)
+    _print_execution_policy_approval_bundle_check(result)
+    if not result.eligible:
+        raise typer.Exit(1)
+
+
+@project_app.command("execution-policy-approval-bundle-approve")
+def approve_execution_policy_approval_bundle_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    bundle_id: str = typer.Option(..., "--bundle", help="Execution-policy approval bundle id."),
+    approver: str = typer.Option(..., "--approver", help="Human approver name."),
+    note: str = typer.Option("", "--note", help="Approval decision note."),
+    confirm_approve: bool = typer.Option(
+        False,
+        "--confirm-approve",
+        help="Approve every still-matching requested child policy.",
+    ),
+) -> None:
+    """Preview or approve a requested bundle after a scope-drift recheck."""
+    project_name = _resolve_project(project_name)
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id)
+    if not bundle:
+        raise typer.BadParameter(
+            f"Execution-policy approval bundle not found: {bundle_id}.",
+            param_hint="--bundle",
+        )
+    _print_execution_policy_approval_bundle(bundle)
+    check = check_execution_policy_approval_bundle(project_name, bundle.bundle_id)
+    _print_execution_policy_approval_bundle_check(check)
+    if not check.eligible:
+        raise typer.Exit(1)
+    if not confirm_approve:
+        console.print("[yellow]Preview only. No execution policy was approved.[/yellow]")
+        console.print(
+            "Suggested next command: devo project execution-policy-approval-bundle-approve "
+            f"--project {project_name} --bundle {bundle.bundle_id} --approver \"{approver}\" --confirm-approve",
+            soft_wrap=True,
+        )
+        return
+    try:
+        approved, json_path, markdown_path = approve_execution_policy_approval_bundle(
+            project_name,
+            bundle.bundle_id,
+            approver=approver,
+            note=note,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--bundle") from exc
+    console.print(f"[green]Execution-policy approval bundle approved[/green] {project_name}")
+    _print_execution_policy_approval_bundle(approved, json_path=json_path, markdown_path=markdown_path)
+    console.print("Child execution policies were approved. No worker, validation, delivery, commit, or push was started.")
 
 
 @project_app.command("queue-worker-plan")

@@ -36,6 +36,7 @@ from devo.project_planning import (
     codex_worker_run_preview_directory,
     codex_worker_subprocess_run_directory,
     execution_policy_artifact_paths,
+    execution_policy_approval_bundle_artifact_paths,
     generate_backlog_refinement_prompt,
     list_execution_policies,
     list_codex_handoffs,
@@ -59,6 +60,7 @@ from devo.project_planning import (
     list_project_batches,
     load_execution_queue,
     load_execution_policy,
+    load_execution_policy_approval_bundle,
     load_queue_worker_run,
     load_project_backlog,
     load_project_batch,
@@ -1676,6 +1678,378 @@ def test_execution_policy_check_blocks_missing_allowed_task(tmp_path: Path, monk
 
     assert result.exit_code != 0
     assert "Allowed tasks missing from batch B001: T999" in result.output
+
+
+def test_execution_policy_approval_bundle_preview_request_and_approve(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    before_target = _target_snapshot(project_path)
+    for task_id in ["T001", "T002"]:
+        created = runner.invoke(
+            app,
+            [
+                "project",
+                "execution-policy-create",
+                "--project",
+                "sample",
+                "--batch",
+                "B001",
+                "--queue",
+                "Q001",
+                "--title",
+                f"Policy for {task_id}",
+                "--allowed-task",
+                task_id,
+                "--allowed-file",
+                "src/**",
+                "--forbidden-file",
+                ".env",
+                "--max-tasks",
+                "1",
+                "--validation-command",
+                "pytest",
+            ],
+            terminal_width=240,
+        )
+        assert created.exit_code == 0, created.output
+        policy_id = "POL-0001" if task_id == "T001" else "POL-0002"
+        requested = runner.invoke(
+            app,
+            ["project", "execution-policy-request", "--project", "sample", "--policy", policy_id],
+            terminal_width=240,
+        )
+        assert requested.exit_code == 0, requested.output
+        _set_execution_policy_risk(workspace, policy_id, "low")
+
+    request_args = [
+        "project",
+        "execution-policy-approval-bundle-request",
+        "--project",
+        "sample",
+        "--policy",
+        "POL-0001",
+        "--policy",
+        "POL-0002",
+        "--max-policies",
+        "2",
+        "--note",
+        "Reviewed both materialized policies.",
+    ]
+    bundle_json, bundle_markdown = execution_policy_approval_bundle_artifact_paths(
+        "sample",
+        "PAB-0001",
+        workspace_root=workspace,
+    )
+    planning_before_preview = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+
+    def fail_on_subprocess(*_args, **_kwargs):
+        raise AssertionError("Approval-bundle request/approval must not launch validation, workers, commit, or push.")
+
+    monkeypatch.setattr(subprocess, "run", fail_on_subprocess)
+    preview = runner.invoke(app, request_args, terminal_width=240)
+
+    assert preview.exit_code == 0, preview.output
+    assert "Eligible: True" in preview.output
+    assert "Preview only" in preview.output
+    assert not bundle_json.exists()
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == planning_before_preview
+
+    requested_bundle = runner.invoke(app, [*request_args, "--confirm-request"], terminal_width=240)
+    approve_preview = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--note",
+            "Approved bounded policies.",
+        ],
+        terminal_width=240,
+    )
+
+    assert requested_bundle.exit_code == 0, requested_bundle.output
+    assert "approval bundle requested" in requested_bundle.output
+    assert bundle_json.exists()
+    assert bundle_markdown.exists()
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    assert bundle.status == "requested"
+    assert bundle.policy_ids == ["POL-0001", "POL-0002"]
+    assert bundle.policy_task_ids == {"POL-0001": ["T001"], "POL-0002": ["T002"]}
+    assert bundle.policy_queue_item_ids == {"POL-0001": ["QI001"], "POL-0002": ["QI002"]}
+    assert bundle.max_policies == 2
+    assert bundle.total_max_tasks == 2
+    assert len(bundle.policy_scope_fingerprints) == 2
+    assert "does not create work" in bundle_markdown.read_text(encoding="utf-8")
+    assert approve_preview.exit_code == 0, approve_preview.output
+    assert "Preview only" in approve_preview.output
+    assert load_execution_policy("sample", "POL-0001", workspace_root=workspace).status == "requested"
+
+    approved = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--note",
+            "Approved bounded policies.",
+            "--confirm-approve",
+        ],
+        terminal_width=240,
+    )
+
+    assert approved.exit_code == 0, approved.output
+    assert "approval bundle approved" in approved.output
+    assert "No worker, validation, delivery, commit, or push was started" in approved.output
+    approved_bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert approved_bundle is not None
+    assert approved_bundle.status == "approved"
+    assert approved_bundle.approver == "Manas"
+    for policy_id in ["POL-0001", "POL-0002"]:
+        policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+        assert policy is not None
+        assert policy.status == "approved"
+        assert policy.approver == "Manas"
+        assert "Approval bundle PAB-0001" in " ".join(policy.notes)
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_execution_policy_approval_bundle_blocks_bounds_and_scope_drift(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue(tmp_path)
+    for index, task_id in enumerate(["T001", "T002"], start=1):
+        runner.invoke(
+            app,
+            [
+                "project",
+                "execution-policy-create",
+                "--project",
+                "sample",
+                "--batch",
+                "B001",
+                "--queue",
+                "Q001",
+                "--title",
+                f"Policy for {task_id}",
+                "--allowed-task",
+                task_id,
+                "--allowed-file",
+                "src/**",
+                "--forbidden-file",
+                ".env",
+                "--max-tasks",
+                "1",
+                "--validation-command",
+                "pytest",
+            ],
+        )
+        runner.invoke(
+            app,
+            ["project", "execution-policy-request", "--project", "sample", "--policy", f"POL-{index:04d}"],
+        )
+        _set_execution_policy_risk(workspace, f"POL-{index:04d}", "low")
+
+    too_small = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-request",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--confirm-request",
+        ],
+        terminal_width=240,
+    )
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-request",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001,POL-0002",
+            "--max-policies",
+            "2",
+            "--confirm-request",
+        ],
+        terminal_width=240,
+    )
+    assert too_small.exit_code != 0
+    assert "at least two distinct policies" in too_small.output
+    assert requested.exit_code == 0, requested.output
+
+    policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert policy is not None
+    drifted = policy.model_copy(update={"allowed_file_patterns": ["docs/**"]})
+    policy_json, _policy_markdown = execution_policy_artifact_paths(
+        "sample",
+        "POL-0002",
+        workspace_root=workspace,
+    )
+    policy_json.write_text(drifted.model_dump_json(indent=2), encoding="utf-8")
+
+    blocked = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--confirm-approve",
+        ],
+        terminal_width=240,
+    )
+
+    assert blocked.exit_code != 0
+    assert "policy scope changed after the bundle was requested" in blocked.output
+    assert load_execution_policy("sample", "POL-0001", workspace_root=workspace).status == "requested"
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace).status == "requested"
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    assert bundle.status == "requested"
+
+
+@pytest.mark.parametrize("risk_level", ["medium", "high", "critical"])
+def test_execution_policy_approval_bundle_rejects_non_low_risk_children(
+    tmp_path: Path,
+    monkeypatch,
+    risk_level: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_execution_policy_risk(workspace, "POL-0002", risk_level)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-request",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001,POL-0002",
+            "--max-policies",
+            "2",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert (
+        f"POL-0002: risk {risk_level} is not eligible; approval bundles require low-risk child policies."
+        in result.output
+    )
+    assert load_execution_policy("sample", "POL-0001", workspace_root=workspace).status == "requested"
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace).status == "requested"
+    bundle_json, _bundle_markdown = execution_policy_approval_bundle_artifact_paths(
+        "sample",
+        "PAB-0001",
+        workspace_root=workspace,
+    )
+    assert not bundle_json.exists()
+
+
+@pytest.mark.parametrize(
+    "queue_item_status",
+    ["running", "waiting_review", "paused", "blocked", "failed", "completed", "skipped", "superseded", "unknown"],
+)
+def test_execution_policy_approval_bundle_rejects_non_pending_queue_items(
+    tmp_path: Path,
+    monkeypatch,
+    queue_item_status: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_queue_item_status(workspace, "QI002", queue_item_status)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-request",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001,POL-0002",
+            "--max-policies",
+            "2",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert f"POL-0002: allowed queue item QI002 status must be pending, not {queue_item_status}." in result.output
+    assert load_execution_policy("sample", "POL-0001", workspace_root=workspace).status == "requested"
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace).status == "requested"
+
+
+def test_execution_policy_approval_bundle_approval_is_atomic_when_queue_item_becomes_stale(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-request",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001,POL-0002",
+            "--max-policies",
+            "2",
+            "--confirm-request",
+        ],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    _set_queue_item_status(workspace, "QI002", "completed")
+
+    approved = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--confirm-approve",
+        ],
+        terminal_width=240,
+    )
+
+    assert approved.exit_code != 0
+    assert "POL-0002: allowed queue item QI002 status must be pending, not completed." in approved.output
+    assert load_execution_policy("sample", "POL-0001", workspace_root=workspace).status == "requested"
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace).status == "requested"
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    assert bundle.status == "requested"
 
 
 def test_queue_worker_plan_blocks_missing_and_draft_policy(tmp_path: Path, monkeypatch) -> None:
@@ -8212,6 +8586,69 @@ def _mock_git_apply_whitespace_only(monkeypatch, project_path: Path) -> None:
 def _create_queue(tmp_path: Path) -> None:
     _create_approved_batch(tmp_path)
     runner.invoke(app, ["project", "queue-create", "--project", "sample", "--batch", "B001"])
+
+
+def _create_requested_approval_bundle_policies(tmp_path: Path, workspace: Path) -> None:
+    _create_queue(tmp_path)
+    for index, task_id in enumerate(["T001", "T002"], start=1):
+        created = runner.invoke(
+            app,
+            [
+                "project",
+                "execution-policy-create",
+                "--project",
+                "sample",
+                "--batch",
+                "B001",
+                "--queue",
+                "Q001",
+                "--title",
+                f"Policy for {task_id}",
+                "--allowed-task",
+                task_id,
+                "--allowed-file",
+                "src/**",
+                "--forbidden-file",
+                ".env",
+                "--max-tasks",
+                "1",
+                "--validation-command",
+                "pytest",
+            ],
+            terminal_width=240,
+        )
+        assert created.exit_code == 0, created.output
+        policy_id = f"POL-{index:04d}"
+        requested = runner.invoke(
+            app,
+            ["project", "execution-policy-request", "--project", "sample", "--policy", policy_id],
+            terminal_width=240,
+        )
+        assert requested.exit_code == 0, requested.output
+        _set_execution_policy_risk(workspace, policy_id, "low")
+
+
+def _set_execution_policy_risk(workspace: Path, policy_id: str, risk_level: str) -> None:
+    policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+    assert policy is not None
+    policy_json, _policy_markdown = execution_policy_artifact_paths(
+        "sample",
+        policy_id,
+        workspace_root=workspace,
+    )
+    policy_json.write_text(policy.model_copy(update={"risk_level": risk_level}).model_dump_json(indent=2), encoding="utf-8")
+
+
+def _set_queue_item_status(workspace: Path, item_id: str, status: str) -> None:
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert any(item.item_id == item_id for item in queue.items)
+    updated_items = [
+        item.model_copy(update={"status": status}) if item.item_id == item_id else item
+        for item in queue.items
+    ]
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(queue.model_copy(update={"items": updated_items}).model_dump_json(indent=2), encoding="utf-8")
 
 
 def _create_blueprint(tmp_path: Path) -> None:

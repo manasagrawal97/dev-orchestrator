@@ -306,6 +306,24 @@ devo project execution-policy-reject --project MyProject --policy POL-0001 --rev
 
 Policies live under `workspace/projects/<project>/planning/execution-policies/`. They record the project, batch, optional queue, allowed task ids, allowed queue item ids, allowed and forbidden file patterns, maximum task and changed-file limits, validation commands, auto-delivery and auto-push permissions, required worker review/validation evidence, pause conditions, approver/reviewer notes, expiry, status, and next action.
 
+When two or more materialized policies have been reviewed and individually moved to `requested`, one bounded bundle can record the shared human decision without weakening the child policy records:
+
+```powershell
+# Preview only: validates eligibility and writes nothing.
+devo project execution-policy-approval-bundle-request --project MyProject --policy POL-0001 --policy POL-0002 --max-policies 2
+
+# Create the auditable request after reviewing the preview.
+devo project execution-policy-approval-bundle-request --project MyProject --policy POL-0001 --policy POL-0002 --max-policies 2 --note "Reviewed both materialized policies." --confirm-request
+devo project execution-policy-approval-bundle-show --project MyProject --bundle PAB-0001
+devo project execution-policy-approval-bundle-check --project MyProject --bundle PAB-0001
+
+# Preview the decision first; add --confirm-approve only after checking every member.
+devo project execution-policy-approval-bundle-approve --project MyProject --bundle PAB-0001 --approver "Manas" --note "Approved within pinned bounds."
+devo project execution-policy-approval-bundle-approve --project MyProject --bundle PAB-0001 --approver "Manas" --note "Approved within pinned bounds." --confirm-approve
+```
+
+Bundle eligibility is deliberately narrower than ordinary individual approval: two through ten distinct policies; `requested` state; exactly low risk; approved source batches; explicit queue, task, queue-item, allowed-file, forbidden-file, and validation references; every referenced queue item still in `pending` state; positive limits; and mandatory worker-review plus validation-evidence gates. The request artifact lives under `workspace/projects/<project>/planning/execution-policies/approval-bundles/` and pins each policy's scope fingerprint plus aggregate task and changed-file bounds. Approval fails if any child status, reference, pinned scope, or queue-item actionability changes. Medium/high/critical-risk, stale/non-pending queue-item, or incomplete policies must use individual review/approval. Bundle approval only updates the existing child policies and bundle artifact; it does not create work, run a queue worker, auto-review, validate, deliver, invoke the trusted runner, commit, or push.
+
 Policy approval is not blanket permission for arbitrary changes. It is permission only inside the recorded batch/task/file/validation bounds. Future automation must pause on failed tests, secret risk, forbidden paths, changed files outside scope, too many files, unclear worker output, usage limits, commit failures, push failures, or expired/missing policy references. Scheduled trusted runner delivery remains the delivery mechanism; the policy does not bypass guarded commit/push.
 
 Prepare one policy-gated queue-worker step:

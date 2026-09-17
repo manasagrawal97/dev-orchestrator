@@ -37,6 +37,7 @@ QUEUES_DIR_NAME = "queues"
 QUEUE_INDEX_JSON = "queue-index.json"
 EXECUTION_POLICIES_DIR_NAME = "execution-policies"
 EXECUTION_POLICY_INDEX_JSON = "execution-policy-index.json"
+EXECUTION_POLICY_APPROVAL_BUNDLES_DIR_NAME = "approval-bundles"
 QUEUE_WORKER_RUNS_DIR_NAME = "queue-worker-runs"
 QUEUE_WORKER_RUN_INDEX_JSON = "queue-worker-run-index.json"
 HANDOFFS_DIR_NAME = "handoffs"
@@ -391,6 +392,45 @@ class ExecutionPolicyCheckResult(BaseModel):
     policy_id: str
     usable: bool = False
     status: str = "missing"
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
+class ExecutionPolicyApprovalBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    bundle_id: str
+    status: str = "requested"
+    policy_ids: list[str] = Field(default_factory=list)
+    policy_scope_fingerprints: dict[str, str] = Field(default_factory=dict)
+    policy_task_ids: dict[str, list[str]] = Field(default_factory=dict)
+    policy_queue_item_ids: dict[str, list[str]] = Field(default_factory=dict)
+    max_policies: int = 5
+    total_max_tasks: int = 0
+    total_max_changed_files: int = 0
+    requested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    approved_at: datetime | None = None
+    approver: str | None = None
+    request_note: str = ""
+    approval_note: str = ""
+    next_action: str = ""
+
+
+class ExecutionPolicyApprovalBundleCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    bundle_id: str | None = None
+    eligible: bool = False
+    status: str = "preview"
+    policy_ids: list[str] = Field(default_factory=list)
+    max_policies: int = 5
+    total_max_tasks: int = 0
+    total_max_changed_files: int = 0
     blockers: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     next_action: str = ""
@@ -2018,6 +2058,7 @@ class PlanningArtifactPaths(BaseModel):
     queue_index_json: Path
     execution_policies_dir: Path
     execution_policy_index_json: Path
+    execution_policy_approval_bundles_dir: Path
     queue_worker_runs_dir: Path
     queue_worker_run_index_json: Path
     handoffs_dir: Path
@@ -2044,6 +2085,9 @@ def planning_artifact_paths(project_name: str, workspace_root: Path | None = Non
         queue_index_json=planning_dir / QUEUES_DIR_NAME / QUEUE_INDEX_JSON,
         execution_policies_dir=planning_dir / EXECUTION_POLICIES_DIR_NAME,
         execution_policy_index_json=planning_dir / EXECUTION_POLICIES_DIR_NAME / EXECUTION_POLICY_INDEX_JSON,
+        execution_policy_approval_bundles_dir=(
+            planning_dir / EXECUTION_POLICIES_DIR_NAME / EXECUTION_POLICY_APPROVAL_BUNDLES_DIR_NAME
+        ),
         queue_worker_runs_dir=planning_dir / QUEUE_WORKER_RUNS_DIR_NAME,
         queue_worker_run_index_json=planning_dir / QUEUE_WORKER_RUNS_DIR_NAME / QUEUE_WORKER_RUN_INDEX_JSON,
         handoffs_dir=planning_dir / HANDOFFS_DIR_NAME,
@@ -2537,6 +2581,19 @@ def execution_policy_artifact_paths(project_name: str, policy_id: str, workspace
     return paths.execution_policies_dir / f"execution-policy-{safe_id}.json", paths.execution_policies_dir / f"execution-policy-{safe_id}.md"
 
 
+def execution_policy_approval_bundle_artifact_paths(
+    project_name: str,
+    bundle_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    safe_id = _normalize_policy_approval_bundle_id(bundle_id)
+    return (
+        paths.execution_policy_approval_bundles_dir / f"approval-bundle-{safe_id}.json",
+        paths.execution_policy_approval_bundles_dir / f"approval-bundle-{safe_id}.md",
+    )
+
+
 def queue_worker_run_artifact_paths(project_name: str, run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
     paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
     safe_id = _normalize_queue_worker_run_id(run_id)
@@ -2820,6 +2877,41 @@ def load_execution_policy(project_name: str, policy_id: str, workspace_root: Pat
     if not json_path.exists():
         return None
     return BatchExecutionPolicy.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
+def list_execution_policy_approval_bundles(
+    project_name: str,
+    workspace_root: Path | None = None,
+) -> list[ExecutionPolicyApprovalBundle]:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    if not paths.execution_policy_approval_bundles_dir.exists():
+        return []
+    bundles: list[ExecutionPolicyApprovalBundle] = []
+    for path in sorted(paths.execution_policy_approval_bundles_dir.glob("approval-bundle-*.json")):
+        try:
+            bundles.append(ExecutionPolicyApprovalBundle.model_validate_json(path.read_text(encoding="utf-8")))
+        except (ValueError, ValidationError):
+            continue
+    return sorted(bundles, key=lambda bundle: bundle.requested_at, reverse=True)
+
+
+def load_execution_policy_approval_bundle(
+    project_name: str,
+    bundle_id: str,
+    workspace_root: Path | None = None,
+) -> ExecutionPolicyApprovalBundle | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = execution_policy_approval_bundle_artifact_paths(
+        project_name,
+        bundle_id,
+        workspace_root=root,
+    )
+    if not json_path.exists():
+        return None
+    return ExecutionPolicyApprovalBundle.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
 def load_queue_worker_run_index(project_name: str, workspace_root: Path | None = None) -> QueueWorkerRunIndex:
@@ -5298,6 +5390,328 @@ def check_execution_policy(
         warnings=warnings,
         next_action=next_action,
     )
+
+
+def plan_execution_policy_approval_bundle(
+    project_name: str,
+    policy_ids: list[str],
+    *,
+    max_policies: int = 5,
+    workspace_root: Path | None = None,
+) -> ExecutionPolicyApprovalBundleCheck:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    normalized_ids = _normalize_policy_ids(policy_ids)
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if max_policies < 2 or max_policies > 10:
+        blockers.append("max_policies must be between 2 and 10.")
+    if len(normalized_ids) < 2:
+        blockers.append("An execution-policy approval bundle requires at least two distinct policies.")
+    if len(normalized_ids) > max_policies:
+        blockers.append(f"Bundle includes {len(normalized_ids)} policies, exceeding max_policies={max_policies}.")
+    policies: list[BatchExecutionPolicy] = []
+    for policy_id in normalized_ids:
+        policy = load_execution_policy(project_name, policy_id, workspace_root=root)
+        if not policy:
+            blockers.append(f"Execution policy not found: {policy_id}.")
+            continue
+        policies.append(policy)
+        blockers.extend(_execution_policy_approval_bundle_member_blockers(policy, root))
+    total_max_tasks = sum(policy.max_tasks for policy in policies)
+    total_max_changed_files = sum(policy.max_total_changed_files for policy in policies)
+    eligible = not blockers
+    next_action = (
+        f"Request the bounded approval bundle with explicit confirmation for {len(normalized_ids)} reviewed policies."
+        if eligible
+        else "Resolve every blocker; do not create or approve the bundle."
+    )
+    return ExecutionPolicyApprovalBundleCheck(
+        project=project_name,
+        eligible=eligible,
+        status="preview",
+        policy_ids=normalized_ids,
+        max_policies=max_policies,
+        total_max_tasks=total_max_tasks,
+        total_max_changed_files=total_max_changed_files,
+        blockers=_dedupe(blockers),
+        warnings=_dedupe(warnings),
+        next_action=next_action,
+    )
+
+
+def request_execution_policy_approval_bundle(
+    project_name: str,
+    policy_ids: list[str],
+    *,
+    max_policies: int = 5,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionPolicyApprovalBundle, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    plan = plan_execution_policy_approval_bundle(
+        project_name,
+        policy_ids,
+        max_policies=max_policies,
+        workspace_root=root,
+    )
+    if not plan.eligible:
+        msg = "Approval bundle is not eligible: " + "; ".join(plan.blockers)
+        raise ValueError(msg)
+    policies = [_require_execution_policy(project_name, policy_id, root) for policy_id in plan.policy_ids]
+    now = datetime.now(UTC)
+    bundle_id = _next_policy_approval_bundle_id(project_name, workspace_root=root)
+    bundle = ExecutionPolicyApprovalBundle(
+        project=project_name,
+        bundle_id=bundle_id,
+        status="requested",
+        policy_ids=plan.policy_ids,
+        policy_scope_fingerprints={
+            policy.policy_id: execution_policy_scope_fingerprint(policy) for policy in policies
+        },
+        policy_task_ids={policy.policy_id: list(policy.allowed_task_ids) for policy in policies},
+        policy_queue_item_ids={policy.policy_id: list(policy.allowed_queue_item_ids) for policy in policies},
+        max_policies=max_policies,
+        total_max_tasks=plan.total_max_tasks,
+        total_max_changed_files=plan.total_max_changed_files,
+        requested_at=now,
+        updated_at=now,
+        request_note=note.strip(),
+        next_action=(
+            f"Review the bundle, then approve explicitly: devo project execution-policy-approval-bundle-approve "
+            f"--project {project_name} --bundle {bundle_id} --approver \"<name>\" --confirm-approve"
+        ),
+    )
+    return _write_execution_policy_approval_bundle(project_name, bundle, workspace_root=root)
+
+
+def check_execution_policy_approval_bundle(
+    project_name: str,
+    bundle_id: str,
+    workspace_root: Path | None = None,
+) -> ExecutionPolicyApprovalBundleCheck:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id, workspace_root=root)
+    if not bundle:
+        return ExecutionPolicyApprovalBundleCheck(
+            project=project_name,
+            bundle_id=_normalize_policy_approval_bundle_id(bundle_id),
+            status="missing",
+            blockers=[f"Execution-policy approval bundle not found: {bundle_id}."],
+            next_action=f"List execution policies: devo project execution-policy-list --project {project_name}",
+        )
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if bundle.status != "requested":
+        blockers.append(f"Bundle status is {bundle.status}; requested is required for approval.")
+    if len(bundle.policy_ids) < 2:
+        blockers.append("Bundle no longer contains at least two policies.")
+    if bundle.max_policies < 2 or bundle.max_policies > 10:
+        blockers.append("Recorded max_policies must be between 2 and 10.")
+    if len(bundle.policy_ids) > bundle.max_policies:
+        blockers.append(
+            f"Bundle includes {len(bundle.policy_ids)} policies, exceeding recorded max_policies={bundle.max_policies}."
+        )
+    policies: list[BatchExecutionPolicy] = []
+    for policy_id in bundle.policy_ids:
+        policy = load_execution_policy(project_name, policy_id, workspace_root=root)
+        if not policy:
+            blockers.append(f"Execution policy not found: {policy_id}.")
+            continue
+        policies.append(policy)
+        blockers.extend(_execution_policy_approval_bundle_member_blockers(policy, root))
+        expected_fingerprint = bundle.policy_scope_fingerprints.get(policy.policy_id)
+        current_fingerprint = execution_policy_scope_fingerprint(policy)
+        if not expected_fingerprint or expected_fingerprint != current_fingerprint:
+            blockers.append(f"{policy.policy_id}: policy scope changed after the bundle was requested.")
+        if bundle.policy_task_ids.get(policy.policy_id) != policy.allowed_task_ids:
+            blockers.append(f"{policy.policy_id}: allowed task references no longer match the bundle snapshot.")
+        if bundle.policy_queue_item_ids.get(policy.policy_id) != policy.allowed_queue_item_ids:
+            blockers.append(f"{policy.policy_id}: allowed queue-item references no longer match the bundle snapshot.")
+    current_total_tasks = sum(policy.max_tasks for policy in policies)
+    current_total_changed_files = sum(policy.max_total_changed_files for policy in policies)
+    if current_total_tasks != bundle.total_max_tasks:
+        blockers.append("The bundle total max-tasks bound no longer matches its policies.")
+    if current_total_changed_files != bundle.total_max_changed_files:
+        blockers.append("The bundle total changed-file bound no longer matches its policies.")
+    eligible = not blockers
+    return ExecutionPolicyApprovalBundleCheck(
+        project=project_name,
+        bundle_id=bundle.bundle_id,
+        eligible=eligible,
+        status=bundle.status,
+        policy_ids=list(bundle.policy_ids),
+        max_policies=bundle.max_policies,
+        total_max_tasks=bundle.total_max_tasks,
+        total_max_changed_files=bundle.total_max_changed_files,
+        blockers=_dedupe(blockers),
+        warnings=_dedupe(warnings),
+        next_action=(
+            "Approve only after reviewing the materialized policies, task/queue references, scope, limits, and validation commands."
+            if eligible
+            else "Do not approve this bundle; create a new bundle after resolving drift or eligibility blockers."
+        ),
+    )
+
+
+def approve_execution_policy_approval_bundle(
+    project_name: str,
+    bundle_id: str,
+    *,
+    approver: str,
+    note: str = "",
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionPolicyApprovalBundle, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    cleaned_approver = approver.strip()
+    if not cleaned_approver:
+        msg = "Approver must not be empty."
+        raise ValueError(msg)
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id, workspace_root=root)
+    if not bundle:
+        msg = f"Execution-policy approval bundle not found: {bundle_id}."
+        raise ValueError(msg)
+    check = check_execution_policy_approval_bundle(project_name, bundle.bundle_id, workspace_root=root)
+    if not check.eligible:
+        msg = "Approval bundle cannot be approved: " + "; ".join(check.blockers)
+        raise ValueError(msg)
+    now = datetime.now(UTC)
+    cleaned_note = note.strip()
+    for policy_id in bundle.policy_ids:
+        policy = _require_execution_policy(project_name, policy_id, root)
+        policy_note = f"Approval bundle {bundle.bundle_id}"
+        if cleaned_note:
+            policy_note += f": {cleaned_note}"
+        notes = _with_timed_note(policy.notes, policy_note, "approval", now)
+        updated_policy = policy.model_copy(
+            update={
+                "status": "approved",
+                "approved_at": now,
+                "approver": cleaned_approver,
+                "decision_note": cleaned_note or f"Approved through {bundle.bundle_id}.",
+                "updated_at": now,
+                "notes": notes,
+                "next_action": "Approved assisted queue policy can be used by queue-worker step/loop.",
+            }
+        )
+        _write_execution_policy(project_name, updated_policy, workspace_root=root)
+    updated_bundle = bundle.model_copy(
+        update={
+            "status": "approved",
+            "approved_at": now,
+            "updated_at": now,
+            "approver": cleaned_approver,
+            "approval_note": cleaned_note,
+            "next_action": (
+                "Bundle approval recorded through normal child policy records. No worker, validation, delivery, commit, or push was started."
+            ),
+        }
+    )
+    return _write_execution_policy_approval_bundle(project_name, updated_bundle, workspace_root=root)
+
+
+def execution_policy_scope_fingerprint(policy: BatchExecutionPolicy) -> str:
+    payload = {
+        "project": policy.project,
+        "policy_id": policy.policy_id,
+        "batch_id": policy.batch_id,
+        "queue_id": policy.queue_id,
+        "title": policy.title,
+        "requested_at": policy.requested_at.isoformat() if policy.requested_at else None,
+        "expires_at": policy.expires_at.isoformat() if policy.expires_at else None,
+        "allowed_task_ids": policy.allowed_task_ids,
+        "allowed_queue_item_ids": policy.allowed_queue_item_ids,
+        "allowed_file_patterns": policy.allowed_file_patterns,
+        "forbidden_file_patterns": policy.forbidden_file_patterns,
+        "max_tasks": policy.max_tasks,
+        "max_tasks_per_run": policy.max_tasks_per_run,
+        "max_changed_files_per_task": policy.max_changed_files_per_task,
+        "max_total_changed_files": policy.max_total_changed_files,
+        "validation_commands": policy.validation_commands,
+        "auto_delivery_allowed": policy.auto_delivery_allowed,
+        "auto_push_allowed": policy.auto_push_allowed,
+        "requires_worker_review": policy.requires_worker_review,
+        "requires_validation_evidence": policy.requires_validation_evidence,
+        "pause_conditions": policy.pause_conditions,
+        "risk_level": policy.risk_level,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _execution_policy_approval_bundle_member_blockers(
+    policy: BatchExecutionPolicy,
+    workspace_root: Path,
+) -> list[str]:
+    blockers: list[str] = []
+    prefix = f"{policy.policy_id}:"
+    if policy.status != "requested":
+        blockers.append(f"{prefix} status must be requested, not {policy.status}.")
+    if policy.risk_level != "low":
+        blockers.append(
+            f"{prefix} risk {policy.risk_level} is not eligible; approval bundles require low-risk child policies."
+        )
+    if policy.expires_at and policy.expires_at <= datetime.now(UTC):
+        blockers.append(f"{prefix} policy expired at {policy.expires_at.isoformat()}.")
+    if not policy.allowed_task_ids:
+        blockers.append(f"{prefix} at least one explicit allowed task is required.")
+    if not policy.queue_id:
+        blockers.append(f"{prefix} an explicit queue reference is required.")
+    if not policy.allowed_queue_item_ids:
+        blockers.append(f"{prefix} at least one explicit allowed queue item is required.")
+    if not policy.allowed_file_patterns:
+        blockers.append(f"{prefix} explicit allowed file patterns are required.")
+    if not policy.forbidden_file_patterns:
+        blockers.append(f"{prefix} explicit forbidden file patterns are required.")
+    if not policy.validation_commands:
+        blockers.append(f"{prefix} at least one validation command is required.")
+    if not policy.requires_worker_review or not policy.requires_validation_evidence:
+        blockers.append(f"{prefix} worker review and validation evidence must remain required.")
+    if policy.auto_push_allowed and not policy.auto_delivery_allowed:
+        blockers.append(f"{prefix} auto_push_allowed requires auto_delivery_allowed.")
+    for label, value in [
+        ("max_tasks", policy.max_tasks),
+        ("max_tasks_per_run", policy.max_tasks_per_run),
+        ("max_changed_files_per_task", policy.max_changed_files_per_task),
+        ("max_total_changed_files", policy.max_total_changed_files),
+    ]:
+        if value < 1:
+            blockers.append(f"{prefix} {label} must be positive.")
+    if len(policy.allowed_task_ids) > policy.max_tasks:
+        blockers.append(f"{prefix} allowed tasks exceed max_tasks={policy.max_tasks}.")
+    batch = load_project_batch(policy.project, policy.batch_id, workspace_root=workspace_root)
+    if not batch:
+        blockers.append(f"{prefix} referenced batch not found: {policy.batch_id}.")
+    else:
+        if batch.approval_status != "approved":
+            blockers.append(f"{prefix} referenced batch {policy.batch_id} is not approved.")
+        batch_tasks = {_normalize_task_id(task_id) for task_id in batch.task_ids}
+        missing_tasks = [task_id for task_id in policy.allowed_task_ids if _normalize_task_id(task_id) not in batch_tasks]
+        if missing_tasks:
+            blockers.append(f"{prefix} allowed tasks missing from batch: {', '.join(missing_tasks)}.")
+    if policy.queue_id:
+        queue = load_execution_queue(policy.project, policy.queue_id, workspace_root=workspace_root)
+        if not queue:
+            blockers.append(f"{prefix} referenced queue not found: {policy.queue_id}.")
+        else:
+            if _normalize_batch_id(queue.source_batch_id) != _normalize_batch_id(policy.batch_id):
+                blockers.append(f"{prefix} queue {queue.queue_id} does not belong to batch {policy.batch_id}.")
+            queue_items = {_normalize_queue_item_id(item.item_id): item for item in queue.items}
+            for item_id in policy.allowed_queue_item_ids:
+                item = queue_items.get(_normalize_queue_item_id(item_id))
+                if not item:
+                    blockers.append(f"{prefix} allowed queue item not found: {item_id}.")
+                else:
+                    if item.status != "pending":
+                        blockers.append(
+                            f"{prefix} allowed queue item {item_id} status must be pending, not {item.status}."
+                        )
+                    if _normalize_task_id(item.task_id) not in {
+                        _normalize_task_id(task_id) for task_id in policy.allowed_task_ids
+                    }:
+                        blockers.append(f"{prefix} queue item {item_id} references task {item.task_id} outside allowed tasks.")
+    return blockers
 
 
 def plan_queue_worker_run(project_name: str, policy_id: str, workspace_root: Path | None = None) -> QueueWorkerPlan:
@@ -10597,6 +11011,63 @@ def render_execution_policy_markdown(policy: BatchExecutionPolicy) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_execution_policy_approval_bundle_markdown(bundle: ExecutionPolicyApprovalBundle) -> str:
+    lines = [
+        f"# Execution-Policy Approval Bundle: {bundle.bundle_id}",
+        "",
+        f"- Project: `{bundle.project}`",
+        f"- Bundle id: `{bundle.bundle_id}`",
+        f"- Status: `{bundle.status}`",
+        f"- Policy count: `{len(bundle.policy_ids)}`",
+        f"- Max policies: `{bundle.max_policies}`",
+        f"- Total max tasks: `{bundle.total_max_tasks}`",
+        f"- Total max changed files: `{bundle.total_max_changed_files}`",
+        f"- Requested at: `{bundle.requested_at.isoformat()}`",
+        f"- Updated at: `{bundle.updated_at.isoformat()}`",
+        f"- Approved at: `{bundle.approved_at.isoformat() if bundle.approved_at else 'none'}`",
+        f"- Approver: `{bundle.approver or 'none'}`",
+        "",
+        "## Policies",
+        "",
+    ]
+    for policy_id in bundle.policy_ids:
+        lines.extend(
+            [
+                f"### {policy_id}",
+                "",
+                f"- Scope fingerprint: `{bundle.policy_scope_fingerprints.get(policy_id, 'missing')}`",
+                f"- Allowed tasks: `{', '.join(bundle.policy_task_ids.get(policy_id, [])) or 'none'}`",
+                f"- Allowed queue items: `{', '.join(bundle.policy_queue_item_ids.get(policy_id, [])) or 'none'}`",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Request Note",
+            "",
+            bundle.request_note or "No request note recorded.",
+            "",
+            "## Approval Note",
+            "",
+            bundle.approval_note or "No approval note recorded.",
+            "",
+            "## Safety Note",
+            "",
+            (
+                "This bundle references existing requested execution policies. Approval rechecks every policy and its scope fingerprint, "
+                "then records approval on each child policy. It does not create work, run workers or validation, create delivery requests, "
+                "invoke the trusted runner, commit, or push. Medium, high, and critical risk policies require individual approval."
+            ),
+            "",
+            "## Next Action",
+            "",
+            bundle.next_action or "Review bundle status.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_backlog_refinement_prompt(
     project_name: str,
     brief: ProjectBrief | None,
@@ -10916,6 +11387,25 @@ def _normalize_policy_id(policy_id: str) -> str:
     return cleaned.upper()
 
 
+def _normalize_policy_ids(policy_ids: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw in policy_ids:
+        for item in raw.split(","):
+            cleaned = _normalize_policy_id(item)
+            if cleaned and cleaned not in normalized:
+                normalized.append(cleaned)
+    return normalized
+
+
+def _normalize_policy_approval_bundle_id(bundle_id: str) -> str:
+    cleaned = bundle_id.strip()
+    if cleaned.lower().startswith("approval-bundle-"):
+        cleaned = cleaned[16:]
+    if cleaned.lower().startswith("bundle-"):
+        cleaned = cleaned[7:]
+    return cleaned.upper()
+
+
 def _normalize_queue_item_id(item_id: str) -> str:
     return item_id.strip().upper()
 
@@ -11010,6 +11500,19 @@ def _next_policy_id(project_name: str, workspace_root: Path | None = None) -> st
     index = 1
     while True:
         candidate = f"POL-{index:04d}"
+        if candidate not in existing:
+            return candidate
+        index += 1
+
+
+def _next_policy_approval_bundle_id(project_name: str, workspace_root: Path | None = None) -> str:
+    existing = {
+        _normalize_policy_approval_bundle_id(bundle.bundle_id)
+        for bundle in list_execution_policy_approval_bundles(project_name, workspace_root=workspace_root)
+    }
+    index = 1
+    while True:
+        candidate = f"PAB-{index:04d}"
         if candidate not in existing:
             return candidate
         index += 1
@@ -11117,6 +11620,27 @@ def _write_execution_policy(project_name: str, policy: BatchExecutionPolicy, wor
     markdown_path.write_text(render_execution_policy_markdown(policy), encoding="utf-8")
     _write_execution_policy_index(project_name, workspace_root=root)
     return policy, json_path, markdown_path
+
+
+def _write_execution_policy_approval_bundle(
+    project_name: str,
+    bundle: ExecutionPolicyApprovalBundle,
+    workspace_root: Path | None = None,
+) -> tuple[ExecutionPolicyApprovalBundle, Path, Path]:
+    root = workspace_root or get_workspace_root()
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    paths.execution_policy_approval_bundles_dir.mkdir(parents=True, exist_ok=True)
+    if bundle.status not in {"requested", "approved"}:
+        msg = f"Invalid execution-policy approval bundle status: {bundle.status}"
+        raise ValueError(msg)
+    json_path, markdown_path = execution_policy_approval_bundle_artifact_paths(
+        project_name,
+        bundle.bundle_id,
+        workspace_root=root,
+    )
+    _write_model(json_path, bundle)
+    markdown_path.write_text(render_execution_policy_approval_bundle_markdown(bundle), encoding="utf-8")
+    return bundle, json_path, markdown_path
 
 
 def _write_queue_worker_run(project_name: str, run: QueueWorkerRun, workspace_root: Path | None = None) -> tuple[QueueWorkerRun, Path, Path]:
