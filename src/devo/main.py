@@ -1379,6 +1379,7 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
     console.print(f"Project: {result.project}")
     console.print(f"Policy: {result.policy_id}")
     console.print(f"Mode: {'dry-run' if result.dry_run else 'execute'}")
+    console.print(f"Auto-worker: {'enabled' if result.auto_worker else 'disabled'}")
     console.print(f"Auto-validation: {'enabled' if result.auto_validation else 'disabled'}")
     console.print(f"Max steps: {result.max_steps}")
     console.print(f"Steps attempted: {result.steps_attempted}")
@@ -1403,6 +1404,21 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
             console.print("    Blockers:")
             for blocker in step.blockers:
                 console.print(f"      - {blocker}", soft_wrap=True)
+    console.print("Automatic worker runs:")
+    if not result.worker_runs:
+        detail = "not run"
+        if result.auto_worker and result.dry_run:
+            detail = "not run (dry-run preview)"
+        console.print(f"  - {detail}")
+    for worker in result.worker_runs:
+        console.print(
+            f"  - run={worker.run_id or 'none'} status={worker.status} "
+            f"batch={worker.batch_worker_run_id or 'none'} preparation={worker.preparation_id or 'none'} "
+            f"worker={worker.codex_worker_run_id or 'none'} ingest={worker.ingest_id or 'none'}",
+            soft_wrap=True,
+        )
+        for blocker in worker.blockers:
+            console.print(f"    Blocker: {blocker}", soft_wrap=True)
     console.print("Automatic validation runs:")
     if not result.validation_runs:
         detail = "not run"
@@ -1433,7 +1449,7 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
     console.print(f"Mutation occurred: {result.mutated}")
     console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
     console.print(
-        "Safety: queue-worker-loop runs one queue-worker step at a time and stops at evidence, delivery, policy, failure, or max-step boundaries. Validation runs only with --auto-validation in confirmed mode. It does not run real Codex, the trusted runner, commit, push, or parallel work.",
+        "Safety: queue-worker-loop runs one queue-worker step at a time and stops at evidence, delivery, policy, failure, or max-step boundaries. One configured Codex subprocess may run only with --auto-worker in confirmed mode; validation runs only with --auto-validation in confirmed mode. It never runs the trusted runner, stages, commits, pushes, or processes parallel work.",
         soft_wrap=True,
     )
 
@@ -6165,6 +6181,7 @@ def loop_queue_worker_run_command(
     note: str = typer.Option("", "--note", help="Optional delivery request note when the run is delivery-ready."),
     max_steps: int = typer.Option(10, "--max-steps", help="Maximum one-step transitions to attempt."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the loop without mutating workspace artifacts."),
+    auto_worker: bool = typer.Option(False, "--auto-worker", help="Run and ingest one configured Codex worker subprocess at the worker gate."),
     auto_validation: bool = typer.Option(False, "--auto-validation", help="Run approved policy validation commands at the validation gate and record evidence."),
     stop_on_waiting_worker: bool = typer.Option(True, "--stop-on-waiting-worker/--no-stop-on-waiting-worker", help="Stop when a worker result is needed."),
     stop_on_delivery_request: bool = typer.Option(True, "--stop-on-delivery-request/--no-stop-on-delivery-request", help="Stop after creating or observing a pending trusted delivery request."),
@@ -6184,6 +6201,7 @@ def loop_queue_worker_run_command(
             note=note,
             max_steps=max_steps,
             dry_run=dry_run,
+            auto_worker=auto_worker,
             auto_validation=auto_validation,
             stop_on_waiting_worker=stop_on_waiting_worker,
             stop_on_delivery_request=stop_on_delivery_request,

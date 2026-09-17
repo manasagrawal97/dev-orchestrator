@@ -649,6 +649,22 @@ class QueueWorkerValidationRunResult(BaseModel):
     )
 
 
+class QueueWorkerAutoWorkerRun(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    policy_id: str
+    run_id: str | None = None
+    status: str = "blocked"
+    batch_worker_run_id: str | None = None
+    preparation_id: str | None = None
+    codex_worker_run_id: str | None = None
+    ingest_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
 class QueueWorkerLoopResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -656,10 +672,12 @@ class QueueWorkerLoopResult(BaseModel):
     policy_id: str
     run_id: str | None = None
     dry_run: bool = False
+    auto_worker: bool = False
     auto_validation: bool = False
     max_steps: int = 10
     steps_attempted: int = 0
     steps: list[QueueWorkerLoopStep] = Field(default_factory=list)
+    worker_runs: list[QueueWorkerAutoWorkerRun] = Field(default_factory=list)
     validation_runs: list[QueueWorkerValidationRunResult] = Field(default_factory=list)
     stop_reason: str = ""
     warnings: list[str] = Field(default_factory=list)
@@ -4457,6 +4475,7 @@ def run_codex_worker_batch(
     project_name: str,
     policy_id: str,
     *,
+    run_id: str | None = None,
     dry_run: bool = False,
     max_items: int = 1,
     max_cycles: int = 1,
@@ -4467,6 +4486,13 @@ def run_codex_worker_batch(
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
     normalized_policy_id = _normalize_policy_id(policy_id)
+    requested_run = _require_queue_worker_run(project_name, run_id, root) if run_id else None
+    if requested_run and requested_run.policy_id != normalized_policy_id:
+        msg = f"Queue-worker run {requested_run.run_id} belongs to policy {requested_run.policy_id}, not {normalized_policy_id}."
+        raise ValueError(msg)
+    if requested_run and requested_run.status != "waiting_worker":
+        msg = f"Queue-worker run {requested_run.run_id} must be waiting_worker before Codex batch execution, not {requested_run.status}."
+        raise ValueError(msg)
     if max_items != 1:
         msg = "Codex worker batch-run v1 supports exactly one item per invocation; use --max-items 1."
         raise ValueError(msg)
@@ -4573,6 +4599,12 @@ def run_codex_worker_batch(
         )
 
     plan = plan_queue_worker_run(project_name, normalized_policy_id, workspace_root=root)
+    if requested_run and plan.selected_queue_item_id != requested_run.selected_queue_item_id:
+        msg = (
+            f"Queue-worker run {requested_run.run_id} selected item {requested_run.selected_queue_item_id or 'none'}, "
+            f"but the current policy plan selected {plan.selected_queue_item_id or 'none'}. Resolve run selection before Codex execution."
+        )
+        raise ValueError(msg)
     add_step(
         "policy and queue item checked",
         status="ok" if plan.usable else "blocked",
@@ -4607,7 +4639,13 @@ def run_codex_worker_batch(
             write_artifact=False,
         )
 
-    step = step_queue_worker_run(project_name, normalized_policy_id, dry_run=False, workspace_root=root)
+    step = step_queue_worker_run(
+        project_name,
+        normalized_policy_id,
+        run_id=requested_run.run_id if requested_run else None,
+        dry_run=False,
+        workspace_root=root,
+    )
     mutation_occurred = mutation_occurred or step.mutated
     warnings = _dedupe([*warnings, *step.warnings])
     blockers = _dedupe([*blockers, *step.blockers])
@@ -6595,6 +6633,7 @@ def loop_queue_worker_run(
     note: str = "",
     max_steps: int = 10,
     dry_run: bool = False,
+    auto_worker: bool = False,
     auto_validation: bool = False,
     stop_on_waiting_worker: bool = True,
     stop_on_delivery_request: bool = True,
@@ -6608,6 +6647,7 @@ def loop_queue_worker_run(
         raise ValueError(msg)
 
     steps: list[QueueWorkerLoopStep] = []
+    worker_runs: list[QueueWorkerAutoWorkerRun] = []
     validation_runs: list[QueueWorkerValidationRunResult] = []
     warnings: list[str] = []
     blockers: list[str] = []
@@ -6649,6 +6689,76 @@ def loop_queue_worker_run(
             stop_reason = "handoff or worker run missing"
             break
         if step.new_status == "waiting_worker":
+            if auto_worker and dry_run:
+                stop_reason = "automatic worker preview"
+                confirmed_command = f"devo project queue-worker-loop --project {project_name} --policy {normalized_policy_id}"
+                if run_id:
+                    confirmed_command += f" --run {current_run_id}"
+                confirmed_command += " --auto-worker --confirm-loop"
+                next_action = (
+                    "Dry-run did not start a Codex worker subprocess. Run confirmed auto-worker with: "
+                    f"{confirmed_command}"
+                )
+                break
+            if auto_worker:
+                try:
+                    worker_result = run_codex_worker_batch(
+                        project_name,
+                        normalized_policy_id,
+                        run_id=current_run_id,
+                        dry_run=False,
+                        max_items=1,
+                        max_cycles=1,
+                        recorded_by="devo queue-worker-loop",
+                        note=note,
+                        workspace_root=root,
+                    )
+                except ValueError as exc:
+                    stop_reason = "automatic worker blocked"
+                    blockers = _dedupe([*blockers, f"Automatic worker was blocked: {exc}"])
+                    next_action = "Resolve the Codex worker blocker, then retry the confirmed auto-worker loop."
+                    break
+                batch_run = worker_result.batch_run
+                worker_runs.append(
+                    QueueWorkerAutoWorkerRun(
+                        project=project_name,
+                        policy_id=normalized_policy_id,
+                        run_id=batch_run.queue_worker_run_id,
+                        status=batch_run.status,
+                        batch_worker_run_id=batch_run.batch_worker_run_id,
+                        preparation_id=batch_run.preparation_id,
+                        codex_worker_run_id=batch_run.codex_worker_run_id,
+                        ingest_id=batch_run.ingest_id,
+                        warnings=worker_result.warnings,
+                        blockers=worker_result.blockers,
+                        next_action=worker_result.next_action,
+                    )
+                )
+                warnings = _dedupe([*warnings, *worker_result.warnings])
+                blockers = _dedupe([*blockers, *worker_result.blockers])
+                mutated = mutated or worker_result.mutation_occurred
+                next_action = worker_result.next_action
+                if batch_run.queue_worker_run_id != current_run_id:
+                    stop_reason = "automatic worker run mismatch"
+                    blockers = _dedupe(
+                        [
+                            *blockers,
+                            "Automatic worker selected a different queue-worker run; stop and inspect policy/run state.",
+                        ]
+                    )
+                    break
+                if batch_run.status == "waiting_review":
+                    stop_reason = "worker review missing"
+                    break
+                stop_reason = f"automatic worker {batch_run.status}"
+                if not blockers:
+                    blockers = _dedupe(
+                        [
+                            *blockers,
+                            f"Automatic worker stopped with status {batch_run.status}; review its artifacts before retrying.",
+                        ]
+                    )
+                break
             if stop_on_waiting_worker or any("Worker result/report not imported" in item for item in step.missing_evidence):
                 stop_reason = "worker result missing"
                 next_action = _queue_worker_record_worker_result_next_action(project_name, current_run_id)
@@ -6750,10 +6860,12 @@ def loop_queue_worker_run(
         policy_id=normalized_policy_id,
         run_id=current_run_id or (steps[-1].run_id if steps else None),
         dry_run=dry_run,
+        auto_worker=auto_worker,
         auto_validation=auto_validation,
         max_steps=max_steps,
         steps_attempted=len(steps),
         steps=steps,
+        worker_runs=worker_runs,
         validation_runs=validation_runs,
         stop_reason=stop_reason or "stopped",
         warnings=warnings,

@@ -2766,6 +2766,187 @@ def test_queue_worker_loop_consumes_recorded_evidence(tmp_path: Path, monkeypatc
     assert run.status == "delivery_requested"
 
 
+def test_queue_worker_loop_without_auto_worker_stops_before_subprocess(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    marker = tmp_path / "auto-worker-default-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-worker: disabled" in result.output
+    assert "Stop reason: worker result missing" in result.output
+    assert "Automatic worker runs:\n  - not run" in result.output
+    assert not marker.exists()
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_dry_run_does_not_spawn_or_mutate(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    marker = tmp_path / "auto-worker-dry-run-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-worker",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-worker: enabled" in result.output
+    assert "Automatic worker runs:\n  - not run (dry-run preview)" in result.output
+    assert "Stop reason: automatic worker preview" in result.output
+    assert "--auto-worker --confirm-loop" in result.output
+    assert not marker.exists()
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_runs_and_ingests_once_then_stops_at_review(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    marker = tmp_path / "auto-worker-ran-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+    head_before = _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip()
+
+    def unexpected_runner(*_args, **_kwargs):
+        pytest.fail("queue-worker-loop --auto-worker must not invoke the trusted runner")
+
+    monkeypatch.setattr("devo.delivery.run_delivery_runner_request", unexpected_runner)
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Auto-worker: enabled" in result.output
+    assert "Automatic worker runs:" in result.output
+    assert "run=QWR-0001 status=waiting_review" in result.output
+    assert "Stop reason: worker review missing" in result.output
+    assert "queue-worker-record-review --project sample --run QWR-0001" in result.output
+    assert marker.exists()
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_review"
+    assert len(list_codex_worker_preparations("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_ingests("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_batch_runs("sample", workspace_root=workspace)) == 1
+    assert load_codex_worker_review("sample", run.selected_worker_run_id, workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    assert _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip() == head_before
+    _git(project_path, "diff", "--cached", "--quiet")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_stops_on_unsafe_worker_result(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "invalid_json")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Auto-worker: enabled" in result.output
+    assert "status=blocked" in result.output
+    assert "Stop reason: automatic worker blocked" in result.output
+    assert "structured text, not a JSON object" in result.output
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.status == "waiting_worker"
+    assert load_codex_worker_review("sample", run.selected_worker_run_id, workspace_root=workspace) is None
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+    _git(project_path, "diff", "--cached", "--quiet")
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_does_not_bypass_policy_approval(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001", approve=False)
+    marker = tmp_path / "auto-worker-unapproved-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "approved is required" in result.output
+    assert not marker.exists()
+    runs = list_queue_worker_runs("sample", workspace_root=workspace)
+    assert len(runs) == 1
+    assert runs[0].status == "blocked"
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_queue_worker_loop_without_auto_validation_still_stops_at_validation_gate(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo ok"])
