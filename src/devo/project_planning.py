@@ -713,17 +713,56 @@ class QueueWorkerLoopResult(BaseModel):
     run_id: str | None = None
     dry_run: bool = False
     auto_worker: bool = False
+    auto_review: bool = False
     auto_validation: bool = False
     max_steps: int = 10
     steps_attempted: int = 0
     steps: list[QueueWorkerLoopStep] = Field(default_factory=list)
     worker_runs: list[QueueWorkerAutoWorkerRun] = Field(default_factory=list)
+    review_runs: list[QueueWorkerReviewRunResult] = Field(default_factory=list)
     validation_runs: list[QueueWorkerValidationRunResult] = Field(default_factory=list)
     stop_reason: str = ""
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     next_action: str = ""
     mutated: bool = False
+
+
+class ApprovedBundleAutoRunResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    bundle_id: str
+    dry_run: bool = True
+    status: str = "blocked"
+    selected_policy_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_queue_worker_run_id: str | None = None
+    queue_worker_run_action: str = "none"
+    planned_gates: list[str] = Field(
+        default_factory=lambda: [
+            "approved bundle and pinned child recheck",
+            "one Codex worker plus strict result ingest",
+            "deterministic low-risk review",
+            "approved validation",
+            "trusted delivery-request creation",
+            "trusted-runner completion reconciliation",
+        ]
+    )
+    policy_ids: list[str] = Field(default_factory=list)
+    bundle_check: ExecutionPolicyApprovalBundleCheck
+    loop_result: QueueWorkerLoopResult | None = None
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    stop_reason: str = ""
+    next_action: str = ""
+    mutated: bool = False
+    safety_note: str = (
+        "auto-run-approved rechecks one approved approval bundle and advances at most one child policy, "
+        "queue item, and Codex worker at a time. It preserves deterministic review and validation gates, "
+        "creates only the existing trusted delivery request, and never runs the trusted runner, stages, "
+        "commits, pushes, or executes work in parallel."
+    )
 
 
 class CodexWorkerPreparation(BaseModel):
@@ -5611,6 +5650,220 @@ def approve_execution_policy_approval_bundle(
     return _write_execution_policy_approval_bundle(project_name, updated_bundle, workspace_root=root)
 
 
+def check_approved_execution_policy_approval_bundle(
+    project_name: str,
+    bundle_id: str,
+    workspace_root: Path | None = None,
+) -> ExecutionPolicyApprovalBundleCheck:
+    """Recheck an approved bundle for supervised sequential execution without mutating it."""
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id, workspace_root=root)
+    if not bundle:
+        return ExecutionPolicyApprovalBundleCheck(
+            project=project_name,
+            bundle_id=_normalize_policy_approval_bundle_id(bundle_id),
+            status="missing",
+            blockers=[f"Execution-policy approval bundle not found: {bundle_id}."],
+            next_action=f"Show the approved bundle: devo project execution-policy-approval-bundle-show --project {project_name} --bundle {bundle_id}",
+        )
+
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if bundle.status != "approved":
+        blockers.append(f"Bundle status is {bundle.status}; approved is required for auto-run-approved.")
+    if len(bundle.policy_ids) < 2:
+        blockers.append("Approved bundle must retain at least two distinct child policies.")
+    if len(set(bundle.policy_ids)) != len(bundle.policy_ids):
+        blockers.append("Approved bundle contains duplicate child policy ids.")
+    if bundle.max_policies < 2 or bundle.max_policies > 10:
+        blockers.append("Recorded max_policies must remain between 2 and 10.")
+    if len(bundle.policy_ids) > bundle.max_policies:
+        blockers.append(
+            f"Bundle includes {len(bundle.policy_ids)} policies, exceeding recorded max_policies={bundle.max_policies}."
+        )
+
+    policies: list[BatchExecutionPolicy] = []
+    queue_item_owners: dict[tuple[str, str], str] = {}
+    task_owners: dict[str, str] = {}
+    all_runs = list_queue_worker_runs(project_name, workspace_root=root)
+    active_statuses = {
+        "handoff_ready",
+        "waiting_worker",
+        "waiting_review",
+        "waiting_validation",
+        "ready_for_delivery_request",
+        "delivery_requested",
+    }
+    bundle_active_runs = [
+        run for run in all_runs if run.policy_id in bundle.policy_ids and run.status in active_statuses
+    ]
+    if len(bundle_active_runs) > 1:
+        blockers.append(
+            "Approved bundle has multiple active queue-worker runs; auto-run-approved requires exactly one-at-a-time execution: "
+            + ", ".join(run.run_id for run in bundle_active_runs)
+            + "."
+        )
+    for run in bundle_active_runs:
+        policy = load_execution_policy(project_name, run.policy_id, workspace_root=root)
+        if not policy:
+            continue
+        if (run.queue_id or "").upper() != (policy.queue_id or "").upper():
+            blockers.append(
+                f"{run.run_id}: active run queue {run.queue_id or 'none'} does not match child policy queue {policy.queue_id or 'none'}."
+            )
+        if _normalize_queue_item_id(run.selected_queue_item_id or "") not in {
+            _normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids
+        }:
+            blockers.append(
+                f"{run.run_id}: active queue item {run.selected_queue_item_id or 'none'} is outside child policy {policy.policy_id}."
+            )
+
+    for policy_id in bundle.policy_ids:
+        policy = load_execution_policy(project_name, policy_id, workspace_root=root)
+        if not policy:
+            blockers.append(f"{policy_id}: execution policy not found.")
+            continue
+        policies.append(policy)
+        policy_check = check_execution_policy(project_name, policy.policy_id, workspace_root=root)
+        blockers.extend(f"{policy.policy_id}: {item}" for item in policy_check.blockers)
+        warnings.extend(f"{policy.policy_id}: {item}" for item in policy_check.warnings)
+        if policy.risk_level != "low":
+            blockers.append(
+                f"{policy.policy_id}: risk {policy.risk_level} is not eligible; auto-run-approved requires low-risk child policies."
+            )
+        if not policy.requires_worker_review or not policy.requires_validation_evidence:
+            blockers.append(f"{policy.policy_id}: worker review and validation evidence gates must remain required.")
+        if not policy.validation_commands:
+            blockers.append(f"{policy.policy_id}: at least one approved validation command is required.")
+        if not policy.allowed_file_patterns or not policy.forbidden_file_patterns:
+            blockers.append(f"{policy.policy_id}: explicit allowed and forbidden file patterns are required.")
+        if policy.max_tasks_per_run != 1:
+            blockers.append(
+                f"{policy.policy_id}: max_tasks_per_run must be 1 for sequential auto-run-approved; got {policy.max_tasks_per_run}."
+            )
+        if not policy.auto_delivery_allowed or not policy.auto_push_allowed:
+            blockers.append(
+                f"{policy.policy_id}: auto_delivery_allowed and auto_push_allowed must both remain true for supervised delivery."
+            )
+        expected_fingerprint = bundle.policy_scope_fingerprints.get(policy.policy_id)
+        if not expected_fingerprint or expected_fingerprint != execution_policy_scope_fingerprint(policy):
+            blockers.append(f"{policy.policy_id}: policy scope changed after bundle approval.")
+        if bundle.policy_task_ids.get(policy.policy_id) != policy.allowed_task_ids:
+            blockers.append(f"{policy.policy_id}: allowed task references no longer match the approved bundle snapshot.")
+        if bundle.policy_queue_item_ids.get(policy.policy_id) != policy.allowed_queue_item_ids:
+            blockers.append(f"{policy.policy_id}: allowed queue-item references no longer match the approved bundle snapshot.")
+
+        batch = load_project_batch(project_name, policy.batch_id, workspace_root=root)
+        if not batch or batch.approval_status != "approved":
+            blockers.append(f"{policy.policy_id}: referenced batch {policy.batch_id} is missing or no longer approved.")
+        queue = load_execution_queue(project_name, policy.queue_id, workspace_root=root) if policy.queue_id else None
+        if not queue:
+            blockers.append(f"{policy.policy_id}: referenced queue {policy.queue_id or 'none'} was not found.")
+            continue
+        if _normalize_batch_id(queue.source_batch_id) != _normalize_batch_id(policy.batch_id):
+            blockers.append(f"{policy.policy_id}: queue {queue.queue_id} does not belong to batch {policy.batch_id}.")
+        queue_items = {_normalize_queue_item_id(item.item_id): item for item in queue.items}
+        for task_id in policy.allowed_task_ids:
+            normalized_task = _normalize_task_id(task_id)
+            previous_owner = task_owners.setdefault(normalized_task, policy.policy_id)
+            if previous_owner != policy.policy_id:
+                blockers.append(
+                    f"{policy.policy_id}: task {task_id} is also owned by {previous_owner}; child policy scopes must not overlap."
+                )
+        for item_id in policy.allowed_queue_item_ids:
+            normalized_item = _normalize_queue_item_id(item_id)
+            owner_key = (_normalize_queue_id(queue.queue_id), normalized_item)
+            previous_owner = queue_item_owners.setdefault(owner_key, policy.policy_id)
+            if previous_owner != policy.policy_id:
+                blockers.append(
+                    f"{policy.policy_id}: queue item {item_id} is also owned by {previous_owner}; child policy scopes must not overlap."
+                )
+            item = queue_items.get(normalized_item)
+            if not item:
+                blockers.append(f"{policy.policy_id}: allowed queue item not found: {item_id}.")
+                continue
+            if _normalize_task_id(item.task_id) not in {
+                _normalize_task_id(task_id) for task_id in policy.allowed_task_ids
+            }:
+                blockers.append(f"{policy.policy_id}: queue item {item_id} references task {item.task_id} outside allowed tasks.")
+            matching_runs = [
+                run
+                for run in all_runs
+                if run.policy_id == policy.policy_id
+                and run.queue_id == queue.queue_id
+                and run.selected_queue_item_id == item.item_id
+            ]
+            latest_matching_run = max(matching_runs, key=lambda run: run.updated_at) if matching_runs else None
+            foreign_active_runs = [
+                run
+                for run in all_runs
+                if run.policy_id != policy.policy_id
+                and run.queue_id == queue.queue_id
+                and run.selected_queue_item_id == item.item_id
+                and run.status in active_statuses
+            ]
+            if foreign_active_runs:
+                blockers.append(
+                    f"{policy.policy_id}: queue item {item.item_id} already has active run(s) under another policy: "
+                    + ", ".join(run.run_id for run in foreign_active_runs)
+                    + "."
+                )
+            if item.status == "pending":
+                # Queue-worker artifacts are the authoritative active-state record; older queue
+                # artifacts may retain pending until trusted delivery is reconciled.
+                if latest_matching_run and latest_matching_run.status in {"blocked", "paused", "failed", "cancelled"}:
+                    blockers.append(
+                        f"{policy.policy_id}: latest queue-worker run {latest_matching_run.run_id} for pending item "
+                        f"{item.item_id} is {latest_matching_run.status}; automatic retry is not allowed."
+                    )
+                elif latest_matching_run and latest_matching_run.status == "completed":
+                    blockers.append(
+                        f"{policy.policy_id}: queue item {item.item_id} is pending although queue-worker run "
+                        f"{latest_matching_run.run_id} is completed."
+                    )
+            elif item.status in {"running", "waiting_review"}:
+                if not any(run.status in active_statuses for run in matching_runs):
+                    blockers.append(
+                        f"{policy.policy_id}: queue item {item.item_id} is {item.status} without a matching active queue-worker run."
+                    )
+            elif item.status == "completed":
+                if not any(run.status == "completed" for run in matching_runs):
+                    blockers.append(
+                        f"{policy.policy_id}: completed queue item {item.item_id} has no matching completed queue-worker run."
+                    )
+            else:
+                blockers.append(
+                    f"{policy.policy_id}: queue item {item.item_id} status {item.status} is not eligible for auto-run-approved."
+                )
+
+    current_total_tasks = sum(policy.max_tasks for policy in policies)
+    current_total_changed_files = sum(policy.max_total_changed_files for policy in policies)
+    if current_total_tasks != bundle.total_max_tasks:
+        blockers.append("The approved bundle total max-tasks bound no longer matches its child policies.")
+    if current_total_changed_files != bundle.total_max_changed_files:
+        blockers.append("The approved bundle total changed-file bound no longer matches its child policies.")
+
+    eligible = not blockers
+    return ExecutionPolicyApprovalBundleCheck(
+        project=project_name,
+        bundle_id=bundle.bundle_id,
+        eligible=eligible,
+        status=bundle.status,
+        policy_ids=list(bundle.policy_ids),
+        max_policies=bundle.max_policies,
+        total_max_tasks=bundle.total_max_tasks,
+        total_max_changed_files=bundle.total_max_changed_files,
+        blockers=_dedupe(blockers),
+        warnings=_dedupe(warnings),
+        next_action=(
+            f"Preview supervised execution: devo project auto-run-approved --project {project_name} --bundle {bundle.bundle_id} --dry-run"
+            if eligible
+            else "Resolve every blocker or request and approve a new bundle before supervised execution."
+        ),
+    )
+
+
 def execution_policy_scope_fingerprint(policy: BatchExecutionPolicy) -> str:
     payload = {
         "project": policy.project,
@@ -7048,6 +7301,7 @@ def loop_queue_worker_run(
     max_steps: int = 10,
     dry_run: bool = False,
     auto_worker: bool = False,
+    auto_review: bool = False,
     auto_validation: bool = False,
     stop_on_waiting_worker: bool = True,
     stop_on_delivery_request: bool = True,
@@ -7062,6 +7316,7 @@ def loop_queue_worker_run(
 
     steps: list[QueueWorkerLoopStep] = []
     worker_runs: list[QueueWorkerAutoWorkerRun] = []
+    review_runs: list[QueueWorkerReviewRunResult] = []
     validation_runs: list[QueueWorkerValidationRunResult] = []
     warnings: list[str] = []
     blockers: list[str] = []
@@ -7162,7 +7417,26 @@ def loop_queue_worker_run(
                     )
                     break
                 if batch_run.status == "waiting_review":
-                    stop_reason = "worker review missing"
+                    if not auto_review:
+                        stop_reason = "worker review missing"
+                        break
+                    review_run = run_queue_worker_policy_review(
+                        project_name,
+                        normalized_policy_id,
+                        current_run_id or "",
+                        confirm_run_review=True,
+                        workspace_root=root,
+                    )
+                    review_runs.append(review_run)
+                    warnings = _dedupe([*warnings, *review_run.warnings])
+                    blockers = _dedupe([*blockers, *review_run.blockers])
+                    next_action = review_run.next_action
+                    if review_run.overall_status == "passed":
+                        mutated = True
+                        continue
+                    stop_reason = "automatic review blocked"
+                    if not review_run.blockers:
+                        blockers = _dedupe([*blockers, "Automatic deterministic review did not pass."])
                     break
                 stop_reason = f"automatic worker {batch_run.status}"
                 if not blockers:
@@ -7178,6 +7452,33 @@ def loop_queue_worker_run(
                 next_action = _queue_worker_record_worker_result_next_action(project_name, current_run_id)
                 break
         if step.new_status == "waiting_review" and any("Worker review not recorded" in item for item in step.missing_evidence):
+            if auto_review and dry_run:
+                stop_reason = "automatic review preview"
+                next_action = (
+                    "Dry-run did not record deterministic review evidence. Run confirmed auto-review with: "
+                    f"devo project queue-worker-loop --project {project_name} --policy {normalized_policy_id} "
+                    f"--run {current_run_id or '<QWR-ID>'} --auto-review --confirm-loop"
+                )
+                break
+            if auto_review:
+                review_run = run_queue_worker_policy_review(
+                    project_name,
+                    normalized_policy_id,
+                    current_run_id or "",
+                    confirm_run_review=True,
+                    workspace_root=root,
+                )
+                review_runs.append(review_run)
+                warnings = _dedupe([*warnings, *review_run.warnings])
+                blockers = _dedupe([*blockers, *review_run.blockers])
+                next_action = review_run.next_action
+                if review_run.overall_status == "passed":
+                    mutated = True
+                    continue
+                stop_reason = "automatic review blocked"
+                if not review_run.blockers:
+                    blockers = _dedupe([*blockers, "Automatic deterministic review did not pass."])
+                break
             stop_reason = "worker review missing"
             next_action = _queue_worker_record_review_next_action(project_name, current_run_id)
             break
@@ -7275,17 +7576,193 @@ def loop_queue_worker_run(
         run_id=current_run_id or (steps[-1].run_id if steps else None),
         dry_run=dry_run,
         auto_worker=auto_worker,
+        auto_review=auto_review,
         auto_validation=auto_validation,
         max_steps=max_steps,
         steps_attempted=len(steps),
         steps=steps,
         worker_runs=worker_runs,
+        review_runs=review_runs,
         validation_runs=validation_runs,
         stop_reason=stop_reason or "stopped",
         warnings=warnings,
         blockers=blockers,
         next_action=next_action,
         mutated=mutated,
+    )
+
+
+def auto_run_approved(
+    project_name: str,
+    bundle_id: str,
+    *,
+    message: str = "",
+    note: str = "",
+    max_steps: int = 10,
+    dry_run: bool = True,
+    workspace_root: Path | None = None,
+) -> ApprovedBundleAutoRunResult:
+    """Advance one eligible child of an approved policy bundle through existing supervised gates."""
+    root = workspace_root or get_workspace_root()
+    if max_steps < 1:
+        msg = "--max-steps must be at least 1."
+        raise ValueError(msg)
+    check = check_approved_execution_policy_approval_bundle(
+        project_name,
+        bundle_id,
+        workspace_root=root,
+    )
+    normalized_bundle_id = check.bundle_id or _normalize_policy_approval_bundle_id(bundle_id)
+    if not check.eligible:
+        return ApprovedBundleAutoRunResult(
+            project=project_name,
+            bundle_id=normalized_bundle_id,
+            dry_run=dry_run,
+            status="blocked",
+            policy_ids=list(check.policy_ids),
+            bundle_check=check,
+            warnings=list(check.warnings),
+            blockers=list(check.blockers),
+            stop_reason="approved bundle recheck failed",
+            next_action=check.next_action,
+        )
+
+    bundle = load_execution_policy_approval_bundle(project_name, normalized_bundle_id, workspace_root=root)
+    if not bundle:
+        # The check above makes this unreachable unless the artifact disappears between reads.
+        blocker = f"Execution-policy approval bundle disappeared during recheck: {normalized_bundle_id}."
+        return ApprovedBundleAutoRunResult(
+            project=project_name,
+            bundle_id=normalized_bundle_id,
+            dry_run=dry_run,
+            status="blocked",
+            policy_ids=list(check.policy_ids),
+            bundle_check=check,
+            blockers=[blocker],
+            stop_reason="approved bundle recheck failed",
+            next_action="Restore or recreate the approved bundle before retrying.",
+        )
+
+    active_statuses = {
+        "handoff_ready",
+        "waiting_worker",
+        "waiting_review",
+        "waiting_validation",
+        "ready_for_delivery_request",
+        "delivery_requested",
+    }
+    all_runs = list_queue_worker_runs(project_name, workspace_root=root)
+    active_runs = [
+        run for run in all_runs if run.policy_id in bundle.policy_ids and run.status in active_statuses
+    ]
+    selected_run = active_runs[0] if active_runs else None
+    selected_policy_id = selected_run.policy_id if selected_run else None
+    selected_queue_item_id = selected_run.selected_queue_item_id if selected_run else None
+    if not selected_policy_id:
+        for policy_id in bundle.policy_ids:
+            policy = _require_execution_policy(project_name, policy_id, root)
+            queue = load_execution_queue(project_name, policy.queue_id, workspace_root=root) if policy.queue_id else None
+            if not queue:
+                continue
+            allowed_items = {_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids}
+            selected_item = next(
+                (
+                    item
+                    for item in queue.items
+                    if item.status == "pending" and _normalize_queue_item_id(item.item_id) in allowed_items
+                ),
+                None,
+            )
+            if selected_item:
+                selected_policy_id = policy.policy_id
+                selected_queue_item_id = selected_item.item_id
+                break
+
+    if not selected_policy_id:
+        return ApprovedBundleAutoRunResult(
+            project=project_name,
+            bundle_id=bundle.bundle_id,
+            dry_run=dry_run,
+            status="completed",
+            policy_ids=list(bundle.policy_ids),
+            bundle_check=check,
+            warnings=list(check.warnings),
+            stop_reason="all approved bundle queue items completed",
+            next_action="No action needed; every queue item pinned by the approved bundle is completed.",
+        )
+
+    selected_run_id = selected_run.run_id if selected_run else None
+    queue_worker_run_action = (
+        f"resume existing queue-worker run {selected_run_id}"
+        if selected_run_id
+        else "create a new queue-worker run"
+    )
+    if dry_run:
+        policy = _require_execution_policy(project_name, selected_policy_id, root)
+        plan = plan_queue_worker_run(project_name, selected_policy_id, workspace_root=root) if not selected_run else None
+        blockers = list(plan.blockers) if plan and not plan.usable else []
+        next_action = (
+            f"Run the reviewed bundle in confirmed mode: devo project auto-run-approved --project {project_name} "
+            f"--bundle {bundle.bundle_id} --confirm-auto-run"
+            if not blockers
+            else "Resolve the selected child policy blockers before confirmed execution."
+        )
+        return ApprovedBundleAutoRunResult(
+            project=project_name,
+            bundle_id=bundle.bundle_id,
+            dry_run=True,
+            status="ready" if not blockers else "blocked",
+            selected_policy_id=policy.policy_id,
+            selected_queue_item_id=selected_queue_item_id,
+            selected_queue_worker_run_id=selected_run_id,
+            queue_worker_run_action=queue_worker_run_action,
+            policy_ids=list(bundle.policy_ids),
+            bundle_check=check,
+            warnings=_dedupe([*check.warnings, *(plan.warnings if plan else [])]),
+            blockers=_dedupe(blockers),
+            stop_reason="preview only" if not blockers else "selected child policy is blocked",
+            next_action=next_action,
+        )
+
+    # Recheck happened above in this same call, immediately before any state-changing service is invoked.
+    loop_result = loop_queue_worker_run(
+        project_name,
+        selected_policy_id,
+        run_id=selected_run_id,
+        message=message,
+        note=note,
+        max_steps=max_steps,
+        dry_run=False,
+        auto_worker=True,
+        auto_review=True,
+        auto_validation=True,
+        stop_on_waiting_worker=False,
+        stop_on_delivery_request=True,
+        workspace_root=root,
+    )
+    blockers = _dedupe([*check.blockers, *loop_result.blockers])
+    status = "blocked" if blockers else "stopped"
+    if loop_result.stop_reason == "waiting for trusted runner":
+        status = "waiting_trusted_delivery"
+    elif "completed" in loop_result.stop_reason:
+        status = "child_completed"
+    return ApprovedBundleAutoRunResult(
+        project=project_name,
+        bundle_id=bundle.bundle_id,
+        dry_run=False,
+        status=status,
+        selected_policy_id=selected_policy_id,
+        selected_queue_item_id=selected_queue_item_id,
+        selected_queue_worker_run_id=loop_result.run_id or selected_run_id,
+        queue_worker_run_action=queue_worker_run_action,
+        policy_ids=list(bundle.policy_ids),
+        bundle_check=check,
+        loop_result=loop_result,
+        warnings=_dedupe([*check.warnings, *loop_result.warnings]),
+        blockers=blockers,
+        stop_reason=loop_result.stop_reason,
+        next_action=loop_result.next_action,
+        mutated=loop_result.mutated,
     )
 
 

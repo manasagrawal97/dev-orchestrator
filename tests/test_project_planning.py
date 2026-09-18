@@ -45,6 +45,8 @@ from devo.project_planning import (
     list_batch_approvals,
     list_execution_queues,
     list_codex_worker_batch_runs,
+    list_codex_worker_reviews,
+    list_codex_worker_runs,
     list_queue_worker_runs,
     patch_proposal_apply_directory,
     patch_proposal_check_directory,
@@ -2050,6 +2052,319 @@ def test_execution_policy_approval_bundle_approval_is_atomic_when_queue_item_bec
     bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
     assert bundle is not None
     assert bundle.status == "requested"
+
+
+def test_auto_run_approved_dry_run_rechecks_bundle_without_mutation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    def fail_if_called(project_name: str) -> DeliveryRunnerScheduleStatus:
+        raise AssertionError(f"dry-run must not check scheduler health for {project_name}")
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", fail_if_called)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Supervised auto-run-approved: sample" in result.output
+    assert "Eligible: True" in result.output
+    assert "Selected policy: POL-0001" in result.output
+    assert "Selected queue item: QI001" in result.output
+    assert "Queue-worker run plan: create a new queue-worker run" in result.output
+    expected_gates = [
+        "1. approved bundle and pinned child recheck",
+        "2. one Codex worker plus strict result ingest",
+        "3. deterministic low-risk review",
+        "4. approved validation",
+        "5. trusted delivery-request creation",
+        "6. trusted-runner completion reconciliation",
+    ]
+    gate_positions = [result.output.index(gate) for gate in expected_gates]
+    assert gate_positions == sorted(gate_positions)
+    assert "Stop reason: preview only" in result.output
+    assert "scheduler health was not checked for dry-run" in result.output
+    assert "Preview only. No queue-worker, Codex, review, validation, or delivery artifact" in result.output
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert list_codex_worker_reviews("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_auto_run_approved_confirmed_blocks_unhealthy_scheduler_before_worker(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    marker = tmp_path / "auto-run-approved-unhealthy-scheduler-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    def unhealthy_scheduler(project_name: str) -> DeliveryRunnerScheduleStatus:
+        return DeliveryRunnerScheduleStatus(
+            project=project_name,
+            installed=False,
+            enabled=False,
+            health="drift",
+            task_query_source="schtasks.exe",
+            task_query_result="ERROR: missing task",
+            next_action="Verify the trusted-runner scheduler from normal PowerShell.",
+        )
+
+    monkeypatch.setattr("devo.main.get_delivery_runner_schedule_status", unhealthy_scheduler)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Trusted runner scheduler gate" in result.output
+    assert "Health: drift" in result.output
+    assert "Stop reason: trusted runner scheduler is not healthy." in result.output
+    assert not marker.exists()
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert list_codex_worker_reviews("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_auto_run_approved_rejects_drifted_child_before_worker(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    marker = tmp_path / "auto-run-approved-drift-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert policy is not None
+    policy_json, _policy_markdown = execution_policy_artifact_paths("sample", "POL-0002", workspace_root=workspace)
+    policy_json.write_text(policy.model_copy(update={"risk_level": "medium"}).model_dump_json(indent=2), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "risk medium is not eligible" in result.output
+    assert "policy scope changed after bundle approval" in result.output
+    assert "Preview blocked before scheduler or child execution." in result.output
+    assert not marker.exists()
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+
+
+def test_auto_run_approved_does_not_retry_failed_child_automatically(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    created = runner.invoke(
+        app,
+        ["project", "queue-worker-loop", "--project", "sample", "--policy", "POL-0001", "--confirm-loop"],
+        terminal_width=240,
+    )
+    assert created.exit_code == 0, created.output
+    failed = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-fail",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--reason",
+            "Synthetic failure stop test.",
+        ],
+        terminal_width=240,
+    )
+    assert failed.exit_code == 0, failed.output
+    marker = tmp_path / "auto-run-approved-no-retry-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "automatic retry is not allowed" in result.output
+    assert not marker.exists()
+    runs = list_queue_worker_runs("sample", workspace_root=workspace)
+    assert len(runs) == 1 and runs[0].status == "failed"
+
+
+def test_auto_run_approved_runs_one_child_sequentially_to_trusted_delivery_wait(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    for policy_id in ["POL-0001", "POL-0002"]:
+        policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+        assert policy is not None
+        policy_json, _policy_markdown = execution_policy_artifact_paths("sample", policy_id, workspace_root=workspace)
+        policy_json.write_text(
+            policy.model_copy(update={"validation_commands": ["cmd /c echo validation-ok"]}).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+    _request_and_approve_execution_policy_bundle()
+    marker = tmp_path / "auto-run-approved-worker-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed_with_change", marker=marker)
+
+    def unexpected_runner(*_args, **_kwargs):
+        pytest.fail("auto-run-approved must not invoke the trusted runner")
+
+    monkeypatch.setattr("devo.delivery.run_delivery_runner_request", unexpected_runner)
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Selected policy: POL-0001" in result.output
+    assert "Auto-worker: enabled" in result.output
+    assert "Auto-review: enabled" in result.output
+    assert "status=passed" in result.output
+    assert "created delivery runner request REQ-0001" in result.output
+    assert "Stop reason: waiting for trusted runner" in result.output
+    assert marker.exists()
+    runs = list_queue_worker_runs("sample", workspace_root=workspace)
+    assert len(runs) == 1
+    assert runs[0].policy_id == "POL-0001"
+    assert runs[0].selected_queue_item_id == "QI001"
+    assert runs[0].status == "delivery_requested"
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+    review = load_codex_worker_review("sample", runs[0].selected_worker_run_id, workspace_root=workspace)
+    assert review is not None
+    assert review.review_status == "reviewed_passed"
+    assert review.validation_evidence.validation_status == "passed"
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None and request.status == "requested"
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    assert next(item for item in queue.items if item.item_id == "QI002").status == "pending"
+
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery completed."}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-0001",
+            runner_context="test",
+            commit_hash="abc123",
+            pushed=True,
+            push_remote="origin",
+            push_branch="main",
+            status="completed",
+            next_action="Trusted delivery completed.",
+        ),
+        workspace_root=workspace,
+    )
+    reconciled = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-auto-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert reconciled.exit_code == 0, reconciled.output
+    assert "specified queue-worker run completed" in reconciled.output
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).status == "completed"
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+    preview_next = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--dry-run",
+            "--no-require-scheduler-healthy",
+        ],
+        terminal_width=240,
+    )
+    assert preview_next.exit_code == 0, preview_next.output
+    assert "Selected policy: POL-0002" in preview_next.output
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
 
 
 def test_queue_worker_plan_blocks_missing_and_draft_policy(tmp_path: Path, monkeypatch) -> None:
@@ -8342,6 +8657,12 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "elif mode == 'completed':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'completed_with_change':",
+                "    changed_path = Path.cwd() / 'src' / 'feature.py'",
+                "    changed_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    changed_path.write_text(\"print('auto-run-approved')\\n\", encoding='utf-8')",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed one scoped change', 'work_performed': ['fake work'], 'changed_files': ['src/feature.py'], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
                 "elif mode == 'completed_schema_echo':",
                 "    print('Expected result schema: status: completed | failed | blocked | usage_limit')",
                 "    print('Stop and report usage_limit if usage limits prevent completion.')",
@@ -8626,6 +8947,46 @@ def _create_requested_approval_bundle_policies(tmp_path: Path, workspace: Path) 
         )
         assert requested.exit_code == 0, requested.output
         _set_execution_policy_risk(workspace, policy_id, "low")
+
+
+def _request_and_approve_execution_policy_bundle() -> None:
+    requested = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-request",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001,POL-0002",
+            "--max-policies",
+            "2",
+            "--confirm-request",
+        ],
+        terminal_width=240,
+    )
+    assert requested.exit_code == 0, requested.output
+    approved = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--confirm-approve",
+        ],
+        terminal_width=240,
+    )
+    assert approved.exit_code == 0, approved.output
+
+
+def _create_approved_execution_policy_bundle(tmp_path: Path, workspace: Path) -> None:
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _request_and_approve_execution_policy_bundle()
 
 
 def _set_execution_policy_risk(workspace: Path, policy_id: str, risk_level: str) -> None:

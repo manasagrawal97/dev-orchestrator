@@ -158,6 +158,7 @@ from .project_planning import (
     ExecutionPolicyCheckResult,
     ExecutionPolicyApprovalBundle,
     ExecutionPolicyApprovalBundleCheck,
+    ApprovedBundleAutoRunResult,
     QueueWorkerEvidenceRecordResult,
     QueueWorkerHandoffChecklist,
     QueueWorkerLoopResult,
@@ -174,6 +175,7 @@ from .project_planning import (
     approve_codex_run_plan,
     approve_execution_policy,
     approve_execution_policy_approval_bundle,
+    auto_run_approved,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -767,6 +769,34 @@ def _print_execution_policy_approval_bundle_check(result: ExecutionPolicyApprova
     for warning in result.warnings or ["none"]:
         console.print(f"  - {warning}", soft_wrap=True)
     console.print(f"Next action: {result.next_action}", soft_wrap=True)
+
+
+def _print_approved_bundle_auto_run_result(result: ApprovedBundleAutoRunResult) -> None:
+    console.print(f"[bold]Supervised auto-run-approved: {result.project}[/bold]")
+    console.print(f"Bundle: {result.bundle_id}")
+    console.print(f"Mode: {'dry-run' if result.dry_run else 'execute'}")
+    console.print(f"Status: {result.status}")
+    console.print(f"Policies: {', '.join(result.policy_ids) if result.policy_ids else 'none'}", soft_wrap=True)
+    console.print(f"Selected policy: {result.selected_policy_id or 'none'}")
+    console.print(f"Selected queue item: {result.selected_queue_item_id or 'none'}")
+    console.print(f"Selected queue-worker run: {result.selected_queue_worker_run_id or 'new run'}")
+    console.print(f"Queue-worker run plan: {result.queue_worker_run_action}")
+    console.print("Planned confirmed-execution gates:")
+    for index, gate in enumerate(result.planned_gates, start=1):
+        console.print(f"  {index}. {gate}", soft_wrap=True)
+    _print_execution_policy_approval_bundle_check(result.bundle_check)
+    if result.loop_result:
+        _print_queue_worker_loop_result(result.loop_result)
+    console.print(f"Stop reason: {result.stop_reason or 'none'}", soft_wrap=True)
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Mutation occurred: {result.mutated}")
+    console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
+    console.print(f"Safety: {result.safety_note}", soft_wrap=True)
 
 
 def _print_queue_worker_plan(plan: QueueWorkerPlan) -> None:
@@ -1435,6 +1465,7 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
     console.print(f"Policy: {result.policy_id}")
     console.print(f"Mode: {'dry-run' if result.dry_run else 'execute'}")
     console.print(f"Auto-worker: {'enabled' if result.auto_worker else 'disabled'}")
+    console.print(f"Auto-review: {'enabled' if result.auto_review else 'disabled'}")
     console.print(f"Auto-validation: {'enabled' if result.auto_validation else 'disabled'}")
     console.print(f"Max steps: {result.max_steps}")
     console.print(f"Steps attempted: {result.steps_attempted}")
@@ -1474,6 +1505,20 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
         )
         for blocker in worker.blockers:
             console.print(f"    Blocker: {blocker}", soft_wrap=True)
+    console.print("Automatic deterministic review runs:")
+    if not result.review_runs:
+        detail = "not run"
+        if result.auto_review and result.dry_run:
+            detail = "not run (dry-run preview)"
+        console.print(f"  - {detail}")
+    for review in result.review_runs:
+        console.print(
+            f"  - run={review.run_id} status={review.overall_status} "
+            f"evidence={review.review_evidence_id or 'none'}",
+            soft_wrap=True,
+        )
+        for blocker in review.blockers:
+            console.print(f"    Blocker: {blocker}", soft_wrap=True)
     console.print("Automatic validation runs:")
     if not result.validation_runs:
         detail = "not run"
@@ -1504,7 +1549,7 @@ def _print_queue_worker_loop_result(result: QueueWorkerLoopResult) -> None:
     console.print(f"Mutation occurred: {result.mutated}")
     console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
     console.print(
-        "Safety: queue-worker-loop runs one queue-worker step at a time and stops at evidence, delivery, policy, failure, or max-step boundaries. One configured Codex subprocess may run only with --auto-worker in confirmed mode; validation runs only with --auto-validation in confirmed mode. It never runs the trusted runner, stages, commits, pushes, or processes parallel work.",
+        "Safety: queue-worker-loop runs one queue-worker step at a time and stops at evidence, delivery, policy, failure, or max-step boundaries. One configured Codex subprocess may run only with --auto-worker in confirmed mode; deterministic review and validation run only through their explicit auto flags in confirmed mode. It never runs the trusted runner, stages, commits, pushes, or processes parallel work.",
         soft_wrap=True,
     )
 
@@ -5327,6 +5372,88 @@ def approve_execution_policy_approval_bundle_command(
     console.print("Child execution policies were approved. No worker, validation, delivery, commit, or push was started.")
 
 
+@project_app.command("auto-run-approved")
+def auto_run_approved_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    bundle_id: str = typer.Option(..., "--bundle", help="Already-approved execution-policy approval bundle id."),
+    message: str = typer.Option("", "--message", help="Optional trusted delivery request commit message for the selected child."),
+    note: str = typer.Option("", "--note", help="Optional supervised run/delivery note."),
+    max_steps: int = typer.Option(10, "--max-steps", help="Maximum one-step transitions for the one selected child."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Recheck and preview one child without creating or running artifacts."),
+    require_scheduler_healthy: bool = typer.Option(
+        True,
+        "--require-scheduler-healthy/--no-require-scheduler-healthy",
+        help="Require a healthy trusted delivery runner schedule before confirmed execution.",
+    ),
+    confirm_auto_run: bool = typer.Option(
+        False,
+        "--confirm-auto-run",
+        help="Confirm one sequential child run through worker, deterministic review, validation, and delivery-request gates.",
+    ),
+) -> None:
+    """Supervise one child of an approved bounded policy bundle through existing gates."""
+    project_name = _resolve_project(project_name)
+    if max_steps < 1:
+        raise typer.BadParameter("--max-steps must be at least 1.", param_hint="--max-steps")
+    if not dry_run and not confirm_auto_run:
+        console.print("auto-run-approved requires --confirm-auto-run unless --dry-run is used.")
+        raise typer.Exit(1)
+
+    try:
+        preview = auto_run_approved(
+            project_name,
+            bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            dry_run=True,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--bundle") from exc
+    _print_approved_bundle_auto_run_result(preview)
+    if preview.blockers:
+        console.print("Preview blocked before scheduler or child execution.")
+        raise typer.Exit(1)
+    if preview.status == "completed":
+        console.print("Approved bundle is complete. No scheduler or execution action is needed.")
+        return
+
+    if dry_run:
+        console.print(
+            "Trusted runner scheduler health was not checked for dry-run; it is required by default for confirmed execution."
+        )
+        console.print("Preview only. No queue-worker, Codex, review, validation, or delivery artifact was created.")
+        return
+
+    if require_scheduler_healthy:
+        scheduler_status = get_delivery_runner_schedule_status(project_name)
+        blocked_by_scheduler = scheduler_status.health != "healthy"
+        _print_approved_queue_run_scheduler_gate(scheduler_status, blocked=blocked_by_scheduler)
+        if blocked_by_scheduler:
+            console.print(
+                "Safety: no queue-worker, Codex, review, validation, delivery, commit, or push mutation ran because scheduler health was not confirmed.",
+                soft_wrap=True,
+            )
+            raise typer.Exit(1)
+    else:
+        console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
+
+    try:
+        result = auto_run_approved(
+            project_name,
+            bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            dry_run=False,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--bundle") from exc
+    _print_approved_bundle_auto_run_result(result)
+    if result.blockers or result.status == "blocked":
+        raise typer.Exit(1)
+
+
 @project_app.command("queue-worker-plan")
 def plan_queue_worker_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
@@ -6361,6 +6488,7 @@ def loop_queue_worker_run_command(
     max_steps: int = typer.Option(10, "--max-steps", help="Maximum one-step transitions to attempt."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the loop without mutating workspace artifacts."),
     auto_worker: bool = typer.Option(False, "--auto-worker", help="Run and ingest one configured Codex worker subprocess at the worker gate."),
+    auto_review: bool = typer.Option(False, "--auto-review", help="Run the low-risk deterministic policy/scope reviewer at the review gate."),
     auto_validation: bool = typer.Option(False, "--auto-validation", help="Run approved policy validation commands at the validation gate and record evidence."),
     stop_on_waiting_worker: bool = typer.Option(True, "--stop-on-waiting-worker/--no-stop-on-waiting-worker", help="Stop when a worker result is needed."),
     stop_on_delivery_request: bool = typer.Option(True, "--stop-on-delivery-request/--no-stop-on-delivery-request", help="Stop after creating or observing a pending trusted delivery request."),
@@ -6381,6 +6509,7 @@ def loop_queue_worker_run_command(
             max_steps=max_steps,
             dry_run=dry_run,
             auto_worker=auto_worker,
+            auto_review=auto_review,
             auto_validation=auto_validation,
             stop_on_waiting_worker=stop_on_waiting_worker,
             stop_on_delivery_request=stop_on_delivery_request,
