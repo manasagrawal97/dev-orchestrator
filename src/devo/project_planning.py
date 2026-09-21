@@ -927,6 +927,9 @@ class CodexWorkerRunPreview(BaseModel):
     staged_files: list[str] = Field(default_factory=list)
     unstaged_files: list[str] = Field(default_factory=list)
     untracked_files: list[str] = Field(default_factory=list)
+    git_state_fingerprint: str | None = None
+    inherited_wip_from_run_id: str | None = None
+    inherited_wip_verified: bool = False
     codex_launched: bool = False
     ai_api_called: bool = False
     mutation_occurred: bool = True
@@ -1002,6 +1005,9 @@ class CodexWorkerSubprocessRun(BaseModel):
     staged_files_before: list[str] = Field(default_factory=list)
     unstaged_files_before: list[str] = Field(default_factory=list)
     untracked_files_before: list[str] = Field(default_factory=list)
+    git_state_fingerprint_before: str | None = None
+    inherited_wip_from_run_id: str | None = None
+    inherited_wip_verified: bool = False
     current_branch_after: str | None = None
     upstream_branch_after: str | None = None
     head_commit_after: str | None = None
@@ -1011,6 +1017,7 @@ class CodexWorkerSubprocessRun(BaseModel):
     unstaged_files_after: list[str] = Field(default_factory=list)
     untracked_files_after: list[str] = Field(default_factory=list)
     changed_files_after: list[str] = Field(default_factory=list)
+    git_state_fingerprint_after: str | None = None
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     next_action: str = ""
@@ -3231,9 +3238,24 @@ def create_codex_worker_run_preview(
         msg = f"Target repo path does not exist: {target_path}"
         raise ValueError(msg)
     git_context = _capture_prepare_git_context(project_name, target_path, workspace_root=root)
+    inherited_wip_from_run_id: str | None = None
+    inherited_wip_verified = False
+    baseline_warnings: list[str] = []
     if git_context["git_dirty"]:
-        msg = f"Target repository must be clean before Codex subprocess preview; current status is {git_context['git_status_summary']}."
-        raise ValueError(msg)
+        try:
+            git_state_fingerprint, inherited_wip_from_run_id, inherited_warning = _verify_codex_worker_retry_baseline(
+                project_name, run, policy, target_path, git_context, root
+            )
+        except ValueError as exc:
+            msg = (
+                f"Target repository must be clean before Codex subprocess preview unless exact inherited WIP from its linked parent is proven; "
+                f"current status is {git_context['git_status_summary']}. {exc}"
+            )
+            raise ValueError(msg) from exc
+        inherited_wip_verified = True
+        baseline_warnings.append(inherited_warning)
+    else:
+        git_state_fingerprint = _git_dirty_state_fingerprint(target_path, git_context)
 
     effective_timeout = timeout_minutes if timeout_minutes is not None else config.timeout_minutes
     result_name = str(result_file) if result_file else config.result_file_name
@@ -3267,7 +3289,7 @@ def create_codex_worker_run_preview(
         result_path=planned_result_path,
     )
     planned_command_text = _format_planned_command(planned_command)
-    warnings = [*config_result.warnings]
+    warnings = [*config_result.warnings, *baseline_warnings]
     preview = CodexWorkerRunPreview(
         project=project_name,
         preview_id=preview_id,
@@ -3297,6 +3319,9 @@ def create_codex_worker_run_preview(
         staged_files=list(git_context["staged_files"]),
         unstaged_files=list(git_context["unstaged_files"]),
         untracked_files=list(git_context["untracked_files"]),
+        git_state_fingerprint=git_state_fingerprint,
+        inherited_wip_from_run_id=inherited_wip_from_run_id,
+        inherited_wip_verified=inherited_wip_verified,
         warnings=warnings,
         next_action=(
             "Review this dry-run preview. To run exactly one subprocess, use codex-worker-run with --confirm-codex-worker from the appropriate operator context."
@@ -3323,6 +3348,8 @@ def create_codex_worker_run_preview(
                 "timeout_minutes": effective_timeout,
                 "working_directory": str(target_path),
                 "planned_command": planned_command,
+                "inherited_wip_verified": inherited_wip_verified,
+                "inherited_wip_from_run_id": inherited_wip_from_run_id,
                 "created_at": now.isoformat(),
             },
             indent=2,
@@ -3427,9 +3454,24 @@ def execute_codex_worker_subprocess_run(
         msg = f"Target repo path does not exist: {target_path}"
         raise ValueError(msg)
     git_before = _capture_prepare_git_context(project_name, target_path, workspace_root=root)
+    inherited_wip_from_run_id: str | None = None
+    inherited_wip_verified = False
+    baseline_warnings: list[str] = []
     if git_before["git_dirty"]:
-        msg = f"Target repository must be clean before Codex subprocess execution; current status is {git_before['git_status_summary']}."
-        raise ValueError(msg)
+        try:
+            git_state_fingerprint_before, inherited_wip_from_run_id, inherited_warning = _verify_codex_worker_retry_baseline(
+                project_name, run, policy, target_path, git_before, root
+            )
+        except ValueError as exc:
+            msg = (
+                f"Target repository must be clean before Codex subprocess execution unless exact inherited WIP from its linked parent is proven; "
+                f"current status is {git_before['git_status_summary']}. {exc}"
+            )
+            raise ValueError(msg) from exc
+        inherited_wip_verified = True
+        baseline_warnings.append(inherited_warning)
+    else:
+        git_state_fingerprint_before = _git_dirty_state_fingerprint(target_path, git_before)
 
     effective_timeout = timeout_minutes if timeout_minutes is not None else config.timeout_minutes
     result_name = str(result_file) if result_file else config.result_file_name
@@ -3480,6 +3522,8 @@ def execute_codex_worker_subprocess_run(
             cwd=target_path,
             input=prompt_text,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=effective_timeout * 60,
             check=False,
@@ -3490,8 +3534,8 @@ def execute_codex_worker_subprocess_run(
     except subprocess.TimeoutExpired as exc:
         exit_code = None
         timed_out = True
-        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
-        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
+        stdout = _decode_subprocess_output(exc.stdout)
+        stderr = _decode_subprocess_output(exc.stderr)
         stderr = (stderr + "\nCodex worker subprocess timed out.").strip() + "\n"
     except (PermissionError, FileNotFoundError, OSError) as exc:
         exit_code = _codex_worker_subprocess_exception_exit_code(exc)
@@ -3510,10 +3554,18 @@ def execute_codex_worker_subprocess_run(
             *[str(item) for item in git_after["untracked_files"]],
         ]
     )
+    fingerprint_warning: str | None = None
+    try:
+        git_state_fingerprint_after = _git_dirty_state_fingerprint(target_path, git_after)
+    except ValueError as exc:
+        git_state_fingerprint_after = None
+        fingerprint_warning = f"Could not capture retry baseline after subprocess execution: {exc}"
     worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=root) if run.selected_worker_run_id else None
     scope_warnings, scope_violation = _codex_worker_subprocess_scope_findings(policy, worker_run, run.handoff_checklist, changed_files)
     usage_limit_detected = _contains_usage_limit_hint(stdout + "\n" + stderr)
-    warnings = [*config_result.warnings, *scope_warnings]
+    warnings = [*config_result.warnings, *baseline_warnings, *scope_warnings]
+    if fingerprint_warning:
+        warnings.append(fingerprint_warning)
     if usage_limit_detected:
         warnings.append("usage_limit_detected: subprocess output contains usage/rate/quota limit wording.")
     status = _classify_codex_worker_subprocess_state(
@@ -3560,6 +3612,9 @@ def execute_codex_worker_subprocess_run(
         staged_files_before=list(git_before["staged_files"]),
         unstaged_files_before=list(git_before["unstaged_files"]),
         untracked_files_before=list(git_before["untracked_files"]),
+        git_state_fingerprint_before=git_state_fingerprint_before,
+        inherited_wip_from_run_id=inherited_wip_from_run_id,
+        inherited_wip_verified=inherited_wip_verified,
         current_branch_after=git_after["current_branch"],
         upstream_branch_after=git_after["upstream_branch"],
         head_commit_after=git_after["head_commit"],
@@ -3569,6 +3624,7 @@ def execute_codex_worker_subprocess_run(
         unstaged_files_after=list(git_after["unstaged_files"]),
         untracked_files_after=list(git_after["untracked_files"]),
         changed_files_after=changed_files,
+        git_state_fingerprint_after=git_state_fingerprint_after,
         warnings=warnings,
         next_action=next_action,
         recorded_by=recorded_by.strip() if recorded_by and recorded_by.strip() else None,
@@ -3591,6 +3647,8 @@ def execute_codex_worker_subprocess_run(
                 "exit_code": exit_code,
                 "working_directory": str(target_path),
                 "planned_command": planned_command,
+                "inherited_wip_verified": inherited_wip_verified,
+                "inherited_wip_from_run_id": inherited_wip_from_run_id,
                 "started_at": started_at.isoformat(),
                 "completed_at": completed_at.isoformat(),
             },
@@ -10214,6 +10272,8 @@ def execute_codex_worker_run(
             command_args,
             input=prompt_text,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             cwd=plan.proposed_working_directory,
             timeout=timeout_seconds,
@@ -10224,8 +10284,8 @@ def execute_codex_worker_run(
         stderr = completed.stderr or ""
     except subprocess.TimeoutExpired as exc:
         exit_code = 124
-        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode(errors="replace")
-        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode(errors="replace")
+        stdout = _decode_subprocess_output(exc.stdout)
+        stderr = _decode_subprocess_output(exc.stderr)
         stderr = (stderr + "\nCodex execution timed out.").strip() + "\n"
     except (PermissionError, FileNotFoundError, OSError) as exc:
         exit_code = _codex_launch_exception_exit_code(exc)
@@ -11000,6 +11060,9 @@ def render_codex_worker_run_preview_markdown(preview: CodexWorkerRunPreview) -> 
         f"- Branch: `{preview.current_branch or 'unknown'}`",
         f"- Upstream: `{preview.upstream_branch or 'none'}`",
         f"- Git status: `{preview.git_status_summary}`",
+        f"- Git state fingerprint: `{preview.git_state_fingerprint or 'none'}`",
+        f"- Inherited WIP verified: `{preview.inherited_wip_verified}`",
+        f"- Inherited WIP parent run: `{preview.inherited_wip_from_run_id or 'none'}`",
         f"- Codex launched: `{preview.codex_launched}`",
         f"- AI/API called: `{preview.ai_api_called}`",
         f"- Mutation occurred: `{preview.mutation_occurred}`",
@@ -11053,6 +11116,10 @@ def render_codex_worker_subprocess_run_markdown(run: CodexWorkerSubprocessRun) -
         f"- Timeout minutes: `{run.timeout_minutes}`",
         f"- Git status before: `{run.git_status_before}`",
         f"- Git status after: `{run.git_status_after}`",
+        f"- Git state fingerprint before: `{run.git_state_fingerprint_before or 'none'}`",
+        f"- Git state fingerprint after: `{run.git_state_fingerprint_after or 'none'}`",
+        f"- Inherited WIP verified: `{run.inherited_wip_verified}`",
+        f"- Inherited WIP parent run: `{run.inherited_wip_from_run_id or 'none'}`",
         f"- Codex launched: `{run.codex_launched}`",
         f"- AI/API called: `{run.ai_api_called}`",
         f"- Started: `{run.started_at.isoformat() if run.started_at else 'none'}`",
@@ -14672,6 +14739,171 @@ def _capture_prepare_git_context(project_name: str, target_path: Path, workspace
             "untracked_files": [],
             "warnings": [f"Could not capture Git status for {target_path}: {exc}"],
         }
+
+
+def _decode_subprocess_output(value: str | bytes | None) -> str:
+    if isinstance(value, str):
+        return value
+    return (value or b"").decode("utf-8", errors="replace")
+
+
+def _git_dirty_state_fingerprint(target_path: Path, git_context: dict[str, object]) -> str:
+    """Hash the complete tracked/index/untracked state used as a retry baseline."""
+    staged = sorted(str(path).replace("\\", "/") for path in git_context["staged_files"])
+    unstaged = sorted(str(path).replace("\\", "/") for path in git_context["unstaged_files"])
+    untracked = sorted(str(path).replace("\\", "/") for path in git_context["untracked_files"])
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(
+            {
+                "head_commit": git_context["head_commit"],
+                "current_branch": git_context["current_branch"],
+                "staged_files": staged,
+                "unstaged_files": unstaged,
+                "untracked_files": untracked,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    changed_paths = sorted(set([*staged, *unstaged]))
+    for label, args in (
+        ("staged", ["git", "diff", "--binary", "--cached", "--no-ext-diff", "HEAD", "--", *changed_paths]),
+        ("unstaged", ["git", "diff", "--binary", "--no-ext-diff", "--", *changed_paths]),
+    ):
+        completed = subprocess.run(args, cwd=target_path, capture_output=True, check=False)
+        if completed.returncode != 0:
+            detail = _decode_subprocess_output(completed.stderr or completed.stdout).strip()
+            msg = f"Could not capture {label} Git state for retry baseline: {detail or f'exit code {completed.returncode}'}"
+            raise ValueError(msg)
+        raw_output = completed.stdout.encode("utf-8", errors="surrogatepass") if isinstance(completed.stdout, str) else (completed.stdout or b"")
+        digest.update(label.encode("ascii") + b"\0" + raw_output)
+
+    resolved_root = target_path.resolve()
+    for relative_path in untracked:
+        candidate = target_path / Path(relative_path)
+        try:
+            candidate.resolve(strict=False).relative_to(resolved_root)
+        except ValueError as exc:
+            raise ValueError(f"Unsafe untracked path while capturing retry baseline: {relative_path}") from exc
+        digest.update(b"untracked\0" + relative_path.encode("utf-8") + b"\0")
+        if candidate.is_symlink():
+            digest.update(b"symlink\0" + os.readlink(candidate).encode("utf-8", errors="surrogateescape"))
+        elif candidate.is_file():
+            digest.update(b"file\0" + candidate.read_bytes())
+        else:
+            raise ValueError(f"Untracked retry-baseline path is not a readable file: {relative_path}")
+    return digest.hexdigest()
+
+
+def _list_codex_worker_subprocess_runs_for_queue(
+    project_name: str,
+    queue_worker_run_id: str,
+    workspace_root: Path,
+) -> list[CodexWorkerSubprocessRun]:
+    runs: list[CodexWorkerSubprocessRun] = []
+    directory = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root)
+    if not directory.exists():
+        return runs
+    for path in directory.glob("*/codex-worker-run.json"):
+        try:
+            run = CodexWorkerSubprocessRun.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValidationError):
+            continue
+        if run.queue_worker_run_id == queue_worker_run_id:
+            runs.append(run)
+    return sorted(runs, key=lambda item: item.completed_at or item.updated_at, reverse=True)
+
+
+def _verify_codex_worker_retry_baseline(
+    project_name: str,
+    run: QueueWorkerRun,
+    policy: ExecutionPolicy,
+    target_path: Path,
+    git_context: dict[str, object],
+    workspace_root: Path,
+) -> tuple[str, str, str]:
+    if not run.retry_of:
+        raise ValueError("Dirty repository is not eligible for execution because this is not a linked queue-worker retry.")
+    parent = load_queue_worker_run(project_name, run.retry_of, workspace_root=workspace_root)
+    if not parent:
+        raise ValueError(f"Linked parent queue-worker run was not found: {run.retry_of}.")
+    linkage_fields = ("policy_id", "queue_id", "selected_queue_item_id", "selected_task_id", "selected_handoff_id")
+    drifted_linkage = [field for field in linkage_fields if getattr(parent, field) != getattr(run, field)]
+    if drifted_linkage:
+        raise ValueError("Linked retry lineage does not match its parent for: " + ", ".join(drifted_linkage) + ".")
+
+    parent_attempts = _list_codex_worker_subprocess_runs_for_queue(project_name, parent.run_id, workspace_root)
+    if not parent_attempts:
+        raise ValueError(f"No parent subprocess attempt exists for linked retry {parent.run_id}; inherited WIP cannot be proven.")
+    parent_attempt = parent_attempts[0]
+    if not parent_attempt.git_dirty_after or not parent_attempt.git_state_fingerprint_after:
+        raise ValueError(
+            f"Latest parent subprocess attempt {parent_attempt.codex_worker_run_id} has no dirty-state fingerprint; inherited WIP cannot be proven."
+        )
+    if parent_attempt.head_commit_after != git_context["head_commit"]:
+        raise ValueError("Repository HEAD changed after the parent attempt; inherited WIP baseline has drifted.")
+    if parent_attempt.current_branch_after != git_context["current_branch"]:
+        raise ValueError("Repository branch changed after the parent attempt; inherited WIP baseline has drifted.")
+
+    current_sets = (
+        sorted(str(item).replace("\\", "/") for item in git_context["staged_files"]),
+        sorted(str(item).replace("\\", "/") for item in git_context["unstaged_files"]),
+        sorted(str(item).replace("\\", "/") for item in git_context["untracked_files"]),
+    )
+    parent_sets = (
+        sorted(path.replace("\\", "/") for path in parent_attempt.staged_files_after),
+        sorted(path.replace("\\", "/") for path in parent_attempt.unstaged_files_after),
+        sorted(path.replace("\\", "/") for path in parent_attempt.untracked_files_after),
+    )
+    if current_sets != parent_sets:
+        raise ValueError("Current dirty-file sets do not exactly match the linked parent attempt; inherited WIP baseline has drifted.")
+    changed_files = _dedupe([*current_sets[0], *current_sets[1], *current_sets[2]])
+    if not changed_files:
+        raise ValueError("Linked retry baseline is dirty but contains no attributable changed files.")
+    if not policy.allowed_file_patterns:
+        raise ValueError("Execution policy has no allowed-file scope, so inherited WIP cannot be accepted.")
+    outside_policy = [path for path in changed_files if not _matches_any_scope_pattern(path, policy.allowed_file_patterns)]
+    forbidden = [path for path in changed_files if _matches_any_scope_pattern(path, policy.forbidden_file_patterns)]
+    worker_run = load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=workspace_root) if run.selected_worker_run_id else None
+    worker_scope_patterns = (
+        [pattern for pattern in worker_run.allowed_scope if _looks_like_file_scope_pattern(pattern)]
+        if worker_run
+        else []
+    )
+    outside_worker = (
+        [path for path in changed_files if not _matches_any_scope_pattern(path, worker_scope_patterns)]
+        if worker_scope_patterns
+        else []
+    )
+    if outside_policy or outside_worker or forbidden:
+        details = []
+        if outside_policy:
+            details.append("outside policy scope: " + ", ".join(outside_policy))
+        if outside_worker:
+            details.append("outside worker task scope: " + ", ".join(outside_worker))
+        if forbidden:
+            details.append("forbidden: " + ", ".join(forbidden))
+        raise ValueError("Inherited WIP is not entirely within approved scope (" + "; ".join(details) + ").")
+    effective_limit = min(policy.max_changed_files_per_task, policy.max_total_changed_files)
+    if len(changed_files) > effective_limit:
+        raise ValueError(f"Inherited WIP changes {len(changed_files)} files, exceeding the policy limit of {effective_limit}.")
+
+    fingerprint = _git_dirty_state_fingerprint(target_path, git_context)
+    if fingerprint != parent_attempt.git_state_fingerprint_after:
+        raise ValueError("Current dirty content does not exactly match the linked parent attempt; inherited WIP baseline has drifted.")
+    warning = (
+        f"Verified exact inherited WIP from {parent.run_id} / {parent_attempt.codex_worker_run_id}; "
+        "branch, HEAD, dirty-file sets, content fingerprint, and approved scope all match."
+    )
+    return fingerprint, parent.run_id, warning
+
+
+def _looks_like_file_scope_pattern(value: str) -> bool:
+    normalized = value.strip().replace("\\", "/")
+    return bool(normalized) and (
+        "/" in normalized or "*" in normalized or (not any(character.isspace() for character in normalized) and Path(normalized).suffix != "")
+    )
 
 
 def _prepare_git_status_summary(staged: list[str], unstaged: list[str], untracked: list[str]) -> str:

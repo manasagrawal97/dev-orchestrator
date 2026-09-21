@@ -4683,6 +4683,178 @@ def test_codex_worker_run_executes_fake_command_and_captures_result(tmp_path: Pa
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_subprocess_capture_is_utf8_safe_for_invalid_bytes(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, "invalid_utf8")
+    prepare = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"])
+    assert prepare.exit_code == 0, prepare.output
+    preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+
+    result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Status: completed_with_result" in result.output
+    run_json = next(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert "invalid stdout: \ufffd" in (run_json.parent / "stdout.txt").read_text(encoding="utf-8")
+    assert "invalid stderr: \ufffd" in (run_json.parent / "stderr.txt").read_text(encoding="utf-8")
+
+
+def test_codex_worker_retry_executes_with_exact_inherited_wip(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, "completed_with_change")
+    prepared = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"])
+    assert prepared.exit_code == 0, prepared.output
+    parent_preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    parent_result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", parent_preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert parent_result.exit_code == 0, parent_result.output
+
+    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"])
+    assert retry.exit_code == 0, retry.output
+    prepared_retry = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"])
+    assert prepared_retry.exit_code == 0, prepared_retry.output
+    retry_preparation = [item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"][0]
+    retry_result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", retry_preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+
+    assert retry_result.exit_code == 0, retry_result.output
+    assert "Inherited WIP verified: True" in retry_result.output
+    assert "Inherited WIP parent run: QWR-0001" in retry_result.output
+    retry_json = next(
+        path
+        for path in codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json")
+        if json.loads(path.read_text(encoding="utf-8"))["queue_worker_run_id"] == "QWR-0002"
+    )
+    retry_data = json.loads(retry_json.read_text(encoding="utf-8"))
+    assert retry_data["inherited_wip_verified"] is True
+    assert retry_data["inherited_wip_from_run_id"] == "QWR-0001"
+    assert retry_data["git_state_fingerprint_before"] == retry_data["git_state_fingerprint_after"]
+
+
+def test_codex_worker_retry_rejects_drifted_inherited_wip(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, "completed_with_change")
+    prepared = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"])
+    assert prepared.exit_code == 0, prepared.output
+    parent_preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    parent_result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", parent_preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert parent_result.exit_code == 0, parent_result.output
+    (project_path / "src" / "feature.py").write_text("print('unrelated drift')\n", encoding="utf-8")
+    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"])
+    assert retry.exit_code == 0, retry.output
+    prepared_retry = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"])
+    assert prepared_retry.exit_code == 0, prepared_retry.output
+    retry_preparation = [item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"][0]
+
+    retry_result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", retry_preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+
+    assert retry_result.exit_code != 0
+    assert "inherited WIP baseline has drifted" in retry_result.output
+    retry_runs = [
+        path
+        for path in codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json")
+        if json.loads(path.read_text(encoding="utf-8"))["queue_worker_run_id"] == "QWR-0002"
+    ]
+    assert retry_runs == []
+
+
+def test_codex_worker_retry_rejects_new_dirty_file_after_parent_attempt(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path, retry_preparation_id, _parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    (project_path / "src" / "unrelated.py").write_text("print('new unrelated WIP')\n", encoding="utf-8")
+
+    retry_result = _invoke_linked_codex_worker_retry(retry_preparation_id)
+
+    assert retry_result.exit_code != 0
+    assert "dirty-file sets do not exactly match" in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
+
+
+@pytest.mark.parametrize(
+    ("policy_update", "expected_message"),
+    [
+        ({"allowed_file_patterns": ["tests/**"]}, "outside policy scope: src/feature.py"),
+        ({"forbidden_file_patterns": ["src/**"]}, "forbidden: src/feature.py"),
+    ],
+)
+def test_codex_worker_retry_rejects_inherited_wip_outside_approved_scope(
+    tmp_path: Path,
+    monkeypatch,
+    policy_update: dict[str, list[str]],
+    expected_message: str,
+) -> None:
+    workspace, _project_path, retry_preparation_id, _parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert policy is not None
+    policy_json, _policy_markdown = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    policy_json.write_text(policy.model_copy(update=policy_update).model_dump_json(indent=2), encoding="utf-8")
+
+    retry_result = _invoke_linked_codex_worker_retry(retry_preparation_id)
+
+    assert retry_result.exit_code != 0
+    assert "Inherited WIP is not entirely within approved scope" in retry_result.output
+    assert expected_message in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
+
+
+def test_codex_worker_retry_rejects_legacy_parent_attempt_without_fingerprint(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path, retry_preparation_id, parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    parent_data = json.loads(parent_run_json.read_text(encoding="utf-8"))
+    parent_data.pop("git_state_fingerprint_after")
+    parent_run_json.write_text(json.dumps(parent_data, indent=2), encoding="utf-8")
+
+    retry_result = _invoke_linked_codex_worker_retry(retry_preparation_id)
+
+    assert retry_result.exit_code != 0
+    assert "has no dirty-state fingerprint; inherited WIP cannot be proven" in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
+
+
+def test_codex_worker_retry_rejects_staged_untracked_category_drift(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path, retry_preparation_id, _parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    _git(project_path, "add", "src/feature.py")
+
+    retry_result = _invoke_linked_codex_worker_retry(retry_preparation_id)
+
+    assert retry_result.exit_code != 0
+    assert "dirty-file sets do not exactly match" in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
+
+
+def test_codex_worker_retry_rejects_branch_drift(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path, retry_preparation_id, _parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    _git(project_path, "checkout", "-b", "retry-drift")
+
+    retry_result = _invoke_linked_codex_worker_retry(retry_preparation_id)
+
+    assert retry_result.exit_code != 0
+    assert "Repository branch changed after the parent attempt" in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_status", "expected_exit"),
     [
@@ -6350,7 +6522,8 @@ def test_codex_worker_prompt_includes_patch_proposal_fallback_contract(tmp_path:
 
 
 def test_codex_worker_batch_summary_reports_waiting_validation_next_command(tmp_path: Path, monkeypatch) -> None:
-    _workspace(tmp_path, monkeypatch)
+    _workspace_path, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
     _create_execution_policy(tmp_path, allowed_task="T001")
     _set_fake_codex_worker_config(tmp_path, "completed")
     batch_run = runner.invoke(
@@ -8566,6 +8739,48 @@ def _create_queue_worker_run(tmp_path: Path, *, validation_commands: list[str] |
     assert result.exit_code == 0, result.output
 
 
+def _prepare_retry_with_inherited_wip(tmp_path: Path, monkeypatch) -> tuple[Path, Path, str, Path]:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    _set_fake_codex_worker_config(tmp_path, "completed_with_change")
+    prepared = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0001", "--confirm-prepare"])
+    assert prepared.exit_code == 0, prepared.output
+    parent_preparation = list_codex_worker_preparations("sample", workspace_root=workspace)[0]
+    parent_result = runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0001", "--prepare", parent_preparation.preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+    assert parent_result.exit_code == 0, parent_result.output
+    parent_run_json = _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0001")[0]
+
+    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"])
+    assert retry.exit_code == 0, retry.output
+    prepared_retry = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"])
+    assert prepared_retry.exit_code == 0, prepared_retry.output
+    retry_preparation = [
+        item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"
+    ][0]
+    return workspace, project_path, retry_preparation.preparation_id, parent_run_json
+
+
+def _invoke_linked_codex_worker_retry(preparation_id: str):
+    return runner.invoke(
+        app,
+        ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", preparation_id, "--confirm-codex-worker"],
+        terminal_width=240,
+    )
+
+
+def _codex_worker_subprocess_runs_for_queue(workspace: Path, run_id: str) -> list[Path]:
+    return [
+        path
+        for path in codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json")
+        if json.loads(path.read_text(encoding="utf-8"))["queue_worker_run_id"] == run_id
+    ]
+
+
 def _create_ready_queue_worker_run(tmp_path: Path) -> None:
     _create_queue_worker_run(tmp_path)
     _import_worker_report(tmp_path)
@@ -8663,6 +8878,11 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "    changed_path.write_text(\"print('auto-run-approved')\\n\", encoding='utf-8')",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed one scoped change', 'work_performed': ['fake work'], 'changed_files': ['src/feature.py'], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'invalid_utf8':",
+                "    sys.stdout.buffer.write(b'invalid stdout: \\xff\\n')",
+                "    sys.stderr.buffer.write(b'invalid stderr: \\xff\\n')",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed with invalid output bytes', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
                 "elif mode == 'completed_schema_echo':",
                 "    print('Expected result schema: status: completed | failed | blocked | usage_limit')",
                 "    print('Stop and report usage_limit if usage limits prevent completion.')",
