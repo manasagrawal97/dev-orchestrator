@@ -133,6 +133,8 @@ TASK-DEVO-195 implements `devo project auto-run-approved --project <project> --b
 
 TASK-DEVO-196 hardens the unattended worker boundary exposed by that dogfood. Captured Codex output is now decoded as UTF-8 with safe replacement rather than the Windows locale, preventing malformed or non-cp1252 bytes from killing a reader thread. Linked retries can continue exact parent-attempt WIP only after a content fingerprint plus branch, HEAD, Git-state categories, scope, forbidden-pattern, and file-count checks all match. This is not a general dirty-tree switch: no retry lineage, missing evidence, drift, or out-of-scope state still stops before launch.
 
+TASK-DEVO-197 adds the explicit continuous form of approved-bundle supervision. Plain `auto-run-approved` preserves the TASK-DEVO-195 one-child boundary; `--supervise` sequentially advances one child, waits with bounded polling for external trusted-runner evidence, reconciles only a completed pushed delivery, rechecks the bundle, and then considers the next child. It records one compact invocation artifact and stops safely on timeout or any human, worker, validation, delivery, or policy boundary. It does not invoke the runner, retry failed work, parallelize children, or provide TASK-DEVO-198 process-crash recovery.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

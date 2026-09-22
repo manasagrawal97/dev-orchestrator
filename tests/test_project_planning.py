@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import devo.project_planning as project_planning_module
 from devo.delivery import (
     DeliveryRunnerRun,
     DeliveryRunnerScheduleStatus,
@@ -21,11 +22,15 @@ from devo.delivery import (
 )
 from devo.main import app
 from devo.project_planning import (
+    ApprovedBundleAutoRunResult,
     BacklogTask,
     CodexWorkerIngest,
     CodexWorkerReport,
     ProjectBacklog,
     QueueWorkerRun,
+    QueueWorkerAutoWorkerRun,
+    QueueWorkerLoopResult,
+    ExecutionPolicyApprovalBundleCheck,
     build_project_intake_status,
     calculate_project_progress,
     create_rough_goal_intake_next_policy,
@@ -74,6 +79,8 @@ from devo.project_planning import (
     queue_artifact_paths,
     queue_worker_run_artifact_paths,
     request_queue_worker_delivery,
+    approved_bundle_supervisor_artifact_paths,
+    supervise_approved_bundle,
     summarize_queue_worker_evidence,
     worker_report_artifact_paths,
 )
@@ -2365,6 +2372,418 @@ def test_auto_run_approved_runs_one_child_sequentially_to_trusted_delivery_wait(
     assert preview_next.exit_code == 0, preview_next.output
     assert "Selected policy: POL-0002" in preview_next.output
     assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+
+
+def test_approved_bundle_supervisor_completes_two_children_sequentially_without_running_trusted_runner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_approval_bundle_validation_commands(workspace)
+    _request_and_approve_execution_policy_bundle()
+    marker = tmp_path / "approved-bundle-supervisor-worker-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change", marker=marker)
+    clock = _FakeMonotonicClock()
+    completed_requests: set[str] = set()
+
+    def unexpected_runner(*_args, **_kwargs):
+        pytest.fail("approved-bundle supervisor must not invoke the trusted runner")
+
+    def complete_delivery(seconds: float) -> None:
+        clock.sleep(seconds)
+        active_runs = [
+            run
+            for run in list_queue_worker_runs("sample", workspace_root=workspace)
+            if run.status
+            in {
+                "handoff_ready",
+                "waiting_worker",
+                "waiting_review",
+                "waiting_validation",
+                "ready_for_delivery_request",
+                "delivery_requested",
+            }
+        ]
+        assert len(active_runs) == 1
+        _complete_latest_pending_delivery(workspace, project_path, completed_requests)
+
+    monkeypatch.setattr("devo.delivery.run_delivery_runner_request", unexpected_runner)
+    result = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=clock,
+        sleep=complete_delivery,
+        workspace_root=workspace,
+    )
+
+    assert result.status == "completed"
+    assert result.stop_reason == "bundle_completed"
+    assert result.children_completed == 2
+    assert result.child_policy_ids_visited == ["POL-0001", "POL-0002"]
+    assert result.queue_item_ids_visited == ["QI001", "QI002"]
+    assert result.queue_worker_run_ids == ["QWR-0001", "QWR-0002"]
+    assert result.delivery_request_ids == ["REQ-0001", "REQ-0002"]
+    assert result.delivery_wait_outcomes == ["REQ-0001: completed", "REQ-0002: completed"]
+    assert len(completed_requests) == 2
+    assert marker.exists()
+    runs = list_queue_worker_runs("sample", workspace_root=workspace)
+    assert {run.status for run in runs} == {"completed"}
+    assert {run.selected_queue_item_id for run in runs} == {"QI001", "QI002"}
+    supervisor_json, supervisor_markdown = approved_bundle_supervisor_artifact_paths(
+        "sample",
+        result.supervisor_run_id or "",
+        workspace_root=workspace,
+    )
+    assert supervisor_json.exists()
+    assert supervisor_markdown.exists()
+    assert len(list(supervisor_json.parent.parent.glob("*/approved-bundle-supervisor.json"))) == 1
+
+    batch_runs_before = len(list_codex_worker_batch_runs("sample", workspace_root=workspace))
+    completed_again = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=1,
+        dry_run=False,
+        monotonic_clock=clock,
+        sleep=lambda _seconds: pytest.fail("completed bundle must not sleep"),
+        workspace_root=workspace,
+    )
+    assert completed_again.stop_reason == "bundle_completed"
+    assert completed_again.children_completed == 0
+    assert len(list_codex_worker_batch_runs("sample", workspace_root=workspace)) == batch_runs_before
+
+
+def test_approved_bundle_supervisor_timeout_is_resumable_and_does_not_duplicate_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_approval_bundle_validation_commands(workspace)
+    _request_and_approve_execution_policy_bundle()
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change")
+    first_clock = _FakeMonotonicClock()
+
+    timed_out = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=first_clock,
+        sleep=first_clock.sleep,
+        workspace_root=workspace,
+    )
+
+    assert timed_out.status == "paused"
+    assert timed_out.stop_reason == "trusted_delivery_timeout"
+    assert timed_out.delivery_request_ids == ["REQ-0001"]
+    assert timed_out.children_completed == 0
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None and request.status == "requested"
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 1
+    assert load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace).status == "delivery_requested"
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+
+    resumed_clock = _FakeMonotonicClock()
+    completed_requests: set[str] = set()
+
+    def complete_delivery(seconds: float) -> None:
+        resumed_clock.sleep(seconds)
+        _complete_latest_pending_delivery(workspace, project_path, completed_requests)
+
+    resumed = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=resumed_clock,
+        sleep=complete_delivery,
+        workspace_root=workspace,
+    )
+
+    assert resumed.stop_reason == "bundle_completed"
+    assert resumed.delivery_request_ids[0] == "REQ-0001"
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 2
+    assert {request.request_id for request in list_delivery_runner_requests("sample", workspace_root=workspace)} == {
+        "REQ-0001",
+        "REQ-0002",
+    }
+
+
+def test_approved_bundle_supervisor_stops_on_trusted_delivery_failure_without_next_child(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_approval_bundle_validation_commands(workspace)
+    _request_and_approve_execution_policy_bundle()
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change")
+    first = project_planning_module.auto_run_approved(
+        "sample",
+        "PAB-0001",
+        dry_run=False,
+        workspace_root=workspace,
+    )
+    assert first.status == "waiting_trusted_delivery"
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-FAILED",
+            runner_context="test",
+            status="failed",
+            blockers=["synthetic trusted delivery failure"],
+            next_action="Inspect failure.",
+        ),
+        workspace_root=workspace,
+    )
+
+    result = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=1,
+        dry_run=False,
+        monotonic_clock=lambda: 0.0,
+        sleep=lambda _seconds: pytest.fail("known failed delivery must not sleep"),
+        workspace_root=workspace,
+    )
+
+    assert result.status == "blocked"
+    assert result.stop_reason == "trusted_delivery_failed"
+    assert result.delivery_request_ids == ["REQ-0001"]
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 1
+
+
+def test_approved_bundle_supervisor_dry_run_is_read_only_and_does_not_sleep(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    marker = tmp_path / "approved-bundle-supervisor-dry-run-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change", marker=marker)
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    result = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        dry_run=True,
+        sleep=lambda _seconds: pytest.fail("dry-run must not sleep"),
+        workspace_root=workspace,
+    )
+
+    assert result.status == "ready"
+    assert result.supervisor_run_id is None
+    assert result.would_run_worker is True
+    assert result.would_run_review is True
+    assert result.would_run_validation is True
+    assert result.would_consider_next_child is True
+    assert not marker.exists()
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_auto_run_approved_supervise_cli_validates_polling_and_previews_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+
+    invalid_poll = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--supervise",
+            "--poll-interval-seconds",
+            "0",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+    invalid_wait = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--supervise",
+            "--max-wait-seconds",
+            "-1",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+    preview = runner.invoke(
+        app,
+        [
+            "project",
+            "auto-run-approved",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--supervise",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert invalid_poll.exit_code != 0
+    assert invalid_wait.exit_code != 0
+    with pytest.raises(ValueError, match="poll-interval-seconds must be greater than 0"):
+        supervise_approved_bundle(
+            "sample",
+            "PAB-0001",
+            poll_interval_seconds=0,
+            workspace_root=workspace,
+        )
+    with pytest.raises(ValueError, match="max-wait-seconds must be greater than 0"):
+        supervise_approved_bundle(
+            "sample",
+            "PAB-0001",
+            max_wait_seconds=0,
+            workspace_root=workspace,
+        )
+    assert preview.exit_code == 0, preview.output
+    assert "Continuous approved-bundle supervisor: sample" in preview.output
+    assert "Would run worker: True" in preview.output
+    assert "no polling sleep occurred" in preview.output
+    supervisor_root = (
+        planning_artifact_paths("sample", workspace_root=workspace).execution_policy_approval_bundles_dir
+        / "supervisor-runs"
+    )
+    assert not supervisor_root.exists()
+
+
+def test_approved_bundle_supervisor_rechecks_bundle_between_children(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_approval_bundle_validation_commands(workspace)
+    _request_and_approve_execution_policy_bundle()
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change")
+    clock = _FakeMonotonicClock()
+    completed_requests: set[str] = set()
+    original_check = project_planning_module.check_approved_execution_policy_approval_bundle
+    check_calls = 0
+
+    def drift_after_first_child(project_name: str, bundle_id: str, workspace_root: Path | None = None):
+        nonlocal check_calls
+        check_calls += 1
+        check = original_check(project_name, bundle_id, workspace_root=workspace_root)
+        if check_calls >= 4:
+            return check.model_copy(
+                update={
+                    "eligible": False,
+                    "blockers": ["POL-0002: policy scope changed after bundle approval."],
+                    "next_action": "Resolve policy drift.",
+                }
+            )
+        return check
+
+    def complete_delivery(seconds: float) -> None:
+        clock.sleep(seconds)
+        _complete_latest_pending_delivery(workspace, project_path, completed_requests)
+
+    monkeypatch.setattr(
+        project_planning_module,
+        "check_approved_execution_policy_approval_bundle",
+        drift_after_first_child,
+    )
+    result = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=clock,
+        sleep=complete_delivery,
+        workspace_root=workspace,
+    )
+
+    assert result.stop_reason == "policy_drift"
+    assert result.children_completed == 1
+    assert load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace) is None
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 1
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "worker_status", "blocker", "expected"),
+    [
+        ("automatic review blocked", "waiting_review", "Semantic review required.", "waiting_human_review"),
+        ("automatic worker blocked", "blocked", "Worker blocked.", "worker_blocked"),
+        ("automatic worker failed", "failed", "Worker failed.", "worker_failed"),
+        ("automatic worker paused_usage_limit", "paused_usage_limit", "Usage limit reached.", "usage_limit"),
+        ("automatic validation failed", "waiting_validation", "Automatic validation failed.", "validation_failed"),
+    ],
+)
+def test_approved_bundle_supervisor_classifies_safe_stops(
+    stop_reason: str,
+    worker_status: str,
+    blocker: str,
+    expected: str,
+) -> None:
+    loop = QueueWorkerLoopResult(
+        project="sample",
+        policy_id="POL-0001",
+        run_id="QWR-0001",
+        stop_reason=stop_reason,
+        blockers=[blocker],
+        worker_runs=[
+            QueueWorkerAutoWorkerRun(
+                project="sample",
+                policy_id="POL-0001",
+                run_id="QWR-0001",
+                status=worker_status,
+            )
+        ],
+    )
+    result = ApprovedBundleAutoRunResult(
+        project="sample",
+        bundle_id="PAB-0001",
+        dry_run=False,
+        status="blocked",
+        selected_policy_id="POL-0001",
+        selected_queue_item_id="QI001",
+        selected_queue_worker_run_id="QWR-0001",
+        bundle_check=ExecutionPolicyApprovalBundleCheck(project="sample", bundle_id="PAB-0001", eligible=True),
+        loop_result=loop,
+        blockers=[blocker],
+        stop_reason=stop_reason,
+    )
+
+    classified, _next_action = project_planning_module._classify_approved_bundle_supervisor_stop(result)
+
+    assert classified == expected
 
 
 def test_queue_worker_plan_blocks_missing_and_draft_policy(tmp_path: Path, monkeypatch) -> None:
@@ -8853,6 +9272,7 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
         "\n".join(
             [
                 "import json",
+                "import re",
                 "import sys",
                 "import time",
                 "from pathlib import Path",
@@ -8878,6 +9298,16 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "    changed_path.write_text(\"print('auto-run-approved')\\n\", encoding='utf-8')",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed one scoped change', 'work_performed': ['fake work'], 'changed_files': ['src/feature.py'], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'completed_with_task_change':",
+                "    prompt_text = prompt_path.read_text(encoding='utf-8')",
+                "    match = re.search(r'^- Task id: `([A-Za-z0-9_-]+)`$', prompt_text, re.MULTILINE)",
+                "    task_id = match.group(1).lower() if match else 'unknown'",
+                "    relative_path = f'src/feature-{task_id}.py'",
+                "    changed_path = Path.cwd() / relative_path",
+                "    changed_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    changed_path.write_text(f\"print('{task_id}')\\n\", encoding='utf-8')",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed one task-scoped change', 'work_performed': ['fake work'], 'changed_files': [relative_path], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
                 "elif mode == 'invalid_utf8':",
                 "    sys.stdout.buffer.write(b'invalid stdout: \\xff\\n')",
                 "    sys.stderr.buffer.write(b'invalid stderr: \\xff\\n')",
@@ -9218,6 +9648,72 @@ def _set_execution_policy_risk(workspace: Path, policy_id: str, risk_level: str)
         workspace_root=workspace,
     )
     policy_json.write_text(policy.model_copy(update={"risk_level": risk_level}).model_dump_json(indent=2), encoding="utf-8")
+
+
+def _set_approval_bundle_validation_commands(workspace: Path) -> None:
+    for policy_id in ["POL-0001", "POL-0002"]:
+        policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+        assert policy is not None
+        policy_json, _policy_markdown = execution_policy_artifact_paths(
+            "sample",
+            policy_id,
+            workspace_root=workspace,
+        )
+        policy_json.write_text(
+            policy.model_copy(update={"validation_commands": ["cmd /c echo validation-ok"]}).model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+
+
+class _FakeMonotonicClock:
+    def __init__(self) -> None:
+        self.current = 0.0
+        self.sleep_calls: list[float] = []
+
+    def __call__(self) -> float:
+        return self.current
+
+    def sleep(self, seconds: float) -> None:
+        self.sleep_calls.append(seconds)
+        self.current += seconds
+
+
+def _complete_latest_pending_delivery(
+    workspace: Path,
+    project_path: Path,
+    completed_requests: set[str],
+) -> None:
+    pending = [
+        request
+        for request in list_delivery_runner_requests("sample", workspace_root=workspace)
+        if request.status == "requested" and request.request_id not in completed_requests
+    ]
+    if not pending:
+        return
+    request = min(pending, key=lambda item: item.created_at)
+    _git(project_path, "add", ".")
+    _git(project_path, "commit", "-m", f"complete {request.request_id}")
+    commit_hash = _git(project_path, "rev-parse", "HEAD", capture=True).stdout.strip()
+    write_delivery_runner_request(
+        request.model_copy(update={"status": "completed", "next_action": "Trusted delivery completed."}),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id=request.request_id,
+            run_id=f"RUN-{request.request_id}",
+            runner_context="external test trusted runner",
+            commit_hash=commit_hash,
+            pushed=True,
+            push_remote="origin",
+            push_branch="main",
+            status="completed",
+            next_action="Trusted delivery completed.",
+        ),
+        workspace_root=workspace,
+    )
+    completed_requests.add(request.request_id)
 
 
 def _set_queue_item_status(workspace: Path, item_id: str, status: str) -> None:

@@ -7,9 +7,10 @@ import re
 import shutil
 import subprocess
 import fnmatch
+import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from pydantic import ValidationError
 
@@ -38,6 +39,7 @@ QUEUE_INDEX_JSON = "queue-index.json"
 EXECUTION_POLICIES_DIR_NAME = "execution-policies"
 EXECUTION_POLICY_INDEX_JSON = "execution-policy-index.json"
 EXECUTION_POLICY_APPROVAL_BUNDLES_DIR_NAME = "approval-bundles"
+APPROVED_BUNDLE_SUPERVISOR_RUNS_DIR_NAME = "supervisor-runs"
 QUEUE_WORKER_RUNS_DIR_NAME = "queue-worker-runs"
 QUEUE_WORKER_RUN_INDEX_JSON = "queue-worker-run-index.json"
 HANDOFFS_DIR_NAME = "handoffs"
@@ -762,6 +764,66 @@ class ApprovedBundleAutoRunResult(BaseModel):
         "queue item, and Codex worker at a time. It preserves deterministic review and validation gates, "
         "creates only the existing trusted delivery request, and never runs the trusted runner, stages, "
         "commits, pushes, or executes work in parallel."
+    )
+
+
+class ApprovedBundleSupervisorEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sequence: int
+    event: str
+    status: str
+    policy_id: str | None = None
+    queue_item_id: str | None = None
+    task_id: str | None = None
+    queue_worker_run_id: str | None = None
+    delivery_request_id: str | None = None
+    detail: str = ""
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ApprovedBundleSupervisorResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    bundle_id: str
+    supervisor_run_id: str | None = None
+    dry_run: bool = True
+    status: str = "blocked"
+    poll_interval_seconds: float = 5.0
+    max_wait_seconds: float = 600.0
+    selected_policy_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    selected_queue_worker_run_id: str | None = None
+    current_queue_worker_status: str | None = None
+    planned_action: str = "none"
+    would_run_worker: bool = False
+    would_run_review: bool = False
+    would_run_validation: bool = False
+    would_wait_for_trusted_delivery: bool = False
+    would_consider_next_child: bool = False
+    child_policy_ids_visited: list[str] = Field(default_factory=list)
+    queue_item_ids_visited: list[str] = Field(default_factory=list)
+    task_ids_visited: list[str] = Field(default_factory=list)
+    queue_worker_run_ids: list[str] = Field(default_factory=list)
+    delivery_request_ids: list[str] = Field(default_factory=list)
+    delivery_wait_outcomes: list[str] = Field(default_factory=list)
+    children_completed: int = 0
+    events: list[ApprovedBundleSupervisorEvent] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    stop_reason: str = ""
+    next_action: str = ""
+    workflow_mutated: bool = False
+    artifact_json_path: str | None = None
+    artifact_markdown_path: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    safety_note: str = (
+        "Continuous supervision remains sequential and bounded. It reuses existing worker, review, validation, "
+        "delivery-request, and reconciliation gates; it never invokes the trusted runner, stages, commits, pushes, "
+        "runs children in parallel, or retries unsafe failures automatically."
     )
 
 
@@ -2638,6 +2700,20 @@ def execution_policy_approval_bundle_artifact_paths(
         paths.execution_policy_approval_bundles_dir / f"approval-bundle-{safe_id}.json",
         paths.execution_policy_approval_bundles_dir / f"approval-bundle-{safe_id}.md",
     )
+
+
+def approved_bundle_supervisor_artifact_paths(
+    project_name: str,
+    supervisor_run_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    directory = (
+        paths.execution_policy_approval_bundles_dir
+        / APPROVED_BUNDLE_SUPERVISOR_RUNS_DIR_NAME
+        / _safe_artifact_id(supervisor_run_id)
+    )
+    return directory / "approved-bundle-supervisor.json", directory / "approved-bundle-supervisor.md"
 
 
 def queue_worker_run_artifact_paths(project_name: str, run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
@@ -7824,6 +7900,398 @@ def auto_run_approved(
     )
 
 
+def supervise_approved_bundle(
+    project_name: str,
+    bundle_id: str,
+    *,
+    message: str = "",
+    note: str = "",
+    max_steps: int = 10,
+    poll_interval_seconds: float = 5.0,
+    max_wait_seconds: float = 600.0,
+    dry_run: bool = True,
+    monotonic_clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    workspace_root: Path | None = None,
+) -> ApprovedBundleSupervisorResult:
+    """Continuously supervise approved bundle children without crossing the trusted-runner boundary."""
+    root = workspace_root or get_workspace_root()
+    if max_steps < 1:
+        msg = "--max-steps must be at least 1."
+        raise ValueError(msg)
+    if poll_interval_seconds <= 0:
+        msg = "--poll-interval-seconds must be greater than 0."
+        raise ValueError(msg)
+    if max_wait_seconds <= 0:
+        msg = "--max-wait-seconds must be greater than 0."
+        raise ValueError(msg)
+
+    started_at = datetime.now(UTC)
+    normalized_bundle_id = _normalize_policy_approval_bundle_id(bundle_id)
+    if dry_run:
+        preview = auto_run_approved(
+            project_name,
+            normalized_bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            dry_run=True,
+            workspace_root=root,
+        )
+        selected_run = (
+            load_queue_worker_run(project_name, preview.selected_queue_worker_run_id, workspace_root=root)
+            if preview.selected_queue_worker_run_id
+            else None
+        )
+        current_status = selected_run.status if selected_run else None
+        selected_task_id = selected_run.selected_task_id if selected_run else None
+        new_child = bool(preview.selected_policy_id and not selected_run)
+        would_wait = current_status == "delivery_requested"
+        would_run_worker = new_child or current_status in {"handoff_ready", "waiting_worker"}
+        would_run_review = would_run_worker or current_status == "waiting_review"
+        would_run_validation = would_run_review or current_status == "waiting_validation"
+        planned_action = "no action; bundle is complete"
+        if preview.blockers:
+            planned_action = "stop and resolve approved bundle or child blockers"
+        elif would_wait:
+            planned_action = "resume waiting for the existing trusted delivery request, then reconcile"
+        elif preview.selected_policy_id:
+            planned_action = "advance the selected child through existing worker, review, validation, and delivery-request gates"
+        return ApprovedBundleSupervisorResult(
+            project=project_name,
+            bundle_id=preview.bundle_id,
+            dry_run=True,
+            status=preview.status,
+            poll_interval_seconds=poll_interval_seconds,
+            max_wait_seconds=max_wait_seconds,
+            selected_policy_id=preview.selected_policy_id,
+            selected_queue_item_id=preview.selected_queue_item_id,
+            selected_task_id=selected_task_id,
+            selected_queue_worker_run_id=preview.selected_queue_worker_run_id,
+            current_queue_worker_status=current_status,
+            planned_action=planned_action,
+            would_run_worker=would_run_worker,
+            would_run_review=would_run_review,
+            would_run_validation=would_run_validation,
+            would_wait_for_trusted_delivery=would_wait,
+            would_consider_next_child=bool(preview.selected_policy_id and not preview.blockers),
+            warnings=list(preview.warnings),
+            blockers=list(preview.blockers),
+            stop_reason="preview only" if not preview.blockers else "policy_drift",
+            next_action=(
+                f"Run continuous supervision: devo project auto-run-approved --project {project_name} "
+                f"--bundle {preview.bundle_id} --supervise --confirm-auto-run"
+                if not preview.blockers and preview.status != "completed"
+                else preview.next_action
+            ),
+            workflow_mutated=False,
+            started_at=started_at,
+            completed_at=datetime.now(UTC),
+        )
+
+    clock = monotonic_clock or time.monotonic
+    sleeper = sleep or time.sleep
+    supervisor_run_id = f"ABSR-{started_at.strftime('%Y%m%d%H%M%S%f')}"
+    events: list[ApprovedBundleSupervisorEvent] = []
+    policy_ids: list[str] = []
+    item_ids: list[str] = []
+    task_ids: list[str] = []
+    run_ids: list[str] = []
+    request_ids: list[str] = []
+    wait_outcomes: list[str] = []
+    warnings: list[str] = []
+    blockers: list[str] = []
+    completed_run_ids: set[str] = set()
+    children_completed = 0
+    workflow_mutated = False
+    selected_policy_id: str | None = None
+    selected_queue_item_id: str | None = None
+    selected_task_id: str | None = None
+    selected_run_id: str | None = None
+    current_run_status: str | None = None
+
+    def append_unique(values: list[str], value: str | None) -> None:
+        if value and value not in values:
+            values.append(value)
+
+    def add_event(
+        event: str,
+        status: str,
+        *,
+        detail: str = "",
+        delivery_request_id: str | None = None,
+    ) -> None:
+        events.append(
+            ApprovedBundleSupervisorEvent(
+                sequence=len(events) + 1,
+                event=event,
+                status=status,
+                policy_id=selected_policy_id,
+                queue_item_id=selected_queue_item_id,
+                task_id=selected_task_id,
+                queue_worker_run_id=selected_run_id,
+                delivery_request_id=delivery_request_id,
+                detail=detail,
+            )
+        )
+
+    def finish(status: str, stop_reason: str, next_action: str) -> ApprovedBundleSupervisorResult:
+        result = ApprovedBundleSupervisorResult(
+            project=project_name,
+            bundle_id=normalized_bundle_id,
+            supervisor_run_id=supervisor_run_id,
+            dry_run=False,
+            status=status,
+            poll_interval_seconds=poll_interval_seconds,
+            max_wait_seconds=max_wait_seconds,
+            selected_policy_id=selected_policy_id,
+            selected_queue_item_id=selected_queue_item_id,
+            selected_task_id=selected_task_id,
+            selected_queue_worker_run_id=selected_run_id,
+            current_queue_worker_status=current_run_status,
+            planned_action="supervision stopped",
+            child_policy_ids_visited=policy_ids,
+            queue_item_ids_visited=item_ids,
+            task_ids_visited=task_ids,
+            queue_worker_run_ids=run_ids,
+            delivery_request_ids=request_ids,
+            delivery_wait_outcomes=wait_outcomes,
+            children_completed=children_completed,
+            events=events,
+            warnings=_dedupe(warnings),
+            blockers=_dedupe(blockers),
+            stop_reason=stop_reason,
+            next_action=next_action,
+            workflow_mutated=workflow_mutated,
+            started_at=started_at,
+            completed_at=datetime.now(UTC),
+        )
+        return _write_approved_bundle_supervisor_result(result, workspace_root=root)
+
+    initial_bundle = load_execution_policy_approval_bundle(project_name, normalized_bundle_id, workspace_root=root)
+    max_iterations = max(4, (len(initial_bundle.policy_ids) if initial_bundle else 1) * 4 + 4)
+    for _iteration in range(max_iterations):
+        bundle_check = check_approved_execution_policy_approval_bundle(
+            project_name,
+            normalized_bundle_id,
+            workspace_root=root,
+        )
+        warnings.extend(bundle_check.warnings)
+        add_event(
+            "bundle_recheck",
+            "passed" if bundle_check.eligible else "blocked",
+            detail=bundle_check.next_action,
+        )
+        if not bundle_check.eligible:
+            blockers.extend(bundle_check.blockers)
+            return finish(
+                "blocked",
+                "policy_drift",
+                "Resolve approved bundle, policy fingerprint, scope, queue linkage, or active-child blockers before resuming supervision.",
+            )
+
+        child_result = auto_run_approved(
+            project_name,
+            normalized_bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            dry_run=False,
+            workspace_root=root,
+        )
+        workflow_mutated = workflow_mutated or child_result.mutated
+        warnings.extend(child_result.warnings)
+        selected_policy_id = child_result.selected_policy_id
+        selected_queue_item_id = child_result.selected_queue_item_id
+        selected_run_id = child_result.selected_queue_worker_run_id
+        selected_run = (
+            load_queue_worker_run(project_name, selected_run_id, workspace_root=root)
+            if selected_run_id
+            else None
+        )
+        selected_task_id = selected_run.selected_task_id if selected_run else None
+        current_run_status = selected_run.status if selected_run else None
+        append_unique(policy_ids, selected_policy_id)
+        append_unique(item_ids, selected_queue_item_id)
+        append_unique(task_ids, selected_task_id)
+        append_unique(run_ids, selected_run_id)
+        delivery_request_id = selected_run.delivery_request_id if selected_run else None
+        append_unique(request_ids, delivery_request_id)
+        add_event(
+            "child_advance",
+            child_result.status,
+            detail=child_result.stop_reason or child_result.next_action,
+            delivery_request_id=delivery_request_id,
+        )
+
+        if child_result.status == "completed":
+            return finish(
+                "completed",
+                "bundle_completed",
+                "No action needed; every queue item pinned by the approved bundle is completed.",
+            )
+        if child_result.status == "child_completed":
+            if selected_run_id and selected_run_id not in completed_run_ids:
+                completed_run_ids.add(selected_run_id)
+                children_completed += 1
+            continue
+        if child_result.status != "waiting_trusted_delivery":
+            blockers.extend(child_result.blockers)
+            stop_reason, stop_next_action = _classify_approved_bundle_supervisor_stop(child_result)
+            return finish("blocked", stop_reason, stop_next_action)
+
+        if not selected_run or not delivery_request_id:
+            blockers.append("Selected child reached trusted-delivery wait without a linked delivery request.")
+            return finish(
+                "blocked",
+                "policy_drift",
+                "Inspect the queue-worker run and restore its trusted delivery-request linkage before resuming.",
+            )
+
+        deadline = clock() + max_wait_seconds
+        add_event(
+            "delivery_wait",
+            "started",
+            detail="Polling existing trusted-runner evidence only; the supervisor will not invoke the runner.",
+            delivery_request_id=delivery_request_id,
+        )
+        while True:
+            delivery_state, delivery_detail = _approved_bundle_supervisor_delivery_state(
+                project_name,
+                delivery_request_id,
+                workspace_root=root,
+            )
+            if delivery_state == "completed":
+                wait_outcomes.append(f"{delivery_request_id}: completed")
+                add_event(
+                    "delivery_wait",
+                    "completed",
+                    detail=delivery_detail,
+                    delivery_request_id=delivery_request_id,
+                )
+                break
+            if delivery_state == "failed":
+                wait_outcomes.append(f"{delivery_request_id}: failed")
+                blockers.append(delivery_detail)
+                add_event(
+                    "delivery_wait",
+                    "failed",
+                    detail=delivery_detail,
+                    delivery_request_id=delivery_request_id,
+                )
+                return finish(
+                    "blocked",
+                    "trusted_delivery_failed",
+                    f"Inspect trusted delivery request {delivery_request_id} and use the documented recovery path; do not retry the worker or create another request.",
+                )
+            remaining = deadline - clock()
+            if remaining <= 0:
+                wait_outcomes.append(f"{delivery_request_id}: timed out pending")
+                add_event(
+                    "delivery_wait",
+                    "timeout",
+                    detail="Existing delivery request remains pending and unchanged.",
+                    delivery_request_id=delivery_request_id,
+                )
+                return finish(
+                    "paused",
+                    "trusted_delivery_timeout",
+                    f"Resume the same pending request with: devo project auto-run-approved --project {project_name} --bundle {normalized_bundle_id} --supervise --confirm-auto-run",
+                )
+            sleeper(min(poll_interval_seconds, remaining))
+
+        reconciled = auto_run_approved(
+            project_name,
+            normalized_bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            dry_run=False,
+            workspace_root=root,
+        )
+        workflow_mutated = workflow_mutated or reconciled.mutated
+        warnings.extend(reconciled.warnings)
+        blockers.extend(reconciled.blockers)
+        selected_run = (
+            load_queue_worker_run(project_name, selected_run_id, workspace_root=root)
+            if selected_run_id
+            else None
+        )
+        current_run_status = selected_run.status if selected_run else current_run_status
+        add_event(
+            "child_reconcile",
+            reconciled.status,
+            detail=reconciled.stop_reason or reconciled.next_action,
+            delivery_request_id=delivery_request_id,
+        )
+        if reconciled.status == "child_completed" or "completed" in reconciled.stop_reason:
+            if selected_run_id and selected_run_id not in completed_run_ids:
+                completed_run_ids.add(selected_run_id)
+                children_completed += 1
+            continue
+        stop_reason, stop_next_action = _classify_approved_bundle_supervisor_stop(reconciled)
+        return finish("blocked", stop_reason, stop_next_action)
+
+    blockers.append("Supervisor reached its conservative internal transition bound without reaching a safe terminal state.")
+    return finish(
+        "blocked",
+        "policy_drift",
+        "Inspect bundle and queue-worker state before resuming; no automatic retry was attempted.",
+    )
+
+
+def _approved_bundle_supervisor_delivery_state(
+    project_name: str,
+    request_id: str,
+    *,
+    workspace_root: Path,
+) -> tuple[str, str]:
+    from .delivery import load_delivery_runner_request, resolve_delivery_runner_run_for_request
+
+    request = load_delivery_runner_request(project_name, request_id, workspace_root=workspace_root)
+    if not request:
+        return "failed", f"Linked trusted delivery request is missing: {request_id}."
+    runner_run = resolve_delivery_runner_run_for_request(project_name, request_id, workspace_root=workspace_root)
+    if runner_run and runner_run.status == "completed" and runner_run.commit_hash and runner_run.pushed:
+        return "completed", f"Trusted runner completed and pushed commit {runner_run.commit_hash}."
+    unsafe_statuses = {"blocked", "failed", "cancelled", "rejected"}
+    if runner_run and runner_run.status in unsafe_statuses:
+        return "failed", f"Trusted delivery runner evidence is {runner_run.status} for {request_id}."
+    if request.status in unsafe_statuses:
+        return "failed", f"Trusted delivery request {request_id} is {request.status}."
+    if request.status == "completed":
+        return "failed", f"Trusted delivery request {request_id} is completed without pushed runner evidence."
+    return "pending", f"Trusted delivery request {request_id} remains pending."
+
+
+def _classify_approved_bundle_supervisor_stop(result: ApprovedBundleAutoRunResult) -> tuple[str, str]:
+    loop = result.loop_result
+    text = " ".join(
+        [
+            result.status,
+            result.stop_reason,
+            result.next_action,
+            *result.blockers,
+            *(loop.blockers if loop else []),
+            *(loop.warnings if loop else []),
+            *([worker.status for worker in loop.worker_runs] if loop else []),
+        ]
+    ).lower()
+    if "approved bundle recheck failed" in text or "policy no longer valid" in text or "fingerprint" in text:
+        return "policy_drift", "Resolve approved bundle or child policy drift before resuming supervision."
+    if "usage_limit" in text or "usage limit" in text or "paused_usage_limit" in text:
+        return "usage_limit", "Wait for usage availability, inspect worker evidence, and resume only with explicit operator intent."
+    if "automatic review blocked" in text or "worker review missing" in text or "review did not pass" in text:
+        return "waiting_human_review", result.next_action or "Review the selected worker result manually before continuing."
+    if "automatic validation failed" in text or "validation evidence failed" in text or "automatic validation blocked" in text:
+        return "validation_failed", result.next_action or "Resolve failed validation before delivery or another child."
+    if "automatic worker failed" in text or "worker report says failed" in text or "failed evidence" in text:
+        return "worker_failed", result.next_action or "Inspect failed worker evidence; no automatic retry is allowed."
+    if "automatic worker" in text or "worker result" in text or "blocked_needs_approval" in text or "paused" in text:
+        return "worker_blocked", result.next_action or "Resolve the worker blocker before resuming; no automatic retry is allowed."
+    return "policy_drift", result.next_action or "Inspect the selected child state before resuming supervision."
+
+
 def fail_queue_worker_run(
     project_name: str,
     run_id: str,
@@ -11612,6 +12080,69 @@ def render_execution_policy_approval_bundle_markdown(bundle: ExecutionPolicyAppr
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_approved_bundle_supervisor_markdown(result: ApprovedBundleSupervisorResult) -> str:
+    lines = [
+        f"# Approved-Bundle Supervisor Run: {result.supervisor_run_id or 'preview'}",
+        "",
+        f"- Project: `{result.project}`",
+        f"- Bundle id: `{result.bundle_id}`",
+        f"- Mode: `{'dry-run' if result.dry_run else 'confirmed'}`",
+        f"- Status: `{result.status}`",
+        f"- Poll interval seconds: `{result.poll_interval_seconds}`",
+        f"- Max wait seconds: `{result.max_wait_seconds}`",
+        f"- Children completed this invocation: `{result.children_completed}`",
+        f"- Workflow mutated: `{result.workflow_mutated}`",
+        f"- Started at: `{result.started_at.isoformat()}`",
+        f"- Completed at: `{result.completed_at.isoformat() if result.completed_at else 'none'}`",
+        "",
+        "## Visited Artifacts",
+        "",
+        f"- Policies: `{', '.join(result.child_policy_ids_visited) or 'none'}`",
+        f"- Queue items: `{', '.join(result.queue_item_ids_visited) or 'none'}`",
+        f"- Tasks: `{', '.join(result.task_ids_visited) or 'none'}`",
+        f"- Queue-worker runs: `{', '.join(result.queue_worker_run_ids) or 'none'}`",
+        f"- Delivery requests: `{', '.join(result.delivery_request_ids) or 'none'}`",
+        f"- Delivery wait outcomes: `{', '.join(result.delivery_wait_outcomes) or 'none'}`",
+        "",
+        "## Events",
+        "",
+    ]
+    for event in result.events:
+        references = ", ".join(
+            value
+            for value in [
+                event.policy_id,
+                event.queue_item_id,
+                event.task_id,
+                event.queue_worker_run_id,
+                event.delivery_request_id,
+            ]
+            if value
+        )
+        suffix = f" ({references})" if references else ""
+        detail = f": {event.detail}" if event.detail else ""
+        lines.append(f"{event.sequence}. `{event.event}` -> `{event.status}`{suffix}{detail}")
+    if not result.events:
+        lines.append("- No events recorded.")
+    lines.extend([""])
+    _append_list_section(lines, "Warnings", result.warnings)
+    _append_list_section(lines, "Blockers", result.blockers)
+    lines.extend(
+        [
+            "## Final Position",
+            "",
+            f"- Stop reason: `{result.stop_reason or 'none'}`",
+            f"- Next action: {result.next_action or 'none'}",
+            "",
+            "## Safety Note",
+            "",
+            result.safety_note,
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_backlog_refinement_prompt(
     project_name: str,
     brief: ProjectBrief | None,
@@ -12185,6 +12716,30 @@ def _write_execution_policy_approval_bundle(
     _write_model(json_path, bundle)
     markdown_path.write_text(render_execution_policy_approval_bundle_markdown(bundle), encoding="utf-8")
     return bundle, json_path, markdown_path
+
+
+def _write_approved_bundle_supervisor_result(
+    result: ApprovedBundleSupervisorResult,
+    workspace_root: Path | None = None,
+) -> ApprovedBundleSupervisorResult:
+    if not result.supervisor_run_id:
+        msg = "Confirmed approved-bundle supervisor result requires a supervisor run id."
+        raise ValueError(msg)
+    json_path, markdown_path = approved_bundle_supervisor_artifact_paths(
+        result.project,
+        result.supervisor_run_id,
+        workspace_root=workspace_root,
+    )
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    saved = result.model_copy(
+        update={
+            "artifact_json_path": str(json_path),
+            "artifact_markdown_path": str(markdown_path),
+        }
+    )
+    _write_model(json_path, saved)
+    markdown_path.write_text(render_approved_bundle_supervisor_markdown(saved), encoding="utf-8")
+    return saved
 
 
 def _write_queue_worker_run(project_name: str, run: QueueWorkerRun, workspace_root: Path | None = None) -> tuple[QueueWorkerRun, Path, Path]:

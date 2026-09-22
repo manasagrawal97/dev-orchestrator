@@ -159,6 +159,7 @@ from .project_planning import (
     ExecutionPolicyApprovalBundle,
     ExecutionPolicyApprovalBundleCheck,
     ApprovedBundleAutoRunResult,
+    ApprovedBundleSupervisorResult,
     QueueWorkerEvidenceRecordResult,
     QueueWorkerHandoffChecklist,
     QueueWorkerLoopResult,
@@ -176,6 +177,7 @@ from .project_planning import (
     approve_execution_policy,
     approve_execution_policy_approval_bundle,
     auto_run_approved,
+    supervise_approved_bundle,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -796,6 +798,60 @@ def _print_approved_bundle_auto_run_result(result: ApprovedBundleAutoRunResult) 
         console.print(f"  - {blocker}", soft_wrap=True)
     console.print(f"Mutation occurred: {result.mutated}")
     console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
+    console.print(f"Safety: {result.safety_note}", soft_wrap=True)
+
+
+def _print_approved_bundle_supervisor_result(result: ApprovedBundleSupervisorResult) -> None:
+    console.print(f"[bold]Continuous approved-bundle supervisor: {result.project}[/bold]")
+    console.print(f"Bundle: {result.bundle_id}")
+    console.print(f"Supervisor run: {result.supervisor_run_id or 'preview'}")
+    console.print(f"Mode: {'dry-run' if result.dry_run else 'execute'}")
+    console.print(f"Status: {result.status}")
+    console.print(f"Poll interval: {result.poll_interval_seconds} seconds")
+    console.print(f"Maximum trusted-delivery wait: {result.max_wait_seconds} seconds")
+    console.print(f"Selected policy: {result.selected_policy_id or 'none'}")
+    console.print(f"Selected queue item: {result.selected_queue_item_id or 'none'}")
+    console.print(f"Selected task: {result.selected_task_id or 'none'}")
+    console.print(f"Selected queue-worker run: {result.selected_queue_worker_run_id or 'new run'}")
+    console.print(f"Current queue-worker status: {result.current_queue_worker_status or 'not created'}")
+    console.print(f"Planned action: {result.planned_action}", soft_wrap=True)
+    if result.dry_run:
+        console.print(f"Would run worker: {result.would_run_worker}")
+        console.print(f"Would run deterministic review: {result.would_run_review}")
+        console.print(f"Would run validation: {result.would_run_validation}")
+        console.print(f"Would wait for trusted delivery: {result.would_wait_for_trusted_delivery}")
+        console.print(f"Would consider another child after reconciliation: {result.would_consider_next_child}")
+    else:
+        console.print(f"Children completed this invocation: {result.children_completed}")
+        console.print(
+            f"Visited policies: {', '.join(result.child_policy_ids_visited) if result.child_policy_ids_visited else 'none'}",
+            soft_wrap=True,
+        )
+        console.print(
+            f"Queue-worker runs: {', '.join(result.queue_worker_run_ids) if result.queue_worker_run_ids else 'none'}",
+            soft_wrap=True,
+        )
+        console.print(
+            f"Delivery requests: {', '.join(result.delivery_request_ids) if result.delivery_request_ids else 'none'}",
+            soft_wrap=True,
+        )
+        console.print(
+            f"Delivery wait outcomes: {', '.join(result.delivery_wait_outcomes) if result.delivery_wait_outcomes else 'none'}",
+            soft_wrap=True,
+        )
+    console.print(f"Stop reason: {result.stop_reason or 'none'}")
+    console.print("Warnings:")
+    for warning in result.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in result.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Workflow mutation occurred: {result.workflow_mutated}")
+    console.print(f"Next action: {result.next_action or 'none'}", soft_wrap=True)
+    if result.artifact_json_path:
+        console.print(f"JSON: {_named_path(Path(result.artifact_json_path))}")
+    if result.artifact_markdown_path:
+        console.print(f"Markdown: {_named_path(Path(result.artifact_markdown_path))}")
     console.print(f"Safety: {result.safety_note}", soft_wrap=True)
 
 
@@ -5383,7 +5439,26 @@ def auto_run_approved_command(
     message: str = typer.Option("", "--message", help="Optional trusted delivery request commit message for the selected child."),
     note: str = typer.Option("", "--note", help="Optional supervised run/delivery note."),
     max_steps: int = typer.Option(10, "--max-steps", help="Maximum one-step transitions for the one selected child."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Recheck and preview one child without creating or running artifacts."),
+    supervise: bool = typer.Option(
+        False,
+        "--supervise",
+        help="Continuously process approved bundle children sequentially while only observing trusted-runner evidence.",
+    ),
+    poll_interval_seconds: float = typer.Option(
+        5.0,
+        "--poll-interval-seconds",
+        help="Seconds between trusted delivery evidence checks in supervised mode.",
+    ),
+    max_wait_seconds: float = typer.Option(
+        600.0,
+        "--max-wait-seconds",
+        help="Maximum seconds to wait for each trusted delivery before a resumable timeout.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Recheck and preview the selected child or supervisor action without creating or running artifacts.",
+    ),
     require_scheduler_healthy: bool = typer.Option(
         True,
         "--require-scheduler-healthy/--no-require-scheduler-healthy",
@@ -5392,33 +5467,57 @@ def auto_run_approved_command(
     confirm_auto_run: bool = typer.Option(
         False,
         "--confirm-auto-run",
-        help="Confirm one sequential child run through worker, deterministic review, validation, and delivery-request gates.",
+        help="Confirm one child run, or the explicit supervised bundle loop, through existing gates.",
     ),
 ) -> None:
-    """Supervise one child of an approved bounded policy bundle through existing gates."""
+    """Run one approved child, or supervise the approved bundle sequentially."""
     project_name = _resolve_project(project_name)
     if max_steps < 1:
         raise typer.BadParameter("--max-steps must be at least 1.", param_hint="--max-steps")
+    if poll_interval_seconds <= 0:
+        raise typer.BadParameter(
+            "--poll-interval-seconds must be greater than 0.",
+            param_hint="--poll-interval-seconds",
+        )
+    if max_wait_seconds <= 0:
+        raise typer.BadParameter("--max-wait-seconds must be greater than 0.", param_hint="--max-wait-seconds")
     if not dry_run and not confirm_auto_run:
         console.print("auto-run-approved requires --confirm-auto-run unless --dry-run is used.")
         raise typer.Exit(1)
 
     try:
-        preview = auto_run_approved(
-            project_name,
-            bundle_id,
-            message=message,
-            note=note,
-            max_steps=max_steps,
-            dry_run=True,
-        )
+        if supervise:
+            supervisor_preview = supervise_approved_bundle(
+                project_name,
+                bundle_id,
+                message=message,
+                note=note,
+                max_steps=max_steps,
+                poll_interval_seconds=poll_interval_seconds,
+                max_wait_seconds=max_wait_seconds,
+                dry_run=True,
+            )
+            _print_approved_bundle_supervisor_result(supervisor_preview)
+            preview_blockers = supervisor_preview.blockers
+            preview_completed = supervisor_preview.status == "completed"
+        else:
+            preview = auto_run_approved(
+                project_name,
+                bundle_id,
+                message=message,
+                note=note,
+                max_steps=max_steps,
+                dry_run=True,
+            )
+            _print_approved_bundle_auto_run_result(preview)
+            preview_blockers = preview.blockers
+            preview_completed = preview.status == "completed"
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--bundle") from exc
-    _print_approved_bundle_auto_run_result(preview)
-    if preview.blockers:
+    if preview_blockers:
         console.print("Preview blocked before scheduler or child execution.")
         raise typer.Exit(1)
-    if preview.status == "completed":
+    if preview_completed:
         console.print("Approved bundle is complete. No scheduler or execution action is needed.")
         return
 
@@ -5426,7 +5525,12 @@ def auto_run_approved_command(
         console.print(
             "Trusted runner scheduler health was not checked for dry-run; it is required by default for confirmed execution."
         )
-        console.print("Preview only. No queue-worker, Codex, review, validation, or delivery artifact was created.")
+        if supervise:
+            console.print(
+                "Preview only. No supervisor, queue-worker, Codex, review, validation, or delivery artifact was created; no polling sleep occurred."
+            )
+        else:
+            console.print("Preview only. No queue-worker, Codex, review, validation, or delivery artifact was created.")
         return
 
     if require_scheduler_healthy:
@@ -5443,6 +5547,21 @@ def auto_run_approved_command(
         console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
 
     try:
+        if supervise:
+            supervisor_result = supervise_approved_bundle(
+                project_name,
+                bundle_id,
+                message=message,
+                note=note,
+                max_steps=max_steps,
+                poll_interval_seconds=poll_interval_seconds,
+                max_wait_seconds=max_wait_seconds,
+                dry_run=False,
+            )
+            _print_approved_bundle_supervisor_result(supervisor_result)
+            if supervisor_result.blockers or supervisor_result.status == "blocked":
+                raise typer.Exit(1)
+            return
         result = auto_run_approved(
             project_name,
             bundle_id,
