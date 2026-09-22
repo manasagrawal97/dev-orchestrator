@@ -135,6 +135,8 @@ TASK-DEVO-196 hardens the unattended worker boundary exposed by that dogfood. Ca
 
 TASK-DEVO-197 adds the explicit continuous form of approved-bundle supervision. Plain `auto-run-approved` preserves the TASK-DEVO-195 one-child boundary; `--supervise` sequentially advances one child, waits with bounded polling for external trusted-runner evidence, reconciles only a completed pushed delivery, rechecks the bundle, and then considers the next child. It records one compact invocation artifact and stops safely on timeout or any human, worker, validation, delivery, or policy boundary. It does not invoke the runner, retry failed work, parallelize children, or provide TASK-DEVO-198 process-crash recovery.
 
+TASK-DEVO-198 closes that recovery gap. Confirmed continuous supervision now uses one OS-released per-bundle lock and one atomically updated incomplete supervisor artifact. Re-entry after interruption keeps the same supervisor id, rebuilds its cursor and completed-child count from durable workflow evidence, resumes existing delivery/reconciliation state, and leaves worker/review/validation/delivery idempotency to their canonical artifacts. Ambiguous worker attempts, multiple incomplete cursors, invalid event ordering, or missing referenced runs fail closed without a worker retry or duplicate request. The trusted runner, scheduler configuration, delivery implementation, approval eligibility, validation semantics, parallel children, and automatic failed-work retry remain outside this slice.
+
 ### Work Packages - MVP Added
 
 A work package is one approved batch of related work.

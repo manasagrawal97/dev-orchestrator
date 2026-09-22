@@ -822,7 +822,9 @@ def _print_approved_bundle_supervisor_result(result: ApprovedBundleSupervisorRes
         console.print(f"Would wait for trusted delivery: {result.would_wait_for_trusted_delivery}")
         console.print(f"Would consider another child after reconciliation: {result.would_consider_next_child}")
     else:
-        console.print(f"Children completed this invocation: {result.children_completed}")
+        console.print(f"Children completed by this durable supervisor run: {result.children_completed}")
+        console.print(f"Resume count: {result.resume_count}")
+        console.print(f"Last durable checkpoint: {result.last_checkpoint or 'none'}")
         console.print(
             f"Visited policies: {', '.join(result.child_policy_ids_visited) if result.child_policy_ids_visited else 'none'}",
             soft_wrap=True,

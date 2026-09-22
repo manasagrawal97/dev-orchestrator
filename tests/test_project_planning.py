@@ -2519,6 +2519,188 @@ def test_approved_bundle_supervisor_timeout_is_resumable_and_does_not_duplicate_
     }
 
 
+def test_restart_safe_approved_bundle_supervisor_reuses_checkpoint_after_process_interruption(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_approval_bundle_validation_commands(workspace)
+    _request_and_approve_execution_policy_bundle()
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change")
+    first_clock = _FakeMonotonicClock()
+
+    class SimulatedProcessInterruption(RuntimeError):
+        pass
+
+    def interrupt_after_checkpoint(seconds: float) -> None:
+        first_clock.sleep(seconds)
+        raise SimulatedProcessInterruption("synthetic supervisor process interruption")
+
+    with pytest.raises(SimulatedProcessInterruption):
+        supervise_approved_bundle(
+            "sample",
+            "PAB-0001",
+            poll_interval_seconds=0.1,
+            max_wait_seconds=2,
+            dry_run=False,
+            monotonic_clock=first_clock,
+            sleep=interrupt_after_checkpoint,
+            workspace_root=workspace,
+        )
+
+    supervisor_root = (
+        planning_artifact_paths("sample", workspace_root=workspace).execution_policy_approval_bundles_dir
+        / "supervisor-runs"
+    )
+    checkpoint_paths = list(supervisor_root.glob("*/approved-bundle-supervisor.json"))
+    assert len(checkpoint_paths) == 1
+    interrupted = project_planning_module.ApprovedBundleSupervisorResult.model_validate_json(
+        checkpoint_paths[0].read_text(encoding="utf-8")
+    )
+    assert interrupted.status == "running"
+    assert interrupted.completed_at is None
+    assert interrupted.last_checkpoint == "delivery_wait_started"
+    assert interrupted.delivery_request_ids == ["REQ-0001"]
+    assert len(list_queue_worker_runs("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_batch_runs("sample", workspace_root=workspace)) == 1
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 1
+
+    resumed_clock = _FakeMonotonicClock()
+    completed_requests: set[str] = set()
+
+    def complete_delivery(seconds: float) -> None:
+        resumed_clock.sleep(seconds)
+        _complete_latest_pending_delivery(workspace, project_path, completed_requests)
+
+    resumed = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=resumed_clock,
+        sleep=complete_delivery,
+        workspace_root=workspace,
+    )
+
+    assert resumed.status == "completed"
+    assert resumed.stop_reason == "bundle_completed"
+    assert resumed.supervisor_run_id == interrupted.supervisor_run_id
+    assert resumed.resume_count == 1
+    assert resumed.children_completed == 2
+    assert any(event.event == "supervisor_reentry" for event in resumed.events)
+    assert len(list(supervisor_root.glob("*/approved-bundle-supervisor.json"))) == 1
+    assert len(list_queue_worker_runs("sample", workspace_root=workspace)) == 2
+    assert len(list_codex_worker_batch_runs("sample", workspace_root=workspace)) == 2
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 2
+
+
+def test_restart_safe_approved_bundle_supervisor_rejects_concurrent_same_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+
+    with project_planning_module._approved_bundle_supervisor_lock(
+        "sample",
+        "PAB-0001",
+        workspace_root=workspace,
+    ):
+        with pytest.raises(ValueError, match="already active for approved bundle PAB-0001"):
+            supervise_approved_bundle(
+                "sample",
+                "PAB-0001",
+                dry_run=False,
+                workspace_root=workspace,
+            )
+
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+
+
+def test_restart_safe_approved_bundle_supervisor_reuses_completed_worker_result_without_relaunch(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_requested_approval_bundle_policies(tmp_path, workspace)
+    _set_approval_bundle_validation_commands(workspace)
+    _request_and_approve_execution_policy_bundle()
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change")
+    original_ingest = project_planning_module.create_codex_worker_ingest
+
+    class SimulatedProcessInterruption(RuntimeError):
+        pass
+
+    def interrupt_before_ingest(*_args, **_kwargs):
+        raise SimulatedProcessInterruption("synthetic interruption after worker result")
+
+    monkeypatch.setattr(project_planning_module, "create_codex_worker_ingest", interrupt_before_ingest)
+    with pytest.raises(SimulatedProcessInterruption):
+        supervise_approved_bundle("sample", "PAB-0001", dry_run=False, workspace_root=workspace)
+    monkeypatch.setattr(project_planning_module, "create_codex_worker_ingest", original_ingest)
+
+    subprocess_root = codex_worker_subprocess_run_directory("sample", workspace_root=workspace)
+    assert len(list(subprocess_root.glob("*/codex-worker-run.json"))) == 1
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+
+    clock = _FakeMonotonicClock()
+    completed_requests: set[str] = set()
+
+    def complete_delivery(seconds: float) -> None:
+        clock.sleep(seconds)
+        _complete_latest_pending_delivery(workspace, project_path, completed_requests)
+
+    resumed = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=clock,
+        sleep=complete_delivery,
+        workspace_root=workspace,
+    )
+
+    assert resumed.status == "completed"
+    assert resumed.resume_count == 1
+    assert any(event.event == "worker_recovery" for event in resumed.events)
+    assert len(list(subprocess_root.glob("*/codex-worker-run.json"))) == 2
+    assert len(list_codex_worker_ingests("sample", workspace_root=workspace)) == 2
+    assert len(list_queue_worker_runs("sample", workspace_root=workspace)) == 2
+    assert len(list_delivery_runner_requests("sample", workspace_root=workspace)) == 2
+
+
+def test_restart_safe_approved_bundle_supervisor_rejects_multiple_incomplete_checkpoints(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    for run_id in ["ABSR-TEST-ONE", "ABSR-TEST-TWO"]:
+        project_planning_module._write_approved_bundle_supervisor_result(
+            project_planning_module.ApprovedBundleSupervisorResult(
+                project="sample",
+                bundle_id="PAB-0001",
+                supervisor_run_id=run_id,
+                dry_run=False,
+                status="running",
+                last_checkpoint="before_child_advance",
+            ),
+            workspace_root=workspace,
+        )
+
+    with pytest.raises(ValueError, match="multiple incomplete runs for PAB-0001"):
+        supervise_approved_bundle("sample", "PAB-0001", dry_run=True, workspace_root=workspace)
+
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+
+
 def test_approved_bundle_supervisor_stops_on_trusted_delivery_failure_without_next_child(
     tmp_path: Path,
     monkeypatch,

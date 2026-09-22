@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import json
+import errno
+import fnmatch
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
-import fnmatch
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, BinaryIO, Callable, Iterator
 
 from pydantic import ValidationError
 
@@ -810,6 +812,10 @@ class ApprovedBundleSupervisorResult(BaseModel):
     delivery_request_ids: list[str] = Field(default_factory=list)
     delivery_wait_outcomes: list[str] = Field(default_factory=list)
     children_completed: int = 0
+    initial_completed_child_keys: list[str] = Field(default_factory=list)
+    resume_count: int = 0
+    last_checkpoint: str = ""
+    checkpointed_at: datetime | None = None
     events: list[ApprovedBundleSupervisorEvent] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
@@ -821,9 +827,10 @@ class ApprovedBundleSupervisorResult(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     safety_note: str = (
-        "Continuous supervision remains sequential and bounded. It reuses existing worker, review, validation, "
-        "delivery-request, and reconciliation gates; it never invokes the trusted runner, stages, commits, pushes, "
-        "runs children in parallel, or retries unsafe failures automatically."
+        "Continuous supervision remains sequential, bounded, and restart-safe. It checkpoints one durable supervisor "
+        "run, reuses existing worker, review, validation, delivery-request, and reconciliation evidence, and holds one "
+        "bundle-scoped process lock. It never invokes the trusted runner, stages, commits, pushes, runs children in "
+        "parallel, or retries ambiguous or failed work automatically."
     )
 
 
@@ -2714,6 +2721,20 @@ def approved_bundle_supervisor_artifact_paths(
         / _safe_artifact_id(supervisor_run_id)
     )
     return directory / "approved-bundle-supervisor.json", directory / "approved-bundle-supervisor.md"
+
+
+def approved_bundle_supervisor_lock_path(
+    project_name: str,
+    bundle_id: str,
+    workspace_root: Path | None = None,
+) -> Path:
+    paths = planning_artifact_paths(project_name, workspace_root=workspace_root)
+    return (
+        paths.execution_policy_approval_bundles_dir
+        / APPROVED_BUNDLE_SUPERVISOR_RUNS_DIR_NAME
+        / ".locks"
+        / f"{_normalize_policy_approval_bundle_id(bundle_id)}.lock"
+    )
 
 
 def queue_worker_run_artifact_paths(project_name: str, run_id: str, workspace_root: Path | None = None) -> tuple[Path, Path]:
@@ -7900,7 +7921,292 @@ def auto_run_approved(
     )
 
 
+def _incomplete_approved_bundle_supervisor_results(
+    project_name: str,
+    bundle_id: str,
+    *,
+    workspace_root: Path,
+) -> list[ApprovedBundleSupervisorResult]:
+    normalized_bundle_id = _normalize_policy_approval_bundle_id(bundle_id)
+    directory = (
+        planning_artifact_paths(project_name, workspace_root=workspace_root).execution_policy_approval_bundles_dir
+        / APPROVED_BUNDLE_SUPERVISOR_RUNS_DIR_NAME
+    )
+    incomplete: list[ApprovedBundleSupervisorResult] = []
+    if not directory.exists():
+        return incomplete
+    for path in sorted(directory.glob("*/approved-bundle-supervisor.json")):
+        try:
+            result = ApprovedBundleSupervisorResult.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, ValidationError) as exc:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as raw_exc:
+                msg = (
+                    f"Contradictory durable supervisor state: unreadable checkpoint {path}; "
+                    "its bundle ownership cannot be established safely."
+                )
+                raise ValueError(msg) from raw_exc
+            if _normalize_policy_approval_bundle_id(str(raw.get("bundle_id", ""))) == normalized_bundle_id:
+                msg = f"Contradictory durable supervisor state: unreadable checkpoint {path}."
+                raise ValueError(msg) from exc
+            continue
+        if _normalize_policy_approval_bundle_id(result.bundle_id) == normalized_bundle_id and result.completed_at is None:
+            incomplete.append(result)
+    return sorted(incomplete, key=lambda item: (item.started_at, item.supervisor_run_id or ""))
+
+
+def _completed_approved_bundle_child_keys(
+    project_name: str,
+    bundle_id: str,
+    *,
+    workspace_root: Path,
+) -> list[str]:
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id, workspace_root=workspace_root)
+    if not bundle:
+        return []
+    completed: list[str] = []
+    for policy_id in bundle.policy_ids:
+        policy = load_execution_policy(project_name, policy_id, workspace_root=workspace_root)
+        queue = load_execution_queue(project_name, policy.queue_id, workspace_root=workspace_root) if policy and policy.queue_id else None
+        if not policy or not queue:
+            continue
+        allowed = {_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids}
+        for item in queue.items:
+            normalized_item_id = _normalize_queue_item_id(item.item_id)
+            child_key = f"{_normalize_queue_id(queue.queue_id)}:{normalized_item_id}"
+            if normalized_item_id in allowed and item.status == "completed" and child_key not in completed:
+                completed.append(child_key)
+    return completed
+
+
+def _approved_bundle_restart_worker_blockers(
+    project_name: str,
+    bundle_id: str,
+    *,
+    workspace_root: Path,
+) -> list[str]:
+    """Fail closed when a waiting worker has evidence that could make relaunch a duplicate."""
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id, workspace_root=workspace_root)
+    if not bundle:
+        return []
+    blockers: list[str] = []
+    run_directory = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root)
+    for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
+        if run.policy_id not in bundle.policy_ids or run.status != "waiting_worker":
+            continue
+        ingests = [
+            item
+            for item in list_codex_worker_ingests(project_name, workspace_root=workspace_root)
+            if item.queue_worker_run_id == run.run_id
+        ]
+        if ingests and not (len(ingests) == 1 and ingests[0].status == "completed"):
+            statuses = ", ".join(f"{item.ingest_id}={item.status}" for item in ingests)
+            blockers.append(
+                f"Contradictory durable worker state for {run.run_id}: worker ingest evidence exists while the run "
+                f"still waits for a worker ({statuses}). Resolve or advance that evidence manually; automatic worker "
+                "re-execution is forbidden."
+            )
+            continue
+        if ingests:
+            continue
+        attempted_directories = (
+            [path for path in run_directory.glob(f"*-{_safe_artifact_id(run.run_id)}*") if path.is_dir()]
+            if run_directory.exists()
+            else []
+        )
+        if attempted_directories:
+            blockers.append(
+                f"Ambiguous interrupted worker state for {run.run_id}: subprocess attempt artifacts already exist. "
+                "Inspect and ingest the existing result or record failure manually; automatic worker re-execution is forbidden."
+            )
+    return blockers
+
+
+def _recover_completed_approved_bundle_worker_attempts(
+    project_name: str,
+    bundle_id: str,
+    *,
+    note: str,
+    workspace_root: Path,
+) -> tuple[list[str], list[str]]:
+    """Ingest one completed pre-crash subprocess result without launching another worker."""
+    bundle = load_execution_policy_approval_bundle(project_name, bundle_id, workspace_root=workspace_root)
+    if not bundle:
+        return [], []
+    recovered: list[str] = []
+    blockers: list[str] = []
+    run_directory = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root)
+    for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
+        if run.policy_id not in bundle.policy_ids or run.status != "waiting_worker":
+            continue
+        if any(
+            item.queue_worker_run_id == run.run_id
+            for item in list_codex_worker_ingests(project_name, workspace_root=workspace_root)
+        ):
+            continue
+        attempt_directories = (
+            [path for path in run_directory.glob(f"*-{_safe_artifact_id(run.run_id)}*") if path.is_dir()]
+            if run_directory.exists()
+            else []
+        )
+        if not attempt_directories:
+            continue
+        attempts: list[CodexWorkerSubprocessRun] = []
+        incomplete_paths: list[str] = []
+        for directory in attempt_directories:
+            run_json = directory / "codex-worker-run.json"
+            if not run_json.exists():
+                incomplete_paths.append(str(directory))
+                continue
+            try:
+                attempt = CodexWorkerSubprocessRun.model_validate_json(run_json.read_text(encoding="utf-8"))
+            except (OSError, ValueError, ValidationError):
+                incomplete_paths.append(str(run_json))
+                continue
+            if attempt.queue_worker_run_id != run.run_id:
+                incomplete_paths.append(str(run_json))
+                continue
+            attempts.append(attempt)
+        if incomplete_paths or len(attempts) != 1:
+            blockers.append(
+                f"Ambiguous interrupted worker state for {run.run_id}: expected one complete subprocess attempt "
+                f"but found {len(attempts)} complete and {len(incomplete_paths)} incomplete attempt artifacts."
+            )
+            continue
+        attempt = attempts[0]
+        result_path = Path(attempt.expected_result_path)
+        if attempt.status != "completed_with_result" or not result_path.exists():
+            blockers.append(
+                f"Interrupted worker attempt {attempt.codex_worker_run_id} for {run.run_id} is {attempt.status}; "
+                "automatic worker re-execution is forbidden."
+            )
+            continue
+        try:
+            ingest_result = create_codex_worker_ingest(
+                project_name,
+                run.run_id,
+                result_path,
+                preparation_id=attempt.preparation_id,
+                recorded_by="devo approved-bundle supervisor recovery",
+                note=note,
+                workspace_root=workspace_root,
+            )
+        except ValueError as exc:
+            blockers.append(f"Existing worker result recovery was blocked for {run.run_id}: {exc}")
+            continue
+        if ingest_result.ingest.status != "completed" or ingest_result.blockers:
+            blockers.append(
+                f"Existing worker result {attempt.codex_worker_run_id} recovered with status "
+                f"{ingest_result.ingest.status}; no worker was relaunched."
+            )
+            blockers.extend(ingest_result.blockers)
+            continue
+        recovered.append(
+            f"Reused completed subprocess attempt {attempt.codex_worker_run_id} and created ingest "
+            f"{ingest_result.ingest.ingest_id} for {run.run_id} without relaunching the worker."
+        )
+    return recovered, blockers
+
+
+@contextmanager
+def _approved_bundle_supervisor_lock(
+    project_name: str,
+    bundle_id: str,
+    *,
+    workspace_root: Path,
+) -> Iterator[None]:
+    """Hold one OS-released lock for a confirmed supervisor of this bundle."""
+    lock_path = approved_bundle_supervisor_lock_path(project_name, bundle_id, workspace_root=workspace_root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle: BinaryIO = lock_path.open("a+b")
+    acquired = False
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                raise
+            msg = (
+                f"Continuous supervision is already active for approved bundle "
+                f"{_normalize_policy_approval_bundle_id(bundle_id)}. Wait for that process to stop before re-entry."
+            )
+            raise ValueError(msg) from exc
+        acquired = True
+        yield
+    finally:
+        if acquired:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
 def supervise_approved_bundle(
+    project_name: str,
+    bundle_id: str,
+    *,
+    message: str = "",
+    note: str = "",
+    max_steps: int = 10,
+    poll_interval_seconds: float = 5.0,
+    max_wait_seconds: float = 600.0,
+    dry_run: bool = True,
+    monotonic_clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    workspace_root: Path | None = None,
+) -> ApprovedBundleSupervisorResult:
+    """Preview or exclusively run restart-safe continuous approved-bundle supervision."""
+    root = workspace_root or get_workspace_root()
+    if dry_run:
+        return _supervise_approved_bundle_locked(
+            project_name,
+            bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            poll_interval_seconds=poll_interval_seconds,
+            max_wait_seconds=max_wait_seconds,
+            dry_run=True,
+            monotonic_clock=monotonic_clock,
+            sleep=sleep,
+            workspace_root=root,
+        )
+    with _approved_bundle_supervisor_lock(project_name, bundle_id, workspace_root=root):
+        return _supervise_approved_bundle_locked(
+            project_name,
+            bundle_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            poll_interval_seconds=poll_interval_seconds,
+            max_wait_seconds=max_wait_seconds,
+            dry_run=False,
+            monotonic_clock=monotonic_clock,
+            sleep=sleep,
+            workspace_root=root,
+        )
+
+
+def _supervise_approved_bundle_locked(
     project_name: str,
     bundle_id: str,
     *,
@@ -7929,6 +8235,16 @@ def supervise_approved_bundle(
     started_at = datetime.now(UTC)
     normalized_bundle_id = _normalize_policy_approval_bundle_id(bundle_id)
     if dry_run:
+        incomplete = _incomplete_approved_bundle_supervisor_results(
+            project_name,
+            normalized_bundle_id,
+            workspace_root=root,
+        )
+        if len(incomplete) > 1:
+            ids = ", ".join(item.supervisor_run_id or "unknown" for item in incomplete)
+            msg = f"Contradictory durable supervisor state: multiple incomplete runs for {normalized_bundle_id}: {ids}."
+            raise ValueError(msg)
+        resumable = incomplete[0] if incomplete else None
         preview = auto_run_approved(
             project_name,
             normalized_bundle_id,
@@ -7957,9 +8273,12 @@ def supervise_approved_bundle(
             planned_action = "resume waiting for the existing trusted delivery request, then reconcile"
         elif preview.selected_policy_id:
             planned_action = "advance the selected child through existing worker, review, validation, and delivery-request gates"
+        if resumable and not preview.blockers and preview.status != "completed":
+            planned_action = f"resume durable supervisor run {resumable.supervisor_run_id}; {planned_action}"
         return ApprovedBundleSupervisorResult(
             project=project_name,
             bundle_id=preview.bundle_id,
+            supervisor_run_id=resumable.supervisor_run_id if resumable else None,
             dry_run=True,
             status=preview.status,
             poll_interval_seconds=poll_interval_seconds,
@@ -7975,6 +8294,12 @@ def supervise_approved_bundle(
             would_run_validation=would_run_validation,
             would_wait_for_trusted_delivery=would_wait,
             would_consider_next_child=bool(preview.selected_policy_id and not preview.blockers),
+            initial_completed_child_keys=(
+                list(resumable.initial_completed_child_keys) if resumable else []
+            ),
+            resume_count=resumable.resume_count if resumable else 0,
+            last_checkpoint=resumable.last_checkpoint if resumable else "preview",
+            checkpointed_at=resumable.checkpointed_at if resumable else None,
             warnings=list(preview.warnings),
             blockers=list(preview.blockers),
             stop_reason="preview only" if not preview.blockers else "policy_drift",
@@ -7991,24 +8316,74 @@ def supervise_approved_bundle(
 
     clock = monotonic_clock or time.monotonic
     sleeper = sleep or time.sleep
-    supervisor_run_id = f"ABSR-{started_at.strftime('%Y%m%d%H%M%S%f')}"
-    events: list[ApprovedBundleSupervisorEvent] = []
-    policy_ids: list[str] = []
-    item_ids: list[str] = []
-    task_ids: list[str] = []
-    run_ids: list[str] = []
-    request_ids: list[str] = []
-    wait_outcomes: list[str] = []
-    warnings: list[str] = []
-    blockers: list[str] = []
-    completed_run_ids: set[str] = set()
+    incomplete = _incomplete_approved_bundle_supervisor_results(
+        project_name,
+        normalized_bundle_id,
+        workspace_root=root,
+    )
+    if len(incomplete) > 1:
+        ids = ", ".join(item.supervisor_run_id or "unknown" for item in incomplete)
+        msg = f"Contradictory durable supervisor state: multiple incomplete runs for {normalized_bundle_id}: {ids}."
+        raise ValueError(msg)
+    resumed = incomplete[0] if incomplete else None
+    if resumed and not resumed.supervisor_run_id:
+        msg = "Contradictory durable supervisor state: incomplete checkpoint has no supervisor run id."
+        raise ValueError(msg)
+    if resumed and [event.sequence for event in resumed.events] != list(range(1, len(resumed.events) + 1)):
+        msg = f"Contradictory durable supervisor state: event sequence is invalid in {resumed.supervisor_run_id}."
+        raise ValueError(msg)
+
+    if resumed:
+        supervisor_run_id = resumed.supervisor_run_id or ""
+        started_at = resumed.started_at
+        events = list(resumed.events)
+        policy_ids = list(resumed.child_policy_ids_visited)
+        item_ids = list(resumed.queue_item_ids_visited)
+        task_ids = list(resumed.task_ids_visited)
+        run_ids = list(resumed.queue_worker_run_ids)
+        request_ids = list(resumed.delivery_request_ids)
+        wait_outcomes = list(resumed.delivery_wait_outcomes)
+        warnings = list(resumed.warnings)
+        blockers = list(resumed.blockers)
+        workflow_mutated = resumed.workflow_mutated
+        selected_policy_id = resumed.selected_policy_id
+        selected_queue_item_id = resumed.selected_queue_item_id
+        selected_task_id = resumed.selected_task_id
+        selected_run_id = resumed.selected_queue_worker_run_id
+        current_run_status = resumed.current_queue_worker_status
+        initial_completed_item_ids = list(resumed.initial_completed_child_keys)
+        resume_count = resumed.resume_count + 1
+    else:
+        supervisor_run_id = f"ABSR-{started_at.strftime('%Y%m%d%H%M%S%f')}"
+        events: list[ApprovedBundleSupervisorEvent] = []
+        policy_ids: list[str] = []
+        item_ids: list[str] = []
+        task_ids: list[str] = []
+        run_ids: list[str] = []
+        request_ids: list[str] = []
+        wait_outcomes: list[str] = []
+        warnings: list[str] = []
+        blockers: list[str] = []
+        workflow_mutated = False
+        selected_policy_id: str | None = None
+        selected_queue_item_id: str | None = None
+        selected_task_id: str | None = None
+        selected_run_id: str | None = None
+        current_run_status: str | None = None
+        initial_completed_item_ids = _completed_approved_bundle_child_keys(
+            project_name,
+            normalized_bundle_id,
+            workspace_root=root,
+        )
+        resume_count = 0
+
+    completed_run_ids = {
+        run_id
+        for run_id in run_ids
+        if (loaded_run := load_queue_worker_run(project_name, run_id, workspace_root=root))
+        and loaded_run.status == "completed"
+    }
     children_completed = 0
-    workflow_mutated = False
-    selected_policy_id: str | None = None
-    selected_queue_item_id: str | None = None
-    selected_task_id: str | None = None
-    selected_run_id: str | None = None
-    current_run_status: str | None = None
 
     def append_unique(values: list[str], value: str | None) -> None:
         if value and value not in values:
@@ -8035,8 +8410,23 @@ def supervise_approved_bundle(
             )
         )
 
-    def finish(status: str, stop_reason: str, next_action: str) -> ApprovedBundleSupervisorResult:
-        result = ApprovedBundleSupervisorResult(
+    def build_result(
+        *,
+        status: str,
+        planned_action: str,
+        last_checkpoint: str,
+        stop_reason: str = "",
+        next_action: str = "",
+        completed_at: datetime | None = None,
+    ) -> ApprovedBundleSupervisorResult:
+        nonlocal children_completed
+        current_completed = _completed_approved_bundle_child_keys(
+            project_name,
+            normalized_bundle_id,
+            workspace_root=root,
+        )
+        children_completed = len(set(current_completed) - set(initial_completed_item_ids))
+        return ApprovedBundleSupervisorResult(
             project=project_name,
             bundle_id=normalized_bundle_id,
             supervisor_run_id=supervisor_run_id,
@@ -8049,7 +8439,7 @@ def supervise_approved_bundle(
             selected_task_id=selected_task_id,
             selected_queue_worker_run_id=selected_run_id,
             current_queue_worker_status=current_run_status,
-            planned_action="supervision stopped",
+            planned_action=planned_action,
             child_policy_ids_visited=policy_ids,
             queue_item_ids_visited=item_ids,
             task_ids_visited=task_ids,
@@ -8057,6 +8447,10 @@ def supervise_approved_bundle(
             delivery_request_ids=request_ids,
             delivery_wait_outcomes=wait_outcomes,
             children_completed=children_completed,
+            initial_completed_child_keys=initial_completed_item_ids,
+            resume_count=resume_count,
+            last_checkpoint=last_checkpoint,
+            checkpointed_at=datetime.now(UTC),
             events=events,
             warnings=_dedupe(warnings),
             blockers=_dedupe(blockers),
@@ -8064,11 +8458,57 @@ def supervise_approved_bundle(
             next_action=next_action,
             workflow_mutated=workflow_mutated,
             started_at=started_at,
+            completed_at=completed_at,
+        )
+
+    def checkpoint(last_checkpoint: str, planned_action: str) -> ApprovedBundleSupervisorResult:
+        result = build_result(
+            status="running",
+            planned_action=planned_action,
+            last_checkpoint=last_checkpoint,
+        )
+        return _write_approved_bundle_supervisor_result(result, workspace_root=root)
+
+    def finish(status: str, stop_reason: str, next_action: str) -> ApprovedBundleSupervisorResult:
+        result = build_result(
+            status=status,
+            planned_action="supervision stopped",
+            last_checkpoint=f"finished:{stop_reason}",
+            stop_reason=stop_reason,
+            next_action=next_action,
             completed_at=datetime.now(UTC),
         )
         return _write_approved_bundle_supervisor_result(result, workspace_root=root)
 
     initial_bundle = load_execution_policy_approval_bundle(project_name, normalized_bundle_id, workspace_root=root)
+    if resumed:
+        add_event(
+            "supervisor_reentry",
+            "resumed",
+            detail=f"Recovered durable supervisor run after interruption; resume count is {resume_count}.",
+        )
+        warnings.append(
+            f"Recovered incomplete supervisor run {supervisor_run_id} from durable workflow and checkpoint evidence."
+        )
+        missing_run_ids = [
+            run_id for run_id in run_ids if not load_queue_worker_run(project_name, run_id, workspace_root=root)
+        ]
+        if missing_run_ids:
+            blockers.append(
+                "Contradictory durable supervisor state: checkpoint references missing queue-worker runs: "
+                + ", ".join(missing_run_ids)
+                + "."
+            )
+            return finish(
+                "blocked",
+                "contradictory_durable_state",
+                "Restore or explicitly resolve the missing durable artifacts before starting another supervisor run.",
+            )
+        checkpoint("reentry_reconstructed", "rechecking durable bundle and child state after process interruption")
+    else:
+        add_event("supervisor_start", "started", detail="Durable checkpoint created before child execution.")
+        checkpoint("supervisor_started", "rechecking approved bundle before selecting one child")
+
     max_iterations = max(4, (len(initial_bundle.policy_ids) if initial_bundle else 1) * 4 + 4)
     for _iteration in range(max_iterations):
         bundle_check = check_approved_execution_policy_approval_bundle(
@@ -8082,6 +8522,7 @@ def supervise_approved_bundle(
             "passed" if bundle_check.eligible else "blocked",
             detail=bundle_check.next_action,
         )
+        checkpoint("bundle_rechecked", "resolving the next durable child transition")
         if not bundle_check.eligible:
             blockers.extend(bundle_check.blockers)
             return finish(
@@ -8090,6 +8531,41 @@ def supervise_approved_bundle(
                 "Resolve approved bundle, policy fingerprint, scope, queue linkage, or active-child blockers before resuming supervision.",
             )
 
+        checkpoint("before_worker_recovery", "reusing durable worker evidence without subprocess relaunch")
+        recovered_worker_messages, recovery_blockers = _recover_completed_approved_bundle_worker_attempts(
+            project_name,
+            normalized_bundle_id,
+            note=note,
+            workspace_root=root,
+        )
+        if recovered_worker_messages:
+            workflow_mutated = True
+            warnings.extend(recovered_worker_messages)
+            for recovered_message in recovered_worker_messages:
+                add_event("worker_recovery", "reused", detail=recovered_message)
+            checkpoint("worker_evidence_recovered", "advancing the existing queue-worker run from recovered evidence")
+        restart_worker_blockers = [
+            *recovery_blockers,
+            *_approved_bundle_restart_worker_blockers(
+                project_name,
+                normalized_bundle_id,
+                workspace_root=root,
+            ),
+        ]
+        if restart_worker_blockers:
+            blockers.extend(restart_worker_blockers)
+            add_event(
+                "restart_reconstruction",
+                "blocked",
+                detail="Durable worker state is ambiguous; no worker was relaunched.",
+            )
+            return finish(
+                "blocked",
+                "contradictory_durable_state",
+                "Inspect existing worker attempt and ingest evidence; resolve it manually before starting another supervisor run.",
+            )
+
+        checkpoint("before_child_advance", "advancing at most one existing or next eligible child")
         child_result = auto_run_approved(
             project_name,
             normalized_bundle_id,
@@ -8123,6 +8599,7 @@ def supervise_approved_bundle(
             detail=child_result.stop_reason or child_result.next_action,
             delivery_request_id=delivery_request_id,
         )
+        checkpoint("after_child_advance", "classifying the durable child result")
 
         if child_result.status == "completed":
             return finish(
@@ -8134,6 +8611,7 @@ def supervise_approved_bundle(
             if selected_run_id and selected_run_id not in completed_run_ids:
                 completed_run_ids.add(selected_run_id)
                 children_completed += 1
+            checkpoint("child_completed", "rechecking the approved bundle before another child")
             continue
         if child_result.status != "waiting_trusted_delivery":
             blockers.extend(child_result.blockers)
@@ -8155,6 +8633,7 @@ def supervise_approved_bundle(
             detail="Polling existing trusted-runner evidence only; the supervisor will not invoke the runner.",
             delivery_request_id=delivery_request_id,
         )
+        checkpoint("delivery_wait_started", "polling only the existing trusted delivery request")
         while True:
             delivery_state, delivery_detail = _approved_bundle_supervisor_delivery_state(
                 project_name,
@@ -8169,6 +8648,7 @@ def supervise_approved_bundle(
                     detail=delivery_detail,
                     delivery_request_id=delivery_request_id,
                 )
+                checkpoint("delivery_wait_completed", "reconciling completed pushed trusted-delivery evidence")
                 break
             if delivery_state == "failed":
                 wait_outcomes.append(f"{delivery_request_id}: failed")
@@ -8179,6 +8659,7 @@ def supervise_approved_bundle(
                     detail=delivery_detail,
                     delivery_request_id=delivery_request_id,
                 )
+                checkpoint("delivery_wait_failed", "stopping before any retry or next child")
                 return finish(
                     "blocked",
                     "trusted_delivery_failed",
@@ -8193,6 +8674,7 @@ def supervise_approved_bundle(
                     detail="Existing delivery request remains pending and unchanged.",
                     delivery_request_id=delivery_request_id,
                 )
+                checkpoint("delivery_wait_timeout", "leaving the existing request pending for explicit re-entry")
                 return finish(
                     "paused",
                     "trusted_delivery_timeout",
@@ -8200,6 +8682,7 @@ def supervise_approved_bundle(
                 )
             sleeper(min(poll_interval_seconds, remaining))
 
+        checkpoint("before_child_reconcile", "reconciling existing completed trusted-delivery evidence")
         reconciled = auto_run_approved(
             project_name,
             normalized_bundle_id,
@@ -8224,10 +8707,12 @@ def supervise_approved_bundle(
             detail=reconciled.stop_reason or reconciled.next_action,
             delivery_request_id=delivery_request_id,
         )
+        checkpoint("after_child_reconcile", "classifying reconciliation before another child")
         if reconciled.status == "child_completed" or "completed" in reconciled.stop_reason:
             if selected_run_id and selected_run_id not in completed_run_ids:
                 completed_run_ids.add(selected_run_id)
                 children_completed += 1
+            checkpoint("child_reconciled", "rechecking the approved bundle before another child")
             continue
         stop_reason, stop_next_action = _classify_approved_bundle_supervisor_stop(reconciled)
         return finish("blocked", stop_reason, stop_next_action)
@@ -12090,7 +12575,11 @@ def render_approved_bundle_supervisor_markdown(result: ApprovedBundleSupervisorR
         f"- Status: `{result.status}`",
         f"- Poll interval seconds: `{result.poll_interval_seconds}`",
         f"- Max wait seconds: `{result.max_wait_seconds}`",
-        f"- Children completed this invocation: `{result.children_completed}`",
+        f"- Children completed by this durable supervisor run: `{result.children_completed}`",
+        f"- Resume count: `{result.resume_count}`",
+        f"- Last checkpoint: `{result.last_checkpoint or 'none'}`",
+        f"- Checkpointed at: `{result.checkpointed_at.isoformat() if result.checkpointed_at else 'none'}`",
+        f"- Initially completed child keys: `{', '.join(result.initial_completed_child_keys) or 'none'}`",
         f"- Workflow mutated: `{result.workflow_mutated}`",
         f"- Started at: `{result.started_at.isoformat()}`",
         f"- Completed at: `{result.completed_at.isoformat() if result.completed_at else 'none'}`",
@@ -12737,8 +13226,8 @@ def _write_approved_bundle_supervisor_result(
             "artifact_markdown_path": str(markdown_path),
         }
     )
-    _write_model(json_path, saved)
-    markdown_path.write_text(render_approved_bundle_supervisor_markdown(saved), encoding="utf-8")
+    _write_text_atomically(json_path, saved.model_dump_json(indent=2))
+    _write_text_atomically(markdown_path, render_approved_bundle_supervisor_markdown(saved))
     return saved
 
 
@@ -17182,6 +17671,19 @@ def _append_progress_groups(lines: list[str], groups: list[PlanningProgressGroup
 
 def _write_model(path: Path, model: BaseModel) -> None:
     path.write_text(model.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _write_text_atomically(path: Path, text: str) -> None:
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_path.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 def _require_project(project_name: str, workspace_root: Path) -> None:
