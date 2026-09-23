@@ -941,6 +941,68 @@ def test_intake_plan_without_headings_creates_conservative_artifact_with_warning
     assert "Allowed files were not specified" in " ".join(data["risk_notes"])
 
 
+def test_rough_goal_intake_parses_and_preserves_explicit_per_task_risks(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file_with_explicit_task_risks(tmp_path)
+
+    created = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+
+    assert created.exit_code == 0, created.output
+    intake = project_planning_module.load_rough_goal_intake_plan("sample", "INTAKE-0001", workspace_root=workspace)
+    assert intake is not None
+    assert [task.risk_level for task in intake.candidate_tasks] == ["low", "medium", "high", "critical", "low"]
+    assert [task.title for task in intake.candidate_tasks] == [
+        "Add parser coverage",
+        "Preserve risk in draft tasks",
+        "Preserve risk in queue items",
+        "Require manual review",
+        "Keep the inferred default",
+    ]
+    assert intake.candidate_tasks[1].summary.endswith("Risk: MEDIUM.")
+    assert intake.suggested_policy_draft.risk_level == "critical"
+
+    materialized = runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    )
+
+    assert materialized.exit_code == 0, materialized.output
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert backlog is not None
+    assert batch is not None
+    assert queue is not None
+    assert policy is not None
+    expected_risks = ["low", "medium", "high", "critical", "low"]
+    assert [task.risk_level for task in backlog.tasks] == expected_risks
+    assert [snapshot.risk_level for snapshot in batch.task_snapshots] == expected_risks
+    assert [item.risk_level for item in queue.items] == expected_risks
+    assert batch.risk_summary == {"low": 2, "medium": 1, "high": 1, "critical": 1}
+    assert policy.risk_level == "critical"
+
+
+def test_rough_goal_intake_treats_unsupported_explicit_task_risk_as_medium(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file_with_explicit_task_risks(tmp_path)
+    goal_file.write_text(goal_file.read_text(encoding="utf-8").replace("Risk: low.", "Risk: severe.", 1), encoding="utf-8")
+
+    plan, _json_path, _markdown_path = project_planning_module.create_rough_goal_intake_plan(
+        "sample",
+        goal_file,
+        workspace_root=workspace,
+    )
+
+    assert plan.candidate_tasks[0].risk_level == "medium"
+    assert "T001: unsupported explicit risk 'severe' was treated as medium." in plan.risk_notes
+
+
 def test_intake_plan_rejects_missing_project(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path, monkeypatch)
     goal_file = _rough_goal_file(tmp_path)
@@ -9987,6 +10049,43 @@ Create a sheetless intake command for rough goals.
 
 # Validation
 - py_compile touched Python
+- focused pytest
+
+# Delivery notes
+- Use trusted runner only.
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _rough_goal_file_with_explicit_task_risks(tmp_path: Path) -> Path:
+    path = tmp_path / "rough-goal-with-explicit-task-risks.md"
+    path.write_text(
+        """# Goal
+Preserve explicit task risks through rough-goal intake.
+
+# Context
+- Each reviewed task can have a different risk.
+
+# Scope
+- Parse deterministic inline task metadata.
+
+# Tasks
+- T001: Add parser coverage. Risk: low.
+- T002: Preserve risk in draft tasks. Risk: MEDIUM.
+- T003: Preserve risk in queue items. risk: high
+- T004: Require manual review. Risk: `critical`.
+- T005: Keep the inferred default.
+
+# Allowed files
+- src/devo/project_planning.py
+- tests/test_project_planning.py
+
+# Do not touch
+- src/devo/main.py
+
+# Validation
 - focused pytest
 
 # Delivery notes

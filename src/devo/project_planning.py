@@ -16084,18 +16084,28 @@ def _build_rough_goal_intake_plan(
     batch_id = _next_batch_id(project_name, workspace_root=workspace_root)
     queue_id = _next_queue_id(project_name, workspace_root=workspace_root)
     policy_id = _next_policy_id(project_name, workspace_root=workspace_root)
-    risk_level = "medium" if missing_sections or not allowed_files else "low"
-    candidate_tasks = [
-        RoughGoalTaskDraft(
-            task_id=f"T{index:03d}",
-            title=_short_title(_strip_leading_task_id(task), f"Candidate task {index}"),
-            summary=_strip_leading_task_id(task),
-            allowed_files=allowed_files,
-            validation=validation_notes,
-            risk_level=risk_level,
+    default_risk_level = "medium" if missing_sections or not allowed_files else "low"
+    task_risk_warnings: list[str] = []
+    candidate_tasks: list[RoughGoalTaskDraft] = []
+    for index, task in enumerate(task_notes[:10], start=1):
+        summary = _strip_leading_task_id(task)
+        task_risk_level, risk_warning = _rough_goal_task_risk(summary, default_risk_level)
+        if risk_warning:
+            task_risk_warnings.append(f"T{index:03d}: {risk_warning}")
+        candidate_tasks.append(
+            RoughGoalTaskDraft(
+                task_id=f"T{index:03d}",
+                title=_short_title(_without_rough_goal_task_risk(summary), f"Candidate task {index}"),
+                summary=summary,
+                allowed_files=allowed_files,
+                validation=validation_notes,
+                risk_level=task_risk_level,
+            )
         )
-        for index, task in enumerate(task_notes[:10], start=1)
-    ]
+    risk_level = max(
+        [default_risk_level, *(task.risk_level for task in candidate_tasks)],
+        key=lambda value: RISK_ORDER.get(value, RISK_ORDER["medium"]),
+    )
     queue_items = [
         RoughGoalQueueItemDraft(item_id=f"QI{index:03d}", task_id=task.task_id, title=task.title)
         for index, task in enumerate(candidate_tasks, start=1)
@@ -16112,6 +16122,7 @@ def _build_rough_goal_intake_plan(
         risk_notes.append("Allowed files were not specified; fill exact policy file patterns before approval.")
     if not validation_notes:
         risk_notes.append("Validation was not specified; choose concrete checks before approving execution.")
+    risk_notes.extend(task_risk_warnings)
     task_ids = [task.task_id for task in candidate_tasks]
     queue_item_ids = [item.item_id for item in queue_items]
     next_commands = _rough_goal_intake_next_commands(
@@ -16207,6 +16218,27 @@ def _text_has_any_heading(text: str, headings: tuple[str, ...]) -> bool:
 
 def _strip_leading_task_id(value: str) -> str:
     return re.sub(r"^(T\d+|TASK[-_A-Za-z0-9]*|[-*])\s*[:.)-]\s*", "", value.strip(), flags=re.IGNORECASE).strip() or value.strip()
+
+
+_ROUGH_GOAL_TASK_RISK_PATTERN = re.compile(
+    r"\brisk\s*:\s*[`*_]*(?P<risk>[A-Za-z]+)\b[`*_]*[.!?]?",
+    flags=re.IGNORECASE,
+)
+
+
+def _rough_goal_task_risk(value: str, default_risk_level: str) -> tuple[str, str | None]:
+    matches = list(_ROUGH_GOAL_TASK_RISK_PATTERN.finditer(value))
+    if not matches:
+        return default_risk_level, None
+    declared_risk = matches[-1].group("risk").casefold()
+    if declared_risk in ALLOWED_RISK_LEVELS:
+        return declared_risk, None
+    return "medium", f"unsupported explicit risk {declared_risk!r} was treated as medium."
+
+
+def _without_rough_goal_task_risk(value: str) -> str:
+    cleaned = _ROUGH_GOAL_TASK_RISK_PATTERN.sub("", value)
+    return re.sub(r"\s+", " ", cleaned).strip(" .;|-")
 
 
 def _materialized_backlog_tasks_from_intake(
