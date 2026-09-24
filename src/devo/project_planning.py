@@ -1605,6 +1605,8 @@ class RoughGoalNextSliceRecommendation(BaseModel):
     queue_id: str
     policy_id: str
     policy_status: str = "unknown"
+    auto_delivery_allowed: bool | None = None
+    auto_push_allowed: bool | None = None
     broad_policy_warning: str = ""
     suggested_narrow_allowed_files: list[str] = Field(default_factory=list)
     do_not_touch_notes: list[str] = Field(default_factory=list)
@@ -5340,6 +5342,7 @@ def create_batch_execution_policy(
     title: str,
     queue_id: str | None = None,
     allowed_task_ids: list[str] | None = None,
+    allowed_queue_item_ids: list[str] | None = None,
     allowed_file_patterns: list[str] | None = None,
     forbidden_file_patterns: list[str] | None = None,
     max_tasks: int | None = None,
@@ -5349,6 +5352,7 @@ def create_batch_execution_policy(
     auto_delivery_allowed: bool = True,
     auto_push_allowed: bool = True,
     expires_at: datetime | None = None,
+    risk_level: str | None = None,
     note: str = "",
     workspace_root: Path | None = None,
 ) -> tuple[BatchExecutionPolicy, Path, Path]:
@@ -5368,12 +5372,59 @@ def create_batch_execution_policy(
     normalized_allowed_tasks = _normalize_task_ids(allowed_task_ids or [])
     if not normalized_allowed_tasks:
         normalized_allowed_tasks = list(batch.task_ids)
+    if len(normalized_allowed_tasks) != len(set(normalized_allowed_tasks)):
+        msg = "Allowed task ids must not contain duplicates."
+        raise ValueError(msg)
     batch_tasks = {_normalize_task_id(task_id) for task_id in batch.task_ids}
     unknown_tasks = [task_id for task_id in normalized_allowed_tasks if _normalize_task_id(task_id) not in batch_tasks]
     if unknown_tasks:
         msg = f"Allowed task ids are not in batch {batch.batch_id}: {', '.join(unknown_tasks)}"
         raise ValueError(msg)
-    allowed_queue_items = [item.item_id for item in queue.items if _normalize_task_id(item.task_id) in {_normalize_task_id(task) for task in normalized_allowed_tasks}] if queue else []
+    allowed_tasks = {_normalize_task_id(task_id) for task_id in normalized_allowed_tasks}
+    if allowed_queue_item_ids is None:
+        allowed_queue_items = [
+            item.item_id for item in queue.items if _normalize_task_id(item.task_id) in allowed_tasks
+        ] if queue else []
+    else:
+        if not queue:
+            msg = "Allowed queue item ids require an execution queue."
+            raise ValueError(msg)
+        allowed_queue_items = _normalize_queue_item_ids(allowed_queue_item_ids)
+        if not allowed_queue_items:
+            msg = "Allowed queue item ids must not be empty when explicitly provided."
+            raise ValueError(msg)
+        if len(allowed_queue_items) != len(set(allowed_queue_items)):
+            msg = "Allowed queue item ids must not contain duplicates."
+            raise ValueError(msg)
+        queue_items_by_id: dict[str, list[QueueItem]] = {}
+        for item in queue.items:
+            queue_items_by_id.setdefault(_normalize_queue_item_id(item.item_id), []).append(item)
+        for item_id in allowed_queue_items:
+            matching_items = queue_items_by_id.get(item_id, [])
+            if len(matching_items) != 1:
+                msg = (
+                    f"Allowed queue item {item_id} must identify exactly one item in queue "
+                    f"{queue.queue_id}; found {len(matching_items)}."
+                )
+                raise ValueError(msg)
+            item = matching_items[0]
+            if _normalize_task_id(item.task_id) not in allowed_tasks:
+                msg = f"Allowed queue item {item_id} references task {item.task_id}, which is outside allowed task ids."
+                raise ValueError(msg)
+            if _normalize_batch_id(item.batch_id) != _normalize_batch_id(batch.batch_id):
+                msg = f"Allowed queue item {item_id} is not for batch {batch.batch_id}."
+                raise ValueError(msg)
+    derived_risk = _execution_policy_risk_for_tasks(batch, normalized_allowed_tasks)
+    normalized_risk = risk_level.strip().casefold() if risk_level is not None else derived_risk
+    if normalized_risk not in ALLOWED_RISK_LEVELS:
+        msg = f"Invalid execution policy risk level: {risk_level}"
+        raise ValueError(msg)
+    if normalized_risk != derived_risk:
+        msg = (
+            f"Execution policy risk {normalized_risk} does not match selected task risk {derived_risk} "
+            f"for {', '.join(normalized_allowed_tasks)}."
+        )
+        raise ValueError(msg)
     cleaned_title = _clean_planning_text(title).strip()
     if not cleaned_title:
         msg = "Policy title must not be empty."
@@ -5410,7 +5461,7 @@ def create_batch_execution_policy(
         auto_delivery_allowed=auto_delivery_allowed,
         auto_push_allowed=auto_push_allowed,
         notes=notes,
-        risk_level=_highest_policy_risk(batch),
+        risk_level=normalized_risk,
         next_action=f"Request policy approval: devo project execution-policy-request --project {project_name} --policy <policyId> --note \"<note>\"",
     )
     return _write_execution_policy(project_name, policy, workspace_root=root)
@@ -9231,30 +9282,75 @@ def recommend_rough_goal_intake_next_slice(
     batch = load_project_batch(project_name, materialization.batch_id, workspace_root=root)
     queue = load_execution_queue(project_name, materialization.queue_id, workspace_root=root)
     policy = load_execution_policy(project_name, materialization.policy_id, workspace_root=root)
+    source_auto_delivery_allowed: bool | None = None
+    source_auto_push_allowed: bool | None = None
     if not batch:
         blockers.append(f"Materialized batch artifact is missing: {materialization.batch_id}")
     if not queue:
         blockers.append(f"Materialized queue artifact is missing: {materialization.queue_id}")
     if not policy:
         blockers.append(f"Materialized policy artifact is missing: {materialization.policy_id}")
+    else:
+        missing_permission_fields = sorted(
+            {"auto_delivery_allowed", "auto_push_allowed"} - policy.model_fields_set
+        )
+        if missing_permission_fields:
+            blockers.append(
+                f"Materialized policy {materialization.policy_id} has no authoritative value for: "
+                f"{', '.join(missing_permission_fields)}."
+            )
+        else:
+            source_auto_delivery_allowed = policy.auto_delivery_allowed
+            source_auto_push_allowed = policy.auto_push_allowed
+        if _normalize_policy_id(policy.policy_id) != _normalize_policy_id(materialization.policy_id):
+            blockers.append(
+                f"Materialized policy identity mismatch: expected {materialization.policy_id}, found {policy.policy_id}."
+            )
+        if policy.project != project_name:
+            blockers.append(
+                f"Materialized policy {materialization.policy_id} belongs to project {policy.project}, not {project_name}."
+            )
+        if _normalize_batch_id(policy.batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append(
+                f"Materialized policy {materialization.policy_id} belongs to batch {policy.batch_id}, "
+                f"not {materialization.batch_id}."
+            )
+        normalized_policy_queue_id = _normalize_queue_id(policy.queue_id) if policy.queue_id else None
+        if normalized_policy_queue_id != _normalize_queue_id(materialization.queue_id):
+            blockers.append(
+                f"Materialized policy {materialization.policy_id} belongs to queue {policy.queue_id or 'none'}, "
+                f"not {materialization.queue_id}."
+            )
 
     backlog = load_project_backlog(project_name, workspace_root=root)
-    task_by_id = {task.id.strip().upper(): task for task in (backlog.tasks if backlog else [])}
-    queue_item_by_task = {
-        item.task_id.strip().upper(): item
-        for item in (queue.items if queue else [])
-        if item.task_id.strip().upper() in {task_id.upper() for task_id in materialization.created_task_ids}
-    }
     created_task_ids = [task_id.strip().upper() for task_id in materialization.created_task_ids]
-    candidates: list[tuple[int, int, BacklogTask, QueueItem | None]] = []
+    if not created_task_ids:
+        blockers.append("Materialization has no created task ids.")
+    if len(created_task_ids) != len(set(created_task_ids)):
+        blockers.append("Materialization contains duplicate created task ids.")
+    materialized_task_ids = set(created_task_ids)
+    tasks_by_id: dict[str, list[BacklogTask]] = {}
+    for task in backlog.tasks if backlog else []:
+        normalized_task_id = _normalize_task_id(task.id)
+        if normalized_task_id in materialized_task_ids:
+            tasks_by_id.setdefault(normalized_task_id, []).append(task)
+    queue_items_by_task: dict[str, list[QueueItem]] = {}
+    for item in queue.items if queue else []:
+        normalized_task_id = _normalize_task_id(item.task_id)
+        if normalized_task_id in materialized_task_ids:
+            queue_items_by_task.setdefault(normalized_task_id, []).append(item)
+    candidates: list[tuple[int, int, BacklogTask]] = []
     deprioritized_setup_tasks: list[str] = []
     for order, task_id in enumerate(created_task_ids):
-        task = task_by_id.get(task_id)
-        if not task:
-            blockers.append(f"Materialized task artifact is missing from backlog: {task_id}")
+        matching_tasks = tasks_by_id.get(task_id, [])
+        if len(matching_tasks) != 1:
+            blockers.append(
+                f"Materialized task {task_id} must identify exactly one backlog task; found {len(matching_tasks)}."
+            )
             continue
-        item = queue_item_by_task.get(task_id)
-        if item and item.status in {"completed", "cancelled"}:
+        task = matching_tasks[0]
+        matching_items = queue_items_by_task.get(task_id, [])
+        if len(matching_items) == 1 and matching_items[0].status in {"completed", "cancelled"}:
             continue
         if task.status in {"completed", "cancelled"}:
             continue
@@ -9262,23 +9358,64 @@ def recommend_rough_goal_intake_next_slice(
         setup_penalty = 50 if setup_reason else 0
         if setup_reason:
             deprioritized_setup_tasks.append(f"{task.id}: {setup_reason}")
-        candidates.append((RISK_ORDER.get(task.risk_level, 99) + setup_penalty, order, task, item))
+        candidates.append((RISK_ORDER.get(task.risk_level, 99) + setup_penalty, order, task))
 
     recommended_task: BacklogTask | None = None
     recommended_item: QueueItem | None = None
     if candidates:
-        _risk, _order, recommended_task, recommended_item = sorted(candidates, key=lambda value: (value[0], value[1]))[0]
+        _risk, _order, recommended_task = sorted(candidates, key=lambda value: (value[0], value[1]))[0]
+        matching_items = queue_items_by_task.get(_normalize_task_id(recommended_task.id), [])
+        if len(matching_items) != 1:
+            blockers.append(
+                f"Recommended task {recommended_task.id} must identify exactly one queue item; found {len(matching_items)}."
+            )
+        else:
+            recommended_item = matching_items[0]
     elif not blockers:
         blockers.append("No incomplete materialized task is available for the next slice.")
 
-    suggested_files = _dedupe(
-        [
-            *(recommended_task.allowed_scope if recommended_task else []),
-            *(materialization.allowed_file_patterns if not recommended_task or not recommended_task.allowed_scope else []),
-        ]
-    )
+    suggested_files = _clean_string_list(recommended_task.allowed_scope if recommended_task else [])
     if not suggested_files:
-        blockers.append("No allowed files are recorded for the recommended slice.")
+        blockers.append("No task-specific allowed files are recorded for the recommended slice.")
+
+    if recommended_task:
+        normalized_task_id = _normalize_task_id(recommended_task.id)
+        if recommended_task.risk_level not in ALLOWED_RISK_LEVELS:
+            blockers.append(
+                f"Recommended task {recommended_task.id} has unsupported risk level {recommended_task.risk_level!r}."
+            )
+        batch_task_count = sum(_normalize_task_id(task_id) == normalized_task_id for task_id in (batch.task_ids if batch else []))
+        if batch_task_count != 1:
+            blockers.append(
+                f"Recommended task {recommended_task.id} must appear exactly once in batch {materialization.batch_id}; "
+                f"found {batch_task_count}."
+            )
+        matching_snapshots = [
+            snapshot
+            for snapshot in (batch.task_snapshots if batch else [])
+            if _normalize_task_id(snapshot.task_id) == normalized_task_id
+        ]
+        if len(matching_snapshots) != 1:
+            blockers.append(
+                f"Recommended task {recommended_task.id} must identify exactly one batch snapshot; "
+                f"found {len(matching_snapshots)}."
+            )
+        elif matching_snapshots[0].risk_level != recommended_task.risk_level:
+            blockers.append(
+                f"Risk mismatch for {recommended_task.id}: backlog={recommended_task.risk_level}, "
+                f"batch={matching_snapshots[0].risk_level}."
+            )
+    if recommended_task and recommended_item:
+        if _normalize_batch_id(recommended_item.batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append(
+                f"Recommended queue item {recommended_item.item_id} belongs to batch {recommended_item.batch_id}, "
+                f"not {materialization.batch_id}."
+            )
+        if recommended_item.risk_level != recommended_task.risk_level:
+            blockers.append(
+                f"Risk mismatch for {recommended_task.id}: backlog={recommended_task.risk_level}, "
+                f"queue item={recommended_item.risk_level}."
+            )
 
     broad_warning = ""
     if policy:
@@ -9298,9 +9435,15 @@ def recommend_rough_goal_intake_next_slice(
         f"devo project queue-show --project {project_name} --queue {materialization.queue_id}",
         f"devo project execution-policy-show --project {project_name} --policy {materialization.policy_id}",
     ]
-    if recommended_task and recommended_item and suggested_files:
+    if recommended_task and recommended_item and suggested_files and not blockers:
         allowed_file_flags = " ".join(f'--allowed-file "{pattern}"' for pattern in suggested_files)
         forbidden_file_flags = " ".join(f'--forbidden-file "{pattern}"' for pattern in materialization.forbidden_file_patterns)
+        permission_flags = " ".join(
+            [
+                "--auto-delivery" if source_auto_delivery_allowed else "--no-auto-delivery",
+                "--auto-push" if source_auto_push_allowed else "--no-auto-push",
+            ]
+        )
         validation_command_flags = " ".join(
             f'--validation-command "{command}"' for command in materialization.validation_notes
         )
@@ -9310,9 +9453,11 @@ def recommend_rough_goal_intake_next_slice(
                 (
                     f'devo project execution-policy-create --project {project_name} --batch {materialization.batch_id} '
                     f"--queue {materialization.queue_id} --title \"Narrow slice for {recommended_task.id}\" "
-                    f"--allowed-task {recommended_task.id} {allowed_file_flags} {forbidden_file_flags} "
+                    f"--allowed-task {recommended_task.id} --allowed-queue-item {recommended_item.item_id} "
+                    f"--risk-level {recommended_task.risk_level} {allowed_file_flags} {forbidden_file_flags} "
                     "--max-tasks 1 --max-tasks-per-run 1 "
                     f"--max-changed-files-per-task {max(1, min(3, len(suggested_files)))} "
+                    f"{permission_flags} "
                     f"{validation_command_segment}"
                     '--note "Narrow policy from materialized intake next-slice recommendation."'
                 ),
@@ -9324,7 +9469,7 @@ def recommend_rough_goal_intake_next_slice(
     return RoughGoalNextSliceRecommendation(
         project=project_name,
         intake_id=intake.intake_id,
-        status="blocked" if blockers and not recommended_task else "ready",
+        status="blocked" if blockers else "ready",
         recommended_task_id=recommended_task.id if recommended_task else None,
         recommended_task_title=recommended_task.title if recommended_task else "",
         recommended_task_risk=recommended_task.risk_level if recommended_task else "unknown",
@@ -9333,6 +9478,8 @@ def recommend_rough_goal_intake_next_slice(
         queue_id=materialization.queue_id,
         policy_id=materialization.policy_id,
         policy_status=policy.status if policy else "missing",
+        auto_delivery_allowed=source_auto_delivery_allowed,
+        auto_push_allowed=source_auto_push_allowed,
         broad_policy_warning=broad_warning,
         suggested_narrow_allowed_files=suggested_files,
         do_not_touch_notes=materialization.forbidden_file_patterns,
@@ -9361,6 +9508,10 @@ def create_rough_goal_intake_next_policy(
         raise ValueError("Cannot create the next intake policy: the recommendation does not identify a task and queue item.")
     if not recommendation.suggested_narrow_allowed_files:
         raise ValueError("Cannot create the next intake policy: the recommendation has no allowed files.")
+    if recommendation.auto_delivery_allowed is None or recommendation.auto_push_allowed is None:
+        raise ValueError(
+            "Cannot create the next intake policy: authoritative materialized policy permissions are unavailable."
+        )
 
     policy, json_path, markdown_path = create_batch_execution_policy(
         project_name,
@@ -9368,12 +9519,16 @@ def create_rough_goal_intake_next_policy(
         queue_id=recommendation.queue_id,
         title=f"Narrow slice for {recommendation.recommended_task_id}",
         allowed_task_ids=[recommendation.recommended_task_id],
+        allowed_queue_item_ids=[recommendation.recommended_queue_item_id],
         allowed_file_patterns=recommendation.suggested_narrow_allowed_files,
         forbidden_file_patterns=recommendation.do_not_touch_notes,
         max_tasks=1,
         max_tasks_per_run=1,
         max_changed_files_per_task=max(1, min(3, len(recommendation.suggested_narrow_allowed_files))),
         validation_commands=recommendation.validation_notes,
+        auto_delivery_allowed=recommendation.auto_delivery_allowed,
+        auto_push_allowed=recommendation.auto_push_allowed,
+        risk_level=recommendation.recommended_task_risk,
         note="Narrow policy from materialized intake next-slice recommendation.",
         workspace_root=root,
     )
@@ -12931,6 +13086,16 @@ def _normalize_task_ids(task_ids: list[str]) -> list[str]:
     return normalized
 
 
+def _normalize_queue_item_ids(item_ids: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw in item_ids:
+        for item in raw.split(","):
+            cleaned = _normalize_queue_item_id(item)
+            if cleaned:
+                normalized.append(cleaned)
+    return normalized
+
+
 def _normalize_task_id(task_id: str) -> str:
     return task_id.strip().upper()
 
@@ -16320,6 +16485,30 @@ def _highest_policy_risk(batch: ProjectBatch) -> str:
     if not known:
         return "medium"
     return max(known, key=lambda risk: RISK_ORDER.get(risk, 0))
+
+
+def _execution_policy_risk_for_tasks(batch: ProjectBatch, task_ids: list[str]) -> str:
+    risks: list[str] = []
+    for task_id in task_ids:
+        normalized_task_id = _normalize_task_id(task_id)
+        matching_snapshots = [
+            snapshot for snapshot in batch.task_snapshots if _normalize_task_id(snapshot.task_id) == normalized_task_id
+        ]
+        if len(matching_snapshots) != 1:
+            msg = (
+                f"Allowed task {task_id} must identify exactly one batch snapshot for risk derivation; "
+                f"found {len(matching_snapshots)}."
+            )
+            raise ValueError(msg)
+        risk = matching_snapshots[0].risk_level
+        if risk not in ALLOWED_RISK_LEVELS:
+            msg = f"Allowed task {task_id} has unsupported batch risk level {risk!r}."
+            raise ValueError(msg)
+        risks.append(risk)
+    if not risks:
+        msg = "Execution policy risk cannot be derived without allowed tasks."
+        raise ValueError(msg)
+    return max(risks, key=lambda value: RISK_ORDER[value])
 
 
 def _build_batch_approval(

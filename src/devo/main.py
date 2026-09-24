@@ -5161,6 +5161,7 @@ def create_execution_policy_command(
     title: str = typer.Option(..., "--title", help="Execution policy title."),
     queue_id: str | None = typer.Option(None, "--queue", help="Optional execution queue id."),
     allowed_tasks: list[str] | None = typer.Option(None, "--allowed-task", help="Allowed backlog task id. Repeatable or comma-separated."),
+    allowed_queue_items: list[str] | None = typer.Option(None, "--allowed-queue-item", help="Allowed queue item id. Repeatable or comma-separated."),
     allowed_files: list[str] | None = typer.Option(None, "--allowed-file", help='Allowed changed-file pattern, for example "docs/**" or "src/app.py". Repeatable or comma-separated.'),
     forbidden_files: list[str] | None = typer.Option(None, "--forbidden-file", help='Forbidden changed-file pattern, for example ".env" or "**/secrets/**". Repeatable or comma-separated.'),
     max_tasks: int | None = typer.Option(None, "--max-tasks", help="Maximum tasks covered by this policy."),
@@ -5170,6 +5171,7 @@ def create_execution_policy_command(
     auto_delivery: bool = typer.Option(True, "--auto-delivery/--no-auto-delivery", help="Allow future runner-request creation within policy bounds."),
     auto_push: bool = typer.Option(True, "--auto-push/--no-auto-push", help="Allow future trusted runner push within policy bounds."),
     expires_at: str | None = typer.Option(None, "--expires-at", help="Optional ISO timestamp when policy expires."),
+    risk_level: str | None = typer.Option(None, "--risk-level", help="Explicit policy risk derived from reviewed narrow task scope."),
     note: str = typer.Option("", "--note", help="Policy note."),
 ) -> None:
     """Create a draft bounded execution policy without executing work."""
@@ -5181,6 +5183,7 @@ def create_execution_policy_command(
             title=title,
             queue_id=queue_id,
             allowed_task_ids=allowed_tasks,
+            allowed_queue_item_ids=allowed_queue_items,
             allowed_file_patterns=allowed_files,
             forbidden_file_patterns=forbidden_files,
             max_tasks=max_tasks,
@@ -5190,6 +5193,7 @@ def create_execution_policy_command(
             auto_delivery_allowed=auto_delivery,
             auto_push_allowed=auto_push,
             expires_at=_parse_optional_datetime(expires_at),
+            risk_level=risk_level,
             note=note,
         )
     except ValueError as exc:

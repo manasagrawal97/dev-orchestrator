@@ -1242,6 +1242,9 @@ def test_intake_next_slice_recommends_low_risk_task_from_materialized_intake(tmp
     assert "Broad policy warning" in result.output
     assert "execution-policy-create --project sample --batch B001 --queue Q001" in result.output
     assert "--allowed-task T001" in result.output
+    assert "--allowed-queue-item QI001" in result.output
+    assert "--risk-level low" in result.output
+    assert "--no-auto-delivery --no-auto-push" in result.output
     assert '--validation-command "py_compile touched Python"' in result.output
     assert '--validation-command "focused pytest"' in result.output
     assert "execution-policy-request --project sample --policy <newPolicyId>" in result.output
@@ -1459,6 +1462,9 @@ def test_intake_policy_create_next_confirm_creates_one_draft_narrow_policy(tmp_p
     assert created_policy.status == "draft"
     assert created_policy.allowed_task_ids == ["T001"]
     assert created_policy.allowed_queue_item_ids == ["QI001"]
+    assert created_policy.risk_level == "low"
+    assert created_policy.auto_delivery_allowed is False
+    assert created_policy.auto_push_allowed is False
     assert created_policy.allowed_file_patterns == ["src/devo/project_planning.py", "src/devo/main.py", "tests/test_project_planning.py"]
     assert "PersonalOS" in created_policy.forbidden_file_patterns
     assert "backup/restore" in created_policy.forbidden_file_patterns
@@ -1473,6 +1479,206 @@ def test_intake_policy_create_next_confirm_creates_one_draft_narrow_policy(tmp_p
     assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
     assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
     assert _target_snapshot(project_path) == before_target
+
+
+def test_goal_workflow_next_policy_preserves_selected_task_risk_not_batch_risk(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file_with_explicit_task_risks(tmp_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    broad_policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert broad_policy is not None
+    assert broad_policy.risk_level == "critical"
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "intake-policy-create-next",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-create-policy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    child_policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert child_policy is not None
+    assert child_policy.allowed_task_ids == ["T001"]
+    assert child_policy.allowed_queue_item_ids == ["QI001"]
+    assert child_policy.risk_level == "low"
+    assert child_policy.auto_delivery_allowed is False
+    assert child_policy.auto_push_allowed is False
+
+
+def test_goal_workflow_next_policy_fails_closed_on_ambiguous_source_policy(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    source_policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert source_policy is not None
+    source_json, _source_markdown = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    source_json.write_text(
+        source_policy.model_copy(update={"policy_id": "POL-9999"}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "intake-policy-create-next",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-create-policy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Materialized policy identity mismatch: expected POL-0001, found POL-9999." in result.output
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace) is None
+
+
+def test_goal_workflow_next_policy_fails_closed_without_authoritative_permissions(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    source_json, _source_markdown = execution_policy_artifact_paths("sample", "POL-0001", workspace_root=workspace)
+    source_data = json.loads(source_json.read_text(encoding="utf-8"))
+    source_data.pop("auto_delivery_allowed")
+    source_json.write_text(json.dumps(source_data, indent=2), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "intake-policy-create-next",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-create-policy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Materialized policy POL-0001 has no authoritative value" in result.output
+    assert "auto_delivery_allowed" in result.output
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace) is None
+
+
+def test_goal_workflow_next_policy_fails_closed_on_ambiguous_queue_item(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    duplicate = queue.items[0].model_copy(update={"item_id": "QI999"})
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(queue.model_copy(update={"items": [*queue.items, duplicate]}).model_dump_json(indent=2), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "intake-policy-create-next",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-create-policy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "Recommended task T001 must identify exactly one queue item; found 2." in result.output
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace) is None
+
+
+def test_goal_workflow_next_policy_fails_closed_on_risk_mismatch(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _rough_goal_file(tmp_path)
+    assert runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    ).exit_code == 0
+    assert runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    ).exit_code == 0
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    changed_items = [
+        item.model_copy(update={"risk_level": "high"}) if item.item_id == "QI001" else item for item in queue.items
+    ]
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(queue.model_copy(update={"items": changed_items}).model_dump_json(indent=2), encoding="utf-8")
+    recommendation = project_planning_module.recommend_rough_goal_intake_next_slice(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    assert "Risk mismatch for T001: backlog=low, queue item=high." in recommendation.blockers
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "intake-policy-create-next",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-create-policy",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert load_execution_policy("sample", "POL-0002", workspace_root=workspace) is None
 
 
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
