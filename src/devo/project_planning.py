@@ -421,6 +421,8 @@ class ExecutionPolicyApprovalBundle(BaseModel):
     approver: str | None = None
     request_note: str = ""
     approval_note: str = ""
+    goal_intake_id: str | None = None
+    allows_non_low_risk: bool = False
     next_action: str = ""
 
 
@@ -1618,6 +1620,39 @@ class RoughGoalNextSliceRecommendation(BaseModel):
     next_commands: list[str] = Field(default_factory=list)
     safety_note: str = (
         "Read-only recommendation only. No approvals, worker run, Codex run, validation, delivery request, commit, or push were created."
+    )
+
+
+class RoughGoalPreparation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PLANNING_SCHEMA_VERSION
+    project: str
+    preparation_id: str
+    intake_id: str
+    status: str = "awaiting_approval"
+    batch_id: str
+    queue_id: str
+    source_policy_id: str
+    task_ids: list[str] = Field(default_factory=list)
+    queue_item_ids: list[str] = Field(default_factory=list)
+    policy_ids: list[str] = Field(default_factory=list)
+    task_policy_ids: dict[str, str] = Field(default_factory=dict)
+    approval_bundle_id: str
+    approval_bundle_status: str = "requested"
+    prepared_task_count: int = 0
+    created_policy_ids: list[str] = Field(default_factory=list)
+    reused_policy_ids: list[str] = Field(default_factory=list)
+    total_max_tasks: int = 0
+    total_max_changed_files: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    safety_note: str = (
+        "Goal preparation creates or reuses requested narrow policies and one approval-bundle request only. "
+        "It does not approve policies or bundles, start workers, execute children, validate, deliver, commit, or push."
     )
 
 
@@ -2882,6 +2917,15 @@ def rough_goal_intake_materialization_artifact_paths(
 ) -> tuple[Path, Path]:
     directory = rough_goal_intake_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(intake_id)
     return directory / "materialization.json", directory / "materialization.md"
+
+
+def rough_goal_preparation_artifact_paths(
+    project_name: str,
+    intake_id: str,
+    workspace_root: Path | None = None,
+) -> tuple[Path, Path]:
+    directory = rough_goal_intake_directory(project_name, workspace_root=workspace_root) / _safe_artifact_id(intake_id)
+    return directory / "goal-preparation.json", directory / "goal-preparation.md"
 
 
 def patch_proposal_check_directory(project_name: str, workspace_root: Path | None = None) -> Path:
@@ -5642,13 +5686,18 @@ def plan_execution_policy_approval_bundle(
     policy_ids: list[str],
     *,
     max_policies: int = 5,
+    goal_intake_id: str | None = None,
+    allow_non_low_risk: bool = False,
     workspace_root: Path | None = None,
 ) -> ExecutionPolicyApprovalBundleCheck:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
     normalized_ids = _normalize_policy_ids(policy_ids)
+    cleaned_goal_intake_id = goal_intake_id.strip() if goal_intake_id else None
     blockers: list[str] = []
     warnings: list[str] = []
+    if allow_non_low_risk and not cleaned_goal_intake_id:
+        blockers.append("Non-low-risk bundle planning requires an explicit materialized goal intake id.")
     if max_policies < 2 or max_policies > 10:
         blockers.append("max_policies must be between 2 and 10.")
     if len(normalized_ids) < 2:
@@ -5662,7 +5711,22 @@ def plan_execution_policy_approval_bundle(
             blockers.append(f"Execution policy not found: {policy_id}.")
             continue
         policies.append(policy)
-        blockers.extend(_execution_policy_approval_bundle_member_blockers(policy, root))
+        blockers.extend(
+            _execution_policy_approval_bundle_member_blockers(
+                policy,
+                root,
+                allow_non_low_risk=allow_non_low_risk,
+            )
+        )
+    if allow_non_low_risk and cleaned_goal_intake_id:
+        blockers.extend(
+            _goal_scoped_approval_bundle_blockers(
+                project_name,
+                cleaned_goal_intake_id,
+                policies,
+                root,
+            )
+        )
     total_max_tasks = sum(policy.max_tasks for policy in policies)
     total_max_changed_files = sum(policy.max_total_changed_files for policy in policies)
     eligible = not blockers
@@ -5691,13 +5755,20 @@ def request_execution_policy_approval_bundle(
     *,
     max_policies: int = 5,
     note: str = "",
+    goal_intake_id: str | None = None,
+    allow_non_low_risk: bool = False,
     workspace_root: Path | None = None,
 ) -> tuple[ExecutionPolicyApprovalBundle, Path, Path]:
     root = workspace_root or get_workspace_root()
+    cleaned_goal_intake_id = goal_intake_id.strip() if goal_intake_id else None
+    if allow_non_low_risk and not cleaned_goal_intake_id:
+        raise ValueError("Non-low-risk bundle requests require an explicit materialized goal intake id.")
     plan = plan_execution_policy_approval_bundle(
         project_name,
         policy_ids,
         max_policies=max_policies,
+        goal_intake_id=cleaned_goal_intake_id,
+        allow_non_low_risk=allow_non_low_risk,
         workspace_root=root,
     )
     if not plan.eligible:
@@ -5722,6 +5793,8 @@ def request_execution_policy_approval_bundle(
         requested_at=now,
         updated_at=now,
         request_note=note.strip(),
+        goal_intake_id=cleaned_goal_intake_id,
+        allows_non_low_risk=allow_non_low_risk,
         next_action=(
             f"Review the bundle, then approve explicitly: devo project execution-policy-approval-bundle-approve "
             f"--project {project_name} --bundle {bundle_id} --approver \"<name>\" --confirm-approve"
@@ -5754,6 +5827,8 @@ def check_execution_policy_approval_bundle(
         blockers.append("Bundle no longer contains at least two policies.")
     if bundle.max_policies < 2 or bundle.max_policies > 10:
         blockers.append("Recorded max_policies must be between 2 and 10.")
+    if bundle.allows_non_low_risk and not bundle.goal_intake_id:
+        blockers.append("A non-low-risk bundle must retain its materialized goal intake id.")
     if len(bundle.policy_ids) > bundle.max_policies:
         blockers.append(
             f"Bundle includes {len(bundle.policy_ids)} policies, exceeding recorded max_policies={bundle.max_policies}."
@@ -5765,7 +5840,13 @@ def check_execution_policy_approval_bundle(
             blockers.append(f"Execution policy not found: {policy_id}.")
             continue
         policies.append(policy)
-        blockers.extend(_execution_policy_approval_bundle_member_blockers(policy, root))
+        blockers.extend(
+            _execution_policy_approval_bundle_member_blockers(
+                policy,
+                root,
+                allow_non_low_risk=bundle.allows_non_low_risk,
+            )
+        )
         expected_fingerprint = bundle.policy_scope_fingerprints.get(policy.policy_id)
         current_fingerprint = execution_policy_scope_fingerprint(policy)
         if not expected_fingerprint or expected_fingerprint != current_fingerprint:
@@ -5774,6 +5855,15 @@ def check_execution_policy_approval_bundle(
             blockers.append(f"{policy.policy_id}: allowed task references no longer match the bundle snapshot.")
         if bundle.policy_queue_item_ids.get(policy.policy_id) != policy.allowed_queue_item_ids:
             blockers.append(f"{policy.policy_id}: allowed queue-item references no longer match the bundle snapshot.")
+    if bundle.allows_non_low_risk and bundle.goal_intake_id:
+        blockers.extend(
+            _goal_scoped_approval_bundle_blockers(
+                project_name,
+                bundle.goal_intake_id,
+                policies,
+                root,
+            )
+        )
     current_total_tasks = sum(policy.max_tasks for policy in policies)
     current_total_changed_files = sum(policy.max_total_changed_files for policy in policies)
     if current_total_tasks != bundle.total_max_tasks:
@@ -6102,12 +6192,19 @@ def execution_policy_scope_fingerprint(policy: BatchExecutionPolicy) -> str:
 def _execution_policy_approval_bundle_member_blockers(
     policy: BatchExecutionPolicy,
     workspace_root: Path,
+    *,
+    allow_non_low_risk: bool = False,
 ) -> list[str]:
     blockers: list[str] = []
     prefix = f"{policy.policy_id}:"
     if policy.status != "requested":
         blockers.append(f"{prefix} status must be requested, not {policy.status}.")
-    if policy.risk_level != "low":
+    if allow_non_low_risk:
+        if policy.risk_level not in {"low", "medium"}:
+            blockers.append(
+                f"{prefix} risk {policy.risk_level} is not eligible; goal-scoped approval bundles allow only low- and medium-risk child policies."
+            )
+    elif policy.risk_level != "low":
         blockers.append(
             f"{prefix} risk {policy.risk_level} is not eligible; approval bundles require low-risk child policies."
         )
@@ -6170,6 +6267,307 @@ def _execution_policy_approval_bundle_member_blockers(
                         _normalize_task_id(task_id) for task_id in policy.allowed_task_ids
                     }:
                         blockers.append(f"{prefix} queue item {item_id} references task {item.task_id} outside allowed tasks.")
+    return blockers
+
+
+def _goal_scoped_approval_bundle_blockers(
+    project_name: str,
+    goal_intake_id: str,
+    policies: list[BatchExecutionPolicy],
+    workspace_root: Path,
+) -> list[str]:
+    """Authenticate a mixed-risk bundle against its authoritative materialized goal."""
+    blockers: list[str] = []
+    intake = load_rough_goal_intake_plan(project_name, goal_intake_id, workspace_root=workspace_root)
+    if not intake:
+        return [f"Materialized goal intake not found: {goal_intake_id}."]
+    materialization = load_rough_goal_intake_materialization(
+        project_name,
+        goal_intake_id,
+        workspace_root=workspace_root,
+    )
+    if not materialization:
+        return [f"Goal intake {goal_intake_id} has no materialization."]
+
+    if intake.project != project_name or materialization.project != project_name:
+        blockers.append("Goal intake or materialization project does not match the bundle project.")
+    if (
+        _safe_artifact_id(intake.intake_id).upper() != _safe_artifact_id(goal_intake_id).upper()
+        or _safe_artifact_id(materialization.intake_id).upper()
+        != _safe_artifact_id(goal_intake_id).upper()
+    ):
+        blockers.append("Goal intake identity does not match its authoritative artifacts.")
+    if intake.preview_only:
+        blockers.append(f"Goal intake {goal_intake_id} is preview-only and is not authoritative.")
+    if materialization.status != "materialized":
+        blockers.append(
+            f"Goal intake {goal_intake_id} materialization status must be materialized, not {materialization.status}."
+        )
+
+    batch = load_project_batch(project_name, materialization.batch_id, workspace_root=workspace_root)
+    queue = load_execution_queue(project_name, materialization.queue_id, workspace_root=workspace_root)
+    backlog = load_project_backlog(project_name, workspace_root=workspace_root)
+    source_policy = load_execution_policy(
+        project_name,
+        materialization.policy_id,
+        workspace_root=workspace_root,
+    )
+    if not batch:
+        blockers.append(f"Materialized goal batch not found: {materialization.batch_id}.")
+    if not queue:
+        blockers.append(f"Materialized goal queue not found: {materialization.queue_id}.")
+    if not backlog:
+        blockers.append("Materialized goal backlog not found.")
+    if not source_policy:
+        blockers.append(f"Materialized goal source policy not found: {materialization.policy_id}.")
+    if not batch or not queue or not backlog or not source_policy:
+        return blockers
+
+    expected_task_ids = [_normalize_task_id(task_id) for task_id in materialization.created_task_ids]
+    if not expected_task_ids or len(expected_task_ids) != len(set(expected_task_ids)):
+        blockers.append("Materialized goal task ids must be non-empty and unique.")
+    if batch.project != project_name or _normalize_batch_id(batch.batch_id) != _normalize_batch_id(
+        materialization.batch_id
+    ):
+        blockers.append("Materialized goal batch identity does not match the bundle project/materialization.")
+    if batch.approval_status != "approved":
+        blockers.append(f"Materialized goal batch {batch.batch_id} is not approved.")
+    if [_normalize_task_id(task_id) for task_id in batch.task_ids] != expected_task_ids:
+        blockers.append("Materialized goal batch task mapping has drifted.")
+    if batch.task_count != len(batch.task_ids):
+        blockers.append("Materialized goal batch task count is stale.")
+    if [_normalize_task_id(snapshot.task_id) for snapshot in batch.task_snapshots] != expected_task_ids:
+        blockers.append("Materialized goal batch snapshot mapping has drifted.")
+    if queue.project != project_name or _normalize_queue_id(queue.queue_id) != _normalize_queue_id(
+        materialization.queue_id
+    ):
+        blockers.append("Materialized goal queue identity does not match the bundle project/materialization.")
+    if _normalize_batch_id(queue.source_batch_id) != _normalize_batch_id(materialization.batch_id):
+        blockers.append("Materialized goal queue no longer belongs to its materialized batch.")
+    if [_normalize_task_id(item.task_id) for item in queue.items] != expected_task_ids:
+        blockers.append("Materialized goal queue task mapping has drifted.")
+    if queue.item_count != len(queue.items):
+        blockers.append("Materialized goal queue item count is stale.")
+    normalized_queue_item_ids = [_normalize_queue_item_id(item.item_id) for item in queue.items]
+    if len(normalized_queue_item_ids) != len(set(normalized_queue_item_ids)):
+        blockers.append("Materialized goal queue item ids are ambiguous.")
+    if backlog.project != project_name:
+        blockers.append("Materialized goal backlog project does not match the bundle project.")
+
+    if source_policy.project != project_name:
+        blockers.append("Materialized goal source policy project does not match the bundle project.")
+    if _normalize_batch_id(source_policy.batch_id) != _normalize_batch_id(materialization.batch_id):
+        blockers.append("Materialized goal source policy batch mapping has drifted.")
+    if not source_policy.queue_id or _normalize_queue_id(source_policy.queue_id) != _normalize_queue_id(
+        materialization.queue_id
+    ):
+        blockers.append("Materialized goal source policy queue mapping has drifted.")
+    if [_normalize_task_id(task_id) for task_id in source_policy.allowed_task_ids] != expected_task_ids:
+        blockers.append("Materialized goal source policy task mapping has drifted.")
+    if [
+        _normalize_queue_item_id(item_id) for item_id in source_policy.allowed_queue_item_ids
+    ] != normalized_queue_item_ids:
+        blockers.append("Materialized goal source policy queue-item mapping has drifted.")
+    if source_policy.allowed_file_patterns != materialization.allowed_file_patterns:
+        blockers.append("Materialized goal source policy allowed scope has drifted.")
+    if source_policy.forbidden_file_patterns != materialization.forbidden_file_patterns:
+        blockers.append("Materialized goal source policy forbidden scope has drifted.")
+    if source_policy.validation_commands != materialization.validation_notes:
+        blockers.append("Materialized goal source policy validation commands have drifted.")
+    missing_permissions = sorted(
+        {"auto_delivery_allowed", "auto_push_allowed"} - source_policy.model_fields_set
+    )
+    if missing_permissions:
+        blockers.append(
+            "Materialized goal source policy has no authoritative value for: "
+            + ", ".join(missing_permissions)
+            + "."
+        )
+    source_auto_delivery = source_policy.auto_delivery_allowed if not missing_permissions else None
+    source_auto_push = source_policy.auto_push_allowed if not missing_permissions else None
+    if source_auto_push and not source_auto_delivery:
+        blockers.append("Materialized goal source policy auto_push_allowed requires auto_delivery_allowed.")
+
+    backlog_matches: dict[str, list[BacklogTask]] = {task_id: [] for task_id in expected_task_ids}
+    for task in backlog.tasks:
+        normalized_task_id = _normalize_task_id(task.id)
+        if normalized_task_id in backlog_matches:
+            backlog_matches[normalized_task_id].append(task)
+    queue_matches: dict[str, list[QueueItem]] = {task_id: [] for task_id in expected_task_ids}
+    for item in queue.items:
+        normalized_task_id = _normalize_task_id(item.task_id)
+        if normalized_task_id in queue_matches:
+            queue_matches[normalized_task_id].append(item)
+    snapshot_matches: dict[str, list[BatchTaskSnapshot]] = {task_id: [] for task_id in expected_task_ids}
+    for snapshot in batch.task_snapshots:
+        normalized_task_id = _normalize_task_id(snapshot.task_id)
+        if normalized_task_id in snapshot_matches:
+            snapshot_matches[normalized_task_id].append(snapshot)
+
+    authoritative_tasks: dict[str, BacklogTask] = {}
+    authoritative_items: dict[str, QueueItem] = {}
+    authoritative_snapshots: dict[str, BatchTaskSnapshot] = {}
+    for task_id in expected_task_ids:
+        matching_tasks = backlog_matches.get(task_id, [])
+        matching_items = queue_matches.get(task_id, [])
+        matching_snapshots = snapshot_matches.get(task_id, [])
+        if len(matching_tasks) != 1:
+            blockers.append(
+                f"Materialized goal task {task_id} must map to exactly one backlog task; found {len(matching_tasks)}."
+            )
+        else:
+            authoritative_tasks[task_id] = matching_tasks[0]
+        if len(matching_items) != 1:
+            blockers.append(
+                f"Materialized goal task {task_id} must map to exactly one queue item; found {len(matching_items)}."
+            )
+        else:
+            authoritative_items[task_id] = matching_items[0]
+        if len(matching_snapshots) != 1:
+            blockers.append(
+                f"Materialized goal task {task_id} must map to exactly one batch snapshot; found {len(matching_snapshots)}."
+            )
+        else:
+            authoritative_snapshots[task_id] = matching_snapshots[0]
+
+    positions = {task_id: index for index, task_id in enumerate(expected_task_ids)}
+    all_backlog_tasks: dict[str, list[BacklogTask]] = {}
+    for task in backlog.tasks:
+        all_backlog_tasks.setdefault(_normalize_task_id(task.id), []).append(task)
+    for task_id in expected_task_ids:
+        task = authoritative_tasks.get(task_id)
+        item = authoritative_items.get(task_id)
+        snapshot = authoritative_snapshots.get(task_id)
+        if not task or not item or not snapshot:
+            continue
+        task_terminal = task.status in {"completed", "superseded"}
+        item_terminal = item.status in {"completed", "skipped", "superseded"}
+        if task_terminal != item_terminal:
+            blockers.append(
+                f"Materialized goal completion state drifted for {task.id}/{item.item_id}: "
+                f"task={task.status}, queue={item.status}."
+            )
+        elif not task_terminal and task.status not in {"draft", "ready", "approved"}:
+            blockers.append(
+                f"Materialized goal task {task.id} status must be draft, ready, or approved, not {task.status}."
+            )
+        allowed_scope = _clean_string_list(task.allowed_scope)
+        forbidden_scope = _clean_string_list(task.forbidden_scope)
+        validation_commands = _clean_string_list(task.validation_expectations)
+        if not allowed_scope:
+            blockers.append(f"Materialized goal task {task.id} has no authoritative allowed files.")
+        elif not set(allowed_scope).issubset(set(materialization.allowed_file_patterns)):
+            blockers.append(f"Materialized goal task {task.id} allowed scope exceeds the materialization.")
+        if not forbidden_scope:
+            blockers.append(f"Materialized goal task {task.id} has no authoritative forbidden scope.")
+        elif not set(materialization.forbidden_file_patterns).issubset(set(forbidden_scope)):
+            blockers.append(f"Materialized goal task {task.id} no longer preserves every materialized forbidden path.")
+        if not validation_commands:
+            blockers.append(f"Materialized goal task {task.id} has no authoritative validation commands.")
+        if item.validation_expectations != task.validation_expectations:
+            blockers.append(f"Materialized goal validation commands drifted for {task.id} between backlog and queue.")
+        task_dependencies = [_normalize_task_id(dependency) for dependency in task.dependencies]
+        if len(task_dependencies) != len(set(task_dependencies)) or task_id in task_dependencies:
+            blockers.append(f"Materialized goal task {task.id} has duplicate or self-referential dependencies.")
+        if task_dependencies != [_normalize_task_id(dependency) for dependency in item.dependencies]:
+            blockers.append(f"Materialized goal dependencies drifted for {task.id} between backlog and queue.")
+        if task_dependencies != [_normalize_task_id(dependency) for dependency in snapshot.dependencies]:
+            blockers.append(f"Materialized goal dependencies drifted for {task.id} between backlog and batch.")
+        for dependency in task_dependencies:
+            if dependency in positions:
+                if positions[dependency] >= positions[task_id]:
+                    blockers.append(
+                        f"Materialized goal order is dependency-unsafe: {task.id} depends on later task {dependency}."
+                    )
+            else:
+                external = all_backlog_tasks.get(dependency, [])
+                if len(external) != 1 or external[0].status != "completed":
+                    blockers.append(
+                        f"Materialized goal task {task.id} has unresolved or ambiguous external dependency {dependency}."
+                    )
+
+    if len(intake.candidate_tasks) != len(expected_task_ids):
+        blockers.append("Goal intake candidate count no longer matches its materialized task count.")
+    else:
+        for index, task_id in enumerate(expected_task_ids):
+            task = authoritative_tasks.get(task_id)
+            if task and intake.candidate_tasks[index].risk_level != task.risk_level:
+                blockers.append(
+                    f"Materialized goal risk drift for {task.id}: intake={intake.candidate_tasks[index].risk_level}, "
+                    f"backlog={task.risk_level}."
+                )
+
+    seen_tasks: set[str] = set()
+    seen_items: set[str] = set()
+    for policy in policies:
+        prefix = f"{policy.policy_id}:"
+        if policy.project != project_name:
+            blockers.append(f"{prefix} policy project does not match the goal project.")
+        if _normalize_batch_id(policy.batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append(f"{prefix} policy batch does not match the materialized goal batch.")
+        if not policy.queue_id or _normalize_queue_id(policy.queue_id) != _normalize_queue_id(
+            materialization.queue_id
+        ):
+            blockers.append(f"{prefix} policy queue does not match the materialized goal queue.")
+        if len(policy.allowed_task_ids) != 1 or policy.max_tasks != 1 or policy.max_tasks_per_run != 1:
+            blockers.append(f"{prefix} goal child policy must be narrow and allow exactly one task.")
+        if len(policy.allowed_queue_item_ids) != 1:
+            blockers.append(f"{prefix} goal child policy must allow exactly one queue item.")
+        if len(policy.allowed_task_ids) != 1 or len(policy.allowed_queue_item_ids) != 1:
+            continue
+        task_id = _normalize_task_id(policy.allowed_task_ids[0])
+        item_id = _normalize_queue_item_id(policy.allowed_queue_item_ids[0])
+        if task_id in seen_tasks:
+            blockers.append(f"{prefix} materialized goal task is already owned by another bundled policy.")
+        seen_tasks.add(task_id)
+        if item_id in seen_items:
+            blockers.append(f"{prefix} materialized goal queue item is already owned by another bundled policy.")
+        seen_items.add(item_id)
+        task = authoritative_tasks.get(task_id)
+        item = authoritative_items.get(task_id)
+        snapshot = authoritative_snapshots.get(task_id)
+        if not task:
+            blockers.append(f"{prefix} task {policy.allowed_task_ids[0]} does not belong to the materialized goal.")
+            continue
+        if not item or _normalize_queue_item_id(item.item_id) != item_id:
+            blockers.append(
+                f"{prefix} queue item {policy.allowed_queue_item_ids[0]} is not the exact materialized mapping for task {task.id}."
+            )
+        if policy.risk_level not in {"low", "medium"}:
+            blockers.append(
+                f"{prefix} risk {policy.risk_level} is not eligible; materialized goal bundles allow only low and medium."
+            )
+        if policy.risk_level != task.risk_level:
+            blockers.append(
+                f"{prefix} policy risk {policy.risk_level} does not match authoritative backlog risk {task.risk_level}."
+            )
+        if item and item.risk_level != task.risk_level:
+            blockers.append(
+                f"{prefix} queue risk {item.risk_level} does not match authoritative backlog risk {task.risk_level}."
+            )
+        if snapshot and snapshot.risk_level != task.risk_level:
+            blockers.append(
+                f"{prefix} batch risk {snapshot.risk_level} does not match authoritative backlog risk {task.risk_level}."
+            )
+        expected_allowed_files = _clean_string_list(task.allowed_scope)
+        expected_forbidden_files = _clean_string_list(task.forbidden_scope)
+        expected_validation_commands = _clean_string_list(task.validation_expectations)
+        expected_max_changed_files = max(1, min(3, len(expected_allowed_files)))
+        if policy.allowed_file_patterns != expected_allowed_files:
+            blockers.append(f"{prefix} allowed files do not match the authoritative materialized task scope.")
+        if policy.forbidden_file_patterns != expected_forbidden_files:
+            blockers.append(f"{prefix} forbidden files do not match the authoritative materialized task scope.")
+        if policy.validation_commands != expected_validation_commands:
+            blockers.append(f"{prefix} validation commands do not match the authoritative materialized task.")
+        if (
+            policy.max_changed_files_per_task != expected_max_changed_files
+            or policy.max_total_changed_files != expected_max_changed_files
+        ):
+            blockers.append(f"{prefix} changed-file bounds do not match the authoritative materialized task scope.")
+        if source_auto_delivery is not None and policy.auto_delivery_allowed != source_auto_delivery:
+            blockers.append(f"{prefix} auto_delivery_allowed does not match authoritative materialized permissions.")
+        if source_auto_push is not None and policy.auto_push_allowed != source_auto_push:
+            blockers.append(f"{prefix} auto_push_allowed does not match authoritative materialized permissions.")
     return blockers
 
 
@@ -9258,6 +9656,23 @@ def load_rough_goal_intake_materialization(
     return RoughGoalIntakeMaterialization.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def load_rough_goal_preparation(
+    project_name: str,
+    intake_id: str,
+    workspace_root: Path | None = None,
+) -> RoughGoalPreparation | None:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    json_path, _markdown_path = rough_goal_preparation_artifact_paths(
+        project_name,
+        intake_id,
+        workspace_root=root,
+    )
+    if not json_path.exists():
+        return None
+    return RoughGoalPreparation.model_validate_json(json_path.read_text(encoding="utf-8"))
+
+
 def recommend_rough_goal_intake_next_slice(
     project_name: str,
     intake_id: str,
@@ -9513,26 +9928,636 @@ def create_rough_goal_intake_next_policy(
             "Cannot create the next intake policy: authoritative materialized policy permissions are unavailable."
         )
 
-    policy, json_path, markdown_path = create_batch_execution_policy(
+    policy, json_path, markdown_path = _create_materialized_intake_child_policy(
         project_name,
         batch_id=recommendation.batch_id,
         queue_id=recommendation.queue_id,
-        title=f"Narrow slice for {recommendation.recommended_task_id}",
-        allowed_task_ids=[recommendation.recommended_task_id],
-        allowed_queue_item_ids=[recommendation.recommended_queue_item_id],
-        allowed_file_patterns=recommendation.suggested_narrow_allowed_files,
-        forbidden_file_patterns=recommendation.do_not_touch_notes,
-        max_tasks=1,
-        max_tasks_per_run=1,
-        max_changed_files_per_task=max(1, min(3, len(recommendation.suggested_narrow_allowed_files))),
+        task_id=recommendation.recommended_task_id,
+        queue_item_id=recommendation.recommended_queue_item_id,
+        risk_level=recommendation.recommended_task_risk,
+        allowed_files=recommendation.suggested_narrow_allowed_files,
+        forbidden_files=recommendation.do_not_touch_notes,
         validation_commands=recommendation.validation_notes,
         auto_delivery_allowed=recommendation.auto_delivery_allowed,
         auto_push_allowed=recommendation.auto_push_allowed,
-        risk_level=recommendation.recommended_task_risk,
         note="Narrow policy from materialized intake next-slice recommendation.",
         workspace_root=root,
     )
     return recommendation, policy, json_path, markdown_path
+
+
+def prepare_rough_goal_intake(
+    project_name: str,
+    intake_id: str,
+    *,
+    workspace_root: Path | None = None,
+) -> tuple[RoughGoalPreparation, Path, Path]:
+    """Prepare the remaining materialized goal as requested one-task policies and one bundle."""
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    intake = load_rough_goal_intake_plan(project_name, intake_id, workspace_root=root)
+    if not intake:
+        raise ValueError(f"Rough goal intake not found: {intake_id}")
+    materialization = load_rough_goal_intake_materialization(project_name, intake_id, workspace_root=root)
+    if not materialization:
+        raise ValueError(
+            f"Rough goal intake is not materialized: {intake_id}. "
+            f"Run: devo project intake-materialize --project {project_name} --intake {intake_id} --confirm-materialize"
+        )
+
+    preparation_json, preparation_markdown = rough_goal_preparation_artifact_paths(
+        project_name,
+        intake.intake_id,
+        workspace_root=root,
+    )
+    if preparation_json.exists() != preparation_markdown.exists():
+        raise ValueError(
+            f"Goal preparation artifacts are incomplete for {intake.intake_id}; both JSON and Markdown are required."
+        )
+    existing_preparation = load_rough_goal_preparation(project_name, intake.intake_id, workspace_root=root)
+
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if intake.preview_only:
+        blockers.append("Persisted intake is still marked preview_only and is not authoritative for preparation.")
+    if materialization.status != "materialized":
+        blockers.append(
+            f"Materialization status must be materialized, not {materialization.status}."
+        )
+    if materialization.project != project_name or intake.project != project_name:
+        blockers.append("Intake or materialization project identity does not match the requested project.")
+    if _safe_artifact_id(materialization.intake_id).upper() != _safe_artifact_id(intake.intake_id).upper():
+        blockers.append(
+            f"Materialization intake identity mismatch: expected {intake.intake_id}, found {materialization.intake_id}."
+        )
+
+    batch = load_project_batch(project_name, materialization.batch_id, workspace_root=root)
+    queue = load_execution_queue(project_name, materialization.queue_id, workspace_root=root)
+    source_policy = load_execution_policy(project_name, materialization.policy_id, workspace_root=root)
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not batch:
+        blockers.append(f"Materialized batch artifact is missing: {materialization.batch_id}.")
+    if not queue:
+        blockers.append(f"Materialized queue artifact is missing: {materialization.queue_id}.")
+    if not source_policy:
+        blockers.append(f"Materialized policy artifact is missing: {materialization.policy_id}.")
+    if not backlog:
+        blockers.append("Project backlog is missing.")
+
+    created_task_ids = [_normalize_task_id(task_id) for task_id in materialization.created_task_ids]
+    if not created_task_ids:
+        blockers.append("Materialization has no created task ids.")
+    if len(created_task_ids) != len(set(created_task_ids)):
+        blockers.append("Materialization contains duplicate created task ids.")
+    if len(intake.candidate_tasks) != len(created_task_ids):
+        blockers.append(
+            "Intake candidate count no longer matches the materialized task count."
+        )
+
+    if batch:
+        normalized_batch_tasks = [_normalize_task_id(task_id) for task_id in batch.task_ids]
+        if batch.project != project_name or _normalize_batch_id(batch.batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append("Materialized batch identity is inconsistent with the intake materialization.")
+        if normalized_batch_tasks != created_task_ids:
+            blockers.append(
+                "Materialized batch task order no longer exactly matches materialization.created_task_ids."
+            )
+        if batch.task_count != len(batch.task_ids):
+            blockers.append("Materialized batch task_count is stale or inconsistent.")
+        if batch.approval_status != "approved" or batch.status not in {"approved", "in_progress"}:
+            blockers.append(
+                f"Materialized batch {batch.batch_id} must remain approved before goal preparation."
+            )
+    if queue:
+        normalized_queue_tasks = [_normalize_task_id(item.task_id) for item in queue.items]
+        if queue.project != project_name or _normalize_queue_id(queue.queue_id) != _normalize_queue_id(materialization.queue_id):
+            blockers.append("Materialized queue identity is inconsistent with the intake materialization.")
+        if _normalize_batch_id(queue.source_batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append(
+                f"Materialized queue {queue.queue_id} does not belong to batch {materialization.batch_id}."
+            )
+        if normalized_queue_tasks != created_task_ids:
+            blockers.append(
+                "Materialized queue task order no longer exactly matches materialization.created_task_ids."
+            )
+        if queue.item_count != len(queue.items):
+            blockers.append("Materialized queue item_count is stale or inconsistent.")
+        recorded_counts = (
+            queue.pending_count,
+            queue.running_count,
+            queue.completed_count,
+            queue.blocked_count,
+            queue.failed_count,
+        )
+        actual_counts = (
+            sum(1 for item in queue.items if item.status == "pending"),
+            sum(1 for item in queue.items if item.status == "running"),
+            sum(1 for item in queue.items if item.status == "completed"),
+            sum(1 for item in queue.items if item.status == "blocked"),
+            sum(1 for item in queue.items if item.status == "failed"),
+        )
+        if recorded_counts != actual_counts:
+            blockers.append("Materialized queue status counts are stale or inconsistent.")
+        if queue.status not in {"draft", "ready", "running"}:
+            blockers.append(f"Materialized queue status {queue.status} is not eligible for goal preparation.")
+        if queue.current_item_id:
+            blockers.append(
+                f"Materialized queue has an active current item {queue.current_item_id}; goal preparation requires no active child."
+            )
+    source_auto_delivery: bool | None = None
+    source_auto_push: bool | None = None
+    if source_policy:
+        missing_permissions = sorted(
+            {"auto_delivery_allowed", "auto_push_allowed"} - source_policy.model_fields_set
+        )
+        if missing_permissions:
+            blockers.append(
+                f"Materialized policy {materialization.policy_id} has no authoritative value for: "
+                f"{', '.join(missing_permissions)}."
+            )
+        else:
+            source_auto_delivery = source_policy.auto_delivery_allowed
+            source_auto_push = source_policy.auto_push_allowed
+        if source_policy.project != project_name:
+            blockers.append(
+                f"Materialized policy {materialization.policy_id} belongs to {source_policy.project}, not {project_name}."
+            )
+        if _normalize_policy_id(source_policy.policy_id) != _normalize_policy_id(materialization.policy_id):
+            blockers.append(
+                f"Materialized policy identity mismatch: expected {materialization.policy_id}, found {source_policy.policy_id}."
+            )
+        if _normalize_batch_id(source_policy.batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append("Materialized policy batch reference is inconsistent with the materialization.")
+        normalized_source_queue = _normalize_queue_id(source_policy.queue_id) if source_policy.queue_id else None
+        if normalized_source_queue != _normalize_queue_id(materialization.queue_id):
+            blockers.append("Materialized policy queue reference is inconsistent with the materialization.")
+        if [_normalize_task_id(task_id) for task_id in source_policy.allowed_task_ids] != created_task_ids:
+            blockers.append("Materialized source policy task order no longer matches the materialization.")
+        if queue and [
+            _normalize_queue_item_id(item_id) for item_id in source_policy.allowed_queue_item_ids
+        ] != [_normalize_queue_item_id(item.item_id) for item in queue.items]:
+            blockers.append("Materialized source policy queue-item order no longer matches the queue.")
+        if source_policy.status not in {"draft", "requested", "approved"}:
+            blockers.append(
+                f"Materialized source policy status {source_policy.status} is not eligible for goal preparation."
+            )
+        if source_policy.allowed_file_patterns != materialization.allowed_file_patterns:
+            blockers.append("Materialized source policy allowed files no longer match the materialization.")
+        if source_policy.forbidden_file_patterns != materialization.forbidden_file_patterns:
+            blockers.append("Materialized source policy forbidden paths no longer match the materialization.")
+        if source_policy.validation_commands != materialization.validation_notes:
+            blockers.append("Materialized source policy validation commands no longer match the materialization.")
+
+    task_matches: dict[str, list[BacklogTask]] = {task_id: [] for task_id in created_task_ids}
+    for task in backlog.tasks if backlog else []:
+        normalized_task_id = _normalize_task_id(task.id)
+        if normalized_task_id in task_matches:
+            task_matches[normalized_task_id].append(task)
+    item_matches: dict[str, list[QueueItem]] = {task_id: [] for task_id in created_task_ids}
+    for item in queue.items if queue else []:
+        normalized_task_id = _normalize_task_id(item.task_id)
+        if normalized_task_id in item_matches:
+            item_matches[normalized_task_id].append(item)
+    snapshot_matches: dict[str, list[BatchTaskSnapshot]] = {task_id: [] for task_id in created_task_ids}
+    for snapshot in batch.task_snapshots if batch else []:
+        normalized_task_id = _normalize_task_id(snapshot.task_id)
+        if normalized_task_id in snapshot_matches:
+            snapshot_matches[normalized_task_id].append(snapshot)
+
+    all_backlog_tasks: dict[str, list[BacklogTask]] = {}
+    for task in backlog.tasks if backlog else []:
+        all_backlog_tasks.setdefault(_normalize_task_id(task.id), []).append(task)
+    ordered_children: list[tuple[BacklogTask, QueueItem]] = []
+    positions = {task_id: index for index, task_id in enumerate(created_task_ids)}
+    terminal_task_statuses = {"completed", "superseded"}
+    terminal_item_statuses = {"completed", "skipped", "superseded"}
+    for task_id in created_task_ids:
+        matching_tasks = task_matches.get(task_id, [])
+        matching_items = item_matches.get(task_id, [])
+        matching_snapshots = snapshot_matches.get(task_id, [])
+        if len(matching_tasks) != 1:
+            blockers.append(
+                f"Materialized task {task_id} must identify exactly one backlog task; found {len(matching_tasks)}."
+            )
+            continue
+        if len(matching_items) != 1:
+            blockers.append(
+                f"Materialized task {task_id} must identify exactly one queue item; found {len(matching_items)}."
+            )
+            continue
+        if len(matching_snapshots) != 1:
+            blockers.append(
+                f"Materialized task {task_id} must identify exactly one batch snapshot; found {len(matching_snapshots)}."
+            )
+            continue
+        task = matching_tasks[0]
+        item = matching_items[0]
+        snapshot = matching_snapshots[0]
+        candidate_index = positions[task_id]
+        if candidate_index < len(intake.candidate_tasks):
+            candidate = intake.candidate_tasks[candidate_index]
+            if candidate.risk_level != task.risk_level:
+                blockers.append(
+                    f"Risk mismatch for {task.id}: intake={candidate.risk_level}, backlog={task.risk_level}."
+                )
+        if _normalize_batch_id(item.batch_id) != _normalize_batch_id(materialization.batch_id):
+            blockers.append(
+                f"Queue item {item.item_id} belongs to batch {item.batch_id}, not {materialization.batch_id}."
+            )
+        if task.risk_level not in ALLOWED_RISK_LEVELS:
+            blockers.append(f"Task {task.id} has unsupported risk level {task.risk_level!r}.")
+        elif task.risk_level not in {"low", "medium"}:
+            blockers.append(
+                f"Task {task.id} risk {task.risk_level} is not eligible for goal preparation; "
+                "goal-scoped approval bundles allow only low- and medium-risk children."
+            )
+        if snapshot.risk_level != task.risk_level or item.risk_level != task.risk_level:
+            blockers.append(
+                f"Risk mismatch for {task.id}: backlog={task.risk_level}, "
+                f"batch={snapshot.risk_level}, queue item={item.risk_level}."
+            )
+        task_dependencies = [_normalize_task_id(dependency) for dependency in task.dependencies]
+        if len(task_dependencies) != len(set(task_dependencies)) or task_id in task_dependencies:
+            blockers.append(f"Task {task.id} has duplicate or self-referential dependencies.")
+        if task_dependencies != [_normalize_task_id(dependency) for dependency in item.dependencies]:
+            blockers.append(f"Dependency mismatch for {task.id} between backlog and queue.")
+        if task_dependencies != [_normalize_task_id(dependency) for dependency in snapshot.dependencies]:
+            blockers.append(f"Dependency mismatch for {task.id} between backlog and batch snapshot.")
+        for dependency in task_dependencies:
+            if dependency in positions:
+                if positions[dependency] >= positions[task_id]:
+                    blockers.append(
+                        f"Reviewed materialized order is dependency-unsafe: {task.id} depends on later task {dependency}."
+                    )
+            else:
+                external = all_backlog_tasks.get(dependency, [])
+                if len(external) != 1 or external[0].status != "completed":
+                    blockers.append(
+                        f"Task {task.id} has unresolved or ambiguous external dependency {dependency}."
+                    )
+        task_terminal = task.status in terminal_task_statuses
+        item_terminal = item.status in terminal_item_statuses
+        if task_terminal != item_terminal:
+            blockers.append(
+                f"Task/queue completion state is inconsistent for {task.id}/{item.item_id}: "
+                f"task={task.status}, queue={item.status}."
+            )
+        if task_terminal and item_terminal:
+            continue
+        if item.validation_expectations != task.validation_expectations:
+            blockers.append(f"Validation-command mismatch for {task.id} between backlog and queue.")
+        if task.status not in {"draft", "ready", "approved"} or item.status != "pending":
+            blockers.append(
+                f"Remaining child {task.id}/{item.item_id} must be unstarted (task draft/ready/approved and queue pending); "
+                f"found task={task.status}, queue={item.status}."
+            )
+        if not _clean_string_list(task.allowed_scope):
+            blockers.append(f"Task {task.id} has no task-specific allowed files.")
+        elif not set(_clean_string_list(task.allowed_scope)).issubset(set(materialization.allowed_file_patterns)):
+            blockers.append(f"Task {task.id} allowed files exceed the materialized intake scope.")
+        if not _clean_string_list(task.forbidden_scope):
+            blockers.append(f"Task {task.id} has no forbidden paths.")
+        elif not set(materialization.forbidden_file_patterns).issubset(set(_clean_string_list(task.forbidden_scope))):
+            blockers.append(f"Task {task.id} no longer preserves every materialized forbidden path.")
+        if not _clean_string_list(task.validation_expectations):
+            blockers.append(f"Task {task.id} has no validation commands.")
+        ordered_children.append((task, item))
+
+    if len(ordered_children) < 2:
+        blockers.append("Goal preparation requires at least two remaining bounded child tasks.")
+    if len(ordered_children) > 10:
+        blockers.append("Goal preparation supports at most ten remaining child tasks in one bundle.")
+    if source_auto_delivery is None or source_auto_push is None:
+        blockers.append("Authoritative auto-delivery and auto-push permissions are unavailable.")
+    if source_auto_push and not source_auto_delivery:
+        blockers.append("Authoritative auto_push_allowed requires auto_delivery_allowed.")
+
+    child_specs: list[dict[str, object]] = []
+    for task, item in ordered_children:
+        allowed_files = _clean_string_list(task.allowed_scope)
+        forbidden_files = _clean_string_list(task.forbidden_scope)
+        validation_commands = _clean_string_list(task.validation_expectations)
+        child_specs.append(
+            {
+                "task": task,
+                "item": item,
+                "allowed_files": allowed_files,
+                "forbidden_files": forbidden_files,
+                "validation_commands": validation_commands,
+                "max_changed_files": max(1, min(3, len(allowed_files))),
+            }
+        )
+    task_ids = [task.id for task, _item in ordered_children]
+    queue_item_ids = [item.item_id for _task, item in ordered_children]
+
+    existing_policies = list_execution_policies(project_name, workspace_root=root)
+    selected_policies: list[BatchExecutionPolicy | None] = []
+    for spec in child_specs:
+        task = spec["task"]
+        item = spec["item"]
+        assert isinstance(task, BacklogTask)
+        assert isinstance(item, QueueItem)
+        scoped = [
+            policy
+            for policy in existing_policies
+            if _normalize_policy_id(policy.policy_id) != _normalize_policy_id(materialization.policy_id)
+            and (
+                (
+                    len(policy.allowed_task_ids) == 1
+                    and _normalize_task_id(policy.allowed_task_ids[0]) == _normalize_task_id(task.id)
+                )
+                or (
+                    len(policy.allowed_queue_item_ids) == 1
+                    and _normalize_queue_item_id(policy.allowed_queue_item_ids[0])
+                    == _normalize_queue_item_id(item.item_id)
+                )
+            )
+        ]
+        equivalent = [
+            policy
+            for policy in scoped
+            if _goal_child_policy_matches(
+                policy,
+                batch_id=materialization.batch_id,
+                queue_id=materialization.queue_id,
+                task=task,
+                item=item,
+                allowed_files=spec["allowed_files"],
+                forbidden_files=spec["forbidden_files"],
+                validation_commands=spec["validation_commands"],
+                max_changed_files=int(spec["max_changed_files"]),
+                auto_delivery_allowed=bool(source_auto_delivery),
+                auto_push_allowed=bool(source_auto_push),
+            )
+        ]
+        conflicting = [policy for policy in scoped if policy not in equivalent]
+        if conflicting:
+            blockers.append(
+                f"Conflicting narrow policy already targets {task.id}/{item.item_id}: "
+                + ", ".join(policy.policy_id for policy in conflicting)
+                + "."
+            )
+        if len(equivalent) > 1:
+            blockers.append(
+                f"Multiple equivalent narrow policies target {task.id}/{item.item_id}: "
+                + ", ".join(policy.policy_id for policy in equivalent)
+                + "."
+            )
+        selected = equivalent[0] if len(equivalent) == 1 else None
+        if selected and selected.status not in {"draft", "requested"}:
+            blockers.append(
+                f"Equivalent narrow policy {selected.policy_id} for {task.id} has incompatible status {selected.status}."
+            )
+        selected_policies.append(selected)
+
+    selected_policy_ids = [policy.policy_id for policy in selected_policies if policy is not None]
+    reusable_bundle: ExecutionPolicyApprovalBundle | None = None
+    if existing_preparation:
+        if (
+            existing_preparation.preparation_id != f"GP-{intake.intake_id}"
+            or existing_preparation.task_ids != task_ids
+            or existing_preparation.queue_item_ids != queue_item_ids
+            or existing_preparation.batch_id != materialization.batch_id
+            or existing_preparation.queue_id != materialization.queue_id
+            or existing_preparation.source_policy_id != materialization.policy_id
+        ):
+            blockers.append(
+                f"Existing preparation {existing_preparation.preparation_id} conflicts with current materialized state."
+            )
+        if len(selected_policy_ids) != len(child_specs) or existing_preparation.policy_ids != selected_policy_ids:
+            blockers.append(
+                f"Existing preparation {existing_preparation.preparation_id} no longer maps to exactly one equivalent policy per child."
+            )
+        existing_bundle = load_execution_policy_approval_bundle(
+            project_name,
+            existing_preparation.approval_bundle_id,
+            workspace_root=root,
+        )
+        if not existing_bundle:
+            blockers.append(
+                f"Existing preparation bundle is missing: {existing_preparation.approval_bundle_id}."
+            )
+        elif (
+            existing_bundle.status != "requested"
+            or existing_bundle.policy_ids != existing_preparation.policy_ids
+            or existing_bundle.goal_intake_id != intake.intake_id
+            or not existing_bundle.allows_non_low_risk
+        ):
+            blockers.append(
+                f"Existing preparation bundle {existing_bundle.bundle_id} conflicts with the preparation snapshot."
+            )
+        else:
+            reusable_bundle = existing_bundle
+
+    if selected_policy_ids:
+        overlapping_bundles = [
+            bundle
+            for bundle in list_execution_policy_approval_bundles(project_name, workspace_root=root)
+            if set(bundle.policy_ids) & set(selected_policy_ids)
+        ]
+        equivalent_bundles = [
+            bundle
+            for bundle in overlapping_bundles
+            if len(selected_policy_ids) == len(child_specs)
+            and bundle.policy_ids == selected_policy_ids
+            and bundle.goal_intake_id == intake.intake_id
+            and bundle.allows_non_low_risk
+        ]
+        conflicting_bundles = [bundle for bundle in overlapping_bundles if bundle not in equivalent_bundles]
+        if conflicting_bundles:
+            blockers.append(
+                "Prepared child policies overlap conflicting approval bundle(s): "
+                + ", ".join(bundle.bundle_id for bundle in conflicting_bundles)
+                + "."
+            )
+        if len(equivalent_bundles) > 1:
+            blockers.append(
+                "Multiple equivalent approval bundles exist: "
+                + ", ".join(bundle.bundle_id for bundle in equivalent_bundles)
+                + "."
+            )
+        if len(equivalent_bundles) == 1:
+            candidate_bundle = equivalent_bundles[0]
+            if candidate_bundle.status != "requested":
+                blockers.append(
+                    f"Equivalent bundle {candidate_bundle.bundle_id} has incompatible status {candidate_bundle.status}."
+                )
+            else:
+                reusable_bundle = candidate_bundle
+
+    if blockers:
+        raise ValueError("Cannot prepare rough goal intake: " + "; ".join(_dedupe(blockers)))
+
+    created_policy_ids: list[str] = []
+    reused_policy_ids: list[str] = []
+    prepared_policies: list[BatchExecutionPolicy] = []
+    for spec, selected in zip(child_specs, selected_policies, strict=True):
+        task = spec["task"]
+        item = spec["item"]
+        assert isinstance(task, BacklogTask)
+        assert isinstance(item, QueueItem)
+        if selected is None:
+            selected, _policy_json, _policy_markdown = _create_materialized_intake_child_policy(
+                project_name,
+                batch_id=materialization.batch_id,
+                queue_id=materialization.queue_id,
+                task_id=task.id,
+                queue_item_id=item.item_id,
+                risk_level=task.risk_level,
+                allowed_files=list(spec["allowed_files"]),
+                forbidden_files=list(spec["forbidden_files"]),
+                validation_commands=list(spec["validation_commands"]),
+                auto_delivery_allowed=bool(source_auto_delivery),
+                auto_push_allowed=bool(source_auto_push),
+                note=f"Narrow child prepared from materialized rough goal intake {intake.intake_id}.",
+                workspace_root=root,
+            )
+            created_policy_ids.append(selected.policy_id)
+        else:
+            reused_policy_ids.append(selected.policy_id)
+        if selected.status == "draft":
+            selected, _policy_json, _policy_markdown = request_execution_policy(
+                project_name,
+                selected.policy_id,
+                note=f"Prepared for bounded goal approval from {intake.intake_id}.",
+                workspace_root=root,
+            )
+        prepared_policies.append(selected)
+
+    policy_ids = [policy.policy_id for policy in prepared_policies]
+    if reusable_bundle:
+        bundle = reusable_bundle
+        bundle_check = check_execution_policy_approval_bundle(project_name, bundle.bundle_id, workspace_root=root)
+        if not bundle_check.eligible:
+            raise ValueError(
+                f"Cannot prepare rough goal intake: equivalent bundle {bundle.bundle_id} is no longer eligible: "
+                + "; ".join(bundle_check.blockers)
+            )
+    else:
+        bundle, _bundle_json, _bundle_markdown = request_execution_policy_approval_bundle(
+            project_name,
+            policy_ids,
+            max_policies=len(policy_ids),
+            note=f"Prepared from reviewed materialized rough goal intake {intake.intake_id}.",
+            goal_intake_id=intake.intake_id,
+            allow_non_low_risk=True,
+            workspace_root=root,
+        )
+
+    if existing_preparation:
+        created_at = existing_preparation.created_at
+        created_policy_ids = list(existing_preparation.created_policy_ids)
+        reused_policy_ids = policy_ids
+        warnings.append(f"Reused existing goal preparation {existing_preparation.preparation_id}.")
+    else:
+        created_at = datetime.now(UTC)
+    now = datetime.now(UTC)
+    preparation = RoughGoalPreparation(
+        project=project_name,
+        preparation_id=f"GP-{intake.intake_id}",
+        intake_id=intake.intake_id,
+        status="awaiting_approval",
+        batch_id=materialization.batch_id,
+        queue_id=materialization.queue_id,
+        source_policy_id=materialization.policy_id,
+        task_ids=task_ids,
+        queue_item_ids=queue_item_ids,
+        policy_ids=policy_ids,
+        task_policy_ids={task_id: policy_id for task_id, policy_id in zip(task_ids, policy_ids, strict=True)},
+        approval_bundle_id=bundle.bundle_id,
+        approval_bundle_status=bundle.status,
+        prepared_task_count=len(task_ids),
+        created_policy_ids=created_policy_ids,
+        reused_policy_ids=reused_policy_ids,
+        total_max_tasks=bundle.total_max_tasks,
+        total_max_changed_files=bundle.total_max_changed_files,
+        warnings=_dedupe(warnings),
+        blockers=[],
+        next_action=(
+            f"Review and approve the prepared goal once: devo project execution-policy-approval-bundle-approve "
+            f"--project {project_name} --bundle {bundle.bundle_id} --approver \"<name>\" --confirm-approve"
+        ),
+        created_at=created_at,
+        updated_at=now,
+    )
+    preparation_json.parent.mkdir(parents=True, exist_ok=True)
+    _write_text_atomically(preparation_json, preparation.model_dump_json(indent=2))
+    _write_text_atomically(preparation_markdown, render_rough_goal_preparation_markdown(preparation))
+    return preparation, preparation_json, preparation_markdown
+
+
+def _create_materialized_intake_child_policy(
+    project_name: str,
+    *,
+    batch_id: str,
+    queue_id: str,
+    task_id: str,
+    queue_item_id: str,
+    risk_level: str,
+    allowed_files: list[str],
+    forbidden_files: list[str],
+    validation_commands: list[str],
+    auto_delivery_allowed: bool,
+    auto_push_allowed: bool,
+    note: str,
+    workspace_root: Path,
+) -> tuple[BatchExecutionPolicy, Path, Path]:
+    """Create one T054-style narrow policy from already-validated materialized child evidence."""
+    return create_batch_execution_policy(
+        project_name,
+        batch_id=batch_id,
+        queue_id=queue_id,
+        title=f"Narrow slice for {task_id}",
+        allowed_task_ids=[task_id],
+        allowed_queue_item_ids=[queue_item_id],
+        allowed_file_patterns=allowed_files,
+        forbidden_file_patterns=forbidden_files,
+        max_tasks=1,
+        max_tasks_per_run=1,
+        max_changed_files_per_task=max(1, min(3, len(allowed_files))),
+        validation_commands=validation_commands,
+        auto_delivery_allowed=auto_delivery_allowed,
+        auto_push_allowed=auto_push_allowed,
+        risk_level=risk_level,
+        note=note,
+        workspace_root=workspace_root,
+    )
+
+
+def _goal_child_policy_matches(
+    policy: BatchExecutionPolicy,
+    *,
+    batch_id: str,
+    queue_id: str,
+    task: BacklogTask,
+    item: QueueItem,
+    allowed_files: list[str],
+    forbidden_files: list[str],
+    validation_commands: list[str],
+    max_changed_files: int,
+    auto_delivery_allowed: bool,
+    auto_push_allowed: bool,
+) -> bool:
+    return (
+        _normalize_batch_id(policy.batch_id) == _normalize_batch_id(batch_id)
+        and policy.queue_id is not None
+        and _normalize_queue_id(policy.queue_id) == _normalize_queue_id(queue_id)
+        and [_normalize_task_id(task_id) for task_id in policy.allowed_task_ids] == [_normalize_task_id(task.id)]
+        and [_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids]
+        == [_normalize_queue_item_id(item.item_id)]
+        and policy.allowed_file_patterns == allowed_files
+        and policy.forbidden_file_patterns == forbidden_files
+        and policy.validation_commands == validation_commands
+        and policy.max_tasks == 1
+        and policy.max_tasks_per_run == 1
+        and policy.max_changed_files_per_task == max_changed_files
+        and policy.max_total_changed_files == max_changed_files
+        and policy.auto_delivery_allowed == auto_delivery_allowed
+        and policy.auto_push_allowed == auto_push_allowed
+        and policy.requires_worker_review
+        and policy.requires_validation_evidence
+        and policy.risk_level == task.risk_level
+    )
 
 
 def _performed_intake_setup_task_reason(
@@ -9826,6 +10851,54 @@ def render_rough_goal_intake_materialization_markdown(materialization: RoughGoal
             "",
             materialization.safety_note,
             "Artifacts remain draft/review-only until the operator explicitly approves the batch and execution policy.",
+            "",
+        ]
+    )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_rough_goal_preparation_markdown(preparation: RoughGoalPreparation) -> str:
+    lines = [
+        f"# Rough Goal Preparation: {preparation.preparation_id}",
+        "",
+        f"- Project: `{preparation.project}`",
+        f"- Intake id: `{preparation.intake_id}`",
+        f"- Status: `{preparation.status}`",
+        f"- Batch id: `{preparation.batch_id}`",
+        f"- Queue id: `{preparation.queue_id}`",
+        f"- Source policy id: `{preparation.source_policy_id}`",
+        f"- Prepared task count: `{preparation.prepared_task_count}`",
+        f"- Approval bundle id: `{preparation.approval_bundle_id}`",
+        f"- Approval bundle status: `{preparation.approval_bundle_status}`",
+        f"- Total max tasks: `{preparation.total_max_tasks}`",
+        f"- Total max changed files: `{preparation.total_max_changed_files}`",
+        f"- Created: `{preparation.created_at.isoformat()}`",
+        f"- Updated: `{preparation.updated_at.isoformat()}`",
+        "",
+        "## Ordered Children",
+        "",
+    ]
+    for task_id, queue_item_id, policy_id in zip(
+        preparation.task_ids,
+        preparation.queue_item_ids,
+        preparation.policy_ids,
+        strict=True,
+    ):
+        lines.append(f"- `{task_id}` -> `{queue_item_id}` -> `{policy_id}`")
+    lines.append("")
+    _append_list_section(lines, "Created Policies", preparation.created_policy_ids)
+    _append_list_section(lines, "Reused Policies", preparation.reused_policy_ids)
+    _append_list_section(lines, "Warnings", preparation.warnings)
+    _append_list_section(lines, "Blockers", preparation.blockers)
+    lines.extend(
+        [
+            "## Safety Note",
+            "",
+            preparation.safety_note,
+            "",
+            "## Next Action",
+            "",
+            preparation.next_action,
             "",
         ]
     )
@@ -12674,6 +13747,8 @@ def render_execution_policy_approval_bundle_markdown(bundle: ExecutionPolicyAppr
         f"- Max policies: `{bundle.max_policies}`",
         f"- Total max tasks: `{bundle.total_max_tasks}`",
         f"- Total max changed files: `{bundle.total_max_changed_files}`",
+        f"- Goal intake id: `{bundle.goal_intake_id or 'none'}`",
+        f"- Allows non-low-risk human approval: `{bundle.allows_non_low_risk}`",
         f"- Requested at: `{bundle.requested_at.isoformat()}`",
         f"- Updated at: `{bundle.updated_at.isoformat()}`",
         f"- Approved at: `{bundle.approved_at.isoformat() if bundle.approved_at else 'none'}`",
@@ -12708,7 +13783,8 @@ def render_execution_policy_approval_bundle_markdown(bundle: ExecutionPolicyAppr
             (
                 "This bundle references existing requested execution policies. Approval rechecks every policy and its scope fingerprint, "
                 "then records approval on each child policy. It does not create work, run workers or validation, create delivery requests, "
-                "invoke the trusted runner, commit, or push. Medium, high, and critical risk policies require individual approval."
+                "invoke the trusted runner, commit, or push. Non-low-risk children are allowed only when the bundle is explicitly "
+                "goal-scoped for human approval; automatic execution retains its separate risk checks."
             ),
             "",
             "## Next Action",

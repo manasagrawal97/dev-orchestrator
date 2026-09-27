@@ -134,6 +134,7 @@ from .project_planning import (
     RoughGoalIntakePlan,
     RoughGoalIntakeMaterialization,
     RoughGoalNextSliceRecommendation,
+    RoughGoalPreparation,
     CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
@@ -269,6 +270,7 @@ from .project_planning import (
     mark_codex_handoff_used,
     mark_codex_worker_run_handoff_used,
     prepare_codex_worker_for_queue_next,
+    prepare_rough_goal_intake,
     preview_codex_worker_execution,
     reject_project_batch,
     reject_execution_policy,
@@ -736,6 +738,8 @@ def _print_execution_policy_approval_bundle(
     console.print(f"Bound: {len(bundle.policy_ids)} of max {bundle.max_policies} policies")
     console.print(f"Total max tasks: {bundle.total_max_tasks}")
     console.print(f"Total max changed files: {bundle.total_max_changed_files}")
+    console.print(f"Goal intake: {bundle.goal_intake_id or 'none'}")
+    console.print(f"Allows non-low-risk human approval: {bundle.allows_non_low_risk}")
     console.print(f"Requested: {bundle.requested_at.isoformat()}")
     console.print(f"Updated: {bundle.updated_at.isoformat()}")
     console.print(f"Approved: {bundle.approved_at.isoformat() if bundle.approved_at else 'none'}")
@@ -2000,6 +2004,44 @@ def _print_rough_goal_next_slice(recommendation: RoughGoalNextSliceRecommendatio
         for command in recommendation.next_commands:
             console.print(f"  {command}", soft_wrap=True)
     console.print(f"Safety: {recommendation.safety_note}", soft_wrap=True)
+
+
+def _print_rough_goal_preparation(
+    preparation: RoughGoalPreparation,
+    json_path: Path | None = None,
+    markdown_path: Path | None = None,
+) -> None:
+    console.print(f"[bold]Goal preparation: {preparation.preparation_id}[/bold]")
+    console.print(f"Project: {preparation.project}")
+    console.print(f"Intake: {preparation.intake_id}")
+    console.print(f"Status: {preparation.status}")
+    console.print(f"Prepared tasks/policies: {preparation.prepared_task_count}")
+    console.print(f"Task order: {', '.join(preparation.task_ids) if preparation.task_ids else 'none'}", soft_wrap=True)
+    console.print(f"Queue items: {', '.join(preparation.queue_item_ids) if preparation.queue_item_ids else 'none'}", soft_wrap=True)
+    console.print(f"Policies: {', '.join(preparation.policy_ids) if preparation.policy_ids else 'none'}", soft_wrap=True)
+    console.print(
+        f"Approval bundle: {preparation.approval_bundle_id} | {preparation.approval_bundle_status}",
+        soft_wrap=True,
+    )
+    console.print(
+        f"Bounds: max_tasks={preparation.total_max_tasks} "
+        f"max_changed_files={preparation.total_max_changed_files}",
+        soft_wrap=True,
+    )
+    console.print(f"Created policies: {', '.join(preparation.created_policy_ids) if preparation.created_policy_ids else 'none'}")
+    console.print(f"Reused policies: {', '.join(preparation.reused_policy_ids) if preparation.reused_policy_ids else 'none'}")
+    console.print("Warnings:")
+    for warning in preparation.warnings or ["none"]:
+        console.print(f"  - {warning}", soft_wrap=True)
+    console.print("Blockers:")
+    for blocker in preparation.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {preparation.next_action}", soft_wrap=True)
+    if json_path:
+        console.print(f"JSON: {_named_path(json_path)}")
+    if markdown_path:
+        console.print(f"Markdown: {_named_path(markdown_path)}")
+    console.print(f"Safety: {preparation.safety_note}", soft_wrap=True)
 
 
 def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
@@ -4666,6 +4708,38 @@ def create_project_intake_next_policy_command(
         "Safety: created policy is draft only. No policy approval, worker run, Codex run, validation, delivery request, commit, or push was created.",
         soft_wrap=True,
     )
+
+
+@project_app.command("goal-prepare")
+def prepare_project_goal_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    intake_id: str = typer.Option(..., "--intake", help="Reviewed materialized rough-goal intake ID."),
+    confirm_prepare: bool = typer.Option(
+        False,
+        "--confirm-prepare",
+        help="Create or reuse requested narrow child policies and one approval-bundle request.",
+    ),
+) -> None:
+    """Prepare remaining materialized goal children in reviewed order, stopping before approval."""
+    project_name = _resolve_project(project_name)
+    if not confirm_prepare:
+        console.print("[yellow]Preview only; no goal preparation artifacts were written.[/yellow]")
+        console.print(
+            f"Review the materialized intake, then run: devo project goal-prepare --project {project_name} "
+            f"--intake {intake_id} --confirm-prepare",
+            soft_wrap=True,
+        )
+        console.print(
+            "Safety: goal preparation stops before policy/bundle approval and never starts workers or delivery.",
+            soft_wrap=True,
+        )
+        return
+    try:
+        preparation, json_path, markdown_path = prepare_rough_goal_intake(project_name, intake_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    console.print(f"[green]Goal prepared[/green] {project_name}")
+    _print_rough_goal_preparation(preparation, json_path=json_path, markdown_path=markdown_path)
 
 
 @project_app.command("brief-create")

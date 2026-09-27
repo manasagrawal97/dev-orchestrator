@@ -68,12 +68,17 @@ from devo.project_planning import (
     load_execution_queue,
     load_execution_policy,
     load_execution_policy_approval_bundle,
+    load_rough_goal_intake_materialization,
+    load_rough_goal_preparation,
+    list_execution_policy_approval_bundles,
     load_queue_worker_run,
     load_project_backlog,
     load_project_batch,
     load_project_blueprint,
     load_project_brief,
     planning_artifact_paths,
+    rough_goal_preparation_artifact_paths,
+    rough_goal_intake_materialization_artifact_paths,
     project_batch_artifact_paths,
     batch_approval_artifact_paths,
     queue_artifact_paths,
@@ -1679,6 +1684,352 @@ def test_goal_workflow_next_policy_fails_closed_on_risk_mismatch(tmp_path: Path,
 
     assert result.exit_code != 0
     assert load_execution_policy("sample", "POL-0002", workspace_root=workspace) is None
+
+
+def test_goal_workflow_prepare_preserves_materialized_order_and_stops_before_approval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "goal-prepare",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-prepare",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Goal prepared" in result.output
+    assert "Prepared tasks/policies: 4" in result.output
+    assert "Task order: T055, T056, T057, T058" in result.output
+    assert "Approval bundle: PAB-0001 | requested" in result.output
+    assert "execution-policy-approval-bundle-approve" in result.output
+    preparation = load_rough_goal_preparation("sample", "INTAKE-0001", workspace_root=workspace)
+    assert preparation is not None
+    assert preparation.preparation_id == "GP-INTAKE-0001"
+    assert preparation.task_ids == ["T055", "T056", "T057", "T058"]
+    assert preparation.queue_item_ids == ["QI002", "QI003", "QI004", "QI005"]
+    assert preparation.policy_ids == ["POL-0002", "POL-0003", "POL-0004", "POL-0005"]
+    assert preparation.prepared_task_count == 4
+    assert preparation.status == "awaiting_approval"
+    assert preparation.approval_bundle_status == "requested"
+    expected_risks = ["medium", "medium", "low", "medium"]
+    for task_id, item_id, policy_id, risk in zip(
+        preparation.task_ids,
+        preparation.queue_item_ids,
+        preparation.policy_ids,
+        expected_risks,
+        strict=True,
+    ):
+        policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+        assert policy is not None
+        assert policy.status == "requested"
+        assert policy.allowed_task_ids == [task_id]
+        assert policy.allowed_queue_item_ids == [item_id]
+        assert policy.risk_level == risk
+        assert policy.allowed_file_patterns == ["src/devo/main.py", "tests/test_project_planning.py"]
+        assert "workspace/**" in policy.forbidden_file_patterns
+        assert ".env" in policy.forbidden_file_patterns
+        assert policy.validation_commands == ["focused pytest"]
+        assert policy.auto_delivery_allowed is False
+        assert policy.auto_push_allowed is False
+        assert policy.max_tasks == 1
+        assert policy.max_tasks_per_run == 1
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    assert bundle.status == "requested"
+    assert bundle.policy_ids == preparation.policy_ids
+    assert bundle.goal_intake_id == "INTAKE-0001"
+    assert bundle.allows_non_low_risk is True
+    assert all(load_execution_policy("sample", policy_id, workspace_root=workspace).status != "approved" for policy_id in preparation.policy_ids)
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_goal_workflow_prepare_is_idempotent_for_policies_bundle_and_preparation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    args = [
+        "project",
+        "goal-prepare",
+        "--project",
+        "sample",
+        "--intake",
+        "INTAKE-0001",
+        "--confirm-prepare",
+    ]
+    first = runner.invoke(app, args, terminal_width=240)
+    assert first.exit_code == 0, first.output
+    first_preparation = load_rough_goal_preparation("sample", "INTAKE-0001", workspace_root=workspace)
+    assert first_preparation is not None
+    policies_before = [policy.policy_id for policy in list_execution_policies("sample", workspace_root=workspace)]
+    bundles_before = [bundle.bundle_id for bundle in list_execution_policy_approval_bundles("sample", workspace_root=workspace)]
+
+    second = runner.invoke(app, args, terminal_width=240)
+
+    assert second.exit_code == 0, second.output
+    assert "Reused existing goal preparation GP-INTAKE-0001." in second.output
+    second_preparation = load_rough_goal_preparation("sample", "INTAKE-0001", workspace_root=workspace)
+    assert second_preparation is not None
+    assert second_preparation.policy_ids == first_preparation.policy_ids
+    assert second_preparation.approval_bundle_id == first_preparation.approval_bundle_id
+    assert second_preparation.created_at == first_preparation.created_at
+    assert [policy.policy_id for policy in list_execution_policies("sample", workspace_root=workspace)] == policies_before
+    assert [bundle.bundle_id for bundle in list_execution_policy_approval_bundles("sample", workspace_root=workspace)] == bundles_before
+
+
+def test_goal_workflow_prepare_fails_closed_on_ambiguous_task_queue_mapping(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    duplicate = queue.items[1].model_copy(update={"item_id": "QI999"})
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(
+        queue.model_copy(
+            update={"items": [*queue.items, duplicate], "item_count": queue.item_count + 1, "pending_count": queue.pending_count + 1}
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "queue task order no longer exactly matches" in result.output
+    assert "Materialized task T055 must identify" in result.output
+    assert "exactly one queue item; found 2." in result.output
+    assert len(list_execution_policies("sample", workspace_root=workspace)) == 1
+    assert list_execution_policy_approval_bundles("sample", workspace_root=workspace) == []
+    preparation_json, preparation_markdown = rough_goal_preparation_artifact_paths(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    assert not preparation_json.exists()
+    assert not preparation_markdown.exists()
+
+
+def test_goal_workflow_prepare_fails_closed_on_stale_batch_order(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    batch_json, _batch_markdown = project_batch_artifact_paths("sample", "B001", workspace_root=workspace)
+    batch_json.write_text(
+        batch.model_copy(update={"task_ids": [batch.task_ids[0], batch.task_ids[2], batch.task_ids[1], *batch.task_ids[3:]]}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "batch task order no longer exactly matches" in result.output
+    assert len(list_execution_policies("sample", workspace_root=workspace)) == 1
+    assert list_execution_policy_approval_bundles("sample", workspace_root=workspace) == []
+
+
+def test_goal_workflow_bundle_rejects_fake_goal_intake_id(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+
+    with pytest.raises(ValueError, match="Materialized goal intake not found: INTAKE-9999"):
+        project_planning_module.request_execution_policy_approval_bundle(
+            "sample",
+            ["POL-0002", "POL-0003"],
+            max_policies=2,
+            goal_intake_id="INTAKE-9999",
+            allow_non_low_risk=True,
+            workspace_root=workspace,
+        )
+
+    assert [bundle.bundle_id for bundle in list_execution_policy_approval_bundles("sample", workspace_root=workspace)] == [
+        "PAB-0001"
+    ]
+
+
+def test_goal_workflow_bundle_plan_cannot_relax_risk_without_authoritative_goal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+
+    plan = project_planning_module.plan_execution_policy_approval_bundle(
+        "sample",
+        ["POL-0002", "POL-0003"],
+        max_policies=2,
+        allow_non_low_risk=True,
+        workspace_root=workspace,
+    )
+
+    assert plan.eligible is False
+    assert "Non-low-risk bundle planning requires an explicit materialized goal intake id." in plan.blockers
+
+
+def test_goal_workflow_bundle_rejects_unrelated_policy_for_real_goal(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+    related_policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert related_policy is not None
+    unrelated_duplicate = related_policy.model_copy(
+        update={"policy_id": "POL-9999", "title": "Unrelated duplicate goal child"}
+    )
+    project_planning_module._write_execution_policy(
+        "sample", unrelated_duplicate, workspace_root=workspace
+    )
+
+    with pytest.raises(ValueError, match="already owned by another bundled policy"):
+        project_planning_module.request_execution_policy_approval_bundle(
+            "sample",
+            ["POL-0002", "POL-9999"],
+            max_policies=2,
+            goal_intake_id="INTAKE-0001",
+            allow_non_low_risk=True,
+            workspace_root=workspace,
+        )
+
+
+def test_goal_workflow_bundle_rejects_policy_scope_outside_authoritative_goal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+    policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert policy is not None
+    policy_json, _policy_markdown = execution_policy_artifact_paths(
+        "sample", "POL-0002", workspace_root=workspace
+    )
+    policy_json.write_text(
+        policy.model_copy(
+            update={"allowed_file_patterns": [*policy.allowed_file_patterns, "docs/**"]}
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="allowed files do not match the authoritative materialized task scope"):
+        project_planning_module.request_execution_policy_approval_bundle(
+            "sample",
+            ["POL-0002", "POL-0003"],
+            max_policies=2,
+            goal_intake_id="INTAKE-0001",
+            allow_non_low_risk=True,
+            workspace_root=workspace,
+        )
+
+
+@pytest.mark.parametrize("risk_level", ["high", "critical"])
+def test_goal_workflow_prepare_rejects_high_and_critical_children(
+    tmp_path: Path,
+    monkeypatch,
+    risk_level: str,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    _set_goal_workflow_task_risk(workspace, "T055", risk_level)
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert f"risk {risk_level}" in result.output
+    assert "children." in result.output
+    assert len(list_execution_policies("sample", workspace_root=workspace)) == 1
+    assert list_execution_policy_approval_bundles("sample", workspace_root=workspace) == []
+
+
+def test_goal_workflow_bundle_recheck_rejects_authoritative_materialization_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+    materialization = load_rough_goal_intake_materialization(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    assert materialization is not None
+    materialization_json, _materialization_markdown = rough_goal_intake_materialization_artifact_paths(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    drifted_task_ids = list(materialization.created_task_ids)
+    drifted_task_ids[1], drifted_task_ids[2] = drifted_task_ids[2], drifted_task_ids[1]
+    materialization_json.write_text(
+        materialization.model_copy(update={"created_task_ids": drifted_task_ids}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    approved = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--confirm-approve",
+        ],
+        terminal_width=240,
+    )
+
+    assert approved.exit_code != 0
+    assert "Materialized goal batch task mapping has drifted" in approved.output
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    assert bundle.status == "requested"
+    assert all(
+        load_execution_policy("sample", policy_id, workspace_root=workspace).status == "requested"
+        for policy_id in bundle.policy_ids
+    )
 
 
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
@@ -10263,6 +10614,210 @@ Create a sheetless intake command for rough goals.
         encoding="utf-8",
     )
     return path
+
+
+def _goal_workflow_file(tmp_path: Path) -> Path:
+    path = tmp_path / "goal-workflow.md"
+    path.write_text(
+        """# Goal
+Prepare one reviewed materialized goal in deterministic order.
+
+# Context
+- A later low-risk child must not jump ahead of earlier medium-risk children.
+
+# Scope
+- Compose existing planning primitives.
+
+# Tasks
+- T001: Completed prerequisite. Risk: medium.
+- T002: Prepare goal workflow. Risk: medium.
+- T003: Add execution entry point. Risk: medium.
+- T004: Add lower-risk status UX. Risk: low.
+- T005: Add final documentation. Risk: medium.
+
+# Allowed files
+- src/devo/main.py
+- tests/test_project_planning.py
+
+# Do not touch
+- workspace/**
+- .env
+
+# Validation
+- focused pytest
+
+# Delivery notes
+- Use trusted runner only.
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _setup_goal_workflow_preparation(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    goal_file = _goal_workflow_file(tmp_path)
+    planned = runner.invoke(
+        app,
+        ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
+        terminal_width=240,
+    )
+    assert planned.exit_code == 0, planned.output
+    materialized = runner.invoke(
+        app,
+        ["project", "intake-materialize", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-materialize"],
+        terminal_width=240,
+    )
+    assert materialized.exit_code == 0, materialized.output
+    task_ids = ["T054", "T055", "T056", "T057", "T058"]
+    id_map = {f"T{index:03d}": task_id for index, task_id in enumerate(task_ids, start=1)}
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    renamed_tasks = [task.model_copy(update={"id": id_map[task.id]}) for task in backlog.tasks]
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    paths.backlog_json.write_text(
+        backlog.model_copy(update={"tasks": renamed_tasks}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    renamed_snapshots = [
+        snapshot.model_copy(update={"task_id": id_map[snapshot.task_id]}) for snapshot in batch.task_snapshots
+    ]
+    batch_json, _batch_markdown = project_batch_artifact_paths("sample", "B001", workspace_root=workspace)
+    batch_json.write_text(
+        batch.model_copy(update={"task_ids": task_ids, "task_snapshots": renamed_snapshots}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    renamed_items = [item.model_copy(update={"task_id": id_map[item.task_id]}) for item in queue.items]
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(
+        queue.model_copy(update={"items": renamed_items}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    source_policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert source_policy is not None
+    source_policy_json, _source_policy_markdown = execution_policy_artifact_paths(
+        "sample", "POL-0001", workspace_root=workspace
+    )
+    source_policy_json.write_text(
+        source_policy.model_copy(update={"allowed_task_ids": task_ids}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    intake_materialization = load_rough_goal_intake_materialization(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    assert intake_materialization is not None
+    materialization_json, _materialization_markdown = rough_goal_intake_materialization_artifact_paths(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    materialization_json.write_text(
+        intake_materialization.model_copy(update={"created_task_ids": task_ids}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    approved = runner.invoke(
+        app,
+        ["project", "batch-approve", "--project", "sample", "--batch", "B001"],
+        terminal_width=240,
+    )
+    assert approved.exit_code == 0, approved.output
+
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    completed_tasks = [
+        task.model_copy(update={"status": "completed"}) if task.id == "T054" else task
+        for task in backlog.tasks
+    ]
+    paths.backlog_json.write_text(
+        backlog.model_copy(
+            update={"tasks": completed_tasks, "completed_task_count": 1}
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    completed_items = [
+        item.model_copy(update={"status": "completed"}) if item.item_id == "QI001" else item
+        for item in queue.items
+    ]
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(
+        queue.model_copy(
+            update={"items": completed_items, "pending_count": 4, "completed_count": 1}
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    return workspace, project_path
+
+
+def _set_goal_workflow_task_risk(workspace: Path, task_id: str, risk_level: str) -> None:
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    assert backlog is not None
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    paths.backlog_json.write_text(
+        backlog.model_copy(
+            update={
+                "tasks": [
+                    task.model_copy(update={"risk_level": risk_level}) if task.id == task_id else task
+                    for task in backlog.tasks
+                ]
+            }
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    batch = load_project_batch("sample", "B001", workspace_root=workspace)
+    assert batch is not None
+    batch_json, _batch_markdown = project_batch_artifact_paths("sample", "B001", workspace_root=workspace)
+    batch_json.write_text(
+        batch.model_copy(
+            update={
+                "task_snapshots": [
+                    snapshot.model_copy(update={"risk_level": risk_level})
+                    if snapshot.task_id == task_id
+                    else snapshot
+                    for snapshot in batch.task_snapshots
+                ]
+            }
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert queue is not None
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    queue_json.write_text(
+        queue.model_copy(
+            update={
+                "items": [
+                    item.model_copy(update={"risk_level": risk_level}) if item.task_id == task_id else item
+                    for item in queue.items
+                ]
+            }
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    intake = project_planning_module.load_rough_goal_intake_plan(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    assert intake is not None
+    intake_json, _intake_markdown = project_planning_module.rough_goal_intake_artifact_paths(
+        "sample", "INTAKE-0001", workspace_root=workspace
+    )
+    candidate_index = [task.id for task in backlog.tasks].index(task_id)
+    intake_json.write_text(
+        intake.model_copy(
+            update={
+                "candidate_tasks": [
+                    candidate.model_copy(update={"risk_level": risk_level})
+                    if index == candidate_index
+                    else candidate
+                    for index, candidate in enumerate(intake.candidate_tasks)
+                ]
+            }
+        ).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
 
 
 def _rough_goal_file_with_explicit_task_risks(tmp_path: Path) -> Path:
