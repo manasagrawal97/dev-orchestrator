@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 import devo.project_planning as project_planning_module
 from devo.delivery import (
+    DeliveryRunnerRequest,
     DeliveryRunnerRun,
     DeliveryRunnerScheduleStatus,
     load_delivery_runner_request,
@@ -1790,6 +1791,193 @@ def test_goal_workflow_prepare_is_idempotent_for_policies_bundle_and_preparation
     assert second_preparation.created_at == first_preparation.created_at
     assert [policy.policy_id for policy in list_execution_policies("sample", workspace_root=workspace)] == policies_before
     assert [bundle.bundle_id for bundle in list_execution_policy_approval_bundles("sample", workspace_root=workspace)] == bundles_before
+
+
+def test_goal_workflow_status_shows_requested_goal_and_only_approval_action_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-status", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared goal status: INTAKE-0001" in result.output
+    assert "Preparation: GP-INTAKE-0001 | awaiting_approval" in result.output
+    assert "Approval bundle: PAB-0001 | requested" in result.output
+    assert "Children: total=4 completed=0 remaining=4" in result.output
+    assert "Current task: T055" in result.output
+    assert "Current policy: POL-0002" in result.output
+    assert "Current queue-worker run: none" in result.output
+    assert "Delivery state: not_requested" in result.output
+    assert "Supervisor: none | none" in result.output
+    assert "Resume count: 0" in result.output
+    assert "Last checkpoint: none" in result.output
+    assert "Blockers:\n  - none" in result.output
+    assert result.output.count("Next action:") == 1
+    assert "execution-policy-approval-bundle-approve" in result.output
+    assert "goal-run" not in result.output
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_goal_workflow_status_json_shows_approved_goal_start_action_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-status", "--project", "sample", "--intake", "INTAKE-0001", "--json"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["preparation_id"] == "GP-INTAKE-0001"
+    assert payload["bundle_id"] == "PAB-0001"
+    assert payload["approval_state"] == "approved"
+    assert payload["child_count"] == 4
+    assert payload["completed_child_count"] == 0
+    assert payload["remaining_child_count"] == 4
+    assert payload["current_task_id"] == "T055"
+    assert payload["current_policy_id"] == "POL-0002"
+    assert payload["current_queue_worker_run_id"] is None
+    assert payload["delivery_state"] == "not_requested"
+    assert payload["blockers"] == []
+    assert payload["next_action"] == (
+        "Start the approved prepared goal: "
+        "devo project goal-run --project sample --intake INTAKE-0001 --confirm-run"
+    )
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_goal_workflow_status_surfaces_durable_recovery_and_pending_delivery_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0001",
+            policy_id="POL-0002",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI002",
+            selected_task_id="T055",
+            status="delivery_requested",
+            delivery_request_id="REQ-0001",
+            delivery_request_status="requested",
+            next_action="Wait for trusted delivery.",
+        ),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_request(
+        DeliveryRunnerRequest(
+            project="sample",
+            request_id="REQ-0001",
+            requested_by="goal status test",
+            requested_from_context="QWR-0001",
+            target_repo_path=str(project_path),
+            intended_commit_message="test: deliver first goal child",
+            status="requested",
+            next_action="Wait for the trusted runner.",
+        ),
+        workspace_root=workspace,
+    )
+    project_planning_module._write_approved_bundle_supervisor_result(
+        project_planning_module.ApprovedBundleSupervisorResult(
+            project="sample",
+            bundle_id="PAB-0001",
+            supervisor_run_id="ABSR-0001",
+            dry_run=False,
+            status="running",
+            selected_policy_id="POL-0002",
+            selected_queue_item_id="QI002",
+            selected_task_id="T055",
+            selected_queue_worker_run_id="QWR-0001",
+            current_queue_worker_status="delivery_requested",
+            resume_count=2,
+            last_checkpoint="delivery_wait_started",
+            planned_action="polling only the existing trusted delivery request",
+        ),
+        workspace_root=workspace,
+    )
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-status", "--project", "sample", "--intake", "INTAKE-0001"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Current task: T055" in result.output
+    assert "Current policy: POL-0002" in result.output
+    assert "Current queue-worker run: QWR-0001" in result.output
+    assert "Current queue-worker status: delivery_requested" in result.output
+    assert "Delivery state: pending" in result.output
+    assert "Supervisor: ABSR-0001 | running" in result.output
+    assert "Resume count: 2" in result.output
+    assert "Last checkpoint: delivery_wait_started" in result.output
+    assert result.output.count("Next action:") == 1
+    assert "Resume the existing prepared-goal supervisor" in result.output
+    assert "--confirm-run" in result.output
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_goal_workflow_status_surfaces_scope_drift_as_blocker_without_recovery_guess(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    policy = load_execution_policy("sample", "POL-0002", workspace_root=workspace)
+    assert policy is not None
+    policy_json, _policy_markdown = execution_policy_artifact_paths(
+        "sample",
+        "POL-0002",
+        workspace_root=workspace,
+    )
+    policy_json.write_text(
+        policy.model_copy(update={"allowed_file_patterns": [*policy.allowed_file_patterns, "docs/**"]}).model_dump_json(
+            indent=2
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["project", "goal-status", "--project", "sample", "--intake", "INTAKE-0001", "--json"],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert any("POL-0002: policy scope changed" in blocker for blocker in payload["blockers"])
+    assert payload["next_action"] == (
+        "Resolve the listed blockers before approving, starting, or resuming this goal."
+    )
+    assert "--confirm-run" not in payload["next_action"]
 
 
 def test_goal_workflow_prepare_ignores_queue_local_ids_from_unrelated_historical_context(

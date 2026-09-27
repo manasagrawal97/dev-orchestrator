@@ -135,6 +135,7 @@ from .project_planning import (
     RoughGoalIntakeMaterialization,
     RoughGoalNextSliceRecommendation,
     RoughGoalPreparation,
+    PreparedGoalStatus,
     CodexExecutableDiagnostic,
     CodexExecutionPreview,
     CodexExecutionResult,
@@ -186,6 +187,7 @@ from .project_planning import (
     approve_project_brief,
     block_queue_item,
     calculate_project_progress,
+    build_prepared_goal_status,
     build_project_intake_status,
     check_execution_policy,
     check_execution_policy_approval_bundle,
@@ -2043,6 +2045,29 @@ def _print_rough_goal_preparation(
     if markdown_path:
         console.print(f"Markdown: {_named_path(markdown_path)}")
     console.print(f"Safety: {preparation.safety_note}", soft_wrap=True)
+
+
+def _print_prepared_goal_status(status: PreparedGoalStatus) -> None:
+    console.print(f"[bold]Prepared goal status: {status.intake_id}[/bold]")
+    console.print(f"Preparation: {status.preparation_id} | {status.preparation_status}")
+    console.print(f"Approval bundle: {status.bundle_id} | {status.approval_state}")
+    console.print(
+        f"Children: total={status.child_count} completed={status.completed_child_count} "
+        f"remaining={status.remaining_child_count}"
+    )
+    console.print(f"Current task: {status.current_task_id or 'none'}")
+    console.print(f"Current policy: {status.current_policy_id or 'none'}")
+    console.print(f"Current queue-worker run: {status.current_queue_worker_run_id or 'none'}")
+    console.print(f"Current queue-worker status: {status.current_queue_worker_status or 'none'}")
+    console.print(f"Delivery state: {status.delivery_state}")
+    console.print(f"Supervisor: {status.supervisor_run_id or 'none'} | {status.supervisor_status or 'none'}")
+    console.print(f"Resume count: {status.resume_count}")
+    console.print(f"Last checkpoint: {status.last_checkpoint}")
+    console.print("Blockers:")
+    for blocker in status.blockers or ["none"]:
+        console.print(f"  - {blocker}", soft_wrap=True)
+    console.print(f"Next action: {status.next_action}", soft_wrap=True)
+    console.print(f"Safety: {status.safety_note}", soft_wrap=True)
 
 
 def _print_execution_queue(queue: ExecutionQueue, json_path: Path | None = None, markdown_path: Path | None = None) -> None:
@@ -4741,6 +4766,24 @@ def prepare_project_goal_command(
         raise typer.BadParameter(str(exc), param_hint="--intake") from exc
     console.print(f"[green]Goal prepared[/green] {project_name}")
     _print_rough_goal_preparation(preparation, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("goal-status")
+def show_prepared_project_goal_status_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    intake_id: str = typer.Option(..., "--intake", help="Prepared materialized rough-goal intake ID."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show compact prepared-goal status and the next recovery action without mutation."""
+    project_name = _resolve_project(project_name, announce=not json_output)
+    try:
+        status = build_prepared_goal_status(project_name, intake_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    if json_output:
+        _print_json_model(status)
+        return
+    _print_prepared_goal_status(status)
 
 
 @project_app.command("goal-run")
