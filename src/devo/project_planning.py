@@ -10261,6 +10261,9 @@ def prepare_rough_goal_intake(
             policy
             for policy in existing_policies
             if _normalize_policy_id(policy.policy_id) != _normalize_policy_id(materialization.policy_id)
+            and _normalize_batch_id(policy.batch_id) == _normalize_batch_id(materialization.batch_id)
+            and policy.queue_id is not None
+            and _normalize_queue_id(policy.queue_id) == _normalize_queue_id(materialization.queue_id)
             and (
                 (
                     len(policy.allowed_task_ids) == 1
@@ -10484,6 +10487,226 @@ def prepare_rough_goal_intake(
     _write_text_atomically(preparation_json, preparation.model_dump_json(indent=2))
     _write_text_atomically(preparation_markdown, render_rough_goal_preparation_markdown(preparation))
     return preparation, preparation_json, preparation_markdown
+
+
+def supervise_prepared_goal(
+    project_name: str,
+    intake_id: str,
+    *,
+    message: str = "",
+    note: str = "",
+    max_steps: int = 10,
+    poll_interval_seconds: float = 5.0,
+    max_wait_seconds: float = 600.0,
+    dry_run: bool = True,
+    monotonic_clock: Callable[[], float] | None = None,
+    sleep: Callable[[float], None] | None = None,
+    workspace_root: Path | None = None,
+) -> tuple[RoughGoalPreparation, ApprovedBundleSupervisorResult]:
+    """Validate one prepared goal, then delegate to the durable approved-bundle supervisor."""
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    intake = load_rough_goal_intake_plan(project_name, intake_id, workspace_root=root)
+    if not intake:
+        raise ValueError(f"Rough goal intake not found: {intake_id}")
+    materialization = load_rough_goal_intake_materialization(project_name, intake.intake_id, workspace_root=root)
+    if not materialization:
+        raise ValueError(f"Rough goal intake is not materialized: {intake.intake_id}.")
+    preparation_json, preparation_markdown = rough_goal_preparation_artifact_paths(
+        project_name,
+        intake.intake_id,
+        workspace_root=root,
+    )
+    preparation = load_rough_goal_preparation(project_name, intake.intake_id, workspace_root=root)
+    if not preparation or not preparation_json.exists() or not preparation_markdown.exists():
+        raise ValueError(
+            f"Goal preparation is missing or incomplete for {intake.intake_id}. "
+            f"Run: devo project goal-prepare --project {project_name} --intake {intake.intake_id} --confirm-prepare"
+        )
+    bundle = load_execution_policy_approval_bundle(
+        project_name,
+        preparation.approval_bundle_id,
+        workspace_root=root,
+    )
+    if not bundle:
+        raise ValueError(f"Prepared goal approval bundle not found: {preparation.approval_bundle_id}.")
+
+    blockers: list[str] = []
+    normalized_intake_id = _safe_artifact_id(intake.intake_id).upper()
+    if intake.preview_only:
+        blockers.append(f"Goal intake {intake.intake_id} is preview-only and cannot be supervised.")
+    if materialization.status != "materialized":
+        blockers.append(
+            f"Goal intake {intake.intake_id} materialization status must be materialized, not {materialization.status}."
+        )
+    if (
+        intake.project != project_name
+        or materialization.project != project_name
+        or preparation.project != project_name
+        or bundle.project != project_name
+    ):
+        blockers.append("Prepared goal artifacts do not all belong to the requested project.")
+    if (
+        _safe_artifact_id(materialization.intake_id).upper() != normalized_intake_id
+        or _safe_artifact_id(preparation.intake_id).upper() != normalized_intake_id
+        or _safe_artifact_id(bundle.goal_intake_id or "").upper() != normalized_intake_id
+    ):
+        blockers.append("Prepared goal intake identity has drifted across materialization, preparation, or bundle.")
+    if preparation.preparation_id != f"GP-{intake.intake_id}":
+        blockers.append("Prepared goal preparation id no longer matches its intake.")
+    if preparation.status != "awaiting_approval":
+        blockers.append(f"Prepared goal status must remain awaiting_approval, not {preparation.status}.")
+    if preparation.batch_id != materialization.batch_id or preparation.queue_id != materialization.queue_id:
+        blockers.append("Prepared goal batch or queue linkage has drifted from the materialization.")
+    if preparation.source_policy_id != materialization.policy_id:
+        blockers.append("Prepared goal source policy linkage has drifted from the materialization.")
+    if bundle.status != "approved":
+        blockers.append(f"Prepared goal bundle {bundle.bundle_id} must be approved, not {bundle.status}.")
+    if not bundle.allows_non_low_risk:
+        blockers.append("Prepared goal bundle no longer records its authoritative goal-scoped approval mode.")
+    if preparation.policy_ids != bundle.policy_ids:
+        blockers.append("Prepared goal child policy order no longer matches the approved bundle.")
+    if preparation.prepared_task_count != len(preparation.task_ids):
+        blockers.append("Prepared goal task count is stale.")
+    if not (
+        len(preparation.task_ids)
+        == len(preparation.queue_item_ids)
+        == len(preparation.policy_ids)
+    ):
+        blockers.append("Prepared goal task, queue-item, and policy mappings have different lengths.")
+    expected_task_policy_ids = {
+        task_id: policy_id
+        for task_id, policy_id in zip(preparation.task_ids, preparation.policy_ids, strict=False)
+    }
+    if preparation.task_policy_ids != expected_task_policy_ids:
+        blockers.append("Prepared goal task-to-policy ownership mapping has drifted.")
+    if preparation.total_max_tasks != bundle.total_max_tasks:
+        blockers.append("Prepared goal max-task bound no longer matches the approved bundle.")
+    if preparation.total_max_changed_files != bundle.total_max_changed_files:
+        blockers.append("Prepared goal changed-file bound no longer matches the approved bundle.")
+
+    materialized_task_ids = [_normalize_task_id(task_id) for task_id in materialization.created_task_ids]
+    if not materialized_task_ids or len(materialized_task_ids) != len(set(materialized_task_ids)):
+        blockers.append("Materialized goal task ids must be non-empty and unique before supervision.")
+    materialized_positions = {task_id: index for index, task_id in enumerate(materialized_task_ids)}
+    prepared_task_ids = [_normalize_task_id(task_id) for task_id in preparation.task_ids]
+    prepared_item_ids = [_normalize_queue_item_id(item_id) for item_id in preparation.queue_item_ids]
+    if len(prepared_task_ids) != len(set(prepared_task_ids)):
+        blockers.append("Prepared goal contains duplicate task ownership mappings.")
+    if len(prepared_item_ids) != len(set(prepared_item_ids)):
+        blockers.append("Prepared goal contains duplicate queue-item ownership mappings.")
+    if len(preparation.policy_ids) != len(set(preparation.policy_ids)):
+        blockers.append("Prepared goal contains duplicate child policy mappings.")
+    prepared_positions = [materialized_positions.get(_normalize_task_id(task_id)) for task_id in preparation.task_ids]
+    if any(position is None for position in prepared_positions) or prepared_positions != sorted(prepared_positions):
+        blockers.append("Prepared goal child order no longer matches the reviewed materialized order.")
+
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    batch = load_project_batch(project_name, materialization.batch_id, workspace_root=root)
+    queue = load_execution_queue(project_name, materialization.queue_id, workspace_root=root)
+    if not backlog:
+        blockers.append("Prepared goal authoritative backlog is missing.")
+    if not batch:
+        blockers.append(f"Prepared goal authoritative batch is missing: {materialization.batch_id}.")
+    if not queue:
+        blockers.append(f"Prepared goal authoritative queue is missing: {materialization.queue_id}.")
+    if backlog and batch and queue:
+        for task_id in materialized_task_ids:
+            matching_tasks = [task for task in backlog.tasks if _normalize_task_id(task.id) == task_id]
+            matching_items = [item for item in queue.items if _normalize_task_id(item.task_id) == task_id]
+            matching_snapshots = [
+                snapshot for snapshot in batch.task_snapshots if _normalize_task_id(snapshot.task_id) == task_id
+            ]
+            if len(matching_tasks) != 1:
+                blockers.append(
+                    f"Materialized goal task {task_id} must map to exactly one backlog task; found {len(matching_tasks)}."
+                )
+            if len(matching_items) != 1:
+                blockers.append(
+                    f"Materialized goal task {task_id} must map to exactly one queue item; found {len(matching_items)}."
+                )
+            if len(matching_snapshots) != 1:
+                blockers.append(
+                    f"Materialized goal task {task_id} must map to exactly one batch snapshot; found {len(matching_snapshots)}."
+                )
+            if len(matching_tasks) != 1 or len(matching_items) != 1 or len(matching_snapshots) != 1:
+                continue
+            task = matching_tasks[0]
+            item = matching_items[0]
+            task_terminal = task.status in {"completed", "superseded"}
+            item_terminal = item.status in {"completed", "skipped", "superseded"}
+            if task_terminal != item_terminal:
+                blockers.append(
+                    f"Materialized goal completion state drifted for {task.id}/{item.item_id}: "
+                    f"task={task.status}, queue={item.status}."
+                )
+                continue
+            if task_terminal and item_terminal:
+                continue
+            prepared_matches = [index for index, prepared_task_id in enumerate(prepared_task_ids) if prepared_task_id == task_id]
+            if len(prepared_matches) != 1:
+                blockers.append(
+                    f"Currently non-terminal materialized child {task.id}/{item.item_id} must appear exactly once "
+                    f"in the prepared goal; found {len(prepared_matches)} mappings."
+                )
+                continue
+            prepared_index = prepared_matches[0]
+            if prepared_index >= len(prepared_item_ids) or prepared_item_ids[prepared_index] != _normalize_queue_item_id(
+                item.item_id
+            ):
+                blockers.append(
+                    f"Currently non-terminal materialized child {task.id} is not mapped to its authoritative "
+                    f"queue item {item.item_id} in the prepared goal."
+                )
+            if prepared_index >= len(preparation.policy_ids):
+                blockers.append(
+                    f"Currently non-terminal materialized child {task.id}/{item.item_id} has no prepared child policy."
+                )
+
+    policies: list[BatchExecutionPolicy] = []
+    for index, policy_id in enumerate(preparation.policy_ids):
+        policy = load_execution_policy(project_name, policy_id, workspace_root=root)
+        if not policy:
+            blockers.append(f"Prepared goal child policy not found: {policy_id}.")
+            continue
+        policies.append(policy)
+        if index >= len(preparation.task_ids) or index >= len(preparation.queue_item_ids):
+            continue
+        expected_task_id = _normalize_task_id(preparation.task_ids[index])
+        expected_item_id = _normalize_queue_item_id(preparation.queue_item_ids[index])
+        if [_normalize_task_id(task_id) for task_id in policy.allowed_task_ids] != [expected_task_id]:
+            blockers.append(f"{policy.policy_id}: prepared task ownership has drifted.")
+        if [_normalize_queue_item_id(item_id) for item_id in policy.allowed_queue_item_ids] != [expected_item_id]:
+            blockers.append(f"{policy.policy_id}: prepared queue-item ownership has drifted.")
+        expected_fingerprint = bundle.policy_scope_fingerprints.get(policy.policy_id)
+        if not expected_fingerprint or expected_fingerprint != execution_policy_scope_fingerprint(policy):
+            blockers.append(f"{policy.policy_id}: policy scope changed after prepared-goal approval.")
+
+    blockers.extend(
+        _goal_scoped_approval_bundle_blockers(
+            project_name,
+            intake.intake_id,
+            policies,
+            root,
+        )
+    )
+    if blockers:
+        raise ValueError("Prepared goal cannot be supervised: " + "; ".join(_dedupe(blockers)))
+
+    supervisor_result = supervise_approved_bundle(
+        project_name,
+        bundle.bundle_id,
+        message=message,
+        note=note,
+        max_steps=max_steps,
+        poll_interval_seconds=poll_interval_seconds,
+        max_wait_seconds=max_wait_seconds,
+        dry_run=dry_run,
+        monotonic_clock=monotonic_clock,
+        sleep=sleep,
+        workspace_root=root,
+    )
+    return preparation, supervisor_result
 
 
 def _create_materialized_intake_child_policy(

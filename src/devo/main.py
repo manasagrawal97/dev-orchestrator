@@ -179,6 +179,7 @@ from .project_planning import (
     approve_execution_policy_approval_bundle,
     auto_run_approved,
     supervise_approved_bundle,
+    supervise_prepared_goal,
     approve_project_batch,
     approve_project_backlog,
     approve_project_blueprint,
@@ -4740,6 +4741,116 @@ def prepare_project_goal_command(
         raise typer.BadParameter(str(exc), param_hint="--intake") from exc
     console.print(f"[green]Goal prepared[/green] {project_name}")
     _print_rough_goal_preparation(preparation, json_path=json_path, markdown_path=markdown_path)
+
+
+@project_app.command("goal-run")
+def run_prepared_project_goal_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    intake_id: str = typer.Option(..., "--intake", help="Prepared materialized rough-goal intake ID."),
+    message: str = typer.Option("", "--message", help="Optional trusted delivery request commit message."),
+    note: str = typer.Option("", "--note", help="Optional prepared-goal supervisor note."),
+    max_steps: int = typer.Option(10, "--max-steps", help="Maximum one-step transitions for each selected child."),
+    poll_interval_seconds: float = typer.Option(
+        5.0,
+        "--poll-interval-seconds",
+        help="Seconds between trusted delivery evidence checks.",
+    ),
+    max_wait_seconds: float = typer.Option(
+        600.0,
+        "--max-wait-seconds",
+        help="Maximum seconds to wait for each trusted delivery before a resumable timeout.",
+    ),
+    require_scheduler_healthy: bool = typer.Option(
+        True,
+        "--require-scheduler-healthy/--no-require-scheduler-healthy",
+        help="Require a healthy trusted delivery runner schedule before confirmed execution.",
+    ),
+    confirm_run: bool = typer.Option(
+        False,
+        "--confirm-run",
+        help="Start or resume the prepared goal through its approved bundle supervisor.",
+    ),
+) -> None:
+    """Preview, start, or resume one approved prepared goal through the durable bundle supervisor."""
+    project_name = _resolve_project(project_name)
+    if max_steps < 1:
+        raise typer.BadParameter("--max-steps must be at least 1.", param_hint="--max-steps")
+    if poll_interval_seconds <= 0:
+        raise typer.BadParameter(
+            "--poll-interval-seconds must be greater than 0.",
+            param_hint="--poll-interval-seconds",
+        )
+    if max_wait_seconds <= 0:
+        raise typer.BadParameter("--max-wait-seconds must be greater than 0.", param_hint="--max-wait-seconds")
+
+    try:
+        preparation, preview = supervise_prepared_goal(
+            project_name,
+            intake_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            poll_interval_seconds=poll_interval_seconds,
+            max_wait_seconds=max_wait_seconds,
+            dry_run=True,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+
+    console.print(f"[bold]Prepared goal execution: {project_name}[/bold]")
+    console.print(f"Intake: {preparation.intake_id}")
+    console.print(f"Preparation: {preparation.preparation_id}")
+    console.print(f"Approval bundle: {preparation.approval_bundle_id}")
+    console.print(f"Reviewed child order: {', '.join(preparation.task_ids)}", soft_wrap=True)
+    _print_approved_bundle_supervisor_result(preview)
+    if preview.blockers or preview.status == "blocked":
+        console.print("Prepared goal is blocked at an existing approval, risk, review, validation, or recovery gate.")
+        raise typer.Exit(1)
+    if preview.status == "completed":
+        console.print("Prepared goal is complete. No scheduler or execution action is needed.")
+        return
+    if not confirm_run:
+        console.print("[yellow]Preview only; no workflow artifact was created or changed.[/yellow]")
+        console.print(
+            f"Start or resume: devo project goal-run --project {project_name} --intake {preparation.intake_id} --confirm-run",
+            soft_wrap=True,
+        )
+        console.print(
+            "Safety: execution remains sequential and restart-safe through the existing approved-bundle supervisor; "
+            "this command never invokes the trusted runner, stages, commits, pushes, or retries blocked work.",
+            soft_wrap=True,
+        )
+        return
+
+    if require_scheduler_healthy:
+        scheduler_status = get_delivery_runner_schedule_status(project_name)
+        blocked_by_scheduler = scheduler_status.health != "healthy"
+        _print_approved_queue_run_scheduler_gate(scheduler_status, blocked=blocked_by_scheduler)
+        if blocked_by_scheduler:
+            console.print(
+                "Safety: no prepared-goal workflow mutation ran because scheduler health was not confirmed.",
+                soft_wrap=True,
+            )
+            raise typer.Exit(1)
+    else:
+        console.print("Trusted runner scheduler gate: skipped by --no-require-scheduler-healthy.")
+
+    try:
+        _preparation, result = supervise_prepared_goal(
+            project_name,
+            intake_id,
+            message=message,
+            note=note,
+            max_steps=max_steps,
+            poll_interval_seconds=poll_interval_seconds,
+            max_wait_seconds=max_wait_seconds,
+            dry_run=False,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--intake") from exc
+    _print_approved_bundle_supervisor_result(result)
+    if result.blockers or result.status == "blocked":
+        raise typer.Exit(1)
 
 
 @project_app.command("brief-create")
