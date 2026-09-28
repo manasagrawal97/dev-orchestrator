@@ -344,6 +344,39 @@ Confirmed supervision is restart-safe. It holds an operating-system lock scoped 
 
 Recovery fails closed instead of guessing. Multiple incomplete supervisor checkpoints, missing queue-worker runs referenced by the checkpoint, invalid event order, or worker attempt/ingest evidence that could make a subprocess relaunch duplicate produce `contradictory_durable_state` (or a pre-mutation error for multiple checkpoints). Inspect and resolve the existing evidence manually; do not delete checkpoints merely to force progress, do not launch another worker, and do not create another delivery request. Different bundles may be supervised independently, but each bundle still executes only one child at a time.
 
+## Prepared Rough-Goal Workflow
+
+TASK-DEVO-199 provides a shorter operator path after a rough goal has been reviewed and materialized. Preparation rechecks the authoritative intake, backlog, batch, queue, and source policy; skips children that were already terminal before preparation; creates or reuses exactly one requested policy per remaining task/queue-item pair in reviewed order; and requests one goal-scoped approval bundle. It stops before approval.
+
+```powershell
+# Preview only. Review the materialized task order and scope before confirming.
+devo project goal-prepare --project MyProject --intake INTAKE-0001
+
+# Create/reuse narrow requested child policies and one bundle request.
+devo project goal-prepare --project MyProject --intake INTAKE-0001 --confirm-prepare
+
+# Read the compact approval/execution/recovery view without mutation.
+devo project goal-status --project MyProject --intake INTAKE-0001
+devo project goal-status --project MyProject --intake INTAKE-0001 --json
+
+# Record the one human decision after reviewing every prepared child and bound.
+devo project execution-policy-approval-bundle-approve --project MyProject --bundle PAB-0001 --approver "Manas" --confirm-approve
+
+# Preview first, then start or resume the existing durable sequential supervisor.
+devo project goal-run --project MyProject --intake INTAKE-0001
+devo project goal-run --project MyProject --intake INTAKE-0001 --confirm-run
+```
+
+One approval does not merge the children into one task or commit. Every child keeps its own policy, queue-worker context, strict worker result, objective review, approved validation, delivery request, and trusted-runner commit. `goal-run` delegates to the existing durable approved-bundle supervisor, waits only for external trusted-delivery evidence, rechecks scope between children, and selects the next child only after the prior child is canonically completed. A failed or ambiguous worker, review, validation, recovery, policy, or delivery state stops the goal without automatic retry. Rerun the same confirmed command only when `goal-status` identifies a safe resume action.
+
+On Windows, point validation caches and pytest `--basetemp` at a known operator-writable safe temporary root. `%TEMP%` is suitable only when the current process and subprocesses can create, enumerate, and clean its directories; restricted-token or Python `0o700` ACL behavior can otherwise produce `WinError 5` before tests run. Treat this as environment setup, not permission to write temp artifacts into the target repository.
+
+Two readout issues remain operator-friction follow-ups. First, a command may reach an expected state boundary—approval required, review required, or trusted delivery pending—while still returning a non-zero process exit; automation and the future console should classify the durable state instead of treating every non-zero exit as a failed task. Second, planning task status can lag canonical queue-worker and trusted-delivery completion; status views should reconcile those sources and explain the stale planning record rather than ask the operator to repeat completed work.
+
+The automated five-child coverage uses a fake subprocess worker and simulated external delivery completion. It proves integration, ordering, gate composition, and terminal reconciliation, but it is not live unattended dogfood. Run and review a real bounded low-risk unattended goal before declaring TASK-DEVO-199 complete.
+
+The next product slices are TASK-DEVO-200, an operator console in the existing UI, followed by TASK-DEVO-201, a local/background service. Their usability target is zero PowerShell for normal Devo operation; the CLI remains the explicit audit and recovery surface.
+
 Policy approval is not blanket permission for arbitrary changes. It is permission only inside the recorded batch/task/file/validation bounds. Future automation must pause on failed tests, secret risk, forbidden paths, changed files outside scope, too many files, unclear worker output, usage limits, commit failures, push failures, or expired/missing policy references. Scheduled trusted runner delivery remains the delivery mechanism; the policy does not bypass guarded commit/push.
 
 Prepare one policy-gated queue-worker step:

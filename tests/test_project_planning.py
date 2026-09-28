@@ -2622,6 +2622,128 @@ def test_goal_workflow_run_delegates_confirmed_execution_to_existing_durable_sup
     ]
 
 
+def test_goal_workflow_integration_completes_five_low_risk_children_after_one_approval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_goal_workflow_preparation(
+        tmp_path,
+        monkeypatch,
+        goal_file=_goal_workflow_integration_file(tmp_path),
+        completed_task_ids=set(),
+    )
+    _init_git_repo(project_path)
+    _enable_goal_workflow_automatic_delivery(workspace)
+
+    prepared = runner.invoke(
+        app,
+        ["project", "goal-prepare", "--project", "sample", "--intake", "INTAKE-0001", "--confirm-prepare"],
+        terminal_width=240,
+    )
+    assert prepared.exit_code == 0, prepared.output
+    preparation = load_rough_goal_preparation("sample", "INTAKE-0001", workspace_root=workspace)
+    assert preparation is not None
+    assert preparation.task_ids == ["T054", "T055", "T056", "T057", "T058"]
+    assert preparation.queue_item_ids == ["QI001", "QI002", "QI003", "QI004", "QI005"]
+    assert preparation.policy_ids == ["POL-0002", "POL-0003", "POL-0004", "POL-0005", "POL-0006"]
+    assert preparation.prepared_task_count == 5
+    assert preparation.approval_bundle_id == "PAB-0001"
+    assert len(list_execution_policy_approval_bundles("sample", workspace_root=workspace)) == 1
+    for task_id, item_id, policy_id in zip(
+        preparation.task_ids,
+        preparation.queue_item_ids,
+        preparation.policy_ids,
+        strict=True,
+    ):
+        policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+        assert policy is not None
+        assert policy.status == "requested"
+        assert policy.risk_level == "low"
+        assert policy.allowed_task_ids == [task_id]
+        assert policy.allowed_queue_item_ids == [item_id]
+        assert policy.max_tasks == 1
+        assert policy.max_tasks_per_run == 1
+
+    approved = runner.invoke(
+        app,
+        [
+            "project",
+            "execution-policy-approval-bundle-approve",
+            "--project",
+            "sample",
+            "--bundle",
+            "PAB-0001",
+            "--approver",
+            "Manas",
+            "--confirm-approve",
+        ],
+        terminal_width=240,
+    )
+    assert approved.exit_code == 0, approved.output
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    assert bundle.status == "approved"
+    assert bundle.policy_ids == preparation.policy_ids
+    assert all(
+        load_execution_policy("sample", policy_id, workspace_root=workspace).status == "approved"
+        for policy_id in preparation.policy_ids
+    )
+
+    marker = tmp_path / "goal-workflow-integration-worker-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed_with_task_change", marker=marker)
+    clock = _FakeMonotonicClock()
+    completed_requests: set[str] = set()
+
+    def unexpected_runner(*_args, **_kwargs):
+        pytest.fail("prepared-goal supervision must not invoke the trusted runner")
+
+    def complete_delivery(seconds: float) -> None:
+        clock.sleep(seconds)
+        active_runs = [
+            run
+            for run in list_queue_worker_runs("sample", workspace_root=workspace)
+            if run.status
+            in {
+                "handoff_ready",
+                "waiting_worker",
+                "waiting_review",
+                "waiting_validation",
+                "ready_for_delivery_request",
+                "delivery_requested",
+            }
+        ]
+        assert len(active_runs) == 1
+        _complete_latest_pending_delivery(workspace, project_path, completed_requests)
+
+    monkeypatch.setattr("devo.delivery.run_delivery_runner_request", unexpected_runner)
+    supervised_preparation, result = supervise_prepared_goal(
+        "sample",
+        "INTAKE-0001",
+        poll_interval_seconds=0.1,
+        max_wait_seconds=2,
+        dry_run=False,
+        monotonic_clock=clock,
+        sleep=complete_delivery,
+        workspace_root=workspace,
+    )
+
+    assert supervised_preparation.preparation_id == preparation.preparation_id
+    assert result.status == "completed"
+    assert result.stop_reason == "bundle_completed"
+    assert result.children_completed == 5
+    assert result.child_policy_ids_visited == preparation.policy_ids
+    assert result.queue_item_ids_visited == preparation.queue_item_ids
+    assert result.task_ids_visited == preparation.task_ids
+    assert result.queue_worker_run_ids == [f"QWR-{index:04d}" for index in range(1, 6)]
+    assert result.delivery_request_ids == [f"REQ-{index:04d}" for index in range(1, 6)]
+    assert result.delivery_wait_outcomes == [f"REQ-{index:04d}: completed" for index in range(1, 6)]
+    assert len(completed_requests) == 5
+    assert marker.exists()
+    assert [run.status for run in list_queue_worker_runs("sample", workspace_root=workspace)] == [
+        "completed"
+    ] * 5
+
+
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _create_approved_batch(tmp_path)
@@ -11662,9 +11784,54 @@ Prepare one reviewed materialized goal in deterministic order.
     return path
 
 
-def _setup_goal_workflow_preparation(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
+def _goal_workflow_integration_file(tmp_path: Path) -> Path:
+    path = tmp_path / "goal-workflow-integration.md"
+    path.write_text(
+        """# Goal
+Complete one reviewed goal through five independently bounded children.
+
+# Context
+- One approval must preserve sequential child execution and every existing safety gate.
+
+# Scope
+- Compose existing planning and supervision primitives.
+
+# Tasks
+- T001: Add focused implementation coverage. Risk: low.
+- T002: Add focused status coverage. Risk: low.
+- T003: Add focused recovery coverage. Risk: low.
+- T004: Add operator documentation. Risk: low.
+- T005: Record integration evidence. Risk: low.
+
+# Allowed files
+- src/**
+- tests/test_project_planning.py
+
+# Do not touch
+- workspace/**
+- .env
+
+# Validation
+- cmd /c echo goal-validation-ok
+
+# Delivery notes
+- Use trusted runner only.
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _setup_goal_workflow_preparation(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    goal_file: Path | None = None,
+    completed_task_ids: set[str] | None = None,
+) -> tuple[Path, Path]:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
-    goal_file = _goal_workflow_file(tmp_path)
+    goal_file = goal_file or _goal_workflow_file(tmp_path)
+    completed_task_ids = {"T054"} if completed_task_ids is None else completed_task_ids
     planned = runner.invoke(
         app,
         ["project", "intake-plan", "--project", "sample", "--from-file", str(goal_file), "--confirm-create"],
@@ -11735,25 +11902,29 @@ def _setup_goal_workflow_preparation(tmp_path: Path, monkeypatch) -> tuple[Path,
     backlog = load_project_backlog("sample", workspace_root=workspace)
     assert backlog is not None
     completed_tasks = [
-        task.model_copy(update={"status": "completed"}) if task.id == "T054" else task
+        task.model_copy(update={"status": "completed"}) if task.id in completed_task_ids else task
         for task in backlog.tasks
     ]
     paths.backlog_json.write_text(
         backlog.model_copy(
-            update={"tasks": completed_tasks, "completed_task_count": 1}
+            update={"tasks": completed_tasks, "completed_task_count": len(completed_task_ids)}
         ).model_dump_json(indent=2),
         encoding="utf-8",
     )
     queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
     assert queue is not None
     completed_items = [
-        item.model_copy(update={"status": "completed"}) if item.item_id == "QI001" else item
+        item.model_copy(update={"status": "completed"}) if item.task_id in completed_task_ids else item
         for item in queue.items
     ]
     queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
     queue_json.write_text(
         queue.model_copy(
-            update={"items": completed_items, "pending_count": 4, "completed_count": 1}
+            update={
+                "items": completed_items,
+                "pending_count": len(completed_items) - len(completed_task_ids),
+                "completed_count": len(completed_task_ids),
+            }
         ).model_dump_json(indent=2),
         encoding="utf-8",
     )
