@@ -1763,6 +1763,9 @@ class CodexHandoff(BaseModel):
     source_batch_id: str | None = None
     source_item_id: str | None = None
     source_task_id: str | None = None
+    source_policy_id: str | None = None
+    source_queue_worker_run_id: str | None = None
+    source_queue_worker_retry_of: str | None = None
     title: str
     status: str = "draft"
     prompt_path: str
@@ -1781,6 +1784,9 @@ class HandoffIndexEntry(BaseModel):
     source_batch_id: str | None = None
     source_item_id: str | None = None
     source_task_id: str | None = None
+    source_policy_id: str | None = None
+    source_queue_worker_run_id: str | None = None
+    source_queue_worker_retry_of: str | None = None
     prompt_path: str
     updated_at: datetime
 
@@ -1934,6 +1940,9 @@ class WorkerRun(BaseModel):
     source_queue_item_id: str | None = None
     source_batch_id: str | None = None
     source_task_id: str | None = None
+    source_policy_id: str | None = None
+    source_queue_worker_run_id: str | None = None
+    source_queue_worker_retry_of: str | None = None
     title: str
     status: str = "planned"
     prompt_path: str
@@ -1971,6 +1980,9 @@ class WorkerRunIndexEntry(BaseModel):
     source_queue_item_id: str | None = None
     source_batch_id: str | None = None
     source_task_id: str | None = None
+    source_policy_id: str | None = None
+    source_queue_worker_run_id: str | None = None
+    source_queue_worker_retry_of: str | None = None
     report_status: str = "missing"
     next_action: str
     path: str
@@ -7969,6 +7981,27 @@ def loop_queue_worker_run(
             dry_run=dry_run,
             workspace_root=root,
         )
+        handoff_ready_run = (
+            _require_queue_worker_run(project_name, step.run_id, root)
+            if step.new_status == "handoff_ready" and auto_worker and step.run_id
+            else None
+        )
+        if handoff_ready_run and handoff_ready_run.retry_of:
+            try:
+                step = _step_queue_worker_recover_linked_retry_handoff(
+                    project_name,
+                    handoff_ready_run,
+                    dry_run=dry_run,
+                    workspace_root=root,
+                )
+            except ValueError as exc:
+                step = step.model_copy(
+                    update={
+                        "action_taken": "automatic linked-retry handoff recovery blocked",
+                        "blockers": _dedupe([*step.blockers, f"Automatic handoff recovery was blocked: {exc}"]),
+                        "next_action": "Resolve the linked-retry handoff recovery blocker, then retry the confirmed auto-worker loop.",
+                    }
+                )
         steps.append(_loop_step_from_step_result(step_number, step))
         warnings = _dedupe([*warnings, *step.warnings])
         blockers = _dedupe([*blockers, *step.blockers])
@@ -12169,6 +12202,9 @@ def create_codex_worker_run_from_handoff(
         source_queue_item_id=handoff.source_item_id,
         source_batch_id=handoff.source_batch_id,
         source_task_id=handoff.source_task_id,
+        source_policy_id=handoff.source_policy_id,
+        source_queue_worker_run_id=handoff.source_queue_worker_run_id,
+        source_queue_worker_retry_of=handoff.source_queue_worker_retry_of,
         title=f"Codex worker run for {handoff.handoff_id}: {handoff.title}",
         status="planned",
         prompt_path=handoff.prompt_path,
@@ -13343,6 +13379,9 @@ def render_codex_worker_run_markdown(worker_run: WorkerRun) -> str:
         f"- Source queue item: `{worker_run.source_queue_item_id or 'none'}`",
         f"- Source batch: `{worker_run.source_batch_id or 'none'}`",
         f"- Source task: `{worker_run.source_task_id or 'none'}`",
+        f"- Source policy: `{worker_run.source_policy_id or 'none'}`",
+        f"- Source queue-worker run: `{worker_run.source_queue_worker_run_id or 'none'}`",
+        f"- Source queue-worker retry parent: `{worker_run.source_queue_worker_retry_of or 'none'}`",
         f"- Created: `{worker_run.created_at.isoformat()}`",
         f"- Updated: `{worker_run.updated_at.isoformat()}`",
         f"- Started: `{worker_run.started_at.isoformat() if worker_run.started_at else 'none'}`",
@@ -15265,6 +15304,9 @@ def _write_codex_handoff(
     source_batch_id: str | None = None,
     source_item_id: str | None = None,
     source_task_id: str | None = None,
+    source_policy_id: str | None = None,
+    source_queue_worker_run_id: str | None = None,
+    source_queue_worker_retry_of: str | None = None,
 ) -> tuple[CodexHandoff, Path, Path]:
     root = workspace_root or get_workspace_root()
     _require_project(project_name, root)
@@ -15283,6 +15325,9 @@ def _write_codex_handoff(
         source_batch_id=source_batch_id,
         source_item_id=source_item_id,
         source_task_id=source_task_id,
+        source_policy_id=source_policy_id,
+        source_queue_worker_run_id=source_queue_worker_run_id,
+        source_queue_worker_retry_of=source_queue_worker_retry_of,
         title=title,
         status="draft",
         prompt_path=str(prompt_path),
@@ -15339,6 +15384,9 @@ def _write_handoff_index(project_name: str, workspace_root: Path | None = None) 
             source_batch_id=handoff.source_batch_id,
             source_item_id=handoff.source_item_id,
             source_task_id=handoff.source_task_id,
+            source_policy_id=handoff.source_policy_id,
+            source_queue_worker_run_id=handoff.source_queue_worker_run_id,
+            source_queue_worker_retry_of=handoff.source_queue_worker_retry_of,
             prompt_path=handoff.prompt_path,
             updated_at=handoff.updated_at,
         )
@@ -15399,6 +15447,9 @@ def _write_worker_run_index(project_name: str, workspace_root: Path | None = Non
             source_queue_item_id=worker_run.source_queue_item_id,
             source_batch_id=worker_run.source_batch_id,
             source_task_id=worker_run.source_task_id,
+            source_policy_id=worker_run.source_policy_id,
+            source_queue_worker_run_id=worker_run.source_queue_worker_run_id,
+            source_queue_worker_retry_of=worker_run.source_queue_worker_retry_of,
             report_status=worker_run.report.report_status,
             next_action=worker_run.next_action,
             path=str(worker_run_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)[0]),
@@ -15532,6 +15583,22 @@ def _create_or_reuse_handoff_for_queue_item(project_name: str, queue_id: str, it
     existing = _find_handoff_for_queue_item(project_name, queue.queue_id, item.item_id, workspace_root=root)
     if existing:
         return existing
+    return _create_fresh_handoff_for_queue_item(project_name, queue.queue_id, item.item_id, workspace_root=root)
+
+
+def _create_fresh_handoff_for_queue_item(
+    project_name: str,
+    queue_id: str,
+    item_id: str,
+    *,
+    source_policy_id: str | None = None,
+    source_queue_worker_run_id: str | None = None,
+    source_queue_worker_retry_of: str | None = None,
+    workspace_root: Path | None = None,
+) -> CodexHandoff:
+    root = workspace_root or get_workspace_root()
+    queue = _require_queue(project_name, queue_id, root)
+    item = _require_queue_item(queue, item_id)
     task = _try_get_backlog_task(project_name, item.task_id, root)
     prompt = render_codex_handoff_prompt(
         project_name,
@@ -15552,6 +15619,9 @@ def _create_or_reuse_handoff_for_queue_item(project_name: str, queue_id: str, it
         source_batch_id=queue.source_batch_id,
         source_item_id=item.item_id,
         source_task_id=item.task_id,
+        source_policy_id=source_policy_id,
+        source_queue_worker_run_id=source_queue_worker_run_id,
+        source_queue_worker_retry_of=source_queue_worker_retry_of,
         workspace_root=root,
     )
     return handoff
@@ -16430,6 +16500,203 @@ def _step_queue_worker_create_run(
         action_taken="created queue-worker run",
         dry_run=False,
         evidence=evidence,
+        mutated=True,
+    )
+
+
+def _step_queue_worker_recover_linked_retry_handoff(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    dry_run: bool,
+    workspace_root: Path,
+) -> QueueWorkerStepResult:
+    if run.status != "handoff_ready":
+        raise ValueError(f"Queue-worker run {run.run_id} is {run.status}, not handoff_ready.")
+    if not run.retry_of:
+        raise ValueError(f"Queue-worker run {run.run_id} is not a linked retry.")
+    parent = load_queue_worker_run(project_name, run.retry_of, workspace_root=workspace_root)
+    if not parent:
+        raise ValueError(f"Linked parent queue-worker run was not found: {run.retry_of}.")
+    linkage_fields = ("policy_id", "batch_id", "queue_id", "selected_queue_item_id", "selected_task_id")
+    drifted_linkage = [field for field in linkage_fields if getattr(parent, field) != getattr(run, field)]
+    if drifted_linkage:
+        raise ValueError("Linked retry lineage does not match its parent for: " + ", ".join(drifted_linkage) + ".")
+    if run.selected_handoff_id or run.selected_worker_run_id or run.delivery_request_id:
+        raise ValueError("Linked retry already contains handoff, worker, or delivery linkage; automatic recovery is unsafe.")
+    if run.blockers or run.failure_reason or run.cancel_reason:
+        raise ValueError("Linked retry contains unresolved blocker, failure, or cancellation state.")
+
+    policy_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(
+        project_name, run, workspace_root
+    )
+    if policy_blockers:
+        raise ValueError("; ".join(policy_blockers))
+    if not run.batch_id or not run.queue_id or not run.selected_queue_item_id or not run.selected_task_id:
+        raise ValueError("Linked retry is missing its exact batch, queue, queue-item, or task authority.")
+    queue = load_execution_queue(project_name, run.queue_id, workspace_root=workspace_root)
+    item = _find_queue_item(queue.items, run.selected_queue_item_id) if queue else None
+    if not item or _normalize_task_id(item.task_id) != _normalize_task_id(run.selected_task_id):
+        raise ValueError("Linked retry queue-item/task authority is missing or has drifted.")
+
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    if evidence.blockers or any(
+        (
+            evidence.handoff_exists,
+            evidence.worker_run_exists,
+            evidence.worker_report_imported,
+            evidence.worker_review_exists,
+            evidence.validation_evidence_exists,
+            evidence.delivery_request_exists,
+        )
+    ):
+        raise ValueError("Linked retry contains stale or unsafe handoff, worker, review, validation, or delivery evidence.")
+    if any(
+        preparation.queue_worker_run_id == run.run_id
+        for preparation in list_codex_worker_preparations(project_name, workspace_root=workspace_root)
+    ) or any(
+        ingest.queue_worker_run_id == run.run_id
+        for ingest in list_codex_worker_ingests(project_name, workspace_root=workspace_root)
+    ) or _list_codex_worker_subprocess_runs_for_queue(project_name, run.run_id, workspace_root):
+        raise ValueError("Linked retry already has Codex preparation, ingest, or subprocess evidence.")
+
+    owned_handoffs = [
+        handoff
+        for handoff in list_codex_handoffs(project_name, workspace_root=workspace_root)
+        if handoff.source_queue_worker_run_id == run.run_id
+    ]
+    owned_workers = [
+        worker
+        for worker in list_codex_worker_runs(project_name, workspace_root=workspace_root)
+        if worker.source_queue_worker_run_id == run.run_id
+    ]
+    if len(owned_handoffs) > 1 or len(owned_workers) > 1:
+        raise ValueError("Linked retry handoff recovery is ambiguous; multiple artifacts claim this exact retry attempt.")
+    handoff = owned_handoffs[0] if owned_handoffs else None
+    worker_run = owned_workers[0] if owned_workers else None
+    expected_handoff_authority = {
+        "handoff_type": "queue_next",
+        "source_policy_id": run.policy_id,
+        "source_queue_id": _normalize_queue_id(run.queue_id),
+        "source_batch_id": _normalize_batch_id(run.batch_id),
+        "source_item_id": _normalize_queue_item_id(run.selected_queue_item_id),
+        "source_task_id": _normalize_task_id(run.selected_task_id),
+        "source_queue_worker_run_id": run.run_id,
+        "source_queue_worker_retry_of": run.retry_of,
+    }
+    expected_worker_authority = {
+        "source_policy_id": run.policy_id,
+        "source_queue_id": _normalize_queue_id(run.queue_id),
+        "source_batch_id": _normalize_batch_id(run.batch_id),
+        "source_queue_item_id": _normalize_queue_item_id(run.selected_queue_item_id),
+        "source_task_id": _normalize_task_id(run.selected_task_id),
+        "source_queue_worker_run_id": run.run_id,
+        "source_queue_worker_retry_of": run.retry_of,
+    }
+    if handoff:
+        mismatches = [
+            field for field, expected in expected_handoff_authority.items() if getattr(handoff, field) != expected
+        ]
+        if mismatches:
+            raise ValueError(
+                "Owned linked-retry handoff has conflicting authority for: " + ", ".join(mismatches) + "."
+            )
+    if worker_run:
+        if not handoff or worker_run.source_handoff_id != handoff.handoff_id:
+            raise ValueError("Owned linked-retry worker is not uniquely linked to the owned handoff.")
+        mismatches = [
+            field for field, expected in expected_worker_authority.items() if getattr(worker_run, field) != expected
+        ]
+        if mismatches:
+            raise ValueError(
+                "Owned linked-retry worker has conflicting authority for: " + ", ".join(mismatches) + "."
+            )
+        if worker_run.status != "planned":
+            raise ValueError(f"Owned linked-retry worker {worker_run.worker_run_id} has unsafe status {worker_run.status}.")
+        if load_codex_worker_report(project_name, worker_run.worker_run_id, workspace_root=workspace_root) or load_codex_worker_review(
+            project_name, worker_run.worker_run_id, workspace_root=workspace_root
+        ):
+            raise ValueError("Fresh matching worker already has report or review evidence.")
+
+    if dry_run:
+        preview = run.model_copy(
+            update={
+                "status": "waiting_worker",
+                "warnings": _dedupe([*run.warnings, *policy_warnings]),
+                "policy_check_summary": policy_summary or run.policy_check_summary,
+                "next_action": "Confirmed auto-worker would create or attach a fresh handoff and WorkerRun for this linked retry.",
+            }
+        )
+        return _step_result_from_run(
+            project_name,
+            preview,
+            previous_status=run.status,
+            action_taken="would recover fresh handoff and worker for linked retry",
+            dry_run=True,
+            evidence=evidence,
+            mutated=False,
+        )
+
+    if not handoff:
+        mutation_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(
+            project_name, run, workspace_root
+        )
+        if mutation_blockers:
+            raise ValueError("Policy recheck immediately before handoff creation failed: " + "; ".join(mutation_blockers))
+        handoff = _create_fresh_handoff_for_queue_item(
+            project_name,
+            run.queue_id,
+            run.selected_queue_item_id,
+            source_policy_id=run.policy_id,
+            source_queue_worker_run_id=run.run_id,
+            source_queue_worker_retry_of=run.retry_of,
+            workspace_root=workspace_root,
+        )
+    if not worker_run:
+        mutation_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(
+            project_name, run, workspace_root
+        )
+        if mutation_blockers:
+            raise ValueError("Policy recheck immediately before worker creation failed: " + "; ".join(mutation_blockers))
+        worker_run, _worker_json, _worker_markdown = create_codex_worker_run_from_handoff(
+            project_name, handoff.handoff_id, workspace_root=workspace_root
+        )
+    mutation_blockers, policy_warnings, policy_summary = _queue_worker_recheck_selected_run(
+        project_name, run, workspace_root
+    )
+    if mutation_blockers:
+        raise ValueError("Policy recheck immediately before retry linkage failed: " + "; ".join(mutation_blockers))
+    now = datetime.now(UTC)
+    updated = run.model_copy(
+        update={
+            "status": "waiting_worker",
+            "selected_handoff_id": handoff.handoff_id,
+            "selected_worker_run_id": worker_run.worker_run_id,
+            "steps_run": [
+                *run.steps_run,
+                f"recovered fresh handoff for linked retry: {handoff.handoff_id}",
+                f"recovered fresh Codex worker run for linked retry: {worker_run.worker_run_id}",
+            ],
+            "blockers": [],
+            "warnings": _dedupe([*run.warnings, *policy_warnings]),
+            "policy_check_summary": policy_summary or run.policy_check_summary,
+            "pause_reason": "waiting_worker",
+            "updated_at": now,
+            "next_action": f"Review the handoff checklist: devo project queue-worker-handoff-show --project {project_name} --run {run.run_id}",
+        }
+    )
+    updated = updated.model_copy(
+        update={"handoff_checklist": build_queue_worker_handoff_checklist(project_name, updated, workspace_root=workspace_root)}
+    )
+    saved, _run_json, _run_markdown = _write_queue_worker_run(project_name, updated, workspace_root=workspace_root)
+    updated_evidence = summarize_queue_worker_evidence(project_name, saved, workspace_root=workspace_root)
+    return _step_result_from_run(
+        project_name,
+        saved,
+        previous_status=run.status,
+        action_taken="recovered fresh handoff and worker for linked retry",
+        dry_run=False,
+        evidence=updated_evidence,
         mutated=True,
     )
 

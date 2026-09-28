@@ -5327,6 +5327,368 @@ def test_queue_worker_loop_auto_worker_dry_run_does_not_spawn_or_mutate(tmp_path
     assert _target_snapshot(project_path) == before_target
 
 
+def test_queue_worker_loop_auto_worker_dry_run_previews_linked_retry_handoff_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path, retry_run, rejected_worker_id = _create_handoff_ready_linked_retry(tmp_path, monkeypatch)
+    marker = tmp_path / "linked-retry-dry-run-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    run_json, _run_markdown = queue_worker_run_artifact_paths("sample", retry_run.run_id, workspace_root=workspace)
+    before_run_json = run_json.read_bytes()
+    before_handoffs = [item.handoff_id for item in list_codex_handoffs("sample", workspace_root=workspace)]
+    before_workers = [item.worker_run_id for item in list_codex_worker_runs("sample", workspace_root=workspace)]
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--dry-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "would recover fresh handoff and worker for linked retry" in result.output
+    assert "Stop reason: automatic worker preview" in result.output
+    assert not marker.exists()
+    assert run_json.read_bytes() == before_run_json
+    assert [item.handoff_id for item in list_codex_handoffs("sample", workspace_root=workspace)] == before_handoffs
+    assert [item.worker_run_id for item in list_codex_worker_runs("sample", workspace_root=workspace)] == before_workers
+    assert load_codex_worker_review("sample", rejected_worker_id, workspace_root=workspace) is not None
+    assert list_codex_worker_preparations("sample", workspace_root=workspace) == []
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_recovers_linked_retry_with_fresh_handoff_and_worker(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path, retry_run, rejected_worker_id = _create_handoff_ready_linked_retry(tmp_path, monkeypatch)
+    marker = tmp_path / "linked-retry-recovery-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    old_handoff_ids = {item.handoff_id for item in list_codex_handoffs("sample", workspace_root=workspace)}
+    old_worker_ids = {item.worker_run_id for item in list_codex_worker_runs("sample", workspace_root=workspace)}
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "recovered fresh handoff and worker for linked retry" in result.output
+    assert "Stop reason: worker review missing" in result.output
+    assert marker.exists()
+    recovered = load_queue_worker_run("sample", retry_run.run_id, workspace_root=workspace)
+    assert recovered is not None
+    assert recovered.retry_of == retry_run.retry_of
+    assert recovered.status == "waiting_review"
+    assert recovered.selected_handoff_id not in old_handoff_ids
+    assert recovered.selected_worker_run_id not in old_worker_ids
+    assert recovered.selected_worker_run_id != rejected_worker_id
+    assert load_codex_worker_review("sample", rejected_worker_id, workspace_root=workspace) is not None
+    assert load_codex_worker_review("sample", recovered.selected_worker_run_id, workspace_root=workspace) is None
+    fresh_worker = load_codex_worker_run("sample", recovered.selected_worker_run_id, workspace_root=workspace)
+    assert fresh_worker is not None
+    assert fresh_worker.source_handoff_id == recovered.selected_handoff_id
+    assert fresh_worker.source_policy_id == retry_run.policy_id
+    assert fresh_worker.source_queue_worker_run_id == retry_run.run_id
+    assert fresh_worker.source_queue_worker_retry_of == retry_run.retry_of
+    assert fresh_worker.source_queue_item_id == retry_run.selected_queue_item_id
+    assert fresh_worker.source_task_id == retry_run.selected_task_id
+    fresh_handoff = load_codex_handoff("sample", recovered.selected_handoff_id, workspace_root=workspace)
+    assert fresh_handoff is not None
+    assert fresh_handoff.source_policy_id == retry_run.policy_id
+    assert fresh_handoff.source_queue_worker_run_id == retry_run.run_id
+    assert fresh_handoff.source_queue_worker_retry_of == retry_run.retry_of
+    assert len(list_codex_worker_preparations("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_ingests("sample", workspace_root=workspace)) == 1
+    assert len(list_codex_worker_batch_runs("sample", workspace_root=workspace)) == 1
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_rejects_conflicting_owned_retry_handoff(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path, retry_run, rejected_worker_id = _create_handoff_ready_linked_retry(tmp_path, monkeypatch)
+    conflicting = project_planning_module._create_fresh_handoff_for_queue_item(
+        "sample",
+        retry_run.queue_id,
+        retry_run.selected_queue_item_id,
+        source_policy_id="POL-9999",
+        source_queue_worker_run_id=retry_run.run_id,
+        source_queue_worker_retry_of=retry_run.retry_of,
+        workspace_root=workspace,
+    )
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            retry_run.policy_id,
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Owned linked-retry handoff has conflicting authority for: source_policy_id" in result.output
+    unchanged = load_queue_worker_run("sample", retry_run.run_id, workspace_root=workspace)
+    assert unchanged is not None
+    assert unchanged.status == "handoff_ready"
+    assert unchanged.selected_handoff_id is None
+    assert unchanged.selected_worker_run_id is None
+    assert [item.handoff_id for item in list_codex_handoffs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id] == [
+        conflicting.handoff_id
+    ]
+    assert [item for item in list_codex_worker_runs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id] == []
+    assert load_codex_worker_review("sample", rejected_worker_id, workspace_root=workspace) is not None
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_does_not_adopt_unowned_matching_retry_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path, retry_run, _rejected_worker_id = _create_handoff_ready_linked_retry(tmp_path, monkeypatch)
+    unrelated_handoff = project_planning_module._create_fresh_handoff_for_queue_item(
+        "sample",
+        retry_run.queue_id,
+        retry_run.selected_queue_item_id,
+        workspace_root=workspace,
+    )
+    unrelated_worker, _json_path, _markdown_path = project_planning_module.create_codex_worker_run_from_handoff(
+        "sample", unrelated_handoff.handoff_id, workspace_root=workspace
+    )
+    marker = tmp_path / "linked-retry-unowned-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            retry_run.policy_id,
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    recovered = load_queue_worker_run("sample", retry_run.run_id, workspace_root=workspace)
+    assert recovered is not None
+    assert recovered.selected_handoff_id != unrelated_handoff.handoff_id
+    assert recovered.selected_worker_run_id != unrelated_worker.worker_run_id
+    owned_handoffs = [
+        item for item in list_codex_handoffs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id
+    ]
+    owned_workers = [
+        item for item in list_codex_worker_runs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id
+    ]
+    assert [item.handoff_id for item in owned_handoffs] == [recovered.selected_handoff_id]
+    assert [item.worker_run_id for item in owned_workers] == [recovered.selected_worker_run_id]
+    assert marker.exists()
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_rejects_ambiguous_owned_retry_handoffs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path, retry_run, _rejected_worker_id = _create_handoff_ready_linked_retry(tmp_path, monkeypatch)
+    for _ in range(2):
+        project_planning_module._create_fresh_handoff_for_queue_item(
+            "sample",
+            retry_run.queue_id,
+            retry_run.selected_queue_item_id,
+            source_policy_id=retry_run.policy_id,
+            source_queue_worker_run_id=retry_run.run_id,
+            source_queue_worker_retry_of=retry_run.retry_of,
+            workspace_root=workspace,
+        )
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            retry_run.policy_id,
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "multiple artifacts claim this exact retry attempt" in result.output
+    assert len(
+        [item for item in list_codex_handoffs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id]
+    ) == 2
+    assert [item for item in list_codex_worker_runs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id] == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_non_retry_handoff_ready_behavior_is_unchanged(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    handoff_count = len(list_codex_handoffs("sample", workspace_root=workspace))
+    worker_count = len(list_codex_worker_runs("sample", workspace_root=workspace))
+    handoff_ready = run.model_copy(
+        update={
+            "status": "handoff_ready",
+            "selected_handoff_id": None,
+            "selected_worker_run_id": None,
+            "pause_reason": "handoff_ready",
+        }
+    )
+    project_planning_module._write_queue_worker_run("sample", handoff_ready, workspace_root=workspace)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Stop reason: handoff or worker run missing" in result.output
+    assert "automatic linked-retry handoff recovery blocked" not in result.output
+    assert len(list_codex_handoffs("sample", workspace_root=workspace)) == handoff_count
+    assert len(list_codex_worker_runs("sample", workspace_root=workspace)) == worker_count
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_queue_worker_loop_auto_worker_reentry_reuses_exact_owned_retry_artifacts_after_interruption(
+    tmp_path: Path, monkeypatch
+) -> None:
+    workspace, project_path, retry_run, _rejected_worker_id = _create_handoff_ready_linked_retry(tmp_path, monkeypatch)
+    marker = tmp_path / "linked-retry-reentry-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed", marker=marker)
+    before_target = _target_snapshot(project_path)
+    real_write = project_planning_module._write_queue_worker_run
+    interrupted = False
+
+    def interrupt_before_retry_linkage(project_name, candidate, workspace_root=None):
+        nonlocal interrupted
+        if candidate.run_id == retry_run.run_id and candidate.selected_handoff_id and not interrupted:
+            interrupted = True
+            raise RuntimeError("simulated interruption before retry linkage")
+        return real_write(project_name, candidate, workspace_root=workspace_root)
+
+    monkeypatch.setattr(project_planning_module, "_write_queue_worker_run", interrupt_before_retry_linkage)
+    first = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            retry_run.policy_id,
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+    assert first.exit_code == 1, first.output
+    owned_handoff_ids = {
+        item.handoff_id for item in list_codex_handoffs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id
+    }
+    owned_worker_ids = {
+        item.worker_run_id for item in list_codex_worker_runs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id
+    }
+    assert len(owned_handoff_ids) == 1
+    assert len(owned_worker_ids) == 1
+    assert not marker.exists()
+
+    monkeypatch.setattr(project_planning_module, "_write_queue_worker_run", real_write)
+    second = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            retry_run.policy_id,
+            "--run",
+            retry_run.run_id,
+            "--auto-worker",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+
+    assert second.exit_code == 0, second.output
+    assert "recovered fresh handoff and worker for linked retry" in second.output
+    assert marker.exists()
+    assert {
+        item.handoff_id for item in list_codex_handoffs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id
+    } == owned_handoff_ids
+    assert {
+        item.worker_run_id for item in list_codex_worker_runs("sample", workspace_root=workspace) if item.source_queue_worker_run_id == retry_run.run_id
+    } == owned_worker_ids
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_queue_worker_loop_auto_worker_runs_and_ingests_once_then_stops_at_review(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -10547,6 +10909,62 @@ def _create_queue_worker_run(tmp_path: Path, *, validation_commands: list[str] |
         terminal_width=240,
     )
     assert result.exit_code == 0, result.output
+
+
+def _create_handoff_ready_linked_retry(
+    tmp_path: Path, monkeypatch
+) -> tuple[Path, Path, QueueWorkerRun, str]:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_queue_worker_run(tmp_path)
+    original = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert original is not None
+    assert original.selected_worker_run_id is not None
+    rejected_worker_id = original.selected_worker_run_id
+    _import_worker_report(tmp_path)
+    _continue_queue_worker_run()
+    rejected = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "needs_changes",
+            "--summary",
+            "Rejected evidence must not be reused.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    assert rejected.exit_code == 0, rejected.output
+    blocked = runner.invoke(
+        app,
+        ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+    assert blocked.exit_code != 0, blocked.output
+    blocked_run = load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace)
+    assert blocked_run is not None
+    assert blocked_run.status == "blocked"
+    assert blocked_run.selected_handoff_id is None
+    assert blocked_run.selected_worker_run_id is None
+    retry = runner.invoke(
+        app,
+        ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0002", "--confirm-retry"],
+        terminal_width=240,
+    )
+    assert retry.exit_code == 0, retry.output
+    retry_run = load_queue_worker_run("sample", "QWR-0003", workspace_root=workspace)
+    assert retry_run is not None
+    assert retry_run.status == "handoff_ready"
+    assert retry_run.retry_of == blocked_run.run_id
+    assert retry_run.selected_handoff_id is None
+    assert retry_run.selected_worker_run_id is None
+    return workspace, project_path, retry_run, rejected_worker_id
 
 
 def _prepare_retry_with_inherited_wip(tmp_path: Path, monkeypatch) -> tuple[Path, Path, str, Path]:
