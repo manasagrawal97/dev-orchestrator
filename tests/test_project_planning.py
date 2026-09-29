@@ -1759,6 +1759,144 @@ def test_goal_workflow_prepare_preserves_materialized_order_and_stops_before_app
     assert _target_snapshot(project_path) == before_target
 
 
+def test_goal_workflow_prepare_supervised_delivery_preview_is_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    planning_dir = planning_artifact_paths("sample", workspace_root=workspace).planning_dir
+    before_planning = _target_snapshot(planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "goal-prepare",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--enable-supervised-delivery",
+            "--confirm-supervised-delivery",
+            "--supervised-delivery-authorized-by",
+            "Manas",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Preview only: supervised-delivery permission was not written" in result.output
+    assert "--enable-supervised-delivery --confirm-supervised-delivery" in result.output
+    source_policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert source_policy is not None
+    assert source_policy.auto_delivery_allowed is False
+    assert source_policy.auto_push_allowed is False
+    assert _target_snapshot(planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_goal_workflow_prepare_supervised_delivery_requires_paired_confirmation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "goal-prepare",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-prepare",
+            "--enable-supervised-delivery",
+            "--supervised-delivery-authorized-by",
+            "Manas",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "--confirm-supervised-delivery" in result.output
+    source_policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert source_policy is not None
+    assert source_policy.auto_delivery_allowed is False
+    assert source_policy.auto_push_allowed is False
+    assert load_rough_goal_preparation("sample", "INTAKE-0001", workspace_root=workspace) is None
+    assert list_execution_policy_approval_bundles("sample", workspace_root=workspace) == []
+
+
+def test_goal_workflow_prepare_explicit_supervised_delivery_opt_in_is_audited_and_stops_before_approval(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_goal_workflow_preparation(tmp_path, monkeypatch)
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "goal-prepare",
+            "--project",
+            "sample",
+            "--intake",
+            "INTAKE-0001",
+            "--confirm-prepare",
+            "--enable-supervised-delivery",
+            "--confirm-supervised-delivery",
+            "--supervised-delivery-authorized-by",
+            "Manas",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Supervised delivery enabled: True" in result.output
+    assert "Supervised delivery authorized by: Manas" in result.output
+    assert "Source policy permissions updated: True" in result.output
+    preparation = load_rough_goal_preparation("sample", "INTAKE-0001", workspace_root=workspace)
+    assert preparation is not None
+    assert preparation.supervised_delivery_enabled is True
+    assert preparation.supervised_delivery_authorized_by == "Manas"
+    assert preparation.source_policy_permissions_updated is True
+    source_policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    assert source_policy is not None
+    assert source_policy.status == "draft"
+    assert source_policy.auto_delivery_allowed is True
+    assert source_policy.auto_push_allowed is True
+    assert any(
+        "supervised-delivery preparation permission explicitly authorized by Manas"
+        in note
+        for note in source_policy.notes
+    )
+    for policy_id, task_id, item_id in zip(
+        preparation.policy_ids,
+        preparation.task_ids,
+        preparation.queue_item_ids,
+        strict=True,
+    ):
+        policy = load_execution_policy("sample", policy_id, workspace_root=workspace)
+        assert policy is not None
+        assert policy.status == "requested"
+        assert policy.allowed_task_ids == [task_id]
+        assert policy.allowed_queue_item_ids == [item_id]
+        assert policy.allowed_file_patterns == ["src/devo/main.py", "tests/test_project_planning.py"]
+        assert policy.auto_delivery_allowed is True
+        assert policy.auto_push_allowed is True
+    bundle = load_execution_policy_approval_bundle(
+        "sample", preparation.approval_bundle_id, workspace_root=workspace
+    )
+    assert bundle is not None
+    assert bundle.status == "requested"
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_goal_workflow_prepare_is_idempotent_for_policies_bundle_and_preparation(
     tmp_path: Path,
     monkeypatch,

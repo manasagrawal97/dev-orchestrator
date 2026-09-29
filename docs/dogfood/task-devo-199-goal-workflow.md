@@ -29,6 +29,8 @@ The test uses a fake subprocess worker and injects simulated external trusted-ru
 
 Live unattended TASK-DEVO-199 dogfood remains pending. Before declaring TASK-DEVO-199 complete, run a real bounded low-risk goal with five pending children through the approved Devo path, use a real configured worker, allow the external trusted runner to produce actual delivery evidence, and confirm that one reviewed bundle approval is followed by sequential completion without operator intervention between successful children. Any failed or ambiguous state must stop without automatic retry.
 
+The first live preparation attempt used `INTAKE-0039`, batch `B032`, queue `Q032`, and source policy `POL-0070`. It correctly stopped because deterministic materialization leaves auto-delivery and auto-push disabled and no supported preparation command had yet captured an operator's permission to enable them. The repository was not executed and no child policy or bundle approval was created. The resulting narrow fix adds an explicit, paired `goal-prepare` supervised-delivery opt-in with authorizer identity. It updates only the draft source permission snapshot, creates requested bounded child policies, and still stops at the one bundle-approval gate.
+
 ## Safety result
 
 One bundle approval does not mean one broad worker or parallel execution. Every child remains an independent task, one-task policy, worker context, review, validation, delivery request, and commit boundary. The supervisor advances the next child only after pushed trusted-delivery evidence completes and reconciles the current child. Failure, ambiguity, usage limits, review/validation blockers, delivery failure, timeout, recovery contradiction, or policy drift still stop the workflow without automatic retry.

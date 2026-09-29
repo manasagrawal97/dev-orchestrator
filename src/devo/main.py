@@ -2031,6 +2031,11 @@ def _print_rough_goal_preparation(
         f"max_changed_files={preparation.total_max_changed_files}",
         soft_wrap=True,
     )
+    console.print(f"Supervised delivery enabled: {preparation.supervised_delivery_enabled}")
+    console.print(
+        f"Supervised delivery authorized by: {preparation.supervised_delivery_authorized_by or 'none'}"
+    )
+    console.print(f"Source policy permissions updated: {preparation.source_policy_permissions_updated}")
     console.print(f"Created policies: {', '.join(preparation.created_policy_ids) if preparation.created_policy_ids else 'none'}")
     console.print(f"Reused policies: {', '.join(preparation.reused_policy_ids) if preparation.reused_policy_ids else 'none'}")
     console.print("Warnings:")
@@ -4745,9 +4750,39 @@ def prepare_project_goal_command(
         "--confirm-prepare",
         help="Create or reuse requested narrow child policies and one approval-bundle request.",
     ),
+    enable_supervised_delivery: bool = typer.Option(
+        False,
+        "--enable-supervised-delivery",
+        help="Opt in to preparing child policies that permit supervised trusted delivery.",
+    ),
+    confirm_supervised_delivery: bool = typer.Option(
+        False,
+        "--confirm-supervised-delivery",
+        help="Confirm the supervised-delivery permission update on the draft source policy snapshot.",
+    ),
+    supervised_delivery_authorized_by: str = typer.Option(
+        "",
+        "--supervised-delivery-authorized-by",
+        help="Operator authorizing the audited supervised-delivery preparation permission.",
+    ),
 ) -> None:
     """Prepare remaining materialized goal children in reviewed order, stopping before approval."""
     project_name = _resolve_project(project_name)
+    if confirm_supervised_delivery and not enable_supervised_delivery:
+        raise typer.BadParameter(
+            "--confirm-supervised-delivery requires --enable-supervised-delivery.",
+            param_hint="--confirm-supervised-delivery",
+        )
+    if enable_supervised_delivery and not confirm_supervised_delivery:
+        raise typer.BadParameter(
+            "Supervised delivery remains disabled without --confirm-supervised-delivery.",
+            param_hint="--confirm-supervised-delivery",
+        )
+    if enable_supervised_delivery and not supervised_delivery_authorized_by.strip():
+        raise typer.BadParameter(
+            "--supervised-delivery-authorized-by is required for the audited opt-in.",
+            param_hint="--supervised-delivery-authorized-by",
+        )
     if not confirm_prepare:
         console.print("[yellow]Preview only; no goal preparation artifacts were written.[/yellow]")
         console.print(
@@ -4759,9 +4794,27 @@ def prepare_project_goal_command(
             "Safety: goal preparation stops before policy/bundle approval and never starts workers or delivery.",
             soft_wrap=True,
         )
+        console.print(
+            f"Supervised delivery opt-in: devo project goal-prepare --project {project_name} --intake {intake_id} "
+            "--confirm-prepare --enable-supervised-delivery --confirm-supervised-delivery "
+            '--supervised-delivery-authorized-by "<name>"',
+            soft_wrap=True,
+        )
+        if enable_supervised_delivery:
+            console.print(
+                "Preview only: supervised-delivery permission was not written. Add --confirm-prepare to create "
+                "the requested child policies and approval-bundle request.",
+                soft_wrap=True,
+            )
         return
     try:
-        preparation, json_path, markdown_path = prepare_rough_goal_intake(project_name, intake_id)
+        preparation, json_path, markdown_path = prepare_rough_goal_intake(
+            project_name,
+            intake_id,
+            supervised_delivery_authorized_by=(
+                supervised_delivery_authorized_by if enable_supervised_delivery else None
+            ),
+        )
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--intake") from exc
     console.print(f"[green]Goal prepared[/green] {project_name}")

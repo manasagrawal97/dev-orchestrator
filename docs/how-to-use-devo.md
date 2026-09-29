@@ -353,7 +353,15 @@ TASK-DEVO-199 provides a shorter operator path after a rough goal has been revie
 devo project goal-prepare --project MyProject --intake INTAKE-0001
 
 # Create/reuse narrow requested child policies and one bundle request.
+# Supervised delivery remains disabled unless the operator explicitly opts in.
 devo project goal-prepare --project MyProject --intake INTAKE-0001 --confirm-prepare
+
+# For a reviewed goal that should use the durable sequential supervisor and
+# scheduled trusted delivery, opt in explicitly during preparation.
+devo project goal-prepare --project MyProject --intake INTAKE-0001 --confirm-prepare `
+  --enable-supervised-delivery `
+  --confirm-supervised-delivery `
+  --supervised-delivery-authorized-by "Manas"
 
 # Read the compact approval/execution/recovery view without mutation.
 devo project goal-status --project MyProject --intake INTAKE-0001
@@ -368,6 +376,8 @@ devo project goal-run --project MyProject --intake INTAKE-0001 --confirm-run
 ```
 
 One approval does not merge the children into one task or commit. Every child keeps its own policy, queue-worker context, strict worker result, objective review, approved validation, delivery request, and trusted-runner commit. `goal-run` delegates to the existing durable approved-bundle supervisor, waits only for external trusted-delivery evidence, rechecks scope between children, and selects the next child only after the prior child is canonically completed. A failed or ambiguous worker, review, validation, recovery, policy, or delivery state stops the goal without automatic retry. Rerun the same confirmed command only when `goal-status` identifies a safe resume action.
+
+The supervised-delivery opt-in updates only the still-draft materialized source policy's permission snapshot and records the authorizer in the preparation artifacts. It does not approve the source policy, child policies, or bundle; start a worker; run validation; create delivery; invoke the trusted runner; stage; commit; or push. Omitting either confirmation flag leaves the permissions disabled and preparation fails closed for supervised execution.
 
 On Windows, point validation caches and pytest `--basetemp` at a known operator-writable safe temporary root. `%TEMP%` is suitable only when the current process and subprocesses can create, enumerate, and clean its directories; restricted-token or Python `0o700` ACL behavior can otherwise produce `WinError 5` before tests run. Treat this as environment setup, not permission to write temp artifacts into the target repository.
 

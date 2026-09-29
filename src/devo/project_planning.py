@@ -1645,6 +1645,9 @@ class RoughGoalPreparation(BaseModel):
     reused_policy_ids: list[str] = Field(default_factory=list)
     total_max_tasks: int = 0
     total_max_changed_files: int = 0
+    supervised_delivery_enabled: bool = False
+    supervised_delivery_authorized_by: str | None = None
+    source_policy_permissions_updated: bool = False
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
     next_action: str = ""
@@ -10049,10 +10052,12 @@ def prepare_rough_goal_intake(
     project_name: str,
     intake_id: str,
     *,
+    supervised_delivery_authorized_by: str | None = None,
     workspace_root: Path | None = None,
 ) -> tuple[RoughGoalPreparation, Path, Path]:
     """Prepare the remaining materialized goal as requested one-task policies and one bundle."""
     root = workspace_root or get_workspace_root()
+    supervised_delivery_authorized_by = (supervised_delivery_authorized_by or "").strip() or None
     _require_project(project_name, root)
     intake = load_rough_goal_intake_plan(project_name, intake_id, workspace_root=root)
     if not intake:
@@ -10206,6 +10211,14 @@ def prepare_rough_goal_intake(
             blockers.append("Materialized source policy forbidden paths no longer match the materialization.")
         if source_policy.validation_commands != materialization.validation_notes:
             blockers.append("Materialized source policy validation commands no longer match the materialization.")
+        if supervised_delivery_authorized_by and source_policy.status != "draft":
+            blockers.append(
+                "Supervised-delivery opt-in may update only the materialized draft source policy; "
+                f"{source_policy.policy_id} is {source_policy.status}."
+            )
+        if supervised_delivery_authorized_by:
+            source_auto_delivery = True
+            source_auto_push = True
 
     task_matches: dict[str, list[BacklogTask]] = {task_id: [] for task_id in created_task_ids}
     for task in backlog.tasks if backlog else []:
@@ -10490,6 +10503,38 @@ def prepare_rough_goal_intake(
     if blockers:
         raise ValueError("Cannot prepare rough goal intake: " + "; ".join(_dedupe(blockers)))
 
+    source_policy_permissions_updated = False
+    if supervised_delivery_authorized_by and source_policy:
+        if not source_policy.auto_delivery_allowed or not source_policy.auto_push_allowed:
+            now = datetime.now(UTC)
+            source_policy = source_policy.model_copy(
+                update={
+                    "auto_delivery_allowed": True,
+                    "auto_push_allowed": True,
+                    "updated_at": now,
+                    "notes": [
+                        *source_policy.notes,
+                        (
+                            f"{now.isoformat()}: supervised-delivery preparation permission explicitly authorized "
+                            f"by {supervised_delivery_authorized_by} for rough goal {intake.intake_id}. "
+                            "This updates the draft source permission snapshot only; execution still requires "
+                            "approval of the bounded child-policy bundle."
+                        ),
+                    ],
+                }
+            )
+            _write_execution_policy(project_name, source_policy, workspace_root=root)
+            source_policy_permissions_updated = True
+            warnings.append(
+                f"Enabled supervised-delivery permissions on draft source policy {source_policy.policy_id} "
+                f"with explicit authorization from {supervised_delivery_authorized_by}."
+            )
+        else:
+            warnings.append(
+                f"Draft source policy {source_policy.policy_id} already records supervised-delivery permissions; "
+                f"authorization was reaffirmed by {supervised_delivery_authorized_by}."
+            )
+
     created_policy_ids: list[str] = []
     reused_policy_ids: list[str] = []
     prepared_policies: list[BatchExecutionPolicy] = []
@@ -10573,6 +10618,15 @@ def prepare_rough_goal_intake(
         reused_policy_ids=reused_policy_ids,
         total_max_tasks=bundle.total_max_tasks,
         total_max_changed_files=bundle.total_max_changed_files,
+        supervised_delivery_enabled=bool(source_auto_delivery and source_auto_push),
+        supervised_delivery_authorized_by=(
+            supervised_delivery_authorized_by
+            or (existing_preparation.supervised_delivery_authorized_by if existing_preparation else None)
+        ),
+        source_policy_permissions_updated=(
+            source_policy_permissions_updated
+            or (existing_preparation.source_policy_permissions_updated if existing_preparation else False)
+        ),
         warnings=_dedupe(warnings),
         blockers=[],
         next_action=(
@@ -11551,6 +11605,9 @@ def render_rough_goal_preparation_markdown(preparation: RoughGoalPreparation) ->
         f"- Approval bundle status: `{preparation.approval_bundle_status}`",
         f"- Total max tasks: `{preparation.total_max_tasks}`",
         f"- Total max changed files: `{preparation.total_max_changed_files}`",
+        f"- Supervised delivery enabled: `{preparation.supervised_delivery_enabled}`",
+        f"- Supervised delivery authorized by: `{preparation.supervised_delivery_authorized_by or 'none'}`",
+        f"- Source policy permissions updated: `{preparation.source_policy_permissions_updated}`",
         f"- Created: `{preparation.created_at.isoformat()}`",
         f"- Updated: `{preparation.updated_at.isoformat()}`",
         "",
