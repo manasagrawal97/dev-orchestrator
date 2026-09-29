@@ -13,3 +13,7 @@ Approval bundle `PAB-0005` authorizes the five children as one bounded goal. The
 ## Sequential execution
 
 The five children run one at a time in their approved order. The durable supervisor starts the next child only after the current child finishes and its result is recorded, so child runs never overlap or execute in parallel.
+
+## Trusted delivery
+
+Codex workers do not commit or push their changes. Delivery is reserved for the scheduled trusted runner and occurs only after worker evidence, human review, validation evidence, and the delivery request gates have passed.
