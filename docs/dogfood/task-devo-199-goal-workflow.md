@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TASK-DEVO-199 reduces the reviewed-goal path to three high-level commands: prepare the materialized goal, inspect its current state, and run or resume it after one bounded bundle approval. This report records the implementation trace and the deterministic five-child integration proof added by T058. It does not record completed live unattended dogfood.
+TASK-DEVO-199 reduces the reviewed-goal path to three high-level commands: prepare the materialized goal, inspect its current state, and run or resume it after one bounded bundle approval. This report records the implementation trace, the deterministic five-child integration proof added by T058, and the completed live five-child dogfood.
 
 ## Implementation trace
 
@@ -27,9 +27,9 @@ The test uses a fake subprocess worker and injects simulated external trusted-ru
 
 ## Live dogfood status
 
-Live unattended TASK-DEVO-199 dogfood remains pending. Before declaring TASK-DEVO-199 complete, run a real bounded low-risk goal with five pending children through the approved Devo path, use a real configured worker, allow the external trusted runner to produce actual delivery evidence, and confirm that one reviewed bundle approval is followed by sequential completion without operator intervention between successful children. Any failed or ambiguous state must stop without automatic retry.
+Live `INTAKE-0039` dogfood completed under batch `B032`, queue `Q032`, source policy `POL-0070`, child policies `POL-0071` through `POL-0075`, and one approved bundle `PAB-0005`. Durable supervisor `ABSR-20260929043832601599` visited the five policies in order, created `QWR-0064` through `QWR-0068`, and finished with `status=completed`, `stop_reason=bundle_completed`, `children_completed=5`, and `resume_count=0`. Each child used a real configured Codex worker, deterministic low-risk review, approved validation, and its own scheduled trusted-delivery request (`REQ-0112` through `REQ-0116`). No operator action occurred between successful children.
 
-The first live preparation attempt used `INTAKE-0039`, batch `B032`, queue `Q032`, and source policy `POL-0070`. It correctly stopped because deterministic materialization leaves auto-delivery and auto-push disabled and no supported preparation command had yet captured an operator's permission to enable them. The repository was not executed and no child policy or bundle approval was created. The resulting narrow fix adds an explicit, paired `goal-prepare` supervised-delivery opt-in with authorizer identity. It updates only the draft source permission snapshot, creates requested bounded child policies, and still stops at the one bundle-approval gate.
+The first live preparation attempt correctly stopped because deterministic materialization leaves auto-delivery and auto-push disabled and no supported preparation command had yet captured an operator's permission to enable them. The resulting narrow fix added an explicit, paired `goal-prepare` supervised-delivery opt-in with authorizer identity. It updated only the draft source permission snapshot, created requested bounded child policies, and still stopped at the one bundle-approval gate before the successful live run.
 
 ## Safety result
 
@@ -43,4 +43,4 @@ One bundle approval does not mean one broad worker or parallel execution. Every 
 
 ## Next roadmap
 
-After live unattended dogfood closes TASK-DEVO-199, TASK-DEVO-200 should expose this workflow in the existing UI as an operator console. TASK-DEVO-201 should then add the local/background service that powers continuous state refresh and approved execution. The usability acceptance target for those two slices is zero PowerShell during normal Devo use. PowerShell and the CLI remain available for auditing, expert diagnosis, and recovery.
+TASK-DEVO-199 is complete. TASK-DEVO-200 should expose this workflow in the existing UI as an operator console. TASK-DEVO-201 should then add the local/background service that powers continuous state refresh and approved execution. The usability acceptance target for those two slices is zero PowerShell during normal Devo use. PowerShell and the CLI remain available for auditing, expert diagnosis, and recovery.

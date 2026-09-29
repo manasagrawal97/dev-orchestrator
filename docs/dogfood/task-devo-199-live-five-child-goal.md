@@ -16,15 +16,16 @@ The five children run one at a time in their approved order. The durable supervi
 
 ## Trusted delivery
 
-Codex workers do not commit or push their changes. Delivery is reserved for the scheduled trusted runner and occurs only after worker evidence, human review, validation evidence, and the delivery request gates have passed.
+Codex workers do not commit or push their changes. Delivery is reserved for the scheduled trusted runner and occurs only after worker evidence, deterministic low-risk review, validation evidence, and the delivery request gates have passed.
 
 ## Final verdict
 
-- Final bundle status: `pending`
-- Child 1 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
-- Child 2 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
-- Child 3 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
-- Child 4 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
-- Child 5 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
-- Friction: `pending`
-- TASK-DEVO-199 completion decision: `pending`
+- Final bundle status: `bundle_completed` via supervisor `ABSR-20260929043832601599`; children completed: `5`; resume count: `0`.
+- Child 1 - `QWR-0064`; `REQ-0112`; commit `0e7c8181874f2c72aedec6c65b3c8ad9011408f7`; pushed.
+- Child 2 - `QWR-0065`; `REQ-0113`; commit `ca257aa34e00e43927a89600c31cd37d6da93523`; pushed.
+- Child 3 - `QWR-0066`; `REQ-0114`; commit `ea0eb8f3080b3d9e565beae66fa8099f68f3b6ee`; pushed.
+- Child 4 - `QWR-0067`; `REQ-0115`; commit `38fa01d92fdda79271bada127e10e1b4c5a020e1`; pushed.
+- Child 5 - `QWR-0068`; `REQ-0116`; commit `ea92b1d190637de677c498ed496d2ea47576e21e`; pushed.
+- Execution evidence: five distinct real Codex worker runs and ingests, five passed deterministic low-risk reviews, five passed approved validations, five scheduled trusted-runner commits, no direct runner invocation, no manual commit/push, no parallel execution, and no retry.
+- Friction: scheduled delivery intentionally adds a wait between children, and `goal-status` still displayed the preparation label `awaiting_approval` after the approved bundle and completed supervisor proved terminal runtime state. Future console/service work should reconcile that label without guessing.
+- TASK-DEVO-199 completion decision: `complete`.
