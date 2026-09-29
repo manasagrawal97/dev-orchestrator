@@ -17,3 +17,14 @@ The five children run one at a time in their approved order. The durable supervi
 ## Trusted delivery
 
 Codex workers do not commit or push their changes. Delivery is reserved for the scheduled trusted runner and occurs only after worker evidence, human review, validation evidence, and the delivery request gates have passed.
+
+## Final verdict
+
+- Final bundle status: `pending`
+- Child 1 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
+- Child 2 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
+- Child 3 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
+- Child 4 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
+- Child 5 — run ID: `pending`; request ID: `pending`; commit ID: `pending`
+- Friction: `pending`
+- TASK-DEVO-199 completion decision: `pending`
