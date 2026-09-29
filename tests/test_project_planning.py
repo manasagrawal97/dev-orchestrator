@@ -2682,7 +2682,7 @@ def test_goal_workflow_run_fails_closed_on_approved_child_scope_drift(tmp_path: 
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
 
 
-def test_goal_workflow_run_preserves_existing_low_risk_supervisor_boundary(
+def test_goal_workflow_run_allows_approved_goal_scoped_medium_risk_supervision(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -2700,10 +2700,77 @@ def test_goal_workflow_run_preserves_existing_low_risk_supervisor_boundary(
     )
 
     assert preparation.policy_ids[0] == "POL-0002"
-    assert result.status == "blocked"
-    assert any("risk medium is not eligible" in blocker for blocker in result.blockers)
+    assert result.status != "blocked"
+    assert result.selected_policy_id == "POL-0002"
+    assert result.selected_queue_item_id == "QI002"
+    assert result.would_run_worker is True
+    assert result.would_run_review is False
+    assert result.would_run_validation is False
+    assert result.planned_action == "advance the selected child through its worker, then stop for human semantic review"
     assert result.workflow_mutated is False
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+
+
+def test_goal_workflow_run_rejects_medium_risk_when_goal_bundle_does_not_allow_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(
+        tmp_path,
+        monkeypatch,
+        medium_task_id="T055",
+    )
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert bundle is not None
+    bundle_json, _bundle_markdown = execution_policy_approval_bundle_artifact_paths(
+        "sample", "PAB-0001", workspace_root=workspace
+    )
+    bundle_json.write_text(
+        bundle.model_copy(update={"allows_non_low_risk": False}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    check = project_planning_module.check_approved_execution_policy_approval_bundle(
+        "sample", "PAB-0001", workspace_root=workspace
+    )
+
+    assert check.eligible is False
+    assert any("POL-0002: risk medium is not eligible" in blocker for blocker in check.blockers)
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
+    assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+
+
+def test_goal_workflow_medium_risk_worker_stops_at_human_semantic_review(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_approved_prepared_goal(
+        tmp_path,
+        monkeypatch,
+        medium_task_id="T055",
+    )
+    _init_git_repo(project_path)
+    marker = tmp_path / "goal-workflow-medium-worker-marker.txt"
+    _set_fake_codex_worker_config(tmp_path, "completed_with_goal_change", marker=marker)
+
+    _preparation, result = supervise_prepared_goal(
+        "sample",
+        "INTAKE-0001",
+        dry_run=False,
+        workspace_root=workspace,
+    )
+
+    assert result.status == "blocked"
+    assert result.stop_reason == "waiting_human_review"
+    assert result.selected_policy_id == "POL-0002"
+    assert result.selected_queue_item_id == "QI002"
+    assert result.selected_queue_worker_run_id == "QWR-0001"
+    assert marker.exists()
+    runs = list_queue_worker_runs("sample", workspace_root=workspace)
+    assert len(runs) == 1
+    assert runs[0].status == "waiting_review"
+    assert list_codex_worker_reviews("sample", workspace_root=workspace) == []
     assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
 
 
@@ -3672,6 +3739,45 @@ def test_auto_run_approved_rejects_drifted_child_before_worker(tmp_path: Path, m
     assert list_queue_worker_runs("sample", workspace_root=workspace) == []
     assert list_codex_worker_batch_runs("sample", workspace_root=workspace) == []
     assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+
+
+def test_auto_run_approved_rejects_medium_risk_for_generic_bundle_even_with_matching_fingerprint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    policy = load_execution_policy("sample", "POL-0001", workspace_root=workspace)
+    bundle = load_execution_policy_approval_bundle("sample", "PAB-0001", workspace_root=workspace)
+    assert policy is not None
+    assert bundle is not None
+    medium_policy = policy.model_copy(update={"risk_level": "medium"})
+    policy_json, _policy_markdown = execution_policy_artifact_paths(
+        "sample", "POL-0001", workspace_root=workspace
+    )
+    policy_json.write_text(medium_policy.model_dump_json(indent=2), encoding="utf-8")
+    bundle_json, _bundle_markdown = execution_policy_approval_bundle_artifact_paths(
+        "sample", "PAB-0001", workspace_root=workspace
+    )
+    fingerprints = dict(bundle.policy_scope_fingerprints)
+    fingerprints[medium_policy.policy_id] = project_planning_module.execution_policy_scope_fingerprint(
+        medium_policy
+    )
+    bundle_json.write_text(
+        bundle.model_copy(update={"policy_scope_fingerprints": fingerprints}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    check = project_planning_module.check_approved_execution_policy_approval_bundle(
+        "sample", "PAB-0001", workspace_root=workspace
+    )
+
+    assert check.eligible is False
+    assert bundle.goal_intake_id is None
+    assert bundle.allows_non_low_risk is False
+    assert any("POL-0001: risk medium is not eligible" in blocker for blocker in check.blockers)
+    assert not any("policy scope changed after bundle approval" in blocker for blocker in check.blockers)
+    assert list_queue_worker_runs("sample", workspace_root=workspace) == []
 
 
 def test_auto_run_approved_does_not_retry_failed_child_automatically(tmp_path: Path, monkeypatch) -> None:
@@ -11367,6 +11473,12 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "    changed_path.write_text(\"print('auto-run-approved')\\n\", encoding='utf-8')",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed one scoped change', 'work_performed': ['fake work'], 'changed_files': ['src/feature.py'], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
+                "elif mode == 'completed_with_goal_change':",
+                "    changed_path = Path.cwd() / 'src' / 'devo' / 'main.py'",
+                "    changed_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    changed_path.write_text(\"print('goal-scoped-medium')\\n\", encoding='utf-8')",
+                "    result_path.parent.mkdir(parents=True, exist_ok=True)",
+                "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed one goal-scoped change', 'work_performed': ['fake work'], 'changed_files': ['src/devo/main.py'], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",
                 "elif mode == 'completed_with_task_change':",
                 "    prompt_text = prompt_path.read_text(encoding='utf-8')",
                 "    match = re.search(r'^- Task id: `([A-Za-z0-9_-]+)`$', prompt_text, re.MULTILINE)",

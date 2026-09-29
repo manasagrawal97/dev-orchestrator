@@ -6069,9 +6069,15 @@ def check_approved_execution_policy_approval_bundle(
         policy_check = check_execution_policy(project_name, policy.policy_id, workspace_root=root)
         blockers.extend(f"{policy.policy_id}: {item}" for item in policy_check.blockers)
         warnings.extend(f"{policy.policy_id}: {item}" for item in policy_check.warnings)
-        if policy.risk_level != "low":
+        goal_scoped_medium_risk_allowed = bool(
+            bundle.goal_intake_id
+            and bundle.allows_non_low_risk
+            and policy.risk_level == "medium"
+        )
+        if policy.risk_level != "low" and not goal_scoped_medium_risk_allowed:
             blockers.append(
-                f"{policy.policy_id}: risk {policy.risk_level} is not eligible; auto-run-approved requires low-risk child policies."
+                f"{policy.policy_id}: risk {policy.risk_level} is not eligible; auto-run-approved requires low-risk "
+                "child policies unless an approved goal-scoped bundle explicitly allows medium-risk supervision."
             )
         if not policy.requires_worker_review or not policy.requires_validation_evidence:
             blockers.append(f"{policy.policy_id}: worker review and validation evidence gates must remain required.")
@@ -8395,6 +8401,7 @@ def auto_run_approved(
         )
 
     # Recheck happened above in this same call, immediately before any state-changing service is invoked.
+    selected_policy = _require_execution_policy(project_name, selected_policy_id, root)
     loop_result = loop_queue_worker_run(
         project_name,
         selected_policy_id,
@@ -8404,7 +8411,7 @@ def auto_run_approved(
         max_steps=max_steps,
         dry_run=False,
         auto_worker=True,
-        auto_review=True,
+        auto_review=selected_policy.risk_level == "low",
         auto_validation=True,
         stop_on_waiting_worker=False,
         stop_on_delivery_request=True,
@@ -8810,18 +8817,30 @@ def _supervise_approved_bundle_locked(
             if preview.selected_queue_worker_run_id
             else None
         )
+        selected_policy = (
+            load_execution_policy(project_name, preview.selected_policy_id, workspace_root=root)
+            if preview.selected_policy_id
+            else None
+        )
+        automatic_review_allowed = bool(selected_policy and selected_policy.risk_level == "low")
         current_status = selected_run.status if selected_run else None
         selected_task_id = selected_run.selected_task_id if selected_run else None
         new_child = bool(preview.selected_policy_id and not selected_run)
         would_wait = current_status == "delivery_requested"
         would_run_worker = new_child or current_status in {"handoff_ready", "waiting_worker"}
-        would_run_review = would_run_worker or current_status == "waiting_review"
-        would_run_validation = would_run_review or current_status == "waiting_validation"
+        would_run_review = automatic_review_allowed and (
+            would_run_worker or current_status == "waiting_review"
+        )
+        would_run_validation = (
+            would_run_review or current_status == "waiting_validation"
+        )
         planned_action = "no action; bundle is complete"
         if preview.blockers:
             planned_action = "stop and resolve approved bundle or child blockers"
         elif would_wait:
             planned_action = "resume waiting for the existing trusted delivery request, then reconcile"
+        elif preview.selected_policy_id and selected_policy and selected_policy.risk_level == "medium":
+            planned_action = "advance the selected child through its worker, then stop for human semantic review"
         elif preview.selected_policy_id:
             planned_action = "advance the selected child through existing worker, review, validation, and delivery-request gates"
         if resumable and not preview.blockers and preview.status != "completed":
