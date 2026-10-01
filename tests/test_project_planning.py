@@ -7906,6 +7906,76 @@ def test_codex_worker_batch_run_does_not_flag_usage_limit_from_schema_echo(tmp_p
     assert _target_snapshot(project_path) == before_target
 
 
+def test_codex_worker_batch_run_detects_explicit_codex_usage_limit_stderr(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "codex_usage_limit_exit")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    runs = list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert len(runs) == 1
+    subprocess_run = json.loads(runs[0].read_text(encoding="utf-8"))
+    assert subprocess_run["status"] == "failed_process"
+    assert subprocess_run["exit_code"] == 1
+    assert subprocess_run["usage_limit_detected"] is True
+    assert any("usage_limit_detected" in warning for warning in subprocess_run["warnings"])
+    stderr = Path(subprocess_run["stderr_path"]).read_text(encoding="utf-8")
+    assert "You've hit your usage limit" in stderr
+    assert "Oct 4th, 2026 10:25 AM" in stderr
+    assert list_codex_worker_ingests("sample", workspace_root=workspace) == []
+    assert _target_snapshot(project_path) == before_target
+
+
+def test_codex_worker_batch_run_generic_exit_code_is_not_usage_limit(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    _set_fake_codex_worker_config(tmp_path, "fail")
+    before_target = _target_snapshot(project_path)
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "codex-worker-batch-run",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--no-require-scheduler-healthy",
+            "--confirm-codex-batch-run",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    runs = list(codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json"))
+    assert len(runs) == 1
+    subprocess_run = json.loads(runs[0].read_text(encoding="utf-8"))
+    assert subprocess_run["status"] == "failed_process"
+    assert subprocess_run["exit_code"] == 7
+    assert subprocess_run["usage_limit_detected"] is False
+    assert not any("usage_limit_detected" in warning for warning in subprocess_run["warnings"])
+    assert _target_snapshot(project_path) == before_target
+
+
 @pytest.mark.parametrize(
     ("mode", "expected_text"),
     [
@@ -11792,6 +11862,9 @@ def _set_fake_codex_worker_config(tmp_path: Path, mode: str, *, marker: Path | N
                 "    time.sleep(5)",
                 "elif mode == 'fail':",
                 "    sys.exit(7)",
+                "elif mode == 'codex_usage_limit_exit':",
+                "    print(\"ERROR: You've hit your usage limit. Try again at Oct 4th, 2026 10:25 AM.\", file=sys.stderr)",
+                "    sys.exit(1)",
                 "elif mode == 'completed':",
                 "    result_path.parent.mkdir(parents=True, exist_ok=True)",
                 "    result_path.write_text(json.dumps({'status': 'completed', 'summary': 'fake worker completed', 'work_performed': ['fake work'], 'changed_files': [], 'commands_run': ['fake command'], 'risks': [], 'recommended_next_action': ''}, indent=2), encoding='utf-8')",

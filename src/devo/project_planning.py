@@ -18598,6 +18598,8 @@ def _codex_worker_subprocess_exception_exit_code(exc: OSError) -> int:
 def _contains_usage_limit_hint(text: str) -> bool:
     normalized_lines = [line.strip().lower() for line in text.splitlines()]
     strong_failure_patterns = [
+        "you've hit your usage limit",
+        "you have hit your usage limit",
         "usage limit reached",
         "usage limit exceeded",
         "usage limit has been reached",
