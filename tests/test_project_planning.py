@@ -3707,6 +3707,172 @@ def test_auto_run_approved_dry_run_rechecks_bundle_without_mutation(tmp_path: Pa
     assert _target_snapshot(project_path) == before_target
 
 
+def test_authoritative_queue_worker_runs_follow_retry_lineage_without_hiding_unrelated_runs() -> None:
+    parent = QueueWorkerRun(
+        project="sample",
+        run_id="QWR-0001",
+        policy_id="POL-0001",
+        batch_id="B001",
+        queue_id="Q001",
+        selected_queue_item_id="QI001",
+        selected_task_id="T001",
+        status="waiting_review",
+    )
+    retry = parent.model_copy(
+        update={
+            "run_id": "QWR-0002",
+            "status": "paused",
+            "retry_of": parent.run_id,
+        }
+    )
+    authoritative_retry = retry.model_copy(
+        update={
+            "run_id": "QWR-0003",
+            "status": "completed",
+            "retry_of": retry.run_id,
+        }
+    )
+    unrelated = parent.model_copy(update={"run_id": "QWR-0004", "retry_of": None})
+    mismatched_retries = [
+        parent.model_copy(update={"run_id": "QWR-0005", "policy_id": "POL-0002", "retry_of": parent.run_id}),
+        parent.model_copy(update={"run_id": "QWR-0006", "batch_id": "B002", "retry_of": parent.run_id}),
+        parent.model_copy(update={"run_id": "QWR-0007", "queue_id": "Q002", "retry_of": parent.run_id}),
+        parent.model_copy(
+            update={"run_id": "QWR-0008", "selected_queue_item_id": "QI002", "retry_of": parent.run_id}
+        ),
+        parent.model_copy(update={"run_id": "QWR-0009", "selected_task_id": "T002", "retry_of": parent.run_id}),
+    ]
+
+    authoritative = project_planning_module._authoritative_queue_worker_runs(
+        [parent, retry, authoritative_retry, unrelated, *mismatched_retries]
+    )
+
+    assert [run.run_id for run in authoritative] == [
+        "QWR-0003",
+        "QWR-0004",
+        "QWR-0005",
+        "QWR-0006",
+        "QWR-0007",
+        "QWR-0008",
+        "QWR-0009",
+    ]
+    assert unrelated in authoritative
+    assert all(run in authoritative for run in mismatched_retries)
+
+
+def test_auto_run_approved_uses_completed_authoritative_retry_and_advances_next_child(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    _set_queue_item_status(workspace, "QI001", "completed")
+    lineage = [
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0001",
+            policy_id="POL-0001",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI001",
+            selected_task_id="T001",
+            status="waiting_review",
+        ),
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0002",
+            policy_id="POL-0001",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI001",
+            selected_task_id="T001",
+            status="paused",
+            retry_of="QWR-0001",
+        ),
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0003",
+            policy_id="POL-0001",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI001",
+            selected_task_id="T001",
+            status="completed",
+            retry_of="QWR-0002",
+        ),
+    ]
+    for run in lineage:
+        project_planning_module._write_queue_worker_run("sample", run, workspace_root=workspace)
+
+    result = project_planning_module.auto_run_approved(
+        "sample",
+        "PAB-0001",
+        dry_run=True,
+        workspace_root=workspace,
+    )
+
+    assert result.status == "ready"
+    assert result.bundle_check is not None and result.bundle_check.eligible is True
+    assert result.selected_policy_id == "POL-0002"
+    assert result.selected_queue_item_id == "QI002"
+    assert result.selected_queue_worker_run_id is None
+    assert not any("multiple active queue-worker runs" in blocker for blocker in result.blockers)
+    assert not any("policy drift" in blocker.lower() for blocker in result.blockers)
+
+    supervisor_preview = supervise_approved_bundle(
+        "sample",
+        "PAB-0001",
+        dry_run=True,
+        workspace_root=workspace,
+    )
+
+    assert supervisor_preview.status == "ready"
+    assert supervisor_preview.selected_policy_id == "POL-0002"
+    assert supervisor_preview.selected_queue_item_id == "QI002"
+    assert supervisor_preview.selected_queue_worker_run_id is None
+    assert supervisor_preview.stop_reason == "preview only"
+
+
+def test_auto_run_approved_still_blocks_multiple_unrelated_active_runs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_approved_execution_policy_bundle(tmp_path, workspace)
+    for run_id in ["QWR-0001", "QWR-0002"]:
+        project_planning_module._write_queue_worker_run(
+            "sample",
+            QueueWorkerRun(
+                project="sample",
+                run_id=run_id,
+                policy_id="POL-0001",
+                batch_id="B001",
+                queue_id="Q001",
+                selected_queue_item_id="QI001",
+                selected_task_id="T001",
+                status="waiting_review",
+            ),
+            workspace_root=workspace,
+        )
+
+    result = project_planning_module.auto_run_approved(
+        "sample",
+        "PAB-0001",
+        dry_run=True,
+        workspace_root=workspace,
+    )
+
+    assert result.status == "blocked"
+    assert any(
+        "multiple active queue-worker runs" in blocker
+        and "QWR-0001" in blocker
+        and "QWR-0002" in blocker
+        for blocker in result.blockers
+    )
+
+
 def test_auto_run_approved_confirmed_blocks_unhealthy_scheduler_before_worker(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)

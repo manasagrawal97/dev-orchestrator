@@ -6161,7 +6161,9 @@ def check_approved_execution_policy_approval_bundle(
     policies: list[BatchExecutionPolicy] = []
     queue_item_owners: dict[tuple[str, str], str] = {}
     task_owners: dict[str, str] = {}
-    all_runs = list_queue_worker_runs(project_name, workspace_root=root)
+    all_runs = _authoritative_queue_worker_runs(
+        list_queue_worker_runs(project_name, workspace_root=root)
+    )
     active_statuses = {
         "handoff_ready",
         "waiting_worker",
@@ -6170,9 +6172,7 @@ def check_approved_execution_policy_approval_bundle(
         "ready_for_delivery_request",
         "delivery_requested",
     }
-    bundle_runs = _authoritative_queue_worker_runs(
-        [run for run in all_runs if run.policy_id in bundle.policy_ids]
-    )
+    bundle_runs = [run for run in all_runs if run.policy_id in bundle.policy_ids]
     bundle_active_runs = [run for run in bundle_runs if run.status in active_statuses]
     if len(bundle_active_runs) > 1:
         blockers.append(
@@ -8492,7 +8492,9 @@ def auto_run_approved(
         "ready_for_delivery_request",
         "delivery_requested",
     }
-    all_runs = list_queue_worker_runs(project_name, workspace_root=root)
+    all_runs = _authoritative_queue_worker_runs(
+        list_queue_worker_runs(project_name, workspace_root=root)
+    )
     active_runs = [
         run for run in all_runs if run.policy_id in bundle.policy_ids and run.status in active_statuses
     ]
@@ -8715,7 +8717,9 @@ def _approved_bundle_restart_worker_blockers(
         return []
     blockers: list[str] = []
     run_directory = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root)
-    for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
+    for run in _authoritative_queue_worker_runs(
+        list_queue_worker_runs(project_name, workspace_root=workspace_root)
+    ):
         if run.policy_id not in bundle.policy_ids or run.status != "waiting_worker":
             continue
         ingests = [
@@ -8760,7 +8764,9 @@ def _recover_completed_approved_bundle_worker_attempts(
     recovered: list[str] = []
     blockers: list[str] = []
     run_directory = codex_worker_subprocess_run_directory(project_name, workspace_root=workspace_root)
-    for run in list_queue_worker_runs(project_name, workspace_root=workspace_root):
+    for run in _authoritative_queue_worker_runs(
+        list_queue_worker_runs(project_name, workspace_root=workspace_root)
+    ):
         if run.policy_id not in bundle.policy_ids or run.status != "waiting_worker":
             continue
         if any(
@@ -17811,7 +17817,8 @@ def _latest_queue_worker_run_for_item(
         and run.selected_queue_item_id
         and _normalize_queue_item_id(run.selected_queue_item_id) == normalized_item
     ]
-    return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+    authoritative = _authoritative_queue_worker_runs(candidates)
+    return sorted(authoritative, key=lambda item: item.updated_at, reverse=True)[0] if authoritative else None
 
 
 def _authoritative_queue_worker_runs(runs: list[QueueWorkerRun]) -> list[QueueWorkerRun]:
