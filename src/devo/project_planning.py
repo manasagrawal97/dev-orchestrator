@@ -108,7 +108,7 @@ ALLOWED_WORKER_RUN_STATUSES = {
 }
 ALLOWED_WORKER_REPORT_STATUSES = {"missing", "present", "validated", "rejected"}
 ALLOWED_WORKER_REPORTED_STATUSES = {"completed", "failed", "blocked", "partial", "usage_limit", "needs_approval"}
-ALLOWED_WORKER_REVIEW_STATUSES = {"draft", "reviewed_passed", "reviewed_needs_changes", "rejected"}
+ALLOWED_WORKER_REVIEW_STATUSES = {"draft", "reviewed_passed", "reviewed_needs_changes", "rejected", "blocked"}
 ALLOWED_VALIDATION_EVIDENCE_STATUSES = {"not_provided", "provided", "passed", "failed", "partial"}
 ALLOWED_WORKER_RUN_PLAN_STATUSES = {"draft", "ready", "blocked", "superseded"}
 ALLOWED_WORKER_RUN_PLAN_APPROVAL_STATUSES = {"not_requested", "requested", "approved", "rejected"}
@@ -1645,6 +1645,7 @@ class RoughGoalPreparation(BaseModel):
     reused_policy_ids: list[str] = Field(default_factory=list)
     total_max_tasks: int = 0
     total_max_changed_files: int = 0
+    materialized_plan_reviewed_by: str | None = None
     supervised_delivery_enabled: bool = False
     supervised_delivery_authorized_by: str | None = None
     source_policy_permissions_updated: bool = False
@@ -1735,6 +1736,7 @@ class OperatorConsoleGoalProjection(BaseModel):
     current_policy_id: str | None = None
     current_queue_worker_run_id: str | None = None
     current_queue_worker_status: str | None = None
+    current_review_status: str | None = None
     delivery_state: str = "not_requested"
     supervisor_run_id: str | None = None
     supervisor_status: str | None = None
@@ -2027,6 +2029,18 @@ class WorkerReview(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     next_action: str = ""
+
+    @model_validator(mode="after")
+    def preserve_historical_blocked_decision(self) -> WorkerReview:
+        record = self.evidence_record
+        if (
+            self.review_status == "reviewed_needs_changes"
+            and record
+            and record.evidence_type == "review"
+            and record.status == "blocked"
+        ):
+            self.review_status = "blocked"
+        return self
 
 
 class WorkerReviewIndexEntry(BaseModel):
@@ -6156,9 +6170,10 @@ def check_approved_execution_policy_approval_bundle(
         "ready_for_delivery_request",
         "delivery_requested",
     }
-    bundle_active_runs = [
-        run for run in all_runs if run.policy_id in bundle.policy_ids and run.status in active_statuses
-    ]
+    bundle_runs = _authoritative_queue_worker_runs(
+        [run for run in all_runs if run.policy_id in bundle.policy_ids]
+    )
+    bundle_active_runs = [run for run in bundle_runs if run.status in active_statuses]
     if len(bundle_active_runs) > 1:
         blockers.append(
             "Approved bundle has multiple active queue-worker runs; auto-run-approved requires exactly one-at-a-time execution: "
@@ -7094,7 +7109,7 @@ def summarize_queue_worker_evidence(
             blockers.append(f"Worker report status is not complete: {report.status_reported_by_worker}.")
     if worker_report_imported and not worker_review_exists:
         missing.append("Worker review not recorded.")
-    if review and review.review_status in {"reviewed_needs_changes", "rejected"}:
+    if review and review.review_status in {"reviewed_needs_changes", "rejected", "blocked"}:
         blockers.append(f"Worker review status is {review.review_status}.")
     if review and not validation_evidence_exists:
         missing.append("Validation evidence not recorded.")
@@ -7262,7 +7277,7 @@ def record_queue_worker_review(
         "passed": "reviewed_passed",
         "needs_changes": "reviewed_needs_changes",
         "rejected": "rejected",
-        "blocked": "reviewed_needs_changes",
+        "blocked": "blocked",
     }
     if normalized_status not in status_map:
         msg = f"Invalid review status: {status}"
@@ -7298,7 +7313,7 @@ def record_queue_worker_review(
     updated_review = review.model_copy(
         update={
             "review_status": status_map[normalized_status],
-            "reviewer": "queue-worker-record-review",
+            "reviewer": (recorded_by or "").strip() or "queue-worker-record-review",
             "decision_note": " ".join([cleaned_summary, *notes]).strip(),
             "evidence_record": evidence_record,
             "changed_files_review": [*review.changed_files_review, *[f"Reviewed changed file: {path}" for path in changed_files]],
@@ -7909,6 +7924,9 @@ def pause_queue_worker_run(
 def resume_queue_worker_run(
     project_name: str,
     run_id: str,
+    *,
+    operator: str | None = None,
+    reason: str | None = None,
     workspace_root: Path | None = None,
 ) -> tuple[QueueWorkerRun, Path, Path]:
     root = workspace_root or get_workspace_root()
@@ -7922,6 +7940,11 @@ def resume_queue_worker_run(
     blockers = [*policy_blockers, *evidence.blockers]
     warnings = [*policy_warnings, *evidence.warnings]
     status = "blocked" if blockers else _queue_worker_status_from_evidence(run, evidence)
+    recovery_note = "resume requested; policy and selected queue item rechecked"
+    if operator:
+        recovery_note += f" by {operator.strip()}"
+    if reason:
+        recovery_note += f": {reason.strip()}"
     updated = run.model_copy(
         update={
             "status": status,
@@ -7930,7 +7953,7 @@ def resume_queue_worker_run(
             "policy_check_summary": policy_summary or run.policy_check_summary,
             "resumed_at": now,
             "updated_at": now,
-            "steps_run": [*run.steps_run, "resume requested; policy and selected queue item rechecked"],
+            "steps_run": [*run.steps_run, recovery_note],
             "next_action": _queue_worker_next_action_for_status(project_name, run, status, evidence, blockers),
         }
     )
@@ -9521,6 +9544,9 @@ def fail_queue_worker_run(
 def retry_queue_worker_run(
     project_name: str,
     run_id: str,
+    *,
+    operator: str | None = None,
+    reason: str | None = None,
     workspace_root: Path | None = None,
 ) -> tuple[QueueWorkerRun, Path, Path]:
     root = workspace_root or get_workspace_root()
@@ -9549,6 +9575,11 @@ def retry_queue_worker_run(
         if handoff
         else f"Create a fresh queue handoff: devo project handoff-next --project {project_name} --queue {previous.queue_id or '<queueId>'}"
     )
+    retry_note = f"retry of queue worker run {previous.run_id}"
+    if operator:
+        retry_note += f" requested by {operator.strip()}"
+    if reason:
+        retry_note += f": {reason.strip()}"
     retry = QueueWorkerRun(
         project=project_name,
         run_id=_next_queue_worker_run_id(project_name, workspace_root=root),
@@ -9565,7 +9596,7 @@ def retry_queue_worker_run(
         approver=previous.approver,
         retry_of=previous.run_id,
         steps_run=[
-            f"retry of queue worker run {previous.run_id}",
+            retry_note,
             "policy and selected queue item rechecked",
             *worker_creation_step,
         ],
@@ -9887,6 +9918,48 @@ def create_rough_goal_intake_plan(
     if not confirm_create:
         return plan, None, None
     json_path, markdown_path = rough_goal_intake_artifact_paths(project_name, intake_id, workspace_root=root)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_model(json_path, plan)
+    markdown_path.write_text(render_rough_goal_intake_plan_markdown(plan), encoding="utf-8")
+    return plan, json_path, markdown_path
+
+
+def create_rough_goal_intake_plan_from_text(
+    project_name: str,
+    goal_markdown: str,
+    *,
+    confirm_create: bool = False,
+    workspace_root: Path | None = None,
+) -> tuple[RoughGoalIntakePlan, Path | None, Path | None]:
+    """Create an intake from operator-provided Markdown while preserving its workspace provenance."""
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    text = goal_markdown.strip()
+    if not text:
+        raise ValueError("Rough goal Markdown must not be empty.")
+
+    intake_id = _next_rough_goal_intake_id(project_name, workspace_root=root) if confirm_create else "INTAKE-PREVIEW"
+    source_file = (
+        root / "projects" / project_name / "planning" / "inputs" / f"operator-console-{intake_id}.md"
+        if confirm_create
+        else Path("operator-console-input.md")
+    )
+    plan = _build_rough_goal_intake_plan(
+        project_name=project_name,
+        source_file=source_file,
+        text=text,
+        intake_id=intake_id,
+        preview_only=not confirm_create,
+        workspace_root=root,
+    )
+    if not confirm_create:
+        return plan, None, None
+
+    json_path, markdown_path = rough_goal_intake_artifact_paths(project_name, intake_id, workspace_root=root)
+    if source_file.exists() or json_path.exists() or markdown_path.exists():
+        raise ValueError(f"Operator-console intake artifacts already exist for {intake_id}.")
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_text_atomically(source_file, text + "\n")
     json_path.parent.mkdir(parents=True, exist_ok=True)
     _write_model(json_path, plan)
     markdown_path.write_text(render_rough_goal_intake_plan_markdown(plan), encoding="utf-8")
@@ -10238,11 +10311,13 @@ def prepare_rough_goal_intake(
     project_name: str,
     intake_id: str,
     *,
+    materialized_plan_reviewed_by: str | None = None,
     supervised_delivery_authorized_by: str | None = None,
     workspace_root: Path | None = None,
 ) -> tuple[RoughGoalPreparation, Path, Path]:
     """Prepare the remaining materialized goal as requested one-task policies and one bundle."""
     root = workspace_root or get_workspace_root()
+    materialized_plan_reviewed_by = (materialized_plan_reviewed_by or "").strip() or None
     supervised_delivery_authorized_by = (supervised_delivery_authorized_by or "").strip() or None
     _require_project(project_name, root)
     intake = load_rough_goal_intake_plan(project_name, intake_id, workspace_root=root)
@@ -10804,6 +10879,10 @@ def prepare_rough_goal_intake(
         reused_policy_ids=reused_policy_ids,
         total_max_tasks=bundle.total_max_tasks,
         total_max_changed_files=bundle.total_max_changed_files,
+        materialized_plan_reviewed_by=(
+            materialized_plan_reviewed_by
+            or (existing_preparation.materialized_plan_reviewed_by if existing_preparation else None)
+        ),
         supervised_delivery_enabled=bool(source_auto_delivery and source_auto_push),
         supervised_delivery_authorized_by=(
             supervised_delivery_authorized_by
@@ -11094,7 +11173,8 @@ def build_prepared_goal_status(
             "paused",
             "blocked",
         }
-        open_runs = [run for run in matching_runs if run.status in open_statuses]
+        authoritative_runs = _authoritative_queue_worker_runs(matching_runs)
+        open_runs = [run for run in authoritative_runs if run.status in open_statuses]
         if len(open_runs) > 1:
             ids = ", ".join(run.run_id for run in open_runs)
             blockers.append(f"Current prepared child has multiple non-terminal queue-worker runs: {ids}.")
@@ -11164,6 +11244,8 @@ def build_prepared_goal_status(
         next_action = "No action needed; every prepared goal child is completed."
     elif incomplete_supervisors:
         next_action = f"Resume the existing prepared-goal supervisor: {run_command}"
+    elif selected_run and selected_run.next_action:
+        next_action = selected_run.next_action
     elif supervisor and supervisor.status in {"blocked", "paused"} and supervisor.next_action:
         next_action = supervisor.next_action
     else:
@@ -11327,7 +11409,31 @@ def _operator_console_goal_projection(
         )
 
     current_child = next((child for child in children if child.is_current), None)
+    current_stage = _operator_console_current_stage(status)
+    current_review_status: str | None = None
     attention_items = list(status.blockers)
+    if status.current_queue_worker_run_id:
+        current_run = load_queue_worker_run(
+            project_name,
+            status.current_queue_worker_run_id,
+            workspace_root=workspace_root,
+        )
+        if current_run and current_run.selected_worker_run_id:
+            current_review = load_codex_worker_review(
+                project_name,
+                current_run.selected_worker_run_id,
+                workspace_root=workspace_root,
+            )
+            if current_review:
+                current_review_status = current_review.review_status
+                if status.current_queue_worker_status == "waiting_review":
+                    if current_review.review_status == "reviewed_passed":
+                        current_stage = "semantic_review_complete"
+                    elif current_review.review_status in {"reviewed_needs_changes", "rejected", "blocked"}:
+                        current_stage = "attention_required"
+                        attention_items.append(
+                            f"Current worker review is {current_review.review_status}; automatic retry is not allowed."
+                        )
     if status.current_queue_worker_status in {"blocked", "paused", "failed", "cancelled"}:
         attention_items.append(
             f"Current worker run is {status.current_queue_worker_status}; automatic retry is not allowed."
@@ -11345,12 +11451,13 @@ def _operator_console_goal_projection(
         completed_child_count=status.completed_child_count,
         remaining_child_count=status.remaining_child_count,
         children=children,
-        current_stage=_operator_console_current_stage(status),
+        current_stage=current_stage,
         current_task_id=status.current_task_id,
         current_task_title=current_child.title if current_child else None,
         current_policy_id=status.current_policy_id,
         current_queue_worker_run_id=status.current_queue_worker_run_id,
         current_queue_worker_status=status.current_queue_worker_status,
+        current_review_status=current_review_status,
         delivery_state=status.delivery_state,
         supervisor_run_id=status.supervisor_run_id,
         supervisor_status=status.supervisor_status,
@@ -11438,7 +11545,38 @@ def _operator_console_supported_actions(
     project_name: str,
     goal: OperatorConsoleGoalProjection | None,
 ) -> list[OperatorConsoleAction]:
-    if not goal or goal.status == "completed" or goal.attention_required:
+    if not goal or goal.status == "completed":
+        return []
+    if goal.attention_required:
+        if goal.current_queue_worker_run_id and (
+            goal.current_review_status in {"reviewed_needs_changes", "rejected", "blocked"}
+            or goal.current_queue_worker_status in {"failed", "blocked"}
+        ):
+            return [
+                OperatorConsoleAction(
+                    action_id="retry_worker",
+                    label="Retry current worker",
+                    command=(
+                        "devo project queue-worker-retry "
+                        f"--project {project_name} --run {goal.current_queue_worker_run_id} --confirm-retry"
+                    ),
+                    confirmation_required=True,
+                    reason="The current bounded worker attempt has explicit blocking evidence and supports a manual retry.",
+                )
+            ]
+        if goal.current_queue_worker_run_id and goal.current_queue_worker_status == "paused":
+            return [
+                OperatorConsoleAction(
+                    action_id="resume_worker",
+                    label="Resume current worker",
+                    command=(
+                        "devo project queue-worker-resume "
+                        f"--project {project_name} --run {goal.current_queue_worker_run_id} --confirm-resume"
+                    ),
+                    confirmation_required=True,
+                    reason="The current bounded worker attempt is paused and supports an authority-rechecked resume.",
+                )
+            ]
         return []
     if goal.bundle_status == "requested":
         return [
@@ -12097,6 +12235,7 @@ def render_rough_goal_preparation_markdown(preparation: RoughGoalPreparation) ->
         f"- Approval bundle status: `{preparation.approval_bundle_status}`",
         f"- Total max tasks: `{preparation.total_max_tasks}`",
         f"- Total max changed files: `{preparation.total_max_changed_files}`",
+        f"- Materialized plan reviewed by: `{preparation.materialized_plan_reviewed_by or 'none'}`",
         f"- Supervised delivery enabled: `{preparation.supervised_delivery_enabled}`",
         f"- Supervised delivery authorized by: `{preparation.supervised_delivery_authorized_by or 'none'}`",
         f"- Source policy permissions updated: `{preparation.source_policy_permissions_updated}`",
@@ -16281,7 +16420,7 @@ def _queue_worker_existing_worker_blockers(worker_run: WorkerRun | None, review:
     blockers: list[str] = []
     if worker_run and worker_run.status in {"failed", "blocked_needs_approval", "cancelled"}:
         blockers.append(f"Existing worker run {worker_run.worker_run_id} has status {worker_run.status}.")
-    if review and review.review_status in {"reviewed_needs_changes", "rejected"}:
+    if review and review.review_status in {"reviewed_needs_changes", "rejected", "blocked"}:
         blockers.append(f"Existing worker review {review.review_id} has status {review.review_status}.")
     if review and review.validation_evidence.validation_status == "failed":
         blockers.append(f"Existing worker review {review.review_id} has failed validation evidence.")
@@ -16511,6 +16650,11 @@ def _queue_completion_next_action(
             f"Fix or rerun worker output before completion. Consider devo project queue-block-item --project {project_name} "
             f"--queue {queue_id} --item {item.item_id} --note \"<needed changes>\"."
         )
+    if review.review_status == "blocked":
+        return (
+            f"Resolve the recorded review blocker before an explicit retry. Keep queue item {item.item_id} incomplete; "
+            f"do not validate or deliver the blocked result."
+        )
     if review.review_status == "rejected":
         return (
             f"Do not complete this item. Block or replace the worker output with devo project queue-block-item --project {project_name} "
@@ -16602,6 +16746,14 @@ def _worker_review_next_action(project_name: str, worker_run: WorkerRun, review_
                 f"--queue {worker_run.source_queue_id} --item {worker_run.source_queue_item_id} --note \"<needed changes>\" or prepare a follow-up worker run."
             )
         return "Review needs changes. Prepare a follow-up handoff or worker run after clarifying scope."
+    if review.review_status == "blocked":
+        if worker_run.source_queue_id and worker_run.source_queue_item_id:
+            return (
+                f"Review is blocked. Keep the queue item incomplete and resolve the stated blocker before an explicit retry: "
+                f"devo project queue-worker-retry --project {project_name} --run "
+                f"{worker_run.source_queue_worker_run_id or '<QWR-ID>'} --confirm-retry"
+            )
+        return "Review is blocked. Resolve the stated blocker before creating a replacement worker attempt."
     if review_status == "rejected":
         if worker_run.source_queue_id and worker_run.source_queue_item_id:
             return (
@@ -17584,7 +17736,7 @@ def _queue_worker_blocked_status_from_evidence(evidence: QueueWorkerEvidenceSumm
         return "failed"
     if evidence.worker_report_status in {"usage_limit", "blocked", "needs_approval", "partial"}:
         return "paused"
-    if evidence.worker_review_status in {"reviewed_needs_changes", "rejected"}:
+    if evidence.worker_review_status in {"reviewed_needs_changes", "rejected", "blocked"}:
         return "paused"
     return "blocked"
 
@@ -17660,6 +17812,25 @@ def _latest_queue_worker_run_for_item(
         and _normalize_queue_item_id(run.selected_queue_item_id) == normalized_item
     ]
     return sorted(candidates, key=lambda item: item.updated_at, reverse=True)[0] if candidates else None
+
+
+def _authoritative_queue_worker_runs(runs: list[QueueWorkerRun]) -> list[QueueWorkerRun]:
+    by_id = {run.run_id: run for run in runs}
+    superseded_retry_parents: set[str] = set()
+    for run in runs:
+        parent = by_id.get(run.retry_of or "")
+        if not parent:
+            continue
+        same_authority = (
+            run.policy_id == parent.policy_id
+            and run.batch_id == parent.batch_id
+            and run.queue_id == parent.queue_id
+            and run.selected_queue_item_id == parent.selected_queue_item_id
+            and run.selected_task_id == parent.selected_task_id
+        )
+        if same_authority:
+            superseded_retry_parents.add(parent.run_id)
+    return [run for run in runs if run.run_id not in superseded_retry_parents]
 
 
 def _latest_preparation_for_queue_worker_run(

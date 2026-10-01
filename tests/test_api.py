@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+import devo.api as api_module
+import devo.project_planning as project_planning_module
 from devo.api import create_app, validate_api_host
 from devo.main import app
 from devo.project_planning import (
+    QueueWorkerRun,
+    WorkerReview,
     approve_project_backlog,
     create_project_backlog,
     create_project_blueprint,
@@ -26,6 +31,7 @@ from devo.project_planning import (
     request_batch_approval,
     request_execution_policy,
     run_queue_worker_once,
+    worker_review_artifact_paths,
 )
 from devo.runs import save_current_selection
 from devo.schemas import ContextSnapshot, ContextState, ContextStatus, ProjectRegistration
@@ -43,7 +49,7 @@ def test_app_factory_creates_app(tmp_path: Path, monkeypatch) -> None:
     assert api.title == "DevOrchestrator API"
 
 
-def test_health_returns_read_only_true(tmp_path: Path, monkeypatch) -> None:
+def test_health_reports_guarded_mutation_capabilities(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     client = TestClient(create_app(workspace_root=workspace))
 
@@ -51,7 +57,14 @@ def test_health_returns_read_only_true(tmp_path: Path, monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "OK"
-    assert response.json()["read_only"] is True
+    assert response.json()["read_only"] is False
+    assert response.json()["capabilities"] == {
+        "read_projections": True,
+        "guarded_mutations": True,
+        "localhost_mutations_only": True,
+        "arbitrary_commands": False,
+        "automatic_retry": False,
+    }
 
 
 def test_current_works_without_current_context(tmp_path: Path, monkeypatch) -> None:
@@ -634,6 +647,541 @@ def test_endpoints_do_not_mutate_target_repo_or_workspace(tmp_path: Path, monkey
     assert _workspace_snapshot(workspace) == before_workspace
 
 
+def test_operator_console_intake_materialize_prepare_and_approve_flow(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace))
+    goal_markdown = """# Goal
+
+Ship a guarded local workflow.
+
+# Context
+
+- Reuse existing Devo services.
+
+# Scope
+
+- Keep mutations in workspace artifacts.
+
+# Tasks
+
+- Add the first bounded slice. Risk: low.
+- Add the second bounded slice. Risk: low.
+
+# Allowed files
+
+- src/example.py
+
+# Do not touch
+
+- .env
+
+# Validation
+
+- python -m pytest -q
+
+# Delivery notes
+
+- Use trusted delivery only.
+"""
+
+    unconfirmed = client.post(
+        "/api/projects/sample/operator-console/intakes",
+        json={"goal_markdown": goal_markdown},
+    )
+    assert unconfirmed.status_code == 400
+    assert unconfirmed.json()["detail"]["error"] == "confirmation_required"
+
+    created = client.post(
+        "/api/projects/sample/operator-console/intakes",
+        json={"goal_markdown": goal_markdown, "confirm_create": True},
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["intake"]["intake_id"] == "INTAKE-0001"
+    assert created.json()["intake"]["source_file"].endswith("operator-console-INTAKE-0001.md")
+
+    unconfirmed_materialization = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/materialize",
+        json={},
+    )
+    assert unconfirmed_materialization.status_code == 400
+
+    materialized = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/materialize",
+        json={"confirm_materialize": True},
+    )
+    assert materialized.status_code == 200, materialized.text
+    materialization = materialized.json()["materialization"]
+    assert materialization["intake_id"] == "INTAKE-0001"
+    assert len(materialized.json()["review"]["backlog_tasks"]) == 2
+    unconfirmed_planning_approval = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/approve",
+        json={
+            "batch_id": materialization["batch_id"],
+            "approver": "Plan Reviewer",
+            "note": "Reviewed the materialized draft tasks.",
+        },
+    )
+    assert unconfirmed_planning_approval.status_code == 400
+
+    stale_planning_approval = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/approve",
+        json={
+            "batch_id": "B999",
+            "approver": "Plan Reviewer",
+            "note": "Reviewed the materialized draft tasks.",
+            "confirm_approve": True,
+        },
+    )
+    assert stale_planning_approval.status_code == 409
+
+    planning_approval = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/approve",
+        json={
+            "batch_id": materialization["batch_id"],
+            "approver": "Plan Reviewer",
+            "note": "Reviewed the materialized draft tasks.",
+            "confirm_approve": True,
+        },
+    )
+    assert planning_approval.status_code == 200, planning_approval.text
+    assert planning_approval.json()["batch"]["approval_status"] == "approved"
+    assert planning_approval.json()["approval"]["approver"] == "Plan Reviewer"
+
+    unsafe_prepare = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/prepare",
+        json={
+            "confirm_prepare": True,
+            "confirm_materialized_plan_reviewed": True,
+            "reviewed_by": "Plan Reviewer",
+            "enable_supervised_delivery": True,
+        },
+    )
+    assert unsafe_prepare.status_code == 400
+    assert "confirm_supervised_delivery" in unsafe_prepare.json()["detail"]["message"]
+
+    prepared = client.post(
+        "/api/projects/sample/operator-console/intakes/INTAKE-0001/prepare",
+        json={
+            "confirm_prepare": True,
+            "confirm_materialized_plan_reviewed": True,
+            "reviewed_by": "Plan Reviewer",
+            "enable_supervised_delivery": True,
+            "confirm_supervised_delivery": True,
+            "supervised_delivery_authorized_by": "Delivery Authorizer",
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    preparation = prepared.json()["preparation"]
+    assert preparation["materialized_plan_reviewed_by"] == "Plan Reviewer"
+    assert preparation["supervised_delivery_enabled"] is True
+    assert preparation["supervised_delivery_authorized_by"] == "Delivery Authorizer"
+    assert prepared.json()["console"]["supported_actions"][0]["action_id"] == "approve_plan"
+
+    stale = client.post(
+        "/api/projects/sample/operator-console/goals/INTAKE-0001/approve",
+        json={
+            "bundle_id": "PAB-9999",
+            "approver": "Goal Approver",
+            "confirm_approve": True,
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["error"] == "operator_console_state_conflict"
+
+    approved = client.post(
+        "/api/projects/sample/operator-console/goals/INTAKE-0001/approve",
+        json={
+            "bundle_id": preparation["approval_bundle_id"],
+            "approver": "  Goal Approver  ",
+            "note": "Reviewed bounded scopes and validation.",
+            "confirm_approve": True,
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["bundle"]["status"] == "approved"
+    assert approved.json()["bundle"]["approver"] == "Goal Approver"
+    assert approved.json()["console"]["active_goal"]["status"] == "approved"
+    assert approved.json()["console"]["supported_actions"][0]["action_id"] == "start_goal"
+
+    console = client.get("/api/projects/sample/operator-console")
+    assert console.status_code == 200
+    assert console.json()["active_goal"]["bundle_status"] == "approved"
+
+
+def test_operator_console_run_calls_existing_supervisor_only_for_supported_current_goal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal = SimpleNamespace(
+        intake_id="INTAKE-0001",
+        bundle_id="PAB-0001",
+        current_queue_worker_run_id=None,
+    )
+    projection = SimpleNamespace(
+        active_goal=goal,
+        supported_actions=[SimpleNamespace(action_id="resume_goal")],
+    )
+    monkeypatch.setattr(api_module, "build_operator_console_projection", lambda *args, **kwargs: projection)
+    calls: list[dict[str, object]] = []
+
+    def fake_supervise(project: str, intake_id: str, **kwargs):
+        calls.append({"project": project, "intake_id": intake_id, **kwargs})
+        return {"intake_id": intake_id}, {"status": "paused", "next_action": "Wait for review."}
+
+    monkeypatch.setattr(api_module, "supervise_prepared_goal", fake_supervise)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/projects/sample/operator-console/goals/INTAKE-0001/run",
+        json={"bundle_id": "PAB-0001", "confirm_run": True, "max_wait_seconds": 1},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["status"] == "paused"
+    assert calls[0]["dry_run"] is False
+    assert calls[0]["workspace_root"] == workspace
+
+
+def test_operator_console_review_is_current_state_guarded(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    review_recorded = False
+    recorded_identities: list[str] = []
+    goal = SimpleNamespace(
+        intake_id="INTAKE-0001",
+        bundle_id="PAB-0001",
+        current_queue_worker_run_id="QWR-0001",
+        current_policy_id="POL-0001",
+    )
+
+    def fake_projection(*args, **kwargs):
+        action_id = "resume_goal" if review_recorded else "review_worker"
+        return SimpleNamespace(
+            active_goal=goal,
+            supported_actions=[SimpleNamespace(action_id=action_id)],
+        )
+
+    def fake_record_review(*args, **kwargs):
+        nonlocal review_recorded
+        review_recorded = True
+        recorded_identities.append(kwargs["recorded_by"])
+        return {"run_id": "QWR-0001", "evidence_status": kwargs["status"]}
+
+    monkeypatch.setattr(api_module, "build_operator_console_projection", fake_projection)
+    monkeypatch.setattr(api_module, "record_queue_worker_review", fake_record_review)
+    monkeypatch.setattr(
+        api_module,
+        "load_queue_worker_run",
+        lambda *args, **kwargs: SimpleNamespace(run_id="QWR-0001", policy_id="POL-0001"),
+    )
+    client = TestClient(create_app(workspace_root=workspace))
+
+    stale = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-9999/review",
+        json={
+            "bundle_id": "PAB-0001",
+            "status": "passed",
+            "summary": "Reviewed.",
+            "recorded_by": "Reviewer",
+            "confirm_review": True,
+        },
+    )
+    assert stale.status_code == 409
+
+    blank_identity = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/review",
+        json={
+            "bundle_id": "PAB-0001",
+            "status": "passed",
+            "summary": "Reviewed.",
+            "recorded_by": "   ",
+            "confirm_review": True,
+        },
+    )
+    assert blank_identity.status_code == 400
+    assert blank_identity.json()["detail"]["error"] == "operator_console_request_invalid"
+    assert review_recorded is False
+
+    reviewed = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/review",
+        json={
+            "bundle_id": "PAB-0001",
+            "status": "passed",
+            "summary": "The bounded implementation matches the reviewed task.",
+            "recorded_by": "  Reviewer  ",
+            "confirm_review": True,
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["review"]["evidence_status"] == "passed"
+    assert reviewed.json()["console"]["supported_actions"][0]["action_id"] == "resume_goal"
+    assert recorded_identities == ["Reviewer"]
+
+
+def test_operator_console_goal_approval_rejects_whitespace_identity_before_service(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal = SimpleNamespace(intake_id="INTAKE-0001", bundle_id="PAB-0001")
+    projection = SimpleNamespace(
+        active_goal=goal,
+        supported_actions=[SimpleNamespace(action_id="approve_plan")],
+    )
+    called = False
+
+    def fake_approve(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("blank approval identity must fail before the domain service")
+
+    monkeypatch.setattr(api_module, "build_operator_console_projection", lambda *args, **kwargs: projection)
+    monkeypatch.setattr(api_module, "approve_execution_policy_approval_bundle", fake_approve)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.post(
+        "/api/projects/sample/operator-console/goals/INTAKE-0001/approve",
+        json={
+            "bundle_id": "PAB-0001",
+            "approver": "   ",
+            "confirm_approve": True,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["error"] == "operator_console_request_invalid"
+    assert called is False
+
+
+def test_operator_console_mutations_reject_non_local_clients(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    client = TestClient(create_app(workspace_root=workspace), client=("203.0.113.10", 50000))
+
+    response = client.post(
+        "/api/projects/sample/operator-console/intakes",
+        json={"goal_markdown": "# Goal\n\nRemote mutation", "confirm_create": True},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "local_request_required"
+
+
+def test_operator_console_review_preserves_blocked_and_requires_bundle_binding(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal = SimpleNamespace(
+        intake_id="INTAKE-0001",
+        bundle_id="PAB-0001",
+        current_queue_worker_run_id="QWR-0001",
+        current_policy_id="POL-0001",
+    )
+    projection = SimpleNamespace(
+        active_goal=goal,
+        supported_actions=[SimpleNamespace(action_id="review_worker")],
+    )
+    recorded: list[dict[str, object]] = []
+    monkeypatch.setattr(api_module, "build_operator_console_projection", lambda *args, **kwargs: projection)
+    monkeypatch.setattr(
+        api_module,
+        "load_queue_worker_run",
+        lambda *args, **kwargs: SimpleNamespace(run_id="QWR-0001", policy_id="POL-0001"),
+    )
+
+    def fake_record(*args, **kwargs):
+        recorded.append(kwargs)
+        return {"evidence_status": kwargs["status"]}
+
+    monkeypatch.setattr(api_module, "record_queue_worker_review", fake_record)
+    client = TestClient(create_app(workspace_root=workspace))
+
+    stale = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/review",
+        json={
+            "bundle_id": "PAB-9999",
+            "status": "blocked",
+            "summary": "External review dependency is unavailable.",
+            "recorded_by": "Reviewer",
+            "confirm_review": True,
+        },
+    )
+    assert stale.status_code == 409
+
+    blocked = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/review",
+        json={
+            "bundle_id": "PAB-0001",
+            "status": "blocked",
+            "summary": "External review dependency is unavailable.",
+            "recorded_by": "Reviewer",
+            "confirm_review": True,
+        },
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["review"]["evidence_status"] == "blocked"
+    assert recorded[0]["status"] == "blocked"
+
+
+def test_legacy_worker_review_status_remains_loadable(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    review = WorkerReview(
+        project="sample",
+        review_id="REV-WR001",
+        worker_run_id="WR001",
+        review_status="reviewed_needs_changes",
+        reviewer="Legacy Reviewer",
+        decision_note="Legacy review artifact.",
+    )
+    review_json, _review_markdown = worker_review_artifact_paths("sample", "WR001", workspace_root=workspace)
+    review_json.parent.mkdir(parents=True, exist_ok=True)
+    review_json.write_text(review.model_dump_json(indent=2), encoding="utf-8")
+    monkeypatch.setattr(
+        api_module,
+        "load_codex_worker_run",
+        lambda *args, **kwargs: SimpleNamespace(worker_run_id="WR001"),
+    )
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/worker-runs/WR001/review")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["review_status"] == "reviewed_needs_changes"
+
+
+def test_legacy_blocked_worker_review_projects_exact_decision_without_rewriting_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    review = WorkerReview(
+        project="sample",
+        review_id="REV-WR001",
+        worker_run_id="WR001",
+        review_status="reviewed_needs_changes",
+        reviewer="Legacy Reviewer",
+        decision_note="Original blocked semantic decision.",
+        evidence_record={
+            "evidence_id": "E001",
+            "project": "sample",
+            "queue_worker_run_id": "QWR-0001",
+            "evidence_type": "review",
+            "status": "blocked",
+            "summary": "Actual diff review is required.",
+        },
+    )
+    review_json, _review_markdown = worker_review_artifact_paths("sample", "WR001", workspace_root=workspace)
+    review_json.parent.mkdir(parents=True, exist_ok=True)
+    legacy_payload = review.model_dump(mode="json")
+    legacy_payload["review_status"] = "reviewed_needs_changes"
+    original = json.dumps(legacy_payload, indent=2)
+    review_json.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(
+        api_module,
+        "load_codex_worker_run",
+        lambda *args, **kwargs: SimpleNamespace(worker_run_id="WR001"),
+    )
+    client = TestClient(create_app(workspace_root=workspace))
+
+    response = client.get("/api/projects/sample/worker-runs/WR001/review")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["review_status"] == "blocked"
+    assert response.json()["evidence_record"]["status"] == "blocked"
+    assert review_json.read_text(encoding="utf-8") == original
+
+
+def test_operator_console_recovery_is_contextual_confirmed_and_authority_checked(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    goal = SimpleNamespace(
+        intake_id="INTAKE-0001",
+        bundle_id="PAB-0001",
+        current_queue_worker_run_id="QWR-0001",
+        current_policy_id="POL-0001",
+    )
+    action_id = "resume_worker"
+
+    def fake_projection(*args, **kwargs):
+        return SimpleNamespace(
+            active_goal=goal,
+            supported_actions=[SimpleNamespace(action_id=action_id)],
+        )
+
+    monkeypatch.setattr(api_module, "build_operator_console_projection", fake_projection)
+    monkeypatch.setattr(
+        api_module,
+        "load_queue_worker_run",
+        lambda *args, **kwargs: SimpleNamespace(run_id="QWR-0001", policy_id="POL-0001"),
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_resume(project: str, run_id: str, **kwargs):
+        calls.append({"project": project, "run_id": run_id, **kwargs})
+        return {"run_id": run_id, "status": "waiting_worker"}, Path("run.json"), Path("run.md")
+
+    monkeypatch.setattr(api_module, "resume_queue_worker_run", fake_resume)
+    client = TestClient(create_app(workspace_root=workspace))
+    payload = {
+        "intake_id": "INTAKE-0001",
+        "bundle_id": "PAB-0001",
+        "action": "resume_worker",
+        "operator": "Recovery Operator",
+        "reason": "The external pause condition is resolved.",
+    }
+
+    unconfirmed = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/recover",
+        json=payload,
+    )
+    assert unconfirmed.status_code == 400
+
+    unsupported = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/recover",
+        json={**payload, "action": "retry_worker", "confirm_recovery": True},
+    )
+    assert unsupported.status_code == 409
+
+    recovered = client.post(
+        "/api/projects/sample/operator-console/runs/QWR-0001/recover",
+        json={**payload, "confirm_recovery": True},
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["action"] == "resume_worker"
+    assert calls[0]["operator"] == "Recovery Operator"
+    assert calls[0]["workspace_root"] == workspace
+
+
+def test_linked_retry_is_authoritative_without_hiding_unrelated_concurrent_run() -> None:
+    parent = QueueWorkerRun(
+        project="sample",
+        run_id="QWR-0001",
+        policy_id="POL-0001",
+        batch_id="B001",
+        queue_id="Q001",
+        selected_queue_item_id="QI001",
+        selected_task_id="T001",
+        status="waiting_review",
+    )
+    retry = parent.model_copy(
+        update={
+            "run_id": "QWR-0002",
+            "retry_of": parent.run_id,
+            "next_action": "Review QWR-0002.",
+        }
+    )
+    unrelated = parent.model_copy(
+        update={
+            "run_id": "QWR-0003",
+            "selected_queue_item_id": "QI002",
+            "selected_task_id": "T002",
+        }
+    )
+
+    authoritative = project_planning_module._authoritative_queue_worker_runs(
+        [retry, parent, unrelated]
+    )
+
+    assert [run.run_id for run in authoritative] == ["QWR-0002", "QWR-0003"]
+    assert authoritative[0].next_action == "Review QWR-0002."
+
+
 def test_non_local_host_is_blocked() -> None:
     try:
         validate_api_host("0.0.0.0")
@@ -677,6 +1225,14 @@ def test_api_routes_command_lists_read_only_endpoints(tmp_path: Path, monkeypatc
     assert "GET /api/projects/{project}/worker-run-plans" in result.output
     assert "GET /api/projects/{project}/worker-run-plans/{plan_id}" in result.output
     assert "GET /api/projects/{project}/tasks" in result.output
+    assert "GET /api/projects/{project}/operator-console" in result.output
+    assert "POST /api/projects/{project}/operator-console/intakes" in result.output
+    assert "POST /api/projects/{project}/operator-console/intakes/{intake_id}/approve" in result.output
+    assert "POST /api/projects/{project}/operator-console/intakes/{intake_id}/prepare" in result.output
+    assert "POST /api/projects/{project}/operator-console/goals/{intake_id}/approve" in result.output
+    assert "POST /api/projects/{project}/operator-console/goals/{intake_id}/run" in result.output
+    assert "POST /api/projects/{project}/operator-console/runs/{run_id}/review" in result.output
+    assert "POST /api/projects/{project}/operator-console/runs/{run_id}/recover" in result.output
 
 
 def test_api_serve_blocks_non_local_host(tmp_path: Path, monkeypatch) -> None:

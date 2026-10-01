@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from time import perf_counter
 from pathlib import Path
+from time import perf_counter
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict, Field
 
 from .delivery import (
     list_delivery_approvals,
@@ -21,7 +23,11 @@ from .delivery import (
 )
 from .doctor import run_doctor_with_timing
 from .project_planning import (
+    approve_execution_policy_approval_bundle,
+    approve_project_batch,
+    build_operator_console_projection,
     calculate_project_progress,
+    create_rough_goal_intake_plan_from_text,
     get_codex_queue_worker_status,
     get_codex_worker_flow_summary,
     get_backlog_task,
@@ -47,7 +53,14 @@ from .project_planning import (
     load_project_batch,
     load_project_blueprint,
     load_project_brief,
+    load_rough_goal_intake_materialization,
+    materialize_rough_goal_intake_plan,
     planning_artifact_paths,
+    prepare_rough_goal_intake,
+    record_queue_worker_review,
+    resume_queue_worker_run,
+    retry_queue_worker_run,
+    supervise_prepared_goal,
     worker_execution_log_paths,
 )
 from .projects import get_workspace_root, list_projects
@@ -106,17 +119,103 @@ API_ROUTES = (
     "GET /api/projects/{project}/doctor",
     "GET /api/projects/{project}/runs/{run_id}/overview",
     "GET /api/projects/{project}/runs/{run_id}/work-package",
+    "GET /api/projects/{project}/operator-console",
+    "POST /api/projects/{project}/operator-console/intakes",
+    "POST /api/projects/{project}/operator-console/intakes/{intake_id}/materialize",
+    "POST /api/projects/{project}/operator-console/intakes/{intake_id}/approve",
+    "POST /api/projects/{project}/operator-console/intakes/{intake_id}/prepare",
+    "POST /api/projects/{project}/operator-console/goals/{intake_id}/approve",
+    "POST /api/projects/{project}/operator-console/goals/{intake_id}/run",
+    "POST /api/projects/{project}/operator-console/runs/{run_id}/review",
+    "POST /api/projects/{project}/operator-console/runs/{run_id}/recover",
     "GET /api/actions",
     "GET /api/actions/allowed",
     "GET /api/actions/{action_id}",
     "POST /api/actions/execute",
 )
 LOCAL_API_HOSTS = {"127.0.0.1", "localhost", "::1"}
+LOCAL_API_CLIENT_HOSTS = {*LOCAL_API_HOSTS, "testclient"}
 LOCAL_FRONTEND_ORIGINS = ("http://127.0.0.1:5173", "http://localhost:5173")
 
 
+class OperatorConsoleIntakeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    goal_markdown: str = Field(min_length=1, max_length=100_000)
+    confirm_create: bool = False
+
+
+class OperatorConsoleMaterializeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_materialize: bool = False
+
+
+class OperatorConsolePrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirm_prepare: bool = False
+    confirm_materialized_plan_reviewed: bool = False
+    reviewed_by: str = Field(default="", max_length=200)
+    enable_supervised_delivery: bool = False
+    confirm_supervised_delivery: bool = False
+    supervised_delivery_authorized_by: str = Field(default="", max_length=200)
+
+
+class OperatorConsolePlanningApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: str = Field(min_length=1, max_length=100)
+    approver: str = Field(min_length=1, max_length=200)
+    note: str = Field(min_length=1, max_length=2_000)
+    confirm_approve: bool = False
+
+
+class OperatorConsoleApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bundle_id: str = Field(min_length=1, max_length=100)
+    approver: str = Field(min_length=1, max_length=200)
+    note: str = Field(default="", max_length=2_000)
+    confirm_approve: bool = False
+
+
+class OperatorConsoleRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bundle_id: str = Field(min_length=1, max_length=100)
+    message: str = Field(default="", max_length=500)
+    note: str = Field(default="", max_length=2_000)
+    max_steps: int = Field(default=10, ge=1, le=100)
+    poll_interval_seconds: float = Field(default=1.0, gt=0, le=30)
+    max_wait_seconds: float = Field(default=30.0, gt=0, le=600)
+    confirm_run: bool = False
+
+
+class OperatorConsoleReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bundle_id: str = Field(min_length=1, max_length=100)
+    status: Literal["passed", "needs_changes", "rejected", "blocked"]
+    summary: str = Field(min_length=1, max_length=10_000)
+    recorded_by: str = Field(min_length=1, max_length=200)
+    note: str = Field(default="", max_length=2_000)
+    confirm_review: bool = False
+
+
+class OperatorConsoleRecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intake_id: str = Field(min_length=1, max_length=100)
+    bundle_id: str = Field(min_length=1, max_length=100)
+    action: Literal["resume_worker", "retry_worker"]
+    operator: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2_000)
+    confirm_recovery: bool = False
+
+
 def create_app(workspace_root: Path | None = None) -> FastAPI:
-    """Create the local read-only Devo API app without starting a server."""
+    """Create the local Devo projection and guarded-control API without starting a server."""
     root = workspace_root or get_workspace_root()
     api = FastAPI(title=APP_NAME, version="0.1.0")
     api.add_middleware(
@@ -139,7 +238,14 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         return {
             "status": "OK",
             "app": APP_NAME,
-            "read_only": True,
+            "read_only": False,
+            "capabilities": {
+                "read_projections": True,
+                "guarded_mutations": True,
+                "localhost_mutations_only": True,
+                "arbitrary_commands": False,
+                "automatic_retry": False,
+            },
         }
 
     @api.get("/api/current")
@@ -548,6 +654,347 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         _require_run(project, run_id, root)
         return _model_dump(build_work_package_overview(project, run_id, workspace_root=root))
 
+    @api.get("/api/projects/{project}/operator-console")
+    def operator_console(project: str) -> dict[str, object]:
+        _require_project(project, root)
+        return _model_dump(build_operator_console_projection(project, workspace_root=root))
+
+    @api.post("/api/projects/{project}/operator-console/intakes")
+    def operator_console_create_intake(
+        project: str,
+        body: OperatorConsoleIntakeRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_create, "confirm_create")
+        try:
+            plan, json_path, markdown_path = create_rough_goal_intake_plan_from_text(
+                project,
+                body.goal_markdown,
+                confirm_create=True,
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "intake": _model_dump(plan),
+            "artifact_paths": {"json": str(json_path), "markdown": str(markdown_path)},
+        }
+
+    @api.post("/api/projects/{project}/operator-console/intakes/{intake_id}/materialize")
+    def operator_console_materialize_intake(
+        project: str,
+        intake_id: str,
+        body: OperatorConsoleMaterializeRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_materialize, "confirm_materialize")
+        try:
+            materialization, backlog, batch, queue, policy, json_path, markdown_path = materialize_rough_goal_intake_plan(
+                project,
+                intake_id,
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "materialization": _model_dump(materialization),
+            "review": {
+                "backlog_tasks": [_model_dump(task) for task in backlog.tasks if task.id in materialization.created_task_ids],
+                "batch": _model_dump(batch),
+                "queue": _model_dump(queue),
+                "source_policy": _model_dump(policy),
+            },
+            "artifact_paths": {"json": str(json_path), "markdown": str(markdown_path)},
+        }
+
+    @api.post("/api/projects/{project}/operator-console/intakes/{intake_id}/prepare")
+    def operator_console_prepare_intake(
+        project: str,
+        intake_id: str,
+        body: OperatorConsolePrepareRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_prepare, "confirm_prepare")
+        _require_confirmation(body.confirm_materialized_plan_reviewed, "confirm_materialized_plan_reviewed")
+        if not body.reviewed_by.strip():
+            raise _operator_console_request_error("reviewed_by is required to record who reviewed the materialized draft.")
+        if body.confirm_supervised_delivery and not body.enable_supervised_delivery:
+            raise _operator_console_request_error(
+                "confirm_supervised_delivery requires enable_supervised_delivery."
+            )
+        if body.enable_supervised_delivery and not body.confirm_supervised_delivery:
+            raise _operator_console_request_error(
+                "Supervised delivery remains disabled without confirm_supervised_delivery."
+            )
+        if body.enable_supervised_delivery and not body.supervised_delivery_authorized_by.strip():
+            raise _operator_console_request_error(
+                "supervised_delivery_authorized_by is required for the audited opt-in."
+            )
+        if not body.enable_supervised_delivery and body.supervised_delivery_authorized_by.strip():
+            raise _operator_console_request_error(
+                "supervised_delivery_authorized_by is accepted only with the explicit supervised-delivery opt-in."
+            )
+        materialization = load_rough_goal_intake_materialization(project, intake_id, workspace_root=root)
+        if not materialization:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "materialization_not_found", "message": f"Rough goal materialization not found: {intake_id}"},
+            )
+        try:
+            preparation, json_path, markdown_path = prepare_rough_goal_intake(
+                project,
+                intake_id,
+                materialized_plan_reviewed_by=body.reviewed_by.strip(),
+                supervised_delivery_authorized_by=(
+                    body.supervised_delivery_authorized_by.strip() if body.enable_supervised_delivery else None
+                ),
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "preparation": _model_dump(preparation),
+            "materialization": _model_dump(materialization),
+            "console": _model_dump(build_operator_console_projection(project, workspace_root=root)),
+            "artifact_paths": {"json": str(json_path), "markdown": str(markdown_path)},
+        }
+
+    @api.post("/api/projects/{project}/operator-console/intakes/{intake_id}/approve")
+    def operator_console_approve_materialized_plan(
+        project: str,
+        intake_id: str,
+        body: OperatorConsolePlanningApprovalRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_approve, "confirm_approve")
+        approver = body.approver.strip()
+        if not approver:
+            raise _operator_console_request_error("approver is required to record planning authority.")
+        note = body.note.strip()
+        if not note:
+            raise _operator_console_request_error("note is required to record the materialized-plan review.")
+        materialization = load_rough_goal_intake_materialization(project, intake_id, workspace_root=root)
+        if not materialization:
+            raise HTTPException(
+                status_code=404,
+                detail={"error": "materialization_not_found", "message": f"Rough goal materialization not found: {intake_id}"},
+            )
+        if materialization.project != project or materialization.intake_id != intake_id:
+            raise _operator_console_conflict("The materialization does not belong to the requested project and intake.")
+        if body.batch_id != materialization.batch_id:
+            raise _operator_console_conflict(
+                f"Stale batch id {body.batch_id}; intake {intake_id} owns {materialization.batch_id}."
+            )
+        projection = build_operator_console_projection(project, workspace_root=root)
+        if projection.active_goal and projection.active_goal.intake_id != intake_id:
+            raise _operator_console_conflict(
+                f"Prepared goal {projection.active_goal.intake_id} is active; planning approval for {intake_id} is not current."
+            )
+        batch = load_project_batch(project, materialization.batch_id, workspace_root=root)
+        if not batch:
+            raise _operator_console_conflict(f"Materialized batch is missing: {materialization.batch_id}.")
+        if (
+            batch.project != project
+            or batch.batch_id != materialization.batch_id
+            or batch.task_ids != materialization.created_task_ids
+        ):
+            raise _operator_console_conflict("The materialized batch authority has drifted from the active intake.")
+        try:
+            batch, batch_json, batch_markdown, approval, approval_json, approval_markdown, direct = approve_project_batch(
+                project,
+                materialization.batch_id,
+                approver=approver,
+                note=note,
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "materialization": _model_dump(materialization),
+            "batch": _model_dump(batch),
+            "approval": _model_dump(approval),
+            "direct_approval": direct,
+            "artifact_paths": {
+                "batch_json": str(batch_json),
+                "batch_markdown": str(batch_markdown),
+                "approval_json": str(approval_json),
+                "approval_markdown": str(approval_markdown),
+            },
+        }
+
+    @api.post("/api/projects/{project}/operator-console/goals/{intake_id}/approve")
+    def operator_console_approve_goal(
+        project: str,
+        intake_id: str,
+        body: OperatorConsoleApprovalRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_approve, "confirm_approve")
+        approver = _require_operator_identity(body.approver, "approver")
+        goal = _require_operator_console_action(
+            project,
+            intake_id,
+            "approve_plan",
+            workspace_root=root,
+        )
+        if body.bundle_id != goal.bundle_id:
+            raise _operator_console_conflict(
+                f"Stale bundle id {body.bundle_id}; the active reviewed goal requires {goal.bundle_id}."
+            )
+        try:
+            bundle, json_path, markdown_path = approve_execution_policy_approval_bundle(
+                project,
+                goal.bundle_id,
+                approver=approver,
+                note=body.note,
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "bundle": _model_dump(bundle),
+            "console": _model_dump(build_operator_console_projection(project, workspace_root=root)),
+            "artifact_paths": {"json": str(json_path), "markdown": str(markdown_path)},
+        }
+
+    @api.post("/api/projects/{project}/operator-console/goals/{intake_id}/run")
+    def operator_console_run_goal(
+        project: str,
+        intake_id: str,
+        body: OperatorConsoleRunRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_run, "confirm_run")
+        goal = _require_operator_console_action(
+            project,
+            intake_id,
+            {"start_goal", "resume_goal", "record_validation"},
+            workspace_root=root,
+        )
+        if body.bundle_id != goal.bundle_id:
+            raise _operator_console_conflict(
+                f"Stale bundle id {body.bundle_id}; the active reviewed goal requires {goal.bundle_id}."
+            )
+        try:
+            preparation, result = supervise_prepared_goal(
+                project,
+                intake_id,
+                message=body.message,
+                note=body.note,
+                max_steps=body.max_steps,
+                poll_interval_seconds=body.poll_interval_seconds,
+                max_wait_seconds=body.max_wait_seconds,
+                dry_run=False,
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "preparation": _model_dump(preparation),
+            "result": _model_dump(result),
+            "console": _model_dump(build_operator_console_projection(project, workspace_root=root)),
+        }
+
+    @api.post("/api/projects/{project}/operator-console/runs/{run_id}/review")
+    def operator_console_review_worker(
+        project: str,
+        run_id: str,
+        body: OperatorConsoleReviewRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_review, "confirm_review")
+        recorded_by = _require_operator_identity(body.recorded_by, "recorded_by")
+        _goal, _run = _require_operator_console_worker_action(
+            project,
+            run_id,
+            body.bundle_id,
+            "review_worker",
+            workspace_root=root,
+        )
+        try:
+            result = record_queue_worker_review(
+                project,
+                run_id,
+                status=body.status,
+                summary=body.summary,
+                recorded_by=recorded_by,
+                note=body.note,
+                workspace_root=root,
+            )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "review": _model_dump(result),
+            "console": _model_dump(build_operator_console_projection(project, workspace_root=root)),
+        }
+
+    @api.post("/api/projects/{project}/operator-console/runs/{run_id}/recover")
+    def operator_console_recover_worker(
+        project: str,
+        run_id: str,
+        body: OperatorConsoleRecoveryRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        _require_local_request(request)
+        _require_project(project, root)
+        _require_confirmation(body.confirm_recovery, "confirm_recovery")
+        operator = body.operator.strip()
+        reason = body.reason.strip()
+        if not operator:
+            raise _operator_console_request_error("operator is required to record recovery authority.")
+        if not reason:
+            raise _operator_console_request_error("reason is required for guarded recovery.")
+        goal, _run = _require_operator_console_worker_action(
+            project,
+            run_id,
+            body.bundle_id,
+            body.action,
+            workspace_root=root,
+        )
+        if goal.intake_id != body.intake_id:
+            raise _operator_console_conflict(
+                f"Prepared goal {body.intake_id} is not the active owner of queue-worker run {run_id}."
+            )
+        try:
+            if body.action == "resume_worker":
+                recovered, json_path, markdown_path = resume_queue_worker_run(
+                    project,
+                    run_id,
+                    operator=operator,
+                    reason=reason,
+                    workspace_root=root,
+                )
+            else:
+                recovered, json_path, markdown_path = retry_queue_worker_run(
+                    project,
+                    run_id,
+                    operator=operator,
+                    reason=reason,
+                    workspace_root=root,
+                )
+        except ValueError as exc:
+            raise _operator_console_domain_error(exc) from exc
+        return {
+            "action": body.action,
+            "run": _model_dump(recovered),
+            "console": _model_dump(build_operator_console_projection(project, workspace_root=root)),
+            "artifact_paths": {"json": str(json_path), "markdown": str(markdown_path)},
+        }
+
     @api.get("/api/actions")
     def ui_actions() -> dict[str, object]:
         actions = [action.to_dict() for action in list_ui_actions()]
@@ -584,6 +1031,110 @@ def validate_api_host(host: str) -> str:
         msg = "Devo API v1 is local-only. Use --host 127.0.0.1 or --host localhost."
         raise ValueError(msg)
     return host
+
+
+def _require_local_request(request: Request) -> None:
+    client_host = request.client.host.strip().lower() if request.client and request.client.host else ""
+    if client_host not in LOCAL_API_CLIENT_HOSTS:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "local_request_required",
+                "message": "Operator-console mutations are available only to a localhost client.",
+            },
+        )
+
+
+def _require_confirmation(confirmed: bool, field_name: str) -> None:
+    if not confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "confirmation_required",
+                "message": f"Explicit {field_name}=true is required.",
+            },
+        )
+
+
+def _require_operator_identity(value: str, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise _operator_console_request_error(
+            f"{field_name} is required and must identify the human operator."
+        )
+    return normalized
+
+
+def _operator_console_request_error(message: str) -> HTTPException:
+    return HTTPException(status_code=400, detail={"error": "operator_console_request_invalid", "message": message})
+
+
+def _operator_console_conflict(message: str) -> HTTPException:
+    return HTTPException(status_code=409, detail={"error": "operator_console_state_conflict", "message": message})
+
+
+def _operator_console_domain_error(exc: ValueError) -> HTTPException:
+    message = str(exc)
+    if "not found" in message.casefold():
+        return HTTPException(status_code=404, detail={"error": "operator_console_not_found", "message": message})
+    return _operator_console_conflict(message)
+
+
+def _require_operator_console_action(
+    project_name: str,
+    intake_id: str,
+    action_ids: str | set[str],
+    *,
+    workspace_root: Path,
+):
+    projection = build_operator_console_projection(project_name, workspace_root=workspace_root)
+    goal = projection.active_goal
+    if not goal or goal.intake_id != intake_id:
+        raise _operator_console_conflict(
+            f"Prepared goal {intake_id} is not the active operator-console goal. Refresh console state."
+        )
+    expected = {action_ids} if isinstance(action_ids, str) else action_ids
+    supported = {action.action_id for action in projection.supported_actions}
+    if not expected & supported:
+        raise _operator_console_conflict(
+            "Requested action is not supported in the current goal state. Refresh console state and resolve blockers."
+        )
+    return goal
+
+
+def _require_operator_console_worker_action(
+    project_name: str,
+    run_id: str,
+    bundle_id: str,
+    action_id: str,
+    *,
+    workspace_root: Path,
+):
+    projection = build_operator_console_projection(project_name, workspace_root=workspace_root)
+    goal = projection.active_goal
+    if not goal:
+        raise _operator_console_conflict("No active prepared goal owns the requested queue-worker run.")
+    if bundle_id != goal.bundle_id:
+        raise _operator_console_conflict(
+            f"Stale bundle id {bundle_id}; the active prepared goal requires {goal.bundle_id}."
+        )
+    if goal.current_queue_worker_run_id != run_id:
+        raise _operator_console_conflict(
+            f"Queue-worker run {run_id} is not the current run for the active prepared goal."
+        )
+    supported = {action.action_id for action in projection.supported_actions}
+    if action_id not in supported:
+        raise _operator_console_conflict(
+            f"Action {action_id} is not supported for queue-worker run {run_id} in its current state."
+        )
+    run = load_queue_worker_run(project_name, run_id, workspace_root=workspace_root)
+    if not run:
+        raise _operator_console_conflict(f"Current queue-worker run is missing: {run_id}.")
+    if not goal.current_policy_id or run.policy_id != goal.current_policy_id:
+        raise _operator_console_conflict(
+            f"Queue-worker run {run_id} is not bound to the active goal policy {goal.current_policy_id or 'none'}."
+        )
+    return goal, run
 
 
 def _current_context(workspace_root: Path) -> dict[str, object]:
