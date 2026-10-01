@@ -16,7 +16,7 @@ from typing import Any, BinaryIO, Callable, Iterator
 
 from pydantic import ValidationError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .projects import get_workspace_root
 from .scanner import load_registered_project
@@ -1666,6 +1666,7 @@ class PreparedGoalStatus(BaseModel):
     intake_id: str
     preparation_id: str
     preparation_status: str
+    recorded_preparation_status: str
     bundle_id: str
     approval_state: str
     child_count: int = 0
@@ -1686,6 +1687,87 @@ class PreparedGoalStatus(BaseModel):
         "Read-only goal status derives one compact recovery view from existing preparation, approval-bundle, "
         "queue-worker, delivery, and durable supervisor artifacts. It does not approve, execute, retry, deliver, "
         "stage, commit, push, or change workflow state."
+    )
+
+
+class OperatorConsoleAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str
+    label: str
+    command: str = ""
+    confirmation_required: bool = False
+    reason: str = ""
+
+
+class OperatorConsoleChildProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    position: int
+    task_id: str
+    title: str
+    risk_level: str
+    queue_item_id: str
+    queue_item_status: str
+    policy_id: str
+    policy_status: str
+    stage: str
+    is_current: bool = False
+
+
+class OperatorConsoleGoalProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intake_id: str
+    goal_summary: str
+    status: str
+    recorded_preparation_status: str
+    preparation_id: str
+    bundle_id: str
+    bundle_status: str
+    child_count: int = 0
+    completed_child_count: int = 0
+    remaining_child_count: int = 0
+    children: list[OperatorConsoleChildProjection] = Field(default_factory=list)
+    current_stage: str
+    current_task_id: str | None = None
+    current_task_title: str | None = None
+    current_policy_id: str | None = None
+    current_queue_worker_run_id: str | None = None
+    current_queue_worker_status: str | None = None
+    delivery_state: str = "not_requested"
+    supervisor_run_id: str | None = None
+    supervisor_status: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    attention_required: bool = False
+    attention_items: list[str] = Field(default_factory=list)
+    next_action: str
+
+
+class OperatorConsoleRecentCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intake_id: str
+    goal_summary: str
+    bundle_id: str
+    child_count: int = 0
+    completed_at: datetime | None = None
+
+
+class OperatorConsoleProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    active_goal: OperatorConsoleGoalProjection | None = None
+    recent_completion: OperatorConsoleRecentCompletion | None = None
+    attention_required: bool = False
+    attention_items: list[str] = Field(default_factory=list)
+    supported_actions: list[OperatorConsoleAction] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    safety_note: str = (
+        "Read-only operator-console projection over existing durable Devo artifacts. It does not approve, "
+        "execute, retry, validate, deliver, stage, commit, push, or change workflow state."
     )
 
 
@@ -1871,6 +1953,25 @@ class WorkerReportValidationResult(BaseModel):
     report: CodexWorkerReport | None = None
 
 
+class ValidationAttempt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_id: str
+    previous_attempt_id: str | None = None
+    supersedes: str | None = None
+    status: str
+    summary: str
+    commands_run: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    artifact_path: str | None = None
+    risks: list[str] = Field(default_factory=list)
+    note: str = ""
+    recorded_by: str | None = None
+    automated: bool = False
+    evidence_record: QueueWorkerEvidenceRecord
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class ValidationEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1881,6 +1982,25 @@ class ValidationEvidence(BaseModel):
     evidence_paths: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     evidence_record: QueueWorkerEvidenceRecord | None = None
+    attempts: list[ValidationAttempt] = Field(default_factory=list)
+    latest_attempt_id: str | None = None
+
+    @model_validator(mode="after")
+    def derive_current_state_from_latest_attempt(self) -> ValidationEvidence:
+        if not self.attempts:
+            return self
+        latest = next(
+            (attempt for attempt in self.attempts if attempt.attempt_id == self.latest_attempt_id),
+            self.attempts[-1],
+        )
+        return self.model_copy(
+            update={
+                "validation_status": latest.status,
+                "validation_summary": latest.summary,
+                "evidence_record": latest.evidence_record,
+                "latest_attempt_id": latest.attempt_id,
+            }
+        )
 
 
 class WorkerReview(BaseModel):
@@ -7273,9 +7393,13 @@ def record_queue_worker_validation(
         warnings.append("Validation was not run; this is not passing evidence.")
     if normalized_status == "provided":
         warnings.append("Validation was provided but not marked passed; this is not passing evidence.")
+    prior_attempts = _validation_attempt_history(review.validation_evidence)
+    previous_attempt_id = prior_attempts[-1].attempt_id if prior_attempts else None
+    attempt_id = f"{run.run_id}-validation-{len(prior_attempts) + 1:04d}".replace("_", "-").lower()
     evidence_record = _build_queue_worker_evidence_record(
         project_name,
         run,
+        evidence_id=attempt_id,
         evidence_type="validation",
         status=normalized_status,
         summary=cleaned_summary,
@@ -7287,6 +7411,22 @@ def record_queue_worker_validation(
         note=note,
         recorded_by=recorded_by,
     )
+    validation_attempt = ValidationAttempt(
+        attempt_id=attempt_id,
+        previous_attempt_id=previous_attempt_id,
+        supersedes=previous_attempt_id,
+        status=status_map[normalized_status],
+        summary=" ".join([cleaned_summary, *_record_notes(note=note, artifact_path=None)]).strip(),
+        commands_run=commands,
+        changed_files=changed_files,
+        artifact_path=_clean_optional_path(artifact_path),
+        risks=risk_items,
+        note=(note or "").strip(),
+        recorded_by=(recorded_by or "").strip() or None,
+        automated=automated,
+        evidence_record=evidence_record,
+        created_at=evidence_record.created_at,
+    )
     validation_evidence = review.validation_evidence.model_copy(
         update={
             "validation_status": status_map[normalized_status],
@@ -7295,6 +7435,8 @@ def record_queue_worker_validation(
             "evidence_paths": evidence_paths,
             "warnings": _dedupe(warnings),
             "evidence_record": evidence_record,
+            "attempts": [*prior_attempts, validation_attempt],
+            "latest_attempt_id": attempt_id,
         }
     )
     updated_review = review.model_copy(
@@ -9794,6 +9936,31 @@ def load_rough_goal_preparation(
     return RoughGoalPreparation.model_validate_json(json_path.read_text(encoding="utf-8"))
 
 
+def list_rough_goal_preparations(
+    project_name: str,
+    workspace_root: Path | None = None,
+) -> list[RoughGoalPreparation]:
+    """List durable prepared goals newest first without changing workflow state."""
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    directory = rough_goal_intake_directory(project_name, workspace_root=root)
+    if not directory.exists():
+        return []
+    preparations: list[RoughGoalPreparation] = []
+    for path in sorted(directory.glob("*/goal-preparation.json")):
+        try:
+            preparation = RoughGoalPreparation.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, ValidationError):
+            continue
+        if preparation.project == project_name:
+            preparations.append(preparation)
+    return sorted(
+        preparations,
+        key=lambda preparation: (preparation.updated_at, preparation.preparation_id),
+        reverse=True,
+    )
+
+
 def recommend_rough_goal_intake_next_slice(
     project_name: str,
     intake_id: str,
@@ -10971,6 +11138,14 @@ def build_prepared_goal_status(
         delivery_state = "complete"
 
     blockers = _dedupe(blockers)
+    canonical_preparation_status = _canonical_prepared_goal_status(
+        recorded_status=preparation.status,
+        bundle_status=bundle.status,
+        remaining_child_count=remaining_child_count,
+        supervisor=supervisor,
+        selected_run=selected_run,
+        blockers=blockers,
+    )
     run_command = (
         f"devo project goal-run --project {project_name} --intake {intake.intake_id} --confirm-run"
     )
@@ -10998,7 +11173,8 @@ def build_prepared_goal_status(
         project=project_name,
         intake_id=intake.intake_id,
         preparation_id=preparation.preparation_id,
-        preparation_status=preparation.status,
+        preparation_status=canonical_preparation_status,
+        recorded_preparation_status=preparation.status,
         bundle_id=bundle.bundle_id,
         approval_state=bundle.status,
         child_count=child_count,
@@ -11016,6 +11192,303 @@ def build_prepared_goal_status(
         blockers=blockers,
         next_action=next_action,
     )
+
+
+def build_operator_console_projection(
+    project_name: str,
+    *,
+    workspace_root: Path | None = None,
+) -> OperatorConsoleProjection:
+    """Project the canonical prepared-goal state for a human operator without mutating artifacts."""
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    preparations = list_rough_goal_preparations(project_name, workspace_root=root)
+    status_pairs: list[tuple[RoughGoalPreparation, PreparedGoalStatus]] = []
+    warnings: list[str] = []
+    for preparation in preparations:
+        try:
+            status = build_prepared_goal_status(project_name, preparation.intake_id, workspace_root=root)
+        except (OSError, ValueError, ValidationError) as exc:
+            warnings.append(f"Could not project prepared goal {preparation.intake_id}: {exc}")
+            continue
+        status_pairs.append((preparation, status))
+
+    active_pairs = sorted(
+        (pair for pair in status_pairs if pair[1].preparation_status != "completed"),
+        key=lambda pair: (
+            pair[1].preparation_status == "running",
+            pair[0].updated_at,
+            pair[0].preparation_id,
+        ),
+        reverse=True,
+    )
+    completed_pairs = [pair for pair in status_pairs if pair[1].preparation_status == "completed"]
+    active_goal = _operator_console_goal_projection(project_name, active_pairs[0], workspace_root=root) if active_pairs else None
+    completion_candidates = [
+        (
+            _operator_console_recent_completion(project_name, pair, workspace_root=root),
+            pair[0].updated_at,
+        )
+        for pair in completed_pairs
+    ]
+    recent_completion_candidate = max(
+        completion_candidates,
+        key=lambda candidate: (
+            candidate[0].completed_at or candidate[1],
+            candidate[0].intake_id,
+        ),
+        default=None,
+    )
+    recent_completion = recent_completion_candidate[0] if recent_completion_candidate else None
+
+    attention_items = [*(active_goal.attention_items if active_goal else []), *warnings]
+    if len(active_pairs) > 1:
+        other_ids = ", ".join(status.intake_id for _preparation, status in active_pairs[1:])
+        warnings.append(f"Older non-terminal prepared goals are not the active projection: {other_ids}.")
+    attention_items = _dedupe(attention_items)
+    return OperatorConsoleProjection(
+        project=project_name,
+        active_goal=active_goal,
+        recent_completion=recent_completion,
+        attention_required=bool(attention_items),
+        attention_items=attention_items,
+        supported_actions=_operator_console_supported_actions(project_name, active_goal),
+        warnings=_dedupe(warnings),
+    )
+
+
+def _canonical_prepared_goal_status(
+    *,
+    recorded_status: str,
+    bundle_status: str,
+    remaining_child_count: int,
+    supervisor: ApprovedBundleSupervisorResult | None,
+    selected_run: QueueWorkerRun | None,
+    blockers: list[str],
+) -> str:
+    """Derive present state while retaining the append-only preparation label separately."""
+    supervisor_completed_bundle = bool(
+        supervisor
+        and supervisor.status == "completed"
+        and supervisor.last_checkpoint == "finished:bundle_completed"
+    )
+    if blockers:
+        return "attention_required"
+    if remaining_child_count == 0 or supervisor_completed_bundle:
+        return "completed"
+    if bundle_status == "approved":
+        if supervisor and supervisor.completed_at is None:
+            return "running"
+        if selected_run and selected_run.status not in {"completed", "cancelled", "failed"}:
+            return "running"
+        return "approved"
+    if bundle_status == "requested":
+        return "awaiting_approval"
+    return recorded_status
+
+
+def _operator_console_goal_projection(
+    project_name: str,
+    pair: tuple[RoughGoalPreparation, PreparedGoalStatus],
+    *,
+    workspace_root: Path,
+) -> OperatorConsoleGoalProjection:
+    preparation, status = pair
+    intake = load_rough_goal_intake_plan(project_name, preparation.intake_id, workspace_root=workspace_root)
+    backlog = load_project_backlog(project_name, workspace_root=workspace_root)
+    queue = load_execution_queue(project_name, preparation.queue_id, workspace_root=workspace_root)
+    task_by_id = {_normalize_task_id(task.id): task for task in backlog.tasks} if backlog else {}
+    item_by_id = {_normalize_queue_item_id(item.item_id): item for item in queue.items} if queue else {}
+    children: list[OperatorConsoleChildProjection] = []
+    for index, task_id in enumerate(preparation.task_ids):
+        item_id = preparation.queue_item_ids[index] if index < len(preparation.queue_item_ids) else ""
+        policy_id = preparation.policy_ids[index] if index < len(preparation.policy_ids) else ""
+        task = task_by_id.get(_normalize_task_id(task_id))
+        item = item_by_id.get(_normalize_queue_item_id(item_id))
+        policy = load_execution_policy(project_name, policy_id, workspace_root=workspace_root) if policy_id else None
+        is_current = bool(status.current_task_id and _normalize_task_id(status.current_task_id) == _normalize_task_id(task_id))
+        children.append(
+            OperatorConsoleChildProjection(
+                position=index + 1,
+                task_id=task_id,
+                title=task.title if task else (item.title if item else task_id),
+                risk_level=task.risk_level if task else (item.risk_level if item else "unknown"),
+                queue_item_id=item_id,
+                queue_item_status=item.status if item else "missing",
+                policy_id=policy_id,
+                policy_status=policy.status if policy else "missing",
+                stage=_operator_console_child_stage(
+                    item.status if item else "missing",
+                    status.current_queue_worker_status if is_current else None,
+                    status.approval_state,
+                ),
+                is_current=is_current,
+            )
+        )
+
+    current_child = next((child for child in children if child.is_current), None)
+    attention_items = list(status.blockers)
+    if status.current_queue_worker_status in {"blocked", "paused", "failed", "cancelled"}:
+        attention_items.append(
+            f"Current worker run is {status.current_queue_worker_status}; automatic retry is not allowed."
+        )
+    attention_items = _dedupe(attention_items)
+    return OperatorConsoleGoalProjection(
+        intake_id=status.intake_id,
+        goal_summary=intake.normalized_goal_summary if intake else status.intake_id,
+        status=status.preparation_status,
+        recorded_preparation_status=status.recorded_preparation_status,
+        preparation_id=status.preparation_id,
+        bundle_id=status.bundle_id,
+        bundle_status=status.approval_state,
+        child_count=status.child_count,
+        completed_child_count=status.completed_child_count,
+        remaining_child_count=status.remaining_child_count,
+        children=children,
+        current_stage=_operator_console_current_stage(status),
+        current_task_id=status.current_task_id,
+        current_task_title=current_child.title if current_child else None,
+        current_policy_id=status.current_policy_id,
+        current_queue_worker_run_id=status.current_queue_worker_run_id,
+        current_queue_worker_status=status.current_queue_worker_status,
+        delivery_state=status.delivery_state,
+        supervisor_run_id=status.supervisor_run_id,
+        supervisor_status=status.supervisor_status,
+        blockers=status.blockers,
+        attention_required=bool(attention_items),
+        attention_items=attention_items,
+        next_action=status.next_action,
+    )
+
+
+def _operator_console_recent_completion(
+    project_name: str,
+    pair: tuple[RoughGoalPreparation, PreparedGoalStatus],
+    *,
+    workspace_root: Path,
+) -> OperatorConsoleRecentCompletion:
+    preparation, status = pair
+    intake = load_rough_goal_intake_plan(project_name, preparation.intake_id, workspace_root=workspace_root)
+    supervisors = _approved_bundle_supervisor_results(
+        project_name,
+        preparation.approval_bundle_id,
+        workspace_root=workspace_root,
+    )
+    completed_at = next(
+        (
+            supervisor.completed_at
+            for supervisor in supervisors
+            if supervisor.status == "completed" and supervisor.last_checkpoint == "finished:bundle_completed"
+        ),
+        None,
+    )
+    return OperatorConsoleRecentCompletion(
+        intake_id=status.intake_id,
+        goal_summary=intake.normalized_goal_summary if intake else status.intake_id,
+        bundle_id=status.bundle_id,
+        child_count=status.child_count,
+        completed_at=completed_at,
+    )
+
+
+def _operator_console_current_stage(status: PreparedGoalStatus) -> str:
+    if status.preparation_status == "completed":
+        return "completed"
+    if status.blockers or status.preparation_status == "attention_required":
+        return "attention_required"
+    if status.approval_state == "requested":
+        return "plan_approval"
+    stages = {
+        "handoff_ready": "worker_handoff",
+        "waiting_worker": "worker_execution",
+        "waiting_review": "semantic_review",
+        "waiting_validation": "validation",
+        "ready_for_delivery_request": "delivery_request",
+        "delivery_requested": "trusted_delivery",
+    }
+    if status.current_queue_worker_status in stages:
+        return stages[status.current_queue_worker_status]
+    if status.supervisor_status == "running":
+        return "supervision"
+    return "ready_to_start"
+
+
+def _operator_console_child_stage(item_status: str, worker_status: str | None, bundle_status: str) -> str:
+    if item_status in {"completed", "skipped", "superseded"}:
+        return "completed"
+    if item_status in {"blocked", "failed"}:
+        return "attention_required"
+    if worker_status:
+        return {
+            "handoff_ready": "worker_handoff",
+            "waiting_worker": "worker_execution",
+            "waiting_review": "semantic_review",
+            "waiting_validation": "validation",
+            "ready_for_delivery_request": "delivery_request",
+            "delivery_requested": "trusted_delivery",
+            "blocked": "attention_required",
+            "paused": "attention_required",
+            "failed": "attention_required",
+            "cancelled": "attention_required",
+        }.get(worker_status, worker_status)
+    return "awaiting_approval" if bundle_status == "requested" else "pending"
+
+
+def _operator_console_supported_actions(
+    project_name: str,
+    goal: OperatorConsoleGoalProjection | None,
+) -> list[OperatorConsoleAction]:
+    if not goal or goal.status == "completed" or goal.attention_required:
+        return []
+    if goal.bundle_status == "requested":
+        return [
+            OperatorConsoleAction(
+                action_id="approve_plan",
+                label="Approve plan",
+                command=(
+                    "devo project execution-policy-approval-bundle-approve "
+                    f"--project {project_name} --bundle {goal.bundle_id} --approver \"<name>\" --confirm-approve"
+                ),
+                confirmation_required=True,
+                reason="The materialized plan is ready for one explicit bounded approval.",
+            )
+        ]
+    if goal.current_stage == "semantic_review":
+        return [
+            OperatorConsoleAction(
+                action_id="review_worker",
+                label="Review worker result",
+                command=(
+                    "devo project queue-worker-record-review "
+                    f"--project {project_name} --run {goal.current_queue_worker_run_id or '<QWR-ID>'} "
+                    '--status "<passed|needs_changes|rejected|blocked>" --summary "<summary>" '
+                    '--recorded-by "<name>" --confirm-record'
+                ),
+                confirmation_required=True,
+                reason="The current child requires a human semantic decision.",
+            )
+        ]
+    elif goal.current_stage == "validation":
+        action_id = "record_validation"
+        label = "Record validation"
+        reason = "The reviewed child is waiting for approved validation evidence."
+    elif goal.supervisor_status == "running" or goal.current_queue_worker_run_id:
+        action_id = "resume_goal"
+        label = "Resume goal"
+        reason = "Continue only the existing durable supervisor and child workflow."
+    else:
+        action_id = "start_goal"
+        label = "Start goal"
+        reason = "The approved goal is ready to start its next child."
+    return [
+        OperatorConsoleAction(
+            action_id=action_id,
+            label=label,
+            command=f"devo project goal-run --project {project_name} --intake {goal.intake_id} --confirm-run",
+            confirmation_required=True,
+            reason=reason,
+        )
+    ]
 
 
 def supervise_prepared_goal(
@@ -13413,6 +13886,27 @@ def render_codex_worker_review_markdown(review: WorkerReview) -> str:
     _append_list_section(lines, "Validation Warnings", review.validation_evidence.warnings)
     _append_queue_worker_evidence_record_section(lines, review.evidence_record, title="Review Evidence Record")
     _append_queue_worker_evidence_record_section(lines, review.validation_evidence.evidence_record, title="Validation Evidence Record")
+    lines.extend(["## Validation Attempt History", ""])
+    if review.validation_evidence.attempts:
+        for attempt in review.validation_evidence.attempts:
+            lines.extend(
+                [
+                    f"### {attempt.attempt_id}",
+                    "",
+                    f"- Status: `{attempt.status}`",
+                    f"- Previous attempt: `{attempt.previous_attempt_id or 'none'}`",
+                    f"- Supersedes: `{attempt.supersedes or 'none'}`",
+                    f"- Recorded by: `{attempt.recorded_by or 'none'}`",
+                    f"- Automated: `{attempt.automated}`",
+                    f"- Created: `{attempt.created_at.isoformat()}`",
+                    "",
+                    attempt.summary,
+                    "",
+                ]
+            )
+            _append_list_section(lines, "Commands", attempt.commands_run)
+    else:
+        lines.extend(["No durable validation attempts recorded yet.", ""])
     _append_list_section(lines, "Acceptance Criteria Review", review.acceptance_criteria_review)
     _append_list_section(lines, "Changed Files Review", review.changed_files_review)
     _append_list_section(lines, "Safety Review", review.safety_review)
@@ -16245,6 +16739,7 @@ def _build_queue_worker_evidence_record(
     project_name: str,
     run: QueueWorkerRun,
     *,
+    evidence_id: str | None = None,
     evidence_type: str,
     status: str,
     summary: str,
@@ -16259,7 +16754,7 @@ def _build_queue_worker_evidence_record(
     normalized_type = evidence_type.strip().lower()
     normalized_status = status.strip().lower()
     return QueueWorkerEvidenceRecord(
-        evidence_id=f"{run.run_id}-{normalized_type}".replace("_", "-").lower(),
+        evidence_id=evidence_id or f"{run.run_id}-{normalized_type}".replace("_", "-").lower(),
         project=project_name,
         queue_worker_run_id=run.run_id,
         queue_item_id=run.selected_queue_item_id,
@@ -16275,6 +16770,30 @@ def _build_queue_worker_evidence_record(
         note=(note or "").strip(),
         recorded_by=(recorded_by or "").strip() or None,
     )
+
+
+def _validation_attempt_history(evidence: ValidationEvidence) -> list[ValidationAttempt]:
+    if evidence.attempts:
+        return list(evidence.attempts)
+    record = evidence.evidence_record
+    if not record:
+        return []
+    return [
+        ValidationAttempt(
+            attempt_id=record.evidence_id,
+            status=evidence.validation_status,
+            summary=evidence.validation_summary or record.summary,
+            commands_run=list(record.commands_run),
+            changed_files=list(record.changed_files),
+            artifact_path=record.artifact_path,
+            risks=list(record.risks),
+            note=record.note,
+            recorded_by=record.recorded_by,
+            automated=record.recorded_by == "devo queue-worker-run-validation",
+            evidence_record=record,
+            created_at=record.created_at,
+        )
+    ]
 
 
 def _require_queue_worker_linked_worker(project_name: str, run: QueueWorkerRun, workspace_root: Path) -> WorkerRun:

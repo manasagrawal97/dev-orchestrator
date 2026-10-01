@@ -32,6 +32,8 @@ from devo.project_planning import (
     QueueWorkerAutoWorkerRun,
     QueueWorkerLoopResult,
     ExecutionPolicyApprovalBundleCheck,
+    build_operator_console_projection,
+    build_prepared_goal_status,
     build_project_intake_status,
     calculate_project_progress,
     create_rough_goal_intake_next_policy,
@@ -2006,6 +2008,36 @@ def test_goal_workflow_status_json_shows_approved_goal_start_action_without_muta
     assert _target_snapshot(project_path) == before_target
 
 
+def test_goal_status_and_operator_console_use_approved_bundle_over_stale_preparation_label(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    before_planning = _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir)
+    before_target = _target_snapshot(project_path)
+
+    status = build_prepared_goal_status("sample", "INTAKE-0001", workspace_root=workspace)
+    projection = build_operator_console_projection("sample", workspace_root=workspace)
+
+    assert status.preparation_status == "approved"
+    assert status.recorded_preparation_status == "awaiting_approval"
+    assert projection.active_goal is not None
+    assert projection.active_goal.intake_id == "INTAKE-0001"
+    assert projection.active_goal.status == "approved"
+    assert projection.active_goal.recorded_preparation_status == "awaiting_approval"
+    assert projection.active_goal.bundle_status == "approved"
+    assert projection.active_goal.current_stage == "ready_to_start"
+    assert projection.active_goal.child_count == 4
+    assert projection.active_goal.completed_child_count == 0
+    assert projection.active_goal.children[0].task_id == "T055"
+    assert projection.active_goal.children[0].is_current is True
+    assert [action.action_id for action in projection.supported_actions] == ["start_goal"]
+    assert projection.attention_required is False
+    assert projection.recent_completion is None
+    assert _target_snapshot(planning_artifact_paths("sample", workspace_root=workspace).planning_dir) == before_planning
+    assert _target_snapshot(project_path) == before_target
+
+
 def test_goal_workflow_status_surfaces_durable_recovery_and_pending_delivery_without_mutation(
     tmp_path: Path,
     monkeypatch,
@@ -2772,6 +2804,16 @@ def test_goal_workflow_medium_risk_worker_stops_at_human_semantic_review(
     assert runs[0].status == "waiting_review"
     assert list_codex_worker_reviews("sample", workspace_root=workspace) == []
     assert list_delivery_runner_requests("sample", workspace_root=workspace) == []
+    projection = build_operator_console_projection("sample", workspace_root=workspace)
+    assert projection.active_goal is not None
+    assert projection.active_goal.current_stage == "semantic_review"
+    assert len(projection.supported_actions) == 1
+    review_action = projection.supported_actions[0]
+    assert review_action.action_id == "review_worker"
+    assert "queue-worker-record-review" in review_action.command
+    assert "--run QWR-0001" in review_action.command
+    assert '--status "<passed|needs_changes|rejected|blocked>"' in review_action.command
+    assert "goal-run" not in review_action.command
 
 
 def test_goal_workflow_run_delegates_confirmed_execution_to_existing_durable_supervisor(
@@ -2947,6 +2989,18 @@ def test_goal_workflow_integration_completes_five_low_risk_children_after_one_ap
     assert [run.status for run in list_queue_worker_runs("sample", workspace_root=workspace)] == [
         "completed"
     ] * 5
+    status = build_prepared_goal_status("sample", "INTAKE-0001", workspace_root=workspace)
+    projection = build_operator_console_projection("sample", workspace_root=workspace)
+    assert status.preparation_status == "completed"
+    assert status.recorded_preparation_status == "awaiting_approval"
+    assert status.completed_child_count == 5
+    assert projection.active_goal is None
+    assert projection.recent_completion is not None
+    assert projection.recent_completion.intake_id == "INTAKE-0001"
+    assert projection.recent_completion.bundle_id == "PAB-0001"
+    assert projection.recent_completion.completed_at == result.completed_at
+    assert projection.supported_actions == []
+    assert projection.attention_required is False
 
 
 def test_queue_create_from_approved_batch_creates_artifacts(tmp_path: Path, monkeypatch) -> None:
@@ -5390,12 +5444,120 @@ def test_queue_worker_run_validation_records_passed_evidence_without_delivery(tm
     assert review.validation_evidence.validation_status == "passed"
     assert review.validation_evidence.evidence_record.status == "passed"
     assert review.validation_evidence.evidence_record.recorded_by == "devo queue-worker-run-validation"
+    assert len(review.validation_evidence.attempts) == 1
+    assert review.validation_evidence.latest_attempt_id == review.validation_evidence.attempts[0].attempt_id
     assert any(
         "Validation evidence was recorded from queue-worker-run-validation" in warning
         for warning in review.validation_evidence.warnings
     )
     assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
     assert _git(project_path, "status", "--short", capture=True).stdout == ""
+
+
+def test_queue_worker_validation_attempt_history_preserves_failure_and_latest_pass_controls_delivery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _init_git_repo(project_path)
+    _create_reviewed_queue_worker_run(tmp_path, validation_commands=["cmd /c echo validation"])
+    (project_path / "src").mkdir()
+    (project_path / "src" / "feature.py").write_text("print('validated')\n", encoding="utf-8")
+    review_before = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review_before is not None
+    review_evidence_before = review_before.evidence_record.model_dump() if review_before.evidence_record else None
+
+    project_planning_module.record_queue_worker_validation(
+        "sample",
+        "QWR-0001",
+        status="failed",
+        summary="First validation attempt failed.",
+        commands_run="cmd /c echo failing && exit 1",
+        recorded_by="Validator",
+        workspace_root=workspace,
+    )
+    failed_review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert failed_review is not None
+    assert failed_review.validation_evidence.validation_status == "failed"
+    assert len(failed_review.validation_evidence.attempts) == 1
+    failed_attempt = failed_review.validation_evidence.attempts[0]
+    assert failed_attempt.status == "failed"
+    assert failed_attempt.evidence_record.status == "failed"
+
+    current_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert current_run is not None
+    failed_evidence = summarize_queue_worker_evidence("sample", current_run, workspace_root=workspace)
+    assert failed_evidence.validation_passed is False
+    assert "Validation evidence failed." in failed_evidence.blockers
+    assert load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace) is None
+
+    review_json, _review_markdown = project_planning_module.worker_review_artifact_paths(
+        "sample", "WR001", workspace_root=workspace
+    )
+    legacy_payload = json.loads(review_json.read_text(encoding="utf-8"))
+    legacy_payload["validation_evidence"].pop("attempts")
+    legacy_payload["validation_evidence"].pop("latest_attempt_id")
+    review_json.write_text(json.dumps(legacy_payload, indent=2), encoding="utf-8")
+    legacy_review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert legacy_review is not None
+    assert legacy_review.validation_evidence.validation_status == "failed"
+    assert legacy_review.validation_evidence.attempts == []
+
+    project_planning_module.record_queue_worker_validation(
+        "sample",
+        "QWR-0001",
+        status="passed",
+        summary="Corrected validation attempt passed.",
+        commands_run="cmd /c echo validation",
+        recorded_by="Validator",
+        workspace_root=workspace,
+    )
+    passed_review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert passed_review is not None
+    assert passed_review.review_status == review_before.review_status
+    assert passed_review.decision_note == review_before.decision_note
+    assert (passed_review.evidence_record.model_dump() if passed_review.evidence_record else None) == review_evidence_before
+    assert passed_review.validation_evidence.validation_status == "passed"
+    assert len(passed_review.validation_evidence.attempts) == 2
+    assert passed_review.validation_evidence.attempts[0].model_dump() == failed_attempt.model_dump()
+    passed_attempt = passed_review.validation_evidence.attempts[1]
+    assert passed_attempt.status == "passed"
+    assert passed_attempt.previous_attempt_id == failed_attempt.attempt_id
+    assert passed_attempt.supersedes == failed_attempt.attempt_id
+    assert passed_review.validation_evidence.latest_attempt_id == passed_attempt.attempt_id
+    assert passed_review.validation_evidence.evidence_record == passed_attempt.evidence_record
+
+    stale_payload = json.loads(review_json.read_text(encoding="utf-8"))
+    stale_payload["validation_evidence"]["validation_status"] = "failed"
+    stale_payload["validation_evidence"]["validation_summary"] = failed_attempt.summary
+    stale_payload["validation_evidence"]["evidence_record"] = failed_attempt.evidence_record.model_dump(mode="json")
+    review_json.write_text(json.dumps(stale_payload, indent=2), encoding="utf-8")
+    derived_review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert derived_review is not None
+    assert derived_review.validation_evidence.validation_status == "passed"
+    assert derived_review.validation_evidence.evidence_record == passed_attempt.evidence_record
+
+    delivered = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-loop",
+            "--project",
+            "sample",
+            "--policy",
+            "POL-0001",
+            "--run",
+            "QWR-0001",
+            "--message",
+            "feat: validation history",
+            "--confirm-loop",
+        ],
+        terminal_width=240,
+    )
+    assert delivered.exit_code == 0, delivered.output
+    request = load_delivery_runner_request("sample", "REQ-0001", workspace_root=workspace)
+    assert request is not None
+    assert request.status == "requested"
 
 
 def test_queue_worker_record_commands_reject_unknown_missing_and_unsafe_states(tmp_path: Path, monkeypatch) -> None:
