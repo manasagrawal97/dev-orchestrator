@@ -505,6 +505,7 @@ class QueueWorkerRun(BaseModel):
     failure_reason: str = ""
     cancel_reason: str = ""
     retry_of: str | None = None
+    retry_authorized_by: str | None = None
     delivery_request_id: str | None = None
     delivery_request_status: str | None = None
     delivery_requested_at: datetime | None = None
@@ -860,6 +861,14 @@ class CodexWorkerPreparation(BaseModel):
     staged_files: list[str] = Field(default_factory=list)
     unstaged_files: list[str] = Field(default_factory=list)
     untracked_files: list[str] = Field(default_factory=list)
+    inherited_wip_verified: bool = False
+    inherited_wip_authorized: bool = False
+    inherited_wip_from_run_id: str | None = None
+    inherited_wip_authorized_by: str | None = None
+    inherited_wip_branch: str | None = None
+    inherited_wip_head_commit: str | None = None
+    inherited_wip_git_state_fingerprint: str | None = None
+    inherited_wip_files: list[str] = Field(default_factory=list)
     policy_status: str
     policy_risk_level: str | None = None
     prompt_path: str
@@ -3568,6 +3577,13 @@ def create_codex_worker_run_preview(
             git_state_fingerprint, inherited_wip_from_run_id, inherited_warning = _verify_codex_worker_retry_baseline(
                 project_name, run, policy, target_path, git_context, root
             )
+            _verify_preparation_inherited_wip_authority(
+                preparation,
+                run,
+                git_context,
+                git_state_fingerprint,
+                inherited_wip_from_run_id,
+            )
         except ValueError as exc:
             msg = (
                 f"Target repository must be clean before Codex subprocess preview unless exact inherited WIP from its linked parent is proven; "
@@ -3783,6 +3799,13 @@ def execute_codex_worker_subprocess_run(
         try:
             git_state_fingerprint_before, inherited_wip_from_run_id, inherited_warning = _verify_codex_worker_retry_baseline(
                 project_name, run, policy, target_path, git_before, root
+            )
+            _verify_preparation_inherited_wip_authority(
+                preparation,
+                run,
+                git_before,
+                git_state_fingerprint_before,
+                inherited_wip_from_run_id,
             )
         except ValueError as exc:
             msg = (
@@ -4931,8 +4954,37 @@ def create_codex_worker_preparation(
         workspace_root=root,
     )
     warnings = list(git_context["warnings"])
+    inherited_wip_verified = False
+    inherited_wip_authorized = False
+    inherited_wip_from_run_id: str | None = None
+    inherited_wip_authorized_by: str | None = None
+    inherited_wip_git_state_fingerprint: str | None = None
+    inherited_wip_files: list[str] = []
     if git_context["git_dirty"]:
-        warnings.append("Target repository is dirty; Codex should not proceed unless the operator confirms this state is expected.")
+        retry_operator = run.retry_authorized_by.strip() if run.retry_authorized_by and run.retry_authorized_by.strip() else None
+        if run.retry_of and retry_operator:
+            try:
+                (
+                    inherited_wip_git_state_fingerprint,
+                    inherited_wip_from_run_id,
+                    inherited_warning,
+                ) = _verify_codex_worker_retry_baseline(project_name, run, policy, target_path, git_context, root)
+            except ValueError as exc:
+                warnings.append(f"Inherited WIP authorization was not emitted because verification failed: {exc}")
+            else:
+                inherited_wip_verified = True
+                inherited_wip_authorized = True
+                inherited_wip_authorized_by = retry_operator
+                inherited_wip_files = _dedupe(
+                    [
+                        *[str(item).replace("\\", "/") for item in git_context["staged_files"]],
+                        *[str(item).replace("\\", "/") for item in git_context["unstaged_files"]],
+                        *[str(item).replace("\\", "/") for item in git_context["untracked_files"]],
+                    ]
+                )
+                warnings.append(inherited_warning)
+        if not inherited_wip_authorized:
+            warnings.append("Target repository is dirty; Codex should not proceed unless the operator confirms this state is expected.")
     if not policy.validation_commands:
         warnings.append("Execution policy has no validation commands; worker must report validation choice honestly.")
     cleaned_recorded_by = recorded_by.strip() if recorded_by and recorded_by.strip() else None
@@ -4956,6 +5008,14 @@ def create_codex_worker_preparation(
         staged_files=list(git_context["staged_files"]),
         unstaged_files=list(git_context["unstaged_files"]),
         untracked_files=list(git_context["untracked_files"]),
+        inherited_wip_verified=inherited_wip_verified,
+        inherited_wip_authorized=inherited_wip_authorized,
+        inherited_wip_from_run_id=inherited_wip_from_run_id,
+        inherited_wip_authorized_by=inherited_wip_authorized_by,
+        inherited_wip_branch=git_context["current_branch"] if inherited_wip_authorized else None,
+        inherited_wip_head_commit=git_context["head_commit"] if inherited_wip_authorized else None,
+        inherited_wip_git_state_fingerprint=inherited_wip_git_state_fingerprint,
+        inherited_wip_files=inherited_wip_files,
         policy_status=policy.status,
         policy_risk_level=policy.risk_level,
         prompt_path=str(prompt_path),
@@ -9582,8 +9642,9 @@ def retry_queue_worker_run(
         else f"Create a fresh queue handoff: devo project handoff-next --project {project_name} --queue {previous.queue_id or '<queueId>'}"
     )
     retry_note = f"retry of queue worker run {previous.run_id}"
-    if operator:
-        retry_note += f" requested by {operator.strip()}"
+    cleaned_operator = operator.strip() if operator and operator.strip() else None
+    if cleaned_operator:
+        retry_note += f" requested by {cleaned_operator}"
     if reason:
         retry_note += f": {reason.strip()}"
     retry = QueueWorkerRun(
@@ -9601,6 +9662,7 @@ def retry_queue_worker_run(
         updated_at=now,
         approver=previous.approver,
         retry_of=previous.run_id,
+        retry_authorized_by=cleaned_operator,
         steps_run=[
             retry_note,
             "policy and selected queue item rechecked",
@@ -14361,6 +14423,7 @@ def render_queue_worker_run_markdown(run: QueueWorkerRun) -> str:
         f"- Updated: `{run.updated_at.isoformat()}`",
         f"- Approver: `{run.approver or 'none'}`",
         f"- Retry of: `{run.retry_of or 'none'}`",
+        f"- Retry authorized by: `{run.retry_authorized_by or 'none'}`",
         f"- Delivery request id: `{run.delivery_request_id or 'none'}`",
         f"- Delivery request status: `{run.delivery_request_status or 'none'}`",
         f"- Pause reason: `{run.pause_reason or 'none'}`",
@@ -14411,6 +14474,11 @@ def render_codex_worker_preparation_markdown(preparation: CodexWorkerPreparation
         f"- Branch: `{preparation.current_branch or 'unknown'}`",
         f"- Upstream: `{preparation.upstream_branch or 'none'}`",
         f"- Git status: `{preparation.git_status_summary}`",
+        f"- Inherited WIP verified: `{preparation.inherited_wip_verified}`",
+        f"- Inherited WIP authorized: `{preparation.inherited_wip_authorized}`",
+        f"- Inherited WIP parent run: `{preparation.inherited_wip_from_run_id or 'none'}`",
+        f"- Inherited WIP authorized by: `{preparation.inherited_wip_authorized_by or 'none'}`",
+        f"- Inherited WIP fingerprint: `{preparation.inherited_wip_git_state_fingerprint or 'none'}`",
         f"- Prompt: `{preparation.prompt_path}`",
         f"- Result template JSON: `{preparation.worker_result_template_json_path}`",
         f"- Result template Markdown: `{preparation.worker_result_template_markdown_path}`",
@@ -14867,7 +14935,30 @@ def render_codex_worker_preparation_prompt(
         f"- Current git status summary: `{preparation.git_status_summary}`",
         "",
     ]
-    if preparation.git_dirty:
+    if preparation.inherited_wip_verified and preparation.inherited_wip_authorized:
+        lines.extend(
+            [
+                "### Verified Inherited WIP Authority",
+                "",
+                "The listed dirty files are expected inherited work from the explicitly approved parent attempt.",
+                "Devo verified this inherited WIP during preparation and rechecks the same authority immediately before subprocess launch.",
+                f"- Parent queue-worker run: `{preparation.inherited_wip_from_run_id}`",
+                f"- Operator authorization recorded by: `{preparation.inherited_wip_authorized_by}`",
+                f"- Verified branch: `{preparation.inherited_wip_branch}`",
+                f"- Verified HEAD: `{preparation.inherited_wip_head_commit}`",
+                f"- Verified git-state fingerprint: `{preparation.inherited_wip_git_state_fingerprint}`",
+                "- Verified inherited files:",
+                "",
+                *_prompt_bullet_lines(preparation.inherited_wip_files),
+                "",
+                "You are authorized to continue only these inherited files within the current policy scope.",
+                "Do not treat their pre-existing modifications as an unexplained dirty-worktree blocker.",
+                "Preserve every unrelated file. Do not reset, discard, clean, stash, stage, commit, or broaden scope because inherited work is present.",
+                "If the branch, HEAD, dirty-file set, fingerprint, or policy scope differs from the verified context above, stop and report blocked.",
+                "",
+            ]
+        )
+    elif preparation.git_dirty:
         lines.extend(
             [
                 "Important dirty-state warning: the target repository is not clean. Do not proceed until the operator confirms the dirty state is expected for this one task.",
@@ -18870,6 +18961,50 @@ def _verify_codex_worker_retry_baseline(
         "branch, HEAD, dirty-file sets, content fingerprint, and approved scope all match."
     )
     return fingerprint, parent.run_id, warning
+
+
+def _verify_preparation_inherited_wip_authority(
+    preparation: CodexWorkerPreparation,
+    run: QueueWorkerRun,
+    git_context: dict[str, object],
+    fingerprint: str,
+    parent_run_id: str,
+) -> None:
+    retry_operator = run.retry_authorized_by.strip() if run.retry_authorized_by and run.retry_authorized_by.strip() else None
+    current_files = sorted(
+        _dedupe(
+            [
+                *[str(item).replace("\\", "/") for item in git_context["staged_files"]],
+                *[str(item).replace("\\", "/") for item in git_context["unstaged_files"]],
+                *[str(item).replace("\\", "/") for item in git_context["untracked_files"]],
+            ]
+        )
+    )
+    mismatches: list[str] = []
+    if not preparation.inherited_wip_verified:
+        mismatches.append("preparation does not record successful inherited-WIP verification")
+    if not preparation.inherited_wip_authorized:
+        mismatches.append("preparation does not record inherited-WIP operator authorization")
+    if not retry_operator:
+        mismatches.append("linked retry does not record the authorizing operator")
+    elif preparation.inherited_wip_authorized_by != retry_operator:
+        mismatches.append("authorizing operator differs")
+    if preparation.inherited_wip_from_run_id != parent_run_id:
+        mismatches.append("parent queue-worker lineage differs")
+    if preparation.inherited_wip_branch != git_context["current_branch"]:
+        mismatches.append("branch differs")
+    if preparation.inherited_wip_head_commit != git_context["head_commit"]:
+        mismatches.append("HEAD differs")
+    if preparation.inherited_wip_git_state_fingerprint != fingerprint:
+        mismatches.append("git-state fingerprint differs")
+    if sorted(path.replace("\\", "/") for path in preparation.inherited_wip_files) != current_files:
+        mismatches.append("dirty-file set differs")
+    if mismatches:
+        raise ValueError(
+            "Codex worker preparation does not carry the current verified inherited-WIP authority ("
+            + "; ".join(mismatches)
+            + "). Create a fresh preparation after the supported linked retry is explicitly authorized."
+        )
 
 
 def _looks_like_file_scope_pattern(value: str) -> bool:

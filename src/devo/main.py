@@ -902,6 +902,7 @@ def _print_queue_worker_run(run: QueueWorkerRun, json_path: Path | None = None, 
     console.print(f"Worker run: {run.selected_worker_run_id or 'none'}")
     console.print(f"Mode: {run.mode}")
     console.print(f"Retry of: {run.retry_of or 'none'}")
+    console.print(f"Retry authorized by: {run.retry_authorized_by or 'none'}")
     console.print(f"Delivery request: {run.delivery_request_id or 'none'}")
     console.print(f"Delivery request status: {run.delivery_request_status or 'none'}")
     console.print(f"Pause reason: {run.pause_reason or 'none'}")
@@ -6812,6 +6813,7 @@ def fail_queue_worker_run_command(
 def retry_queue_worker_run_command(
     project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
     run_id: str = typer.Option(..., "--run", help="Queue worker run id."),
+    operator: str | None = typer.Option(None, "--operator", help="Operator authorizing this linked retry."),
     confirm_retry: bool = typer.Option(False, "--confirm-retry", help="Confirm linked queue-worker retry creation."),
 ) -> None:
     """Create a linked queue-worker retry attempt after policy/item rechecks."""
@@ -6820,7 +6822,7 @@ def retry_queue_worker_run_command(
         console.print("queue-worker-retry requires --confirm-retry.")
         raise typer.Exit(1)
     try:
-        run, json_path, markdown_path = retry_queue_worker_run(project_name, run_id)
+        run, json_path, markdown_path = retry_queue_worker_run(project_name, run_id, operator=operator)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_queue_worker_run(run, json_path=json_path, markdown_path=markdown_path)

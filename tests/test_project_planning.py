@@ -7108,6 +7108,10 @@ def test_codex_worker_prepare_generates_prompt_and_result_templates(tmp_path: Pa
     assert preparation.queue_item_id == "QI001"
     assert preparation.task_id == "T001"
     assert preparation.git_status_summary == "clean"
+    assert preparation.inherited_wip_verified is False
+    assert preparation.inherited_wip_authorized is False
+    assert preparation.inherited_wip_from_run_id is None
+    assert preparation.inherited_wip_files == []
     prompt = Path(preparation.prompt_path)
     template_json = Path(preparation.worker_result_template_json_path)
     template_md = Path(preparation.worker_result_template_markdown_path)
@@ -7125,6 +7129,7 @@ def test_codex_worker_prepare_generates_prompt_and_result_templates(tmp_path: Pa
     assert "Scripted/fake workers should parse this explicit `Task id:` line" in prompt_text
     assert "status: completed | failed | blocked | usage_limit" in prompt_text
     assert "codex-worker-ingest --project sample --run QWR-0001" in prompt_text
+    assert "Verified Inherited WIP Authority" not in prompt_text
     data = json.loads(template_json.read_text(encoding="utf-8"))
     assert data["status"] == "completed | failed | blocked | usage_limit"
     assert data["recorded_by"] == "Manas"
@@ -7586,11 +7591,50 @@ def test_codex_worker_retry_executes_with_exact_inherited_wip(tmp_path: Path, mo
     )
     assert parent_result.exit_code == 0, parent_result.output
 
-    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"])
+    retry = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-retry",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--confirm-retry",
+        ],
+    )
     assert retry.exit_code == 0, retry.output
+    assert "Retry authorized by: Manas" in retry.output
     prepared_retry = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"])
     assert prepared_retry.exit_code == 0, prepared_retry.output
     retry_preparation = [item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"][0]
+    parent_run_data = json.loads(
+        next(
+            path
+            for path in codex_worker_subprocess_run_directory("sample", workspace_root=workspace).glob("*/codex-worker-run.json")
+            if json.loads(path.read_text(encoding="utf-8"))["queue_worker_run_id"] == "QWR-0001"
+        ).read_text(encoding="utf-8")
+    )
+    retry_prompt = Path(retry_preparation.prompt_path).read_text(encoding="utf-8")
+    assert retry_preparation.inherited_wip_verified is True
+    assert retry_preparation.inherited_wip_authorized is True
+    assert retry_preparation.inherited_wip_from_run_id == "QWR-0001"
+    assert retry_preparation.inherited_wip_authorized_by == "Manas"
+    assert retry_preparation.inherited_wip_branch == parent_run_data["current_branch_after"]
+    assert retry_preparation.inherited_wip_head_commit == parent_run_data["head_commit_after"]
+    assert retry_preparation.inherited_wip_git_state_fingerprint == parent_run_data["git_state_fingerprint_after"]
+    assert retry_preparation.inherited_wip_files == ["src/feature.py"]
+    assert "Verified Inherited WIP Authority" in retry_prompt
+    assert "Parent queue-worker run: `QWR-0001`" in retry_prompt
+    assert "Operator authorization recorded by: `Manas`" in retry_prompt
+    assert f"Verified HEAD: `{parent_run_data['head_commit_after']}`" in retry_prompt
+    assert f"Verified git-state fingerprint: `{parent_run_data['git_state_fingerprint_after']}`" in retry_prompt
+    assert "- src/feature.py" in retry_prompt
+    assert "Do not treat their pre-existing modifications as an unexplained dirty-worktree blocker." in retry_prompt
+    assert "Do not reset, discard, clean, stash, stage, commit, or broaden scope" in retry_prompt
+    assert "Do not proceed until the operator confirms the dirty state" not in retry_prompt
     retry_result = runner.invoke(
         app,
         ["project", "codex-worker-run", "--project", "sample", "--run", "QWR-0002", "--prepare", retry_preparation.preparation_id, "--confirm-codex-worker"],
@@ -7626,11 +7670,29 @@ def test_codex_worker_retry_rejects_drifted_inherited_wip(tmp_path: Path, monkey
     )
     assert parent_result.exit_code == 0, parent_result.output
     (project_path / "src" / "feature.py").write_text("print('unrelated drift')\n", encoding="utf-8")
-    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"])
+    retry = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-retry",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--confirm-retry",
+        ],
+    )
     assert retry.exit_code == 0, retry.output
     prepared_retry = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"])
     assert prepared_retry.exit_code == 0, prepared_retry.output
     retry_preparation = [item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"][0]
+    retry_prompt = Path(retry_preparation.prompt_path).read_text(encoding="utf-8")
+    assert retry_preparation.inherited_wip_verified is False
+    assert retry_preparation.inherited_wip_authorized is False
+    assert "Verified Inherited WIP Authority" not in retry_prompt
+    assert "Do not proceed until the operator confirms the dirty state" in retry_prompt
 
     retry_result = runner.invoke(
         app,
@@ -7646,6 +7708,37 @@ def test_codex_worker_retry_rejects_drifted_inherited_wip(tmp_path: Path, monkey
         if json.loads(path.read_text(encoding="utf-8"))["queue_worker_run_id"] == "QWR-0002"
     ]
     assert retry_runs == []
+
+
+def test_codex_worker_retry_prompt_requires_durable_operator_authority(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path, _retry_preparation_id, _parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    retry_run = load_queue_worker_run("sample", "QWR-0002", workspace_root=workspace)
+    assert retry_run is not None
+    run_json, _run_markdown = queue_worker_run_artifact_paths("sample", "QWR-0002", workspace_root=workspace)
+    run_json.write_text(retry_run.model_copy(update={"retry_authorized_by": None}).model_dump_json(indent=2), encoding="utf-8")
+
+    prepared_retry = runner.invoke(
+        app,
+        ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--force", "--confirm-prepare"],
+        terminal_width=240,
+    )
+
+    assert prepared_retry.exit_code == 0, prepared_retry.output
+    preparations = [
+        item for item in list_codex_worker_preparations("sample", workspace_root=workspace) if item.queue_worker_run_id == "QWR-0002"
+    ]
+    latest = max(preparations, key=lambda item: item.created_at)
+    prompt = Path(latest.prompt_path).read_text(encoding="utf-8")
+    assert latest.inherited_wip_verified is False
+    assert latest.inherited_wip_authorized is False
+    assert latest.inherited_wip_authorized_by is None
+    assert "Verified Inherited WIP Authority" not in prompt
+    assert "Do not proceed until the operator confirms the dirty state" in prompt
+    retry_result = _invoke_linked_codex_worker_retry(latest.preparation_id)
+    assert retry_result.exit_code != 0
+    assert "does not carry the current verified inherited-WIP authority" in retry_result.output
+    assert "linked retry does not record the authorizing operator" in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
 
 
 def test_codex_worker_retry_rejects_new_dirty_file_after_parent_attempt(tmp_path: Path, monkeypatch) -> None:
@@ -7718,6 +7811,20 @@ def test_codex_worker_retry_rejects_branch_drift(tmp_path: Path, monkeypatch) ->
 
     assert retry_result.exit_code != 0
     assert "Repository branch changed after the parent attempt" in retry_result.output
+    assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
+
+
+def test_codex_worker_retry_rejects_head_drift_after_authorized_preparation(tmp_path: Path, monkeypatch) -> None:
+    workspace, project_path, retry_preparation_id, _parent_run_json = _prepare_retry_with_inherited_wip(tmp_path, monkeypatch)
+    marker = project_path / "head-drift.txt"
+    marker.write_text("new committed baseline\n", encoding="utf-8")
+    _git(project_path, "add", "head-drift.txt")
+    _git(project_path, "commit", "-m", "test: move retry head")
+
+    retry_result = _invoke_linked_codex_worker_retry(retry_preparation_id)
+
+    assert retry_result.exit_code != 0
+    assert "Repository HEAD changed after the parent attempt" in retry_result.output
     assert _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0002") == []
 
 
@@ -11747,7 +11854,20 @@ def _prepare_retry_with_inherited_wip(tmp_path: Path, monkeypatch) -> tuple[Path
     assert parent_result.exit_code == 0, parent_result.output
     parent_run_json = _codex_worker_subprocess_runs_for_queue(workspace, "QWR-0001")[0]
 
-    retry = runner.invoke(app, ["project", "queue-worker-retry", "--project", "sample", "--run", "QWR-0001", "--confirm-retry"])
+    retry = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-retry",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--confirm-retry",
+        ],
+    )
     assert retry.exit_code == 0, retry.output
     prepared_retry = runner.invoke(app, ["project", "codex-worker-prepare", "--project", "sample", "--run", "QWR-0002", "--confirm-prepare"])
     assert prepared_retry.exit_code == 0, prepared_retry.output
