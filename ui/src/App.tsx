@@ -9,6 +9,7 @@ import { DeliveryPage } from './pages/DeliveryPage';
 import { HandoffsPage } from './pages/HandoffsPage';
 import { HealthPage } from './pages/HealthPage';
 import { PlanningIntakePage } from './pages/PlanningIntakePage';
+import { OperatorConsolePage } from './pages/OperatorConsolePage';
 import { ProgressPage } from './pages/ProgressPage';
 import { ProjectOverviewPage } from './pages/ProjectOverviewPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -20,6 +21,7 @@ import type { CurrentContext } from './types/devo';
 type PageId =
   | 'projects'
   | 'overview'
+  | 'operator-console'
   | 'planning'
   | 'blueprint'
   | 'backlog'
@@ -37,6 +39,7 @@ type PageId =
 const pages: Array<{ id: PageId; label: string }> = [
   { id: 'projects', label: 'Projects' },
   { id: 'overview', label: 'Project Overview' },
+  { id: 'operator-console', label: 'Operator Console' },
   { id: 'planning', label: 'Planning Intake' },
   { id: 'blueprint', label: 'Blueprint' },
   { id: 'backlog', label: 'Backlog' },
@@ -139,10 +142,17 @@ export default function App() {
         </aside>
 
         <main className="content-shell">
-          <section className="readonly-banner">
-            <strong>Read-only dashboard.</strong>
-            <span>Use CLI/Codex for approvals, validation, delivery, restore, and scheduler changes.</span>
-          </section>
+          {activePage === 'operator-console' ? (
+            <section className="readonly-banner operator-banner">
+              <strong>Guarded local controls.</strong>
+              <span>Every state-changing action requires explicit confirmation and is rechecked by Devo.</span>
+            </section>
+          ) : (
+            <section className="readonly-banner">
+              <strong>Read-only dashboard.</strong>
+              <span>Use the Operator Console or CLI/Codex for guarded workflow actions.</span>
+            </section>
+          )}
 
           <div className="page-title">
             <p className="eyebrow">Dashboard</p>
@@ -151,6 +161,7 @@ export default function App() {
 
           {activePage === 'projects' ? <ProjectsPage selectedProject={selectedProject} onSelectProject={selectProject} /> : null}
           {activePage === 'overview' ? <ProjectOverviewPage selectedProject={selectedProject} onSelectRun={selectRun} onOpenPage={setActivePage} /> : null}
+          {activePage === 'operator-console' ? <OperatorConsolePage selectedProject={selectedProject} /> : null}
           {activePage === 'planning' ? <PlanningIntakePage selectedProject={selectedProject} onOpenPage={setActivePage} /> : null}
           {activePage === 'blueprint' ? <BlueprintPage selectedProject={selectedProject} /> : null}
           {activePage === 'backlog' ? <BacklogPage selectedProject={selectedProject} /> : null}
