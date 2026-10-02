@@ -16,6 +16,23 @@ import type {
   CodexRunPlansResponse,
   CodexHandoff,
   ExecutionQueue,
+  OperatorConsoleApprovalRequest,
+  OperatorConsoleApprovalResponse,
+  OperatorConsoleCreateIntakeResponse,
+  OperatorConsoleIntakeRequest,
+  OperatorConsoleMaterializeRequest,
+  OperatorConsoleMaterializeResponse,
+  OperatorConsolePlanningApprovalRequest,
+  OperatorConsolePlanningApprovalResponse,
+  OperatorConsolePrepareRequest,
+  OperatorConsolePrepareResponse,
+  OperatorConsoleProjection,
+  OperatorConsoleRecoveryRequest,
+  OperatorConsoleRecoveryResponse,
+  OperatorConsoleReviewRequest,
+  OperatorConsoleReviewResponse,
+  OperatorConsoleRunRequest,
+  OperatorConsoleRunResponse,
   ProjectBacklog,
   ProjectBatchesResponse,
   ProjectBlueprint,
@@ -135,6 +152,56 @@ export const devoApi = {
     getJson<RunOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/overview`),
   getWorkPackageOverview: (project: string, runId: string) =>
     getJson<WorkPackageOverview>(`/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/work-package`),
+  getProjectOperatorConsole: (project: string) =>
+    getJson<OperatorConsoleProjection>(`/api/projects/${encodeURIComponent(project)}/operator-console`),
+  createProjectOperatorConsoleIntake: (project: string, request: OperatorConsoleIntakeRequest) =>
+    postJson<OperatorConsoleCreateIntakeResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/intakes`,
+      request
+    ),
+  materializeProjectOperatorConsoleIntake: (
+    project: string,
+    intakeId: string,
+    request: OperatorConsoleMaterializeRequest
+  ) =>
+    postJson<OperatorConsoleMaterializeResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/intakes/${encodeURIComponent(intakeId)}/materialize`,
+      request
+    ),
+  approveProjectOperatorConsoleMaterializedPlan: (
+    project: string,
+    intakeId: string,
+    request: OperatorConsolePlanningApprovalRequest
+  ) =>
+    postJson<OperatorConsolePlanningApprovalResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/intakes/${encodeURIComponent(intakeId)}/approve`,
+      request
+    ),
+  prepareProjectOperatorConsoleIntake: (project: string, intakeId: string, request: OperatorConsolePrepareRequest) =>
+    postJson<OperatorConsolePrepareResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/intakes/${encodeURIComponent(intakeId)}/prepare`,
+      request
+    ),
+  approveProjectOperatorConsoleGoal: (project: string, intakeId: string, request: OperatorConsoleApprovalRequest) =>
+    postJson<OperatorConsoleApprovalResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/goals/${encodeURIComponent(intakeId)}/approve`,
+      request
+    ),
+  runProjectOperatorConsoleGoal: (project: string, intakeId: string, request: OperatorConsoleRunRequest) =>
+    postJson<OperatorConsoleRunResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/goals/${encodeURIComponent(intakeId)}/run`,
+      request
+    ),
+  reviewProjectOperatorConsoleWorker: (project: string, runId: string, request: OperatorConsoleReviewRequest) =>
+    postJson<OperatorConsoleReviewResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/runs/${encodeURIComponent(runId)}/review`,
+      request
+    ),
+  recoverProjectOperatorConsoleWorker: (project: string, runId: string, request: OperatorConsoleRecoveryRequest) =>
+    postJson<OperatorConsoleRecoveryResponse>(
+      `/api/projects/${encodeURIComponent(project)}/operator-console/runs/${encodeURIComponent(runId)}/recover`,
+      request
+    ),
   getUiActions: () => getJson<UiActionsResponse>('/api/actions'),
   getAllowedUiActions: () => getJson<UiActionsResponse>('/api/actions/allowed'),
   getUiAction: (actionId: string) => getJson<UiActionMetadata>(`/api/actions/${encodeURIComponent(actionId)}`),

@@ -4,6 +4,13 @@ export interface ApiHealth {
   status: string;
   app: string;
   read_only: boolean;
+  capabilities?: {
+    read_projections: boolean;
+    guarded_mutations: boolean;
+    localhost_mutations_only: boolean;
+    arbitrary_commands: boolean;
+    automatic_retry: boolean;
+  };
 }
 
 export interface CurrentContext {
@@ -669,6 +676,550 @@ export interface DoctorReport {
   checks: DoctorCheck[];
   overall_status: StatusTone;
   suggested_next_action: string;
+}
+
+export interface OperatorConsoleAction {
+  action_id: string;
+  label: string;
+  command: string;
+  confirmation_required: boolean;
+  reason: string;
+}
+
+export interface OperatorConsoleChild {
+  position: number;
+  task_id: string;
+  title: string;
+  risk_level: string;
+  queue_item_id: string;
+  queue_item_status: string;
+  policy_id: string;
+  policy_status: string;
+  stage: string;
+  is_current: boolean;
+}
+
+export interface OperatorConsoleGoal {
+  intake_id: string;
+  goal_summary: string;
+  status: string;
+  recorded_preparation_status: string;
+  preparation_id: string;
+  bundle_id: string;
+  bundle_status: string;
+  child_count: number;
+  completed_child_count: number;
+  remaining_child_count: number;
+  children: OperatorConsoleChild[];
+  current_stage: string;
+  current_task_id: string | null;
+  current_task_title: string | null;
+  current_policy_id: string | null;
+  current_queue_worker_run_id: string | null;
+  current_queue_worker_status: string | null;
+  current_review_status: string | null;
+  delivery_state: string;
+  supervisor_run_id: string | null;
+  supervisor_status: string | null;
+  blockers: string[];
+  attention_required: boolean;
+  attention_items: string[];
+  next_action: string;
+}
+
+export interface OperatorConsoleRecentCompletion {
+  intake_id: string;
+  goal_summary: string;
+  bundle_id: string;
+  child_count: number;
+  completed_at: string | null;
+}
+
+export interface OperatorConsoleProjection {
+  project: string;
+  active_goal: OperatorConsoleGoal | null;
+  recent_completion: OperatorConsoleRecentCompletion | null;
+  attention_required: boolean;
+  attention_items: string[];
+  supported_actions: OperatorConsoleAction[];
+  warnings: string[];
+  generated_at: string;
+  safety_note: string;
+}
+
+export interface RoughGoalTaskDraft {
+  task_id: string;
+  title: string;
+  summary: string;
+  allowed_files: string[];
+  validation: string[];
+  risk_level: string;
+}
+
+export interface RoughGoalBatchDraft {
+  suggested_batch_id: string;
+  title: string;
+  task_ids: string[];
+  notes: string[];
+}
+
+export interface RoughGoalQueueItemDraft {
+  item_id: string;
+  task_id: string;
+  title: string;
+}
+
+export interface RoughGoalQueueDraft {
+  suggested_queue_id: string;
+  batch_id: string;
+  items: RoughGoalQueueItemDraft[];
+  notes: string[];
+}
+
+export interface RoughGoalPolicyDraft {
+  suggested_policy_id: string;
+  batch_id: string;
+  queue_id: string;
+  allowed_task_ids: string[];
+  allowed_queue_item_ids: string[];
+  allowed_file_patterns: string[];
+  forbidden_file_patterns: string[];
+  validation_commands: string[];
+  risk_level: string;
+  max_tasks: number;
+  max_tasks_per_run: number;
+  max_changed_files_per_task: number;
+  notes: string[];
+}
+
+export interface RoughGoalIntakePlan {
+  schema_version: string;
+  project: string;
+  intake_id: string;
+  source_file: string;
+  normalized_goal_summary: string;
+  parsed_scope_notes: string[];
+  parsed_context_notes: string[];
+  candidate_tasks: RoughGoalTaskDraft[];
+  suggested_batch_draft: RoughGoalBatchDraft;
+  suggested_queue_draft: RoughGoalQueueDraft;
+  suggested_policy_draft: RoughGoalPolicyDraft;
+  suggested_allowed_files: string[];
+  do_not_touch: string[];
+  validation_notes: string[];
+  delivery_notes: string[];
+  missing_sections: string[];
+  risk_notes: string[];
+  recommended_next_commands: string[];
+  preview_only: boolean;
+  created_at: string;
+}
+
+export interface RoughGoalIntakeMaterialization {
+  schema_version: string;
+  project: string;
+  intake_id: string;
+  status: string;
+  created_task_ids: string[];
+  batch_id: string;
+  queue_id: string;
+  policy_id: string;
+  allowed_file_patterns: string[];
+  forbidden_file_patterns: string[];
+  validation_notes: string[];
+  delivery_notes: string[];
+  risk_notes: string[];
+  backlog_path: string;
+  batch_path: string;
+  queue_path: string;
+  policy_path: string;
+  next_commands: string[];
+  safety_note: string;
+  created_at: string;
+}
+
+export interface RoughGoalPreparation {
+  schema_version: string;
+  project: string;
+  preparation_id: string;
+  intake_id: string;
+  status: string;
+  batch_id: string;
+  queue_id: string;
+  source_policy_id: string;
+  task_ids: string[];
+  queue_item_ids: string[];
+  policy_ids: string[];
+  task_policy_ids: Record<string, string>;
+  approval_bundle_id: string;
+  approval_bundle_status: string;
+  prepared_task_count: number;
+  created_policy_ids: string[];
+  reused_policy_ids: string[];
+  total_max_tasks: number;
+  total_max_changed_files: number;
+  materialized_plan_reviewed_by: string | null;
+  supervised_delivery_enabled: boolean;
+  supervised_delivery_authorized_by: string | null;
+  source_policy_permissions_updated: boolean;
+  warnings: string[];
+  blockers: string[];
+  next_action: string;
+  created_at: string;
+  updated_at: string;
+  safety_note: string;
+}
+
+export interface BatchExecutionPolicy {
+  schema_version: string;
+  project: string;
+  policy_id: string;
+  batch_id: string;
+  queue_id: string | null;
+  title: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  requested_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  cancelled_at: string | null;
+  expires_at: string | null;
+  approver: string | null;
+  reviewer: string | null;
+  decision_note: string;
+  allowed_task_ids: string[];
+  allowed_queue_item_ids: string[];
+  allowed_file_patterns: string[];
+  forbidden_file_patterns: string[];
+  max_tasks: number;
+  max_tasks_per_run: number;
+  max_changed_files_per_task: number;
+  max_total_changed_files: number;
+  validation_commands: string[];
+  auto_delivery_allowed: boolean;
+  auto_push_allowed: boolean;
+  requires_worker_review: boolean;
+  requires_validation_evidence: boolean;
+  pause_conditions: string[];
+  risk_level: string;
+  notes: string[];
+  next_action: string;
+}
+
+export interface ExecutionPolicyApprovalBundle {
+  schema_version: string;
+  project: string;
+  bundle_id: string;
+  status: string;
+  policy_ids: string[];
+  policy_scope_fingerprints: Record<string, string>;
+  policy_task_ids: Record<string, string[]>;
+  policy_queue_item_ids: Record<string, string[]>;
+  max_policies: number;
+  total_max_tasks: number;
+  total_max_changed_files: number;
+  requested_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  approver: string | null;
+  request_note: string;
+  approval_note: string;
+  goal_intake_id: string | null;
+  allows_non_low_risk: boolean;
+  next_action: string;
+}
+
+export interface QueueWorkerHandoffChecklist {
+  objective: string;
+  allowed_scope: string[];
+  forbidden_scope: string[];
+  relevant_files: string[];
+  acceptance_criteria: string[];
+  required_tests: string[];
+  expected_worker_result_format: string[];
+  risk_notes: string[];
+  next_action: string;
+}
+
+export interface QueueWorkerRun {
+  schema_version: string;
+  project: string;
+  run_id: string;
+  policy_id: string;
+  batch_id: string | null;
+  queue_id: string | null;
+  selected_queue_item_id: string | null;
+  selected_task_id: string | null;
+  selected_handoff_id: string | null;
+  selected_worker_run_id: string | null;
+  mode: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  approver: string | null;
+  steps_run: string[];
+  blockers: string[];
+  warnings: string[];
+  skipped_queue_item_summaries: string[];
+  handoff_checklist: QueueWorkerHandoffChecklist | null;
+  policy_check_summary: string;
+  selection_reason: string;
+  pause_reason: string;
+  failure_reason: string;
+  cancel_reason: string;
+  retry_of: string | null;
+  retry_authorized_by?: string | null;
+  delivery_request_id: string | null;
+  delivery_request_status: string | null;
+  delivery_requested_at: string | null;
+  paused_at: string | null;
+  resumed_at: string | null;
+  failed_at: string | null;
+  cancelled_at: string | null;
+  updated_at: string;
+  next_action: string;
+}
+
+export interface QueueWorkerEvidenceRecord {
+  evidence_id: string;
+  project: string;
+  queue_worker_run_id: string;
+  queue_item_id: string | null;
+  task_id: string | null;
+  evidence_type: string;
+  status: string;
+  summary: string;
+  changed_files: string[];
+  commands_run: string[];
+  artifact_path: string | null;
+  risks: string[];
+  recommended_next_action: string;
+  note: string;
+  created_at: string;
+  recorded_by: string | null;
+}
+
+export interface QueueWorkerEvidenceSummary {
+  handoff_exists: boolean;
+  worker_run_exists: boolean;
+  worker_report_imported: boolean;
+  worker_review_exists: boolean;
+  worker_review_passed: boolean;
+  validation_evidence_exists: boolean;
+  validation_passed: boolean;
+  worker_report_status: string | null;
+  worker_review_status: string | null;
+  validation_status: string | null;
+  delivery_request_id: string | null;
+  delivery_request_status: string | null;
+  delivery_request_exists: boolean;
+  delivery_completed: boolean;
+  patch_proposal_present: boolean;
+  patch_artifact_path: string | null;
+  missing_evidence: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface QueueWorkerEvidenceRecordResult {
+  project: string;
+  run_id: string;
+  evidence_record: QueueWorkerEvidenceRecord | null;
+  run_status: string;
+  evidence_type: string;
+  evidence_status: string;
+  summary: string;
+  action_taken: string;
+  artifact_path: string | null;
+  record_json_path: string | null;
+  record_markdown_path: string | null;
+  commands_run: string[];
+  files_changed: string[];
+  evidence: QueueWorkerEvidenceSummary;
+  next_action: string;
+  warnings: string[];
+  blockers: string[];
+}
+
+export interface ApprovedBundleSupervisorEvent {
+  sequence: number;
+  event: string;
+  status: string;
+  policy_id: string | null;
+  queue_item_id: string | null;
+  task_id: string | null;
+  queue_worker_run_id: string | null;
+  delivery_request_id: string | null;
+  detail: string;
+  recorded_at: string;
+}
+
+export interface ApprovedBundleSupervisorResult {
+  project: string;
+  bundle_id: string;
+  supervisor_run_id: string | null;
+  dry_run: boolean;
+  status: string;
+  poll_interval_seconds: number;
+  max_wait_seconds: number;
+  selected_policy_id: string | null;
+  selected_queue_item_id: string | null;
+  selected_task_id: string | null;
+  selected_queue_worker_run_id: string | null;
+  current_queue_worker_status: string | null;
+  planned_action: string;
+  would_run_worker: boolean;
+  would_run_review: boolean;
+  would_run_validation: boolean;
+  would_wait_for_trusted_delivery: boolean;
+  would_consider_next_child: boolean;
+  child_policy_ids_visited: string[];
+  queue_item_ids_visited: string[];
+  task_ids_visited: string[];
+  queue_worker_run_ids: string[];
+  delivery_request_ids: string[];
+  delivery_wait_outcomes: string[];
+  children_completed: number;
+  initial_completed_child_keys: string[];
+  resume_count: number;
+  last_checkpoint: string;
+  checkpointed_at: string | null;
+  events: ApprovedBundleSupervisorEvent[];
+  warnings: string[];
+  blockers: string[];
+  stop_reason: string;
+  next_action: string;
+  workflow_mutated: boolean;
+  artifact_json_path: string | null;
+  artifact_markdown_path: string | null;
+  started_at: string;
+  completed_at: string | null;
+  safety_note: string;
+}
+
+export interface OperatorConsoleIntakeRequest {
+  goal_markdown: string;
+  confirm_create: boolean;
+}
+
+export interface OperatorConsoleMaterializeRequest {
+  confirm_materialize: boolean;
+}
+
+export interface OperatorConsolePrepareRequest {
+  confirm_prepare: boolean;
+  confirm_materialized_plan_reviewed: boolean;
+  reviewed_by: string;
+  enable_supervised_delivery: boolean;
+  confirm_supervised_delivery: boolean;
+  supervised_delivery_authorized_by: string;
+}
+
+export interface OperatorConsolePlanningApprovalRequest {
+  batch_id: string;
+  approver: string;
+  note: string;
+  confirm_approve: boolean;
+}
+
+export interface OperatorConsoleApprovalRequest {
+  bundle_id: string;
+  approver: string;
+  note: string;
+  confirm_approve: boolean;
+}
+
+export interface OperatorConsoleRunRequest {
+  bundle_id: string;
+  message: string;
+  note: string;
+  max_steps: number;
+  poll_interval_seconds: number;
+  max_wait_seconds: number;
+  confirm_run: boolean;
+}
+
+export type OperatorConsoleReviewStatus = 'passed' | 'needs_changes' | 'rejected' | 'blocked';
+
+export interface OperatorConsoleReviewRequest {
+  bundle_id: string;
+  status: OperatorConsoleReviewStatus;
+  summary: string;
+  recorded_by: string;
+  note: string;
+  confirm_review: boolean;
+}
+
+export type OperatorConsoleRecoveryAction = 'resume_worker' | 'retry_worker';
+
+export interface OperatorConsoleRecoveryRequest {
+  intake_id: string;
+  bundle_id: string;
+  action: OperatorConsoleRecoveryAction;
+  operator: string;
+  reason: string;
+  confirm_recovery: boolean;
+}
+
+export interface OperatorConsoleCreateIntakeResponse {
+  intake: RoughGoalIntakePlan;
+  artifact_paths: ArtifactPaths;
+}
+
+export interface OperatorConsoleMaterializeResponse {
+  materialization: RoughGoalIntakeMaterialization;
+  review: {
+    backlog_tasks: BacklogTask[];
+    batch: ProjectBatch;
+    queue: ExecutionQueue;
+    source_policy: BatchExecutionPolicy;
+  };
+  artifact_paths: ArtifactPaths;
+}
+
+export interface OperatorConsolePlanningApprovalResponse {
+  materialization: RoughGoalIntakeMaterialization;
+  batch: ProjectBatch;
+  approval: BatchApproval;
+  direct_approval: boolean;
+  artifact_paths: {
+    batch_json: string;
+    batch_markdown: string;
+    approval_json: string;
+    approval_markdown: string;
+  };
+}
+
+export interface OperatorConsolePrepareResponse {
+  preparation: RoughGoalPreparation;
+  materialization: RoughGoalIntakeMaterialization;
+  console: OperatorConsoleProjection;
+  artifact_paths: ArtifactPaths;
+}
+
+export interface OperatorConsoleApprovalResponse {
+  bundle: ExecutionPolicyApprovalBundle;
+  console: OperatorConsoleProjection;
+  artifact_paths: ArtifactPaths;
+}
+
+export interface OperatorConsoleRunResponse {
+  preparation: RoughGoalPreparation;
+  result: ApprovedBundleSupervisorResult;
+  console: OperatorConsoleProjection;
+}
+
+export interface OperatorConsoleReviewResponse {
+  review: QueueWorkerEvidenceRecordResult;
+  console: OperatorConsoleProjection;
+}
+
+export interface OperatorConsoleRecoveryResponse {
+  action: OperatorConsoleRecoveryAction;
+  run: QueueWorkerRun;
+  console: OperatorConsoleProjection;
+  artifact_paths: ArtifactPaths;
 }
 
 export interface UiActionMetadata {
