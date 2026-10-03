@@ -10629,6 +10629,455 @@ def test_queue_worker_loop_stops_on_cancelled_run(tmp_path: Path, monkeypatch) -
     assert run.status == "cancelled"
 
 
+def test_child_supersede_retires_matching_task_and_queue_item_with_durable_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    subprocess_path = _record_failed_subprocess_attempt(workspace, "QWR-0001")
+    run_json, _run_markdown = queue_worker_run_artifact_paths(
+        "sample", "QWR-0001", workspace_root=workspace
+    )
+    run_before = run_json.read_bytes()
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T001",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI001",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            " Manas ",
+            "--reason",
+            "Replace usage-limited work with bounded children.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "draft -> superseded" in result.output
+    assert "pending -> superseded" in result.output
+    assert "Operator: Manas" in result.output
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert backlog is not None
+    assert queue is not None
+    task = next(task for task in backlog.tasks if task.id == "T001")
+    item = next(item for item in queue.items if item.item_id == "QI001")
+    assert task.status == "superseded"
+    assert item.status == "superseded"
+    assert any("operator=Manas" in note and "QWR-0001" in note for note in task.notes)
+    assert task.notes[-1] == item.notes[-1]
+    assert run_json.read_bytes() == run_before
+    assert subprocess_path.exists()
+    records = list((planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "child-supersessions").glob("*.json"))
+    assert len(records) == 1
+    record = json.loads(records[0].read_text(encoding="utf-8"))
+    assert record["task_id"] == "T001"
+    assert record["queue_item_id"] == "QI001"
+    assert record["queue_worker_run_id"] == "QWR-0001"
+    assert record["operator"] == "Manas"
+    assert record["prior_task_status"] == "draft"
+    assert record["prior_queue_item_status"] == "pending"
+    plan = runner.invoke(
+        app,
+        ["project", "queue-worker-plan", "--project", "sample", "--policy", "POL-0001"],
+        terminal_width=240,
+    )
+    assert plan.exit_code != 0
+    assert "item status is superseded" in plan.output
+
+
+def test_child_supersede_requires_confirmation_identity_and_reason_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before = (paths.backlog_json.read_bytes(), queue_json.read_bytes())
+    common = [
+        "project",
+        "child-supersede",
+        "--project",
+        "sample",
+        "--task",
+        "T001",
+        "--batch",
+        "B001",
+        "--queue",
+        "Q001",
+        "--item",
+        "QI001",
+        "--operator",
+        "Manas",
+        "--reason",
+        "Bounded replacement.",
+    ]
+
+    unconfirmed = runner.invoke(app, common, terminal_width=240)
+    assert unconfirmed.exit_code == 1
+    assert "requires --confirm-supersede" in unconfirmed.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+    empty_reason = runner.invoke(
+        app,
+        [*common[:-1], "   ", "--confirm-supersede"],
+        terminal_width=240,
+    )
+    assert empty_reason.exit_code != 0
+    assert "reason is" in empty_reason.output and "required" in empty_reason.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+    empty_operator = runner.invoke(
+        app,
+        [*common[: common.index("--operator") + 1], "   ", *common[common.index("--reason") :], "--confirm-supersede"],
+        terminal_width=240,
+    )
+    assert empty_operator.exit_code != 0
+    assert all(token in empty_operator.output for token in ["operator", "identity", "required"])
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+
+def test_child_supersede_rejects_mismatched_and_unsafe_authority_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    _record_failed_subprocess_attempt(workspace, "QWR-0001")
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before = (paths.backlog_json.read_bytes(), queue_json.read_bytes())
+
+    mismatch = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T002",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI001",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Mismatched authority must fail.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
+    assert mismatch.exit_code != 0
+    assert "references" in mismatch.output and "task T001, not T002" in mismatch.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    run_json, _run_markdown = queue_worker_run_artifact_paths(
+        "sample", "QWR-0001", workspace_root=workspace
+    )
+    run_json.write_text(
+        run.model_copy(update={"status": "delivery_requested", "delivery_request_id": "REQ-0001"}).model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    unsafe = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T001",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI001",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Unsafe advanced state must fail.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
+    assert unsafe.exit_code != 0
+    assert "advanced beyond safe" in unsafe.output
+    unsafe_without_run = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T001",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI001",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Omitting the advanced run must still fail.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
+    assert unsafe_without_run.exit_code != 0
+    assert "advanced beyond safe" in unsafe_without_run.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+
+def test_child_supersede_rejects_live_worker_and_rerun(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_queue_worker_run(tmp_path)
+    args = [
+        "project",
+        "child-supersede",
+        "--project",
+        "sample",
+        "--task",
+        "T001",
+        "--batch",
+        "B001",
+        "--queue",
+        "Q001",
+        "--item",
+        "QI001",
+        "--run",
+        "QWR-0001",
+        "--operator",
+        "Manas",
+        "--reason",
+        "Retire failed worker authority.",
+        "--confirm-supersede",
+    ]
+
+    active = runner.invoke(app, args, terminal_width=240)
+    assert active.exit_code != 0
+    assert "without terminal subprocess evidence" in active.output
+
+    _record_failed_subprocess_attempt(workspace, "QWR-0001")
+    first = runner.invoke(app, args, terminal_width=240)
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(app, args, terminal_width=240)
+    assert second.exit_code != 0
+    assert all(token in second.output for token in ["status", "superseded", "safe", "supersede"])
+    records = list((planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "child-supersessions").glob("*.json"))
+    assert len(records) == 1
+
+
+def test_child_supersede_rolls_back_both_authoritative_artifacts_on_write_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _create_execution_policy(tmp_path, allowed_task="T001")
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before = (paths.backlog_json.read_bytes(), queue_json.read_bytes())
+    original_writer = project_planning_module._write_text_atomically
+    failed_once = False
+
+    def fail_queue_write_once(path: Path, text: str) -> None:
+        nonlocal failed_once
+        if path == queue_json and not failed_once:
+            failed_once = True
+            raise OSError("synthetic queue write failure")
+        original_writer(path, text)
+
+    monkeypatch.setattr(project_planning_module, "_write_text_atomically", fail_queue_write_once)
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T001",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI001",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Exercise atomic rollback.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code != 0
+    assert "original artifacts were restored" in result.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+    record_dir = paths.planning_dir / "child-supersessions"
+    assert not record_dir.exists() or list(record_dir.iterdir()) == []
+
+
+def test_child_supersede_makes_prepared_goal_advance_to_next_child(tmp_path: Path, monkeypatch) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0001",
+            policy_id="POL-0002",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI002",
+            selected_task_id="T055",
+            status="waiting_worker",
+        ),
+        workspace_root=workspace,
+    )
+    _record_failed_subprocess_attempt(workspace, "QWR-0001")
+
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T055",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI002",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Replace this bounded child without broadening authority.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
+
+    assert result.exit_code == 0, result.output
+    preparation, preview = supervise_prepared_goal(
+        "sample", "INTAKE-0001", dry_run=True, workspace_root=workspace
+    )
+    assert preparation.task_ids[0] == "T055"
+    assert preview.status != "blocked", preview.blockers
+    assert preview.selected_policy_id == "POL-0003"
+    assert preview.selected_queue_item_id == "QI003"
+
+
+def test_prepared_goal_raw_superseded_status_without_audit_does_not_advance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    _set_prepared_goal_child_statuses(workspace, task_status="superseded", item_status="superseded")
+
+    status = build_prepared_goal_status("sample", "INTAKE-0001", workspace_root=workspace)
+    _preparation, preview = supervise_prepared_goal(
+        "sample", "INTAKE-0001", dry_run=True, workspace_root=workspace
+    )
+
+    assert status.preparation_status == "attention_required"
+    assert status.current_task_id == "T055"
+    assert status.completed_child_count == 0
+    assert any("without exactly one matching durable child-supersession record" in item for item in status.blockers)
+    assert preview.status == "blocked"
+    assert preview.selected_policy_id is None
+
+
+def test_prepared_goal_superseded_item_without_superseded_task_does_not_advance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    _set_prepared_goal_child_statuses(workspace, task_status="draft", item_status="superseded")
+
+    status = build_prepared_goal_status("sample", "INTAKE-0001", workspace_root=workspace)
+
+    assert status.preparation_status == "attention_required"
+    assert status.current_task_id == "T055"
+    assert status.completed_child_count == 0
+    assert any("supersession state drifted" in item for item in status.blockers)
+
+
+def test_prepared_goal_duplicate_supersession_records_do_not_advance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    _supersede_prepared_goal_child(workspace)
+    record_dir = planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "child-supersessions"
+    record = next(record_dir.glob("child-supersession-*.json"))
+    (record_dir / "child-supersession-duplicate.json").write_bytes(record.read_bytes())
+
+    status = build_prepared_goal_status("sample", "INTAKE-0001", workspace_root=workspace)
+    _preparation, preview = supervise_prepared_goal(
+        "sample", "INTAKE-0001", dry_run=True, workspace_root=workspace
+    )
+
+    assert status.preparation_status == "attention_required"
+    assert status.current_task_id == "T055"
+    assert status.completed_child_count == 0
+    assert any("without exactly one matching durable child-supersession record" in item for item in status.blockers)
+    assert preview.status == "blocked"
+
+
+def test_prepared_goal_mismatched_supersession_record_does_not_advance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    _supersede_prepared_goal_child(workspace)
+    record_dir = planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "child-supersessions"
+    record_path = next(record_dir.glob("child-supersession-*.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["batch_id"] = "B999"
+    record_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+    status = build_prepared_goal_status("sample", "INTAKE-0001", workspace_root=workspace)
+
+    assert status.preparation_status == "attention_required"
+    assert status.current_task_id == "T055"
+    assert status.completed_child_count == 0
+    assert any("without exactly one matching durable child-supersession record" in item for item in status.blockers)
+
+
 def test_queue_worker_loop_completes_delivered_run_then_starts_next_item(tmp_path: Path, monkeypatch) -> None:
     workspace, project_path = _workspace(tmp_path, monkeypatch)
     _init_git_repo(project_path)
@@ -11777,6 +12226,124 @@ def _create_queue_worker_run(tmp_path: Path, *, validation_commands: list[str] |
     result = runner.invoke(
         app,
         ["project", "queue-worker-run", "--project", "sample", "--policy", "POL-0001", "--once", "--confirm-queue-worker"],
+        terminal_width=240,
+    )
+    assert result.exit_code == 0, result.output
+
+
+def _record_failed_subprocess_attempt(workspace: Path, run_id: str) -> Path:
+    run = load_queue_worker_run("sample", run_id, workspace_root=workspace)
+    assert run is not None
+    attempt = project_planning_module.CodexWorkerSubprocessRun(
+        project="sample",
+        codex_worker_run_id=f"CWR-FAILED-{run_id}",
+        queue_worker_run_id=run_id,
+        preparation_id=f"CWP-FAILED-{run_id}",
+        policy_id=run.policy_id,
+        batch_id=run.batch_id,
+        queue_id=run.queue_id,
+        queue_item_id=run.selected_queue_item_id,
+        task_id=run.selected_task_id,
+        worker_run_id=run.selected_worker_run_id,
+        target_repo_path="target-project",
+        working_directory="target-project",
+        configured_command="codex",
+        args_template="exec",
+        planned_command=["codex", "exec"],
+        planned_command_text="codex exec",
+        prompt_path="prompt.md",
+        expected_result_path="worker-result.json",
+        stdout_path="stdout.txt",
+        stderr_path="stderr.txt",
+        timeout_minutes=30,
+        status="failed_process",
+        exit_code=1,
+        codex_launched=True,
+        started_at=run.updated_at,
+        completed_at=run.updated_at,
+    )
+    directory = codex_worker_subprocess_run_directory("sample", workspace_root=workspace) / attempt.codex_worker_run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "codex-worker-run.json"
+    path.write_text(attempt.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def _set_prepared_goal_child_statuses(
+    workspace: Path,
+    *,
+    task_status: str,
+    item_status: str,
+) -> None:
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert backlog is not None
+    assert queue is not None
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    updated_backlog = project_planning_module._with_backlog_counts(
+        backlog.model_copy(
+            update={
+                "tasks": [
+                    task.model_copy(update={"status": task_status}) if task.id == "T055" else task
+                    for task in backlog.tasks
+                ]
+            }
+        )
+    )
+    updated_queue = project_planning_module._with_queue_counts(
+        queue.model_copy(
+            update={
+                "items": [
+                    item.model_copy(update={"status": item_status}) if item.item_id == "QI002" else item
+                    for item in queue.items
+                ]
+            }
+        )
+    )
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    paths.backlog_json.write_text(updated_backlog.model_dump_json(indent=2), encoding="utf-8")
+    queue_json.write_text(updated_queue.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _supersede_prepared_goal_child(workspace: Path) -> None:
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0001",
+            policy_id="POL-0002",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI002",
+            selected_task_id="T055",
+            status="waiting_worker",
+        ),
+        workspace_root=workspace,
+    )
+    _record_failed_subprocess_attempt(workspace, "QWR-0001")
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T055",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI002",
+            "--run",
+            "QWR-0001",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Exercise prepared-goal durable supersession authority.",
+            "--confirm-supersede",
+        ],
         terminal_width=240,
     )
     assert result.exit_code == 0, result.output

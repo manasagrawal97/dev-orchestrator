@@ -195,6 +195,7 @@ from .project_planning import (
     accept_patch_proposal,
     apply_patch_proposal,
     cancel_queue_worker_run,
+    supersede_workflow_child,
     continue_queue_worker_run,
     create_batch_execution_policy,
     create_rough_goal_intake_plan,
@@ -7099,6 +7100,62 @@ def cancel_queue_worker_run_command(
         raise typer.BadParameter(str(exc), param_hint="--run") from exc
     _print_queue_worker_run(run, json_path=json_path, markdown_path=markdown_path)
     console.print("No queue item, validation, delivery request, commit, or push state was updated automatically.")
+
+
+@project_app.command("child-supersede")
+def supersede_workflow_child_command(
+    project_name: str | None = typer.Option(None, "--project", help="Registered project name."),
+    task_id: str = typer.Option(..., "--task", help="Backlog task id to retire."),
+    batch_id: str = typer.Option(..., "--batch", help="Expected source batch id."),
+    queue_id: str = typer.Option(..., "--queue", help="Execution queue id."),
+    queue_item_id: str = typer.Option(..., "--item", help="Queue item id linked to the task."),
+    run_id: str | None = typer.Option(None, "--run", help="Authoritative queue-worker run, when one exists."),
+    operator: str = typer.Option(..., "--operator", help="Human operator authorizing supersession."),
+    reason: str = typer.Option(..., "--reason", help="Non-empty supersession reason."),
+    replacement_task_id: str | None = typer.Option(None, "--replacement-task", help="Optional replacement task id."),
+    replacement_queue_id: str | None = typer.Option(None, "--replacement-queue", help="Optional replacement queue id."),
+    replacement_queue_item_id: str | None = typer.Option(
+        None, "--replacement-item", help="Optional replacement queue-item id."
+    ),
+    confirm_supersede: bool = typer.Option(
+        False, "--confirm-supersede", help="Confirm atomic task and queue-item supersession."
+    ),
+) -> None:
+    """Retire one matched unfinished task and queue item without deleting history."""
+    project_name = _resolve_project(project_name)
+    if not confirm_supersede:
+        console.print("child-supersede requires --confirm-supersede.")
+        console.print("No task, queue item, queue-worker evidence, delivery, commit, or push state was changed.")
+        raise typer.Exit(1)
+    try:
+        result = supersede_workflow_child(
+            project_name,
+            task_id=task_id,
+            batch_id=batch_id,
+            queue_id=queue_id,
+            queue_item_id=queue_item_id,
+            queue_worker_run_id=run_id,
+            operator=operator,
+            reason=reason,
+            confirm_supersede=confirm_supersede,
+            replacement_task_id=replacement_task_id,
+            replacement_queue_id=replacement_queue_id,
+            replacement_queue_item_id=replacement_queue_item_id,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--task/--queue/--item") from exc
+    console.print(f"Child supersession: {result.supersession_id}")
+    console.print(f"Task: {result.task_id} ({result.prior_task_status} -> {result.task_status})")
+    console.print(
+        f"Queue item: {result.queue_id}/{result.queue_item_id} "
+        f"({result.prior_queue_item_status} -> {result.queue_item_status})"
+    )
+    console.print(f"Queue-worker run preserved: {result.queue_worker_run_id or 'none'}")
+    console.print(f"Operator: {result.operator}")
+    console.print(f"Reason: {result.reason}")
+    console.print(f"Record JSON: {result.record_json_path}")
+    console.print(f"Record Markdown: {result.record_markdown_path}")
+    console.print(result.safety_note)
 
 
 @project_app.command("progress")

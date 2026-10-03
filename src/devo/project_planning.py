@@ -566,6 +566,36 @@ class QueueWorkerStatusReport(BaseModel):
     next_action: str = ""
 
 
+class ChildSupersessionResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project: str
+    supersession_id: str
+    task_id: str
+    batch_id: str
+    queue_id: str
+    queue_item_id: str
+    queue_worker_run_id: str | None = None
+    operator: str
+    reason: str
+    prior_task_status: str
+    prior_queue_item_status: str
+    task_status: str = "superseded"
+    queue_item_status: str = "superseded"
+    replacement_task_id: str | None = None
+    replacement_queue_id: str | None = None
+    replacement_queue_item_id: str | None = None
+    backlog_json_path: str
+    queue_json_path: str
+    record_json_path: str
+    record_markdown_path: str
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    safety_note: str = (
+        "The task and matching queue item were retired together without deleting historical artifacts, "
+        "rewriting queue-worker evidence, approving replacement work, or executing delivery."
+    )
+
+
 class QueueWorkerStepResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -6221,9 +6251,20 @@ def check_approved_execution_policy_approval_bundle(
     policies: list[BatchExecutionPolicy] = []
     queue_item_owners: dict[tuple[str, str], str] = {}
     task_owners: dict[str, str] = {}
-    all_runs = _authoritative_queue_worker_runs(
-        list_queue_worker_runs(project_name, workspace_root=root)
-    )
+    all_runs = [
+        run
+        for run in _authoritative_queue_worker_runs(
+            list_queue_worker_runs(project_name, workspace_root=root)
+        )
+        if not _is_durably_superseded_child(
+            project_name,
+            task_id=run.selected_task_id,
+            queue_id=run.queue_id,
+            queue_item_id=run.selected_queue_item_id,
+            queue_worker_run_id=run.run_id,
+            workspace_root=root,
+        )
+    ]
     active_statuses = {
         "handoff_ready",
         "waiting_worker",
@@ -6373,6 +6414,17 @@ def check_approved_execution_policy_approval_bundle(
                 if not any(run.status == "completed" for run in matching_runs):
                     blockers.append(
                         f"{policy.policy_id}: completed queue item {item.item_id} has no matching completed queue-worker run."
+                    )
+            elif item.status == "superseded":
+                if not _is_durably_superseded_child(
+                    project_name,
+                    task_id=item.task_id,
+                    queue_id=queue.queue_id,
+                    queue_item_id=item.item_id,
+                    workspace_root=root,
+                ):
+                    blockers.append(
+                        f"{policy.policy_id}: superseded queue item {item.item_id} has no matching atomic child-supersession evidence."
                     )
             else:
                 blockers.append(
@@ -8552,9 +8604,20 @@ def auto_run_approved(
         "ready_for_delivery_request",
         "delivery_requested",
     }
-    all_runs = _authoritative_queue_worker_runs(
-        list_queue_worker_runs(project_name, workspace_root=root)
-    )
+    all_runs = [
+        run
+        for run in _authoritative_queue_worker_runs(
+            list_queue_worker_runs(project_name, workspace_root=root)
+        )
+        if not _is_durably_superseded_child(
+            project_name,
+            task_id=run.selected_task_id,
+            queue_id=run.queue_id,
+            queue_item_id=run.selected_queue_item_id,
+            queue_worker_run_id=run.run_id,
+            workspace_root=root,
+        )
+    ]
     active_runs = [
         run for run in all_runs if run.policy_id in bundle.policy_ids and run.status in active_statuses
     ]
@@ -8760,7 +8823,18 @@ def _completed_approved_bundle_child_keys(
         for item in queue.items:
             normalized_item_id = _normalize_queue_item_id(item.item_id)
             child_key = f"{_normalize_queue_id(queue.queue_id)}:{normalized_item_id}"
-            if normalized_item_id in allowed and item.status == "completed" and child_key not in completed:
+            if normalized_item_id not in allowed or child_key in completed:
+                continue
+            if item.status == "completed" or (
+                item.status == "superseded"
+                and _is_durably_superseded_child(
+                    project_name,
+                    task_id=item.task_id,
+                    queue_id=queue.queue_id,
+                    queue_item_id=item.item_id,
+                    workspace_root=workspace_root,
+                )
+            ):
                 completed.append(child_key)
     return completed
 
@@ -8781,6 +8855,15 @@ def _approved_bundle_restart_worker_blockers(
         list_queue_worker_runs(project_name, workspace_root=workspace_root)
     ):
         if run.policy_id not in bundle.policy_ids or run.status != "waiting_worker":
+            continue
+        if _is_durably_superseded_child(
+            project_name,
+            task_id=run.selected_task_id,
+            queue_id=run.queue_id,
+            queue_item_id=run.selected_queue_item_id,
+            queue_worker_run_id=run.run_id,
+            workspace_root=workspace_root,
+        ):
             continue
         ingests = [
             item
@@ -8828,6 +8911,15 @@ def _recover_completed_approved_bundle_worker_attempts(
         list_queue_worker_runs(project_name, workspace_root=workspace_root)
     ):
         if run.policy_id not in bundle.policy_ids or run.status != "waiting_worker":
+            continue
+        if _is_durably_superseded_child(
+            project_name,
+            task_id=run.selected_task_id,
+            queue_id=run.queue_id,
+            queue_item_id=run.selected_queue_item_id,
+            queue_worker_run_id=run.run_id,
+            workspace_root=workspace_root,
+        ):
             continue
         if any(
             item.queue_worker_run_id == run.run_id
@@ -9711,6 +9803,426 @@ def cancel_queue_worker_run(
         }
     )
     return _write_queue_worker_run(project_name, updated, workspace_root=root)
+
+
+def supersede_workflow_child(
+    project_name: str,
+    *,
+    task_id: str,
+    batch_id: str,
+    queue_id: str,
+    queue_item_id: str,
+    operator: str,
+    reason: str,
+    confirm_supersede: bool = False,
+    queue_worker_run_id: str | None = None,
+    replacement_task_id: str | None = None,
+    replacement_queue_id: str | None = None,
+    replacement_queue_item_id: str | None = None,
+    workspace_root: Path | None = None,
+) -> ChildSupersessionResult:
+    root = workspace_root or get_workspace_root()
+    _require_project(project_name, root)
+    if not confirm_supersede:
+        raise ValueError("Child supersession requires explicit confirmation.")
+    cleaned_operator = operator.strip()
+    if not cleaned_operator:
+        raise ValueError("Child supersession operator identity is required.")
+    cleaned_reason = reason.strip()
+    if not cleaned_reason:
+        raise ValueError("Child supersession reason is required.")
+
+    normalized_task = _normalize_task_id(task_id)
+    normalized_batch = _normalize_batch_id(batch_id)
+    normalized_queue = _normalize_queue_id(queue_id)
+    normalized_item = _normalize_queue_item_id(queue_item_id)
+    normalized_run = _normalize_queue_worker_run_id(queue_worker_run_id) if queue_worker_run_id else None
+
+    backlog = load_project_backlog(project_name, workspace_root=root)
+    if not backlog:
+        raise ValueError(f"Project backlog not found for project: {project_name}")
+    task_matches = [task for task in backlog.tasks if _normalize_task_id(task.id) == normalized_task]
+    if len(task_matches) != 1:
+        raise ValueError(f"Task {normalized_task} must resolve to exactly one backlog task; found {len(task_matches)}.")
+    task = task_matches[0]
+    batch = _require_batch(project_name, normalized_batch, root)
+    if normalized_task not in {_normalize_task_id(value) for value in batch.task_ids}:
+        raise ValueError(f"Task {normalized_task} does not belong to batch {normalized_batch}.")
+    queue = _require_queue(project_name, normalized_queue, root)
+    if _normalize_batch_id(queue.source_batch_id) != normalized_batch:
+        raise ValueError(f"Queue {normalized_queue} belongs to batch {queue.source_batch_id}, not {normalized_batch}.")
+    item = _require_queue_item(queue, normalized_item)
+    if _normalize_task_id(item.task_id) != normalized_task:
+        raise ValueError(
+            f"Queue item {normalized_queue}/{normalized_item} references task {item.task_id}, not {normalized_task}."
+        )
+    if _normalize_batch_id(item.batch_id) != normalized_batch:
+        raise ValueError(f"Queue item {normalized_item} belongs to batch {item.batch_id}, not {normalized_batch}.")
+
+    eligible_task_statuses = {"draft", "ready", "approved", "blocked"}
+    eligible_item_statuses = {"pending", "paused", "blocked", "failed"}
+    if task.status not in eligible_task_statuses:
+        raise ValueError(f"Task {normalized_task} status {task.status} is not safe to supersede.")
+    if item.status not in eligible_item_statuses:
+        raise ValueError(f"Queue item {normalized_item} status {item.status} is not safe to supersede.")
+
+    all_authoritative_runs = _authoritative_queue_worker_runs(
+        list_queue_worker_runs(project_name, workspace_root=root)
+    )
+    related_runs = [
+        run
+        for run in all_authoritative_runs
+        if run.queue_id == normalized_queue
+        and run.selected_queue_item_id == normalized_item
+        and run.selected_task_id == normalized_task
+    ]
+    active_authoritative_runs = [
+        run for run in related_runs if run.status not in {"completed", "cancelled", "failed"}
+    ]
+    advanced_related_runs = [
+        run
+        for run in related_runs
+        if run.delivery_request_id
+        or run.status
+        in {
+            "waiting_review",
+            "waiting_validation",
+            "ready_for_delivery_request",
+            "delivery_requested",
+            "completed",
+        }
+    ]
+    if advanced_related_runs:
+        raise ValueError(
+            "Authoritative queue-worker evidence has already advanced beyond safe supersession: "
+            + ", ".join(f"{run.run_id}={run.status}" for run in advanced_related_runs)
+            + "."
+        )
+    conflicting_children = [
+        run
+        for run in all_authoritative_runs
+        if run.queue_id == normalized_queue
+        and run.selected_queue_item_id != normalized_item
+        and run.status not in {"completed", "cancelled", "failed"}
+    ]
+    if conflicting_children:
+        raise ValueError(
+            "Another authoritative child is active in the same queue: "
+            + ", ".join(run.run_id for run in conflicting_children)
+            + "."
+        )
+    bound_run: QueueWorkerRun | None = None
+    if normalized_run:
+        bound_run = _require_queue_worker_run(project_name, normalized_run, root)
+        linkage = {
+            "batch": (bound_run.batch_id, normalized_batch),
+            "queue": (bound_run.queue_id, normalized_queue),
+            "queue item": (bound_run.selected_queue_item_id, normalized_item),
+            "task": (bound_run.selected_task_id, normalized_task),
+        }
+        drifted = [label for label, (actual, expected) in linkage.items() if actual != expected]
+        if drifted:
+            raise ValueError(
+                f"Queue-worker run {normalized_run} does not match the requested child authority for: "
+                + ", ".join(drifted)
+                + "."
+            )
+        policy = _require_execution_policy(project_name, bound_run.policy_id, root)
+        if (
+            _normalize_batch_id(policy.batch_id) != normalized_batch
+            or not policy.queue_id
+            or _normalize_queue_id(policy.queue_id) != normalized_queue
+            or normalized_task not in {_normalize_task_id(value) for value in policy.allowed_task_ids}
+            or normalized_item not in {_normalize_queue_item_id(value) for value in policy.allowed_queue_item_ids}
+        ):
+            raise ValueError(f"Queue-worker run {normalized_run} policy authority does not match the requested child.")
+        conflicting = [run.run_id for run in active_authoritative_runs if run.run_id != normalized_run]
+        if conflicting:
+            raise ValueError("Another authoritative queue-worker run conflicts with this child: " + ", ".join(conflicting) + ".")
+        if active_authoritative_runs and all(run.run_id != normalized_run for run in active_authoritative_runs):
+            raise ValueError(f"Queue-worker run {normalized_run} is not the authoritative active run for this child.")
+        attempts = _list_codex_worker_subprocess_runs_for_queue(project_name, normalized_run, root)
+        live_attempts = [attempt.codex_worker_run_id for attempt in attempts if attempt.codex_launched and attempt.completed_at is None]
+        if live_attempts:
+            raise ValueError("Active Codex subprocess execution prevents supersession: " + ", ".join(live_attempts) + ".")
+        if bound_run.status == "waiting_worker":
+            if not attempts:
+                raise ValueError(
+                    f"Queue-worker run {normalized_run} is waiting_worker without terminal subprocess evidence; supersession is unsafe."
+                )
+            safe_terminal_attempts = {"failed_process", "timeout", "blocked_preflight", "completed_missing_result"}
+            if attempts[0].status not in safe_terminal_attempts:
+                raise ValueError(
+                    f"Latest Codex subprocess {attempts[0].codex_worker_run_id} status {attempts[0].status} is not safe for supersession."
+                )
+    elif active_authoritative_runs:
+        raise ValueError(
+            "An authoritative queue-worker run exists for this child; bind it explicitly with --run: "
+            + ", ".join(run.run_id for run in active_authoritative_runs)
+            + "."
+        )
+
+    replacement_values = [replacement_task_id, replacement_queue_id, replacement_queue_item_id]
+    if any(replacement_values) and not all(value and value.strip() for value in replacement_values):
+        raise ValueError("Replacement task, queue, and queue-item ids must be supplied together.")
+    normalized_replacement_task: str | None = None
+    normalized_replacement_queue: str | None = None
+    normalized_replacement_item: str | None = None
+    if all(replacement_values):
+        normalized_replacement_task = _normalize_task_id(str(replacement_task_id))
+        normalized_replacement_queue = _normalize_queue_id(str(replacement_queue_id))
+        normalized_replacement_item = _normalize_queue_item_id(str(replacement_queue_item_id))
+        if (
+            normalized_replacement_task == normalized_task
+            or (normalized_replacement_queue == normalized_queue and normalized_replacement_item == normalized_item)
+        ):
+            raise ValueError("Replacement authority must be distinct from the superseded child.")
+        replacement_task = get_backlog_task(project_name, normalized_replacement_task, workspace_root=root)
+        replacement_queue = _require_queue(project_name, normalized_replacement_queue, root)
+        replacement_item = _require_queue_item(replacement_queue, normalized_replacement_item)
+        if _normalize_task_id(replacement_item.task_id) != normalized_replacement_task:
+            raise ValueError("Replacement queue item does not reference the supplied replacement task.")
+        if replacement_task.status in {"completed", "superseded"} or replacement_item.status in {
+            "completed",
+            "skipped",
+            "superseded",
+        }:
+            raise ValueError("Replacement authority is already terminal and cannot replace this child.")
+        original_scope = {value.replace("\\", "/") for value in task.allowed_scope}
+        replacement_scope = {value.replace("\\", "/") for value in replacement_task.allowed_scope}
+        broadened_scope = sorted(replacement_scope - original_scope)
+        if broadened_scope:
+            raise ValueError("Replacement task broadens the original allowed scope: " + ", ".join(broadened_scope) + ".")
+        if RISK_ORDER.get(replacement_task.risk_level, 99) > RISK_ORDER.get(task.risk_level, -1):
+            raise ValueError("Replacement task risk exceeds the superseded task risk.")
+
+    now = datetime.now(UTC)
+    supersession_id = f"CS-{now.strftime('%Y%m%d%H%M%S')}-{normalized_task}-{normalized_item}"
+    replacement_summary = (
+        f"{normalized_replacement_task}/{normalized_replacement_queue}/{normalized_replacement_item}"
+        if normalized_replacement_task and normalized_replacement_queue and normalized_replacement_item
+        else "none"
+    )
+    audit_note = (
+        f"{now.isoformat()}: child supersession {supersession_id}; operator={cleaned_operator}; "
+        f"reason={cleaned_reason}; task={normalized_task} {task.status}->superseded; "
+        f"queue_item={normalized_queue}/{normalized_item} {item.status}->superseded; "
+        f"queue_worker_run={normalized_run or 'none'}; replacement={replacement_summary}."
+    )
+    updated_task = task.model_copy(
+        update={"status": "superseded", "notes": [*task.notes, audit_note], "updated_at": now}
+    )
+    updated_tasks = [updated_task if candidate is task else candidate for candidate in backlog.tasks]
+    updated_backlog = _with_backlog_counts(backlog.model_copy(update={"tasks": updated_tasks, "updated_at": now}))
+    updated_item = item.model_copy(
+        update={"status": "superseded", "completed_at": now, "notes": [*item.notes, audit_note]}
+    )
+    updated_items = [updated_item if candidate is item else candidate for candidate in queue.items]
+    queue_status = queue.status
+    if all(candidate.status in {"completed", "skipped", "superseded"} for candidate in updated_items):
+        queue_status = "completed"
+    updated_queue = _with_queue_counts(
+        queue.model_copy(
+            update={
+                "status": queue_status,
+                "items": updated_items,
+                "current_item_id": None if queue.current_item_id == normalized_item else queue.current_item_id,
+                "updated_at": now,
+            }
+        )
+    )
+
+    paths = planning_artifact_paths(project_name, workspace_root=root)
+    queue_json_path, queue_markdown_path = queue_artifact_paths(project_name, normalized_queue, workspace_root=root)
+    record_dir = paths.planning_dir / "child-supersessions"
+    record_json_path = record_dir / f"child-supersession-{supersession_id}.json"
+    record_markdown_path = record_dir / f"child-supersession-{supersession_id}.md"
+    result = ChildSupersessionResult(
+        project=project_name,
+        supersession_id=supersession_id,
+        task_id=normalized_task,
+        batch_id=normalized_batch,
+        queue_id=normalized_queue,
+        queue_item_id=normalized_item,
+        queue_worker_run_id=normalized_run,
+        operator=cleaned_operator,
+        reason=cleaned_reason,
+        prior_task_status=task.status,
+        prior_queue_item_status=item.status,
+        replacement_task_id=normalized_replacement_task,
+        replacement_queue_id=normalized_replacement_queue,
+        replacement_queue_item_id=normalized_replacement_item,
+        backlog_json_path=str(paths.backlog_json),
+        queue_json_path=str(queue_json_path),
+        record_json_path=str(record_json_path),
+        record_markdown_path=str(record_markdown_path),
+        recorded_at=now,
+    )
+    current_queues = list_execution_queues(project_name, workspace_root=root)
+    queue_index = QueueIndex(
+        project=project_name,
+        queues=[
+            QueueIndexEntry(
+                queue_id=candidate.queue_id,
+                title=candidate.title,
+                source_batch_id=candidate.source_batch_id,
+                status=candidate.status,
+                item_count=candidate.item_count,
+                pending_count=candidate.pending_count,
+                completed_count=candidate.completed_count,
+                blocked_count=candidate.blocked_count,
+                path=str(queue_artifact_paths(project_name, candidate.queue_id, workspace_root=root)[0]),
+                updated_at=candidate.updated_at,
+            )
+            for candidate in [updated_queue if candidate.queue_id == normalized_queue else candidate for candidate in current_queues]
+        ],
+        updated_at=now,
+    )
+    expected_backlog_bytes = paths.backlog_json.read_bytes()
+    expected_queue_bytes = queue_json_path.read_bytes()
+    if ProjectBacklog.model_validate_json(expected_backlog_bytes) != backlog:
+        raise ValueError("Backlog artifact changed before child supersession could commit.")
+    if ExecutionQueue.model_validate_json(expected_queue_bytes) != queue:
+        raise ValueError("Queue artifact changed before child supersession could commit.")
+    artifacts = {
+        paths.backlog_json: updated_backlog.model_dump_json(indent=2),
+        paths.backlog_markdown: render_project_backlog_markdown(updated_backlog),
+        queue_json_path: updated_queue.model_dump_json(indent=2),
+        queue_markdown_path: render_execution_queue_markdown(updated_queue),
+        paths.queue_index_json: queue_index.model_dump_json(indent=2),
+        record_json_path: result.model_dump_json(indent=2),
+        record_markdown_path: _render_child_supersession_markdown(result),
+    }
+    _commit_child_supersession_artifacts(
+        artifacts,
+        authoritative_expectations={
+            paths.backlog_json: expected_backlog_bytes,
+            queue_json_path: expected_queue_bytes,
+        },
+    )
+    return result
+
+
+def _commit_child_supersession_artifacts(
+    artifacts: dict[Path, str],
+    *,
+    authoritative_expectations: dict[Path, bytes],
+) -> None:
+    for path, expected in authoritative_expectations.items():
+        if not path.exists() or path.read_bytes() != expected:
+            raise ValueError(f"Authoritative artifact changed before child supersession commit: {path}.")
+    originals = {path: path.read_bytes() if path.exists() else None for path in artifacts}
+    try:
+        for path, text in artifacts.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write_text_atomically(path, text)
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        for path, original in originals.items():
+            try:
+                if original is None:
+                    if path.exists():
+                        path.unlink()
+                else:
+                    _write_bytes_atomically(path, original)
+            except Exception as rollback_exc:  # pragma: no cover - catastrophic filesystem failure
+                rollback_errors.append(f"{path}: {rollback_exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                "Child supersession encountered a partial-write failure and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from exc
+        raise ValueError("Child supersession could not commit; original artifacts were restored.") from exc
+
+
+def _render_child_supersession_markdown(result: ChildSupersessionResult) -> str:
+    replacement = (
+        f"{result.replacement_task_id} / {result.replacement_queue_id} / {result.replacement_queue_item_id}"
+        if result.replacement_task_id and result.replacement_queue_id and result.replacement_queue_item_id
+        else "none"
+    )
+    return "\n".join(
+        [
+            f"# Child Supersession: {result.supersession_id}",
+            "",
+            f"- Project: `{result.project}`",
+            f"- Task: `{result.task_id}` (`{result.prior_task_status}` -> `{result.task_status}`)",
+            f"- Batch: `{result.batch_id}`",
+            f"- Queue item: `{result.queue_id}/{result.queue_item_id}` "
+            f"(`{result.prior_queue_item_status}` -> `{result.queue_item_status}`)",
+            f"- Queue-worker run: `{result.queue_worker_run_id or 'none'}`",
+            f"- Replacement: `{replacement}`",
+            f"- Operator: `{result.operator}`",
+            f"- Recorded: `{result.recorded_at.isoformat()}`",
+            "",
+            "## Reason",
+            "",
+            result.reason,
+            "",
+            "## Safety",
+            "",
+            result.safety_note,
+            "",
+        ]
+    )
+
+
+def _is_durably_superseded_child(
+    project_name: str,
+    *,
+    task_id: str | None,
+    queue_id: str | None,
+    queue_item_id: str | None,
+    queue_worker_run_id: str | None = None,
+    workspace_root: Path,
+) -> bool:
+    """Require matching task, queue-item, and audit evidence before treating a child as retired."""
+    if not task_id or not queue_id or not queue_item_id:
+        return False
+    normalized_task = _normalize_task_id(task_id)
+    normalized_queue = _normalize_queue_id(queue_id)
+    normalized_item = _normalize_queue_item_id(queue_item_id)
+    backlog = load_project_backlog(project_name, workspace_root=workspace_root)
+    queue = load_execution_queue(project_name, normalized_queue, workspace_root=workspace_root)
+    if not backlog or not queue:
+        return False
+    matching_tasks = [
+        task
+        for task in backlog.tasks
+        if _normalize_task_id(task.id) == normalized_task and task.status == "superseded"
+    ]
+    matching_items = [
+        item
+        for item in queue.items
+        if _normalize_queue_item_id(item.item_id) == normalized_item
+        and _normalize_task_id(item.task_id) == normalized_task
+        and item.status == "superseded"
+    ]
+    if len(matching_tasks) != 1 or len(matching_items) != 1:
+        return False
+    record_dir = planning_artifact_paths(project_name, workspace_root=workspace_root).planning_dir / "child-supersessions"
+    records: list[ChildSupersessionResult] = []
+    if record_dir.exists():
+        for path in record_dir.glob("child-supersession-*.json"):
+            try:
+                record = ChildSupersessionResult.model_validate_json(path.read_text(encoding="utf-8"))
+            except (OSError, ValidationError):
+                continue
+            if (
+                record.project == project_name
+                and _normalize_task_id(record.task_id) == normalized_task
+                and _normalize_batch_id(record.batch_id) == _normalize_batch_id(queue.source_batch_id)
+                and _normalize_queue_id(record.queue_id) == normalized_queue
+                and _normalize_queue_item_id(record.queue_item_id) == normalized_item
+                and record.task_status == "superseded"
+                and record.queue_item_status == "superseded"
+                and (
+                    queue_worker_run_id is None
+                    or record.queue_worker_run_id == _normalize_queue_worker_run_id(queue_worker_run_id)
+                )
+            ):
+                records.append(record)
+    return len(records) == 1
 
 
 def request_batch_approval(
@@ -11105,8 +11617,29 @@ def build_prepared_goal_status(
                 continue
             task = matching_tasks[0]
             item = matching_items[0]
-            task_terminal = task.status in {"completed", "superseded"}
-            item_terminal = item.status in {"completed", "skipped", "superseded"}
+            task_superseded = task.status == "superseded"
+            item_superseded = item.status == "superseded"
+            if task_superseded or item_superseded:
+                if task_superseded != item_superseded:
+                    blockers.append(
+                        f"Materialized goal supersession state drifted for {task.id}/{item.item_id}: "
+                        f"task={task.status}, queue={item.status}."
+                    )
+                elif _is_durably_superseded_child(
+                    project_name,
+                    task_id=task.id,
+                    queue_id=queue.queue_id,
+                    queue_item_id=item.item_id,
+                    workspace_root=root,
+                ):
+                    continue
+                else:
+                    blockers.append(
+                        f"Materialized goal child {task.id}/{item.item_id} says superseded without exactly one "
+                        "matching durable child-supersession record."
+                    )
+            task_terminal = task.status == "completed"
+            item_terminal = item.status in {"completed", "skipped"}
             if task_terminal != item_terminal:
                 blockers.append(
                     f"Materialized goal completion state drifted for {task.id}/{item.item_id}: "
@@ -11168,12 +11701,29 @@ def build_prepared_goal_status(
         item = matching_items[0]
         if _normalize_task_id(item.task_id) != _normalize_task_id(task_id):
             blockers.append(f"Prepared goal queue item {item_id} no longer owns task {task_id}.")
-        child_statuses.append(item.status)
+        if item.status == "superseded":
+            if _is_durably_superseded_child(
+                project_name,
+                task_id=task_id,
+                queue_id=preparation.queue_id,
+                queue_item_id=item.item_id,
+                workspace_root=root,
+            ):
+                child_statuses.append("superseded")
+            else:
+                blockers.append(
+                    f"Prepared goal child {task_id}/{item.item_id} says superseded without exactly one matching "
+                    "durable child-supersession record."
+                )
+                child_statuses.append("inconsistent_superseded")
+        else:
+            child_statuses.append(item.status)
 
-    completed_child_count = sum(status == "completed" for status in child_statuses)
+    terminal_child_statuses = {"completed", "skipped", "superseded"}
+    completed_child_count = sum(status in terminal_child_statuses for status in child_statuses)
     remaining_child_count = child_count - completed_child_count
     next_child_index = next(
-        (index for index, status in enumerate(child_statuses) if status != "completed"),
+        (index for index, status in enumerate(child_statuses) if status not in terminal_child_statuses),
         None,
     )
 
@@ -20798,6 +21348,19 @@ def _write_text_atomically(path: Path, text: str) -> None:
     try:
         with temporary_path.open("w", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+
+
+def _write_bytes_atomically(path: Path, content: bytes) -> None:
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary_path.open("wb") as handle:
+            handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
