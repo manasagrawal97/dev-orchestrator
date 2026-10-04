@@ -699,6 +699,69 @@ export interface OperatorConsoleChild {
   is_current: boolean;
 }
 
+export interface OperatorConsoleStage {
+  stage_id: string;
+  label: string;
+  status: string;
+  detail: string;
+}
+
+export interface OperatorConsoleWorkerEvidence {
+  queue_worker_run_id: string;
+  worker_run_id: string | null;
+  queue_worker_status: string;
+  worker_status: string | null;
+  report_status: string | null;
+  summary: string;
+  work_performed: string[];
+  changed_files: string[];
+  commands_run: string[];
+  risks: string[];
+  blockers: string[];
+  artifact_path: string | null;
+  patch_proposal_present: boolean;
+  patch_artifact_path: string | null;
+  diff_preview: string;
+  diff_truncated: boolean;
+  diff_note: string;
+}
+
+export interface OperatorConsoleReviewEvidence {
+  status: string;
+  reviewer: string | null;
+  decision_note: string;
+  changed_files_review: string[];
+  safety_review: string[];
+  acceptance_criteria_review: string[];
+  follow_up_items: string[];
+}
+
+export interface OperatorConsoleValidationEvidence {
+  status: string;
+  summary: string;
+  commands: string[];
+  tests: string[];
+  warnings: string[];
+  latest_attempt_id: string | null;
+  artifact_paths: string[];
+}
+
+export interface OperatorConsoleDeliveryEvidence {
+  state: string;
+  request_id: string | null;
+  request_status: string | null;
+  runner_run_id: string | null;
+  runner_status: string | null;
+  commit_hash: string | null;
+  pushed: boolean;
+  expected_changed_files: string[];
+  validation_summary: string | null;
+  test_summary: string | null;
+  blockers: string[];
+  warnings: string[];
+  next_action: string;
+}
+
 export interface OperatorConsoleGoal {
   intake_id: string;
   goal_summary: string;
@@ -712,6 +775,7 @@ export interface OperatorConsoleGoal {
   remaining_child_count: number;
   children: OperatorConsoleChild[];
   current_stage: string;
+  stage_timeline: OperatorConsoleStage[];
   current_task_id: string | null;
   current_task_title: string | null;
   current_policy_id: string | null;
@@ -719,6 +783,10 @@ export interface OperatorConsoleGoal {
   current_queue_worker_status: string | null;
   current_review_status: string | null;
   delivery_state: string;
+  worker_evidence: OperatorConsoleWorkerEvidence | null;
+  review_evidence: OperatorConsoleReviewEvidence | null;
+  validation_evidence: OperatorConsoleValidationEvidence | null;
+  delivery_evidence: OperatorConsoleDeliveryEvidence | null;
   supervisor_run_id: string | null;
   supervisor_status: string | null;
   blockers: string[];

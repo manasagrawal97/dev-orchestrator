@@ -343,7 +343,10 @@ export function OperatorConsolePage({ selectedProject }: OperatorConsolePageProp
           ) : null}
 
           {goal ? (
-            <ActiveGoalPanel goal={goal} />
+            <>
+              <ActiveGoalPanel goal={goal} />
+              <LiveEvidencePanel goal={goal} />
+            </>
           ) : (
             <EmptyState message="No active prepared goal. Start with a rough goal below; no project artifacts are created until you confirm each step." />
           )}
@@ -644,6 +647,18 @@ function ActiveGoalPanel({ goal }: { goal: NonNullable<OperatorConsoleProjection
         <div><span>Goal progress</span><strong>{goal.completed_child_count} / {goal.child_count} children</strong></div>
         <div className="progress-meter-track"><span style={{ width: `${completion}%` }} /></div>
       </div>
+      <ol className="operator-stage-timeline" aria-label="Execution stage timeline">
+        {goal.stage_timeline.map((stage) => (
+          <li className={stage.status} key={stage.stage_id}>
+            <span className="operator-stage-marker" aria-hidden="true" />
+            <div>
+              <strong>{stage.label}</strong>
+              <small>{stage.detail}</small>
+            </div>
+            <StatusBadge status={humanize(stage.status)} />
+          </li>
+        ))}
+      </ol>
       <ol className="operator-child-list">
         {goal.children.map((child) => (
           <li className={`${child.is_current ? 'current' : ''} ${child.stage === 'completed' ? 'complete' : ''}`} key={child.task_id}>
@@ -662,6 +677,141 @@ function ActiveGoalPanel({ goal }: { goal: NonNullable<OperatorConsoleProjection
       </section>
       {goal.attention_items.length ? <AttentionPanel title="Goal blockers and attention" items={goal.attention_items} /> : null}
     </section>
+  );
+}
+
+function LiveEvidencePanel({ goal }: { goal: NonNullable<OperatorConsoleProjection['active_goal']> }) {
+  const worker = goal.worker_evidence;
+  const review = goal.review_evidence;
+  const validation = goal.validation_evidence;
+  const delivery = goal.delivery_evidence;
+
+  return (
+    <section className="panel operator-evidence-panel">
+      <div className="operator-evidence-heading">
+        <div>
+          <span className="operator-kicker">Canonical live evidence</span>
+          <h3>Execution, review, validation, and delivery</h3>
+        </div>
+        <span className="operator-evidence-refresh-note">Refresh state to load newly recorded evidence.</span>
+      </div>
+
+      <div className="operator-evidence-grid">
+        <EvidenceCard title="Worker execution" status={worker?.report_status ?? worker?.queue_worker_status ?? 'not started'}>
+          {worker ? (
+            <>
+              <EvidenceFacts items={[
+                ['Queue worker run', worker.queue_worker_run_id],
+                ['Worker run', worker.worker_run_id ?? 'not assigned'],
+                ['Queue status', humanize(worker.queue_worker_status)],
+                ['Worker status', worker.worker_status ? humanize(worker.worker_status) : 'not recorded']
+              ]} />
+              {worker.summary ? <p className="operator-evidence-summary">{worker.summary}</p> : null}
+              <div className="operator-evidence-lists">
+                <ListBlock label="Work performed" items={worker.work_performed} empty="not reported" />
+                <ListBlock label="Changed files" items={worker.changed_files} empty="none reported" />
+                <ListBlock label="Commands and tests" items={worker.commands_run} empty="none reported" />
+                <ListBlock label="Risks" items={worker.risks} empty="none reported" />
+                <ListBlock label="Blockers" items={worker.blockers} empty="none reported" />
+              </div>
+              {worker.artifact_path || worker.patch_proposal_present ? (
+                <EvidenceFacts items={[
+                  ['Worker artifact', worker.artifact_path ?? 'not recorded'],
+                  ['Patch proposal', worker.patch_proposal_present ? (worker.patch_artifact_path ?? 'included in worker result') : 'none']
+                ]} />
+              ) : null}
+              <DiffPreview preview={worker.diff_preview} note={worker.diff_note} truncated={worker.diff_truncated} />
+            </>
+          ) : <p className="operator-evidence-empty">No worker evidence is recorded for the current child.</p>}
+        </EvidenceCard>
+
+        <EvidenceCard title="Human semantic review" status={review?.status ?? 'not recorded'}>
+          {review ? (
+            <>
+              <EvidenceFacts items={[
+                ['Reviewer', review.reviewer ?? 'not recorded'],
+                ['Decision', humanize(review.status)]
+              ]} />
+              {review.decision_note ? <p className="operator-evidence-summary">{review.decision_note}</p> : null}
+              <div className="operator-evidence-lists">
+                <ListBlock label="Changed files review" items={review.changed_files_review} empty="not recorded" />
+                <ListBlock label="Safety review" items={review.safety_review} empty="not recorded" />
+                <ListBlock label="Acceptance criteria review" items={review.acceptance_criteria_review} empty="not recorded" />
+                <ListBlock label="Follow-up items" items={review.follow_up_items} empty="none" />
+              </div>
+            </>
+          ) : <p className="operator-evidence-empty">No human semantic review is recorded. Review remains a separate explicit action.</p>}
+        </EvidenceCard>
+
+        <EvidenceCard title="Validation" status={validation?.status ?? 'not provided'}>
+          {validation ? (
+            <>
+              <EvidenceFacts items={[
+                ['Latest attempt', validation.latest_attempt_id ?? 'not recorded'],
+                ['Status', humanize(validation.status)]
+              ]} />
+              {validation.summary ? <p className="operator-evidence-summary">{validation.summary}</p> : null}
+              <div className="operator-evidence-lists">
+                <ListBlock label="Commands" items={validation.commands} empty="not reported" />
+                <ListBlock label="Tests" items={validation.tests} empty="not reported" />
+                <ListBlock label="Warnings" items={validation.warnings} empty="none" />
+                <ListBlock label="Evidence artifacts" items={validation.artifact_paths} empty="none" />
+              </div>
+            </>
+          ) : <p className="operator-evidence-empty">No approved validation evidence is recorded.</p>}
+        </EvidenceCard>
+
+        <EvidenceCard title="Trusted delivery" status={delivery?.state ?? goal.delivery_state}>
+          {delivery ? (
+            <>
+              <EvidenceFacts items={[
+                ['Request', delivery.request_id ?? 'not requested'],
+                ['Request status', delivery.request_status ? humanize(delivery.request_status) : 'not recorded'],
+                ['Runner run', delivery.runner_run_id ?? 'not started'],
+                ['Runner status', delivery.runner_status ? humanize(delivery.runner_status) : 'not recorded'],
+                ['Commit', delivery.commit_hash ?? 'not created'],
+                ['Pushed', delivery.pushed ? 'yes' : 'no']
+              ]} />
+              {delivery.validation_summary ? <p className="operator-evidence-summary"><strong>Validation:</strong> {delivery.validation_summary}</p> : null}
+              {delivery.test_summary ? <p className="operator-evidence-summary"><strong>Tests:</strong> {delivery.test_summary}</p> : null}
+              <div className="operator-evidence-lists">
+                <ListBlock label="Expected changed files" items={delivery.expected_changed_files} empty="none recorded" />
+                <ListBlock label="Blockers" items={delivery.blockers} empty="none" />
+                <ListBlock label="Warnings" items={delivery.warnings} empty="none" />
+              </div>
+              {delivery.next_action ? <p className="operator-delivery-next"><strong>Delivery next action</strong><span>{delivery.next_action}</span></p> : null}
+            </>
+          ) : <p className="operator-evidence-empty">Trusted delivery has not been requested.</p>}
+        </EvidenceCard>
+      </div>
+    </section>
+  );
+}
+
+function EvidenceCard({ title, status, children }: { title: string; status: string; children: React.ReactNode }) {
+  return (
+    <article className="operator-evidence-card">
+      <div className="operator-evidence-card-heading"><h4>{title}</h4><StatusBadge status={humanize(status)} /></div>
+      {children}
+    </article>
+  );
+}
+
+function EvidenceFacts({ items }: { items: Array<[string, string]> }) {
+  return (
+    <dl className="operator-evidence-facts">
+      {items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+    </dl>
+  );
+}
+
+function DiffPreview({ preview, note, truncated }: { preview: string; note: string; truncated: boolean }) {
+  return (
+    <details className="operator-diff-preview" open={Boolean(preview)}>
+      <summary>In-scope worker diff preview{truncated ? ' (truncated)' : ''}</summary>
+      {note ? <p>{note}</p> : null}
+      {preview ? <pre>{preview}</pre> : <span>No diff preview is available.</span>}
+    </details>
   );
 }
 
