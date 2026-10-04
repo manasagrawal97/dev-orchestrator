@@ -1755,6 +1755,79 @@ class OperatorConsoleChildProjection(BaseModel):
     is_current: bool = False
 
 
+class OperatorConsoleStageProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage_id: str
+    label: str
+    status: str
+    detail: str = ""
+
+
+class OperatorConsoleWorkerEvidenceProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    queue_worker_run_id: str
+    worker_run_id: str | None = None
+    queue_worker_status: str
+    worker_status: str | None = None
+    report_status: str | None = None
+    summary: str = ""
+    work_performed: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    commands_run: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    artifact_path: str | None = None
+    patch_proposal_present: bool = False
+    patch_artifact_path: str | None = None
+    diff_preview: str = ""
+    diff_truncated: bool = False
+    diff_note: str = ""
+
+
+class OperatorConsoleReviewProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "not_recorded"
+    reviewer: str | None = None
+    decision_note: str = ""
+    changed_files_review: list[str] = Field(default_factory=list)
+    safety_review: list[str] = Field(default_factory=list)
+    acceptance_criteria_review: list[str] = Field(default_factory=list)
+    follow_up_items: list[str] = Field(default_factory=list)
+
+
+class OperatorConsoleValidationProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = "not_provided"
+    summary: str = ""
+    commands: list[str] = Field(default_factory=list)
+    tests: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    latest_attempt_id: str | None = None
+    artifact_paths: list[str] = Field(default_factory=list)
+
+
+class OperatorConsoleDeliveryProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: str = "not_requested"
+    request_id: str | None = None
+    request_status: str | None = None
+    runner_run_id: str | None = None
+    runner_status: str | None = None
+    commit_hash: str | None = None
+    pushed: bool = False
+    expected_changed_files: list[str] = Field(default_factory=list)
+    validation_summary: str | None = None
+    test_summary: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    next_action: str = ""
+
+
 class OperatorConsoleGoalProjection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1770,6 +1843,7 @@ class OperatorConsoleGoalProjection(BaseModel):
     remaining_child_count: int = 0
     children: list[OperatorConsoleChildProjection] = Field(default_factory=list)
     current_stage: str
+    stage_timeline: list[OperatorConsoleStageProjection] = Field(default_factory=list)
     current_task_id: str | None = None
     current_task_title: str | None = None
     current_policy_id: str | None = None
@@ -1777,6 +1851,10 @@ class OperatorConsoleGoalProjection(BaseModel):
     current_queue_worker_status: str | None = None
     current_review_status: str | None = None
     delivery_state: str = "not_requested"
+    worker_evidence: OperatorConsoleWorkerEvidenceProjection | None = None
+    review_evidence: OperatorConsoleReviewProjection | None = None
+    validation_evidence: OperatorConsoleValidationProjection | None = None
+    delivery_evidence: OperatorConsoleDeliveryProjection | None = None
     supervisor_run_id: str | None = None
     supervisor_status: str | None = None
     blockers: list[str] = Field(default_factory=list)
@@ -12029,6 +12107,7 @@ def _operator_console_goal_projection(
     current_child = next((child for child in children if child.is_current), None)
     current_stage = _operator_console_current_stage(status)
     current_review_status: str | None = None
+    current_run: QueueWorkerRun | None = None
     attention_items = list(status.blockers)
     if status.current_queue_worker_run_id:
         current_run = load_queue_worker_run(
@@ -12056,6 +12135,20 @@ def _operator_console_goal_projection(
         attention_items.append(
             f"Current worker run is {status.current_queue_worker_status}; automatic retry is not allowed."
         )
+    worker_evidence, review_evidence, validation_evidence, delivery_evidence = _operator_console_live_evidence(
+        project_name,
+        current_run,
+        delivery_state=status.delivery_state,
+        workspace_root=workspace_root,
+    )
+    stage_timeline = _operator_console_stage_timeline(
+        current_stage=current_stage,
+        bundle_status=status.approval_state,
+        worker_evidence=worker_evidence,
+        review_evidence=review_evidence,
+        validation_evidence=validation_evidence,
+        delivery_evidence=delivery_evidence,
+    )
     attention_items = _dedupe(attention_items)
     return OperatorConsoleGoalProjection(
         intake_id=status.intake_id,
@@ -12070,6 +12163,7 @@ def _operator_console_goal_projection(
         remaining_child_count=status.remaining_child_count,
         children=children,
         current_stage=current_stage,
+        stage_timeline=stage_timeline,
         current_task_id=status.current_task_id,
         current_task_title=current_child.title if current_child else None,
         current_policy_id=status.current_policy_id,
@@ -12077,6 +12171,10 @@ def _operator_console_goal_projection(
         current_queue_worker_status=status.current_queue_worker_status,
         current_review_status=current_review_status,
         delivery_state=status.delivery_state,
+        worker_evidence=worker_evidence,
+        review_evidence=review_evidence,
+        validation_evidence=validation_evidence,
+        delivery_evidence=delivery_evidence,
         supervisor_run_id=status.supervisor_run_id,
         supervisor_status=status.supervisor_status,
         blockers=status.blockers,
@@ -12084,6 +12182,348 @@ def _operator_console_goal_projection(
         attention_items=attention_items,
         next_action=status.next_action,
     )
+
+
+def _operator_console_live_evidence(
+    project_name: str,
+    run: QueueWorkerRun | None,
+    *,
+    delivery_state: str,
+    workspace_root: Path,
+) -> tuple[
+    OperatorConsoleWorkerEvidenceProjection | None,
+    OperatorConsoleReviewProjection | None,
+    OperatorConsoleValidationProjection | None,
+    OperatorConsoleDeliveryProjection,
+]:
+    if not run:
+        return None, None, None, OperatorConsoleDeliveryProjection(state=delivery_state)
+
+    evidence = summarize_queue_worker_evidence(project_name, run, workspace_root=workspace_root)
+    worker_run = (
+        load_codex_worker_run(project_name, run.selected_worker_run_id, workspace_root=workspace_root)
+        if run.selected_worker_run_id
+        else None
+    )
+    report = (
+        load_codex_worker_report(project_name, run.selected_worker_run_id, workspace_root=workspace_root)
+        if run.selected_worker_run_id
+        else None
+    )
+    ingest = _latest_ingest_for_queue_worker_run(
+        list_codex_worker_ingests(project_name, workspace_root=workspace_root),
+        run.run_id,
+    )
+    review = (
+        load_codex_worker_review(project_name, run.selected_worker_run_id, workspace_root=workspace_root)
+        if run.selected_worker_run_id
+        else None
+    )
+    changed_files = list(ingest.changed_files if ingest else (report.changed_files if report else []))
+    commands_run = list(ingest.commands_run if ingest else (report.commands_run if report else []))
+    policy = load_execution_policy(project_name, run.policy_id, workspace_root=workspace_root)
+    diff_preview, diff_truncated, diff_note = _operator_console_diff_preview(
+        Path(worker_run.target_repo_path) if worker_run else None,
+        changed_files,
+        allowed_patterns=policy.allowed_file_patterns if policy else [],
+        forbidden_patterns=policy.forbidden_file_patterns if policy else [],
+    )
+    worker_blockers = list(evidence.blockers)
+    if report:
+        worker_blockers.extend(report.blockers)
+    if ingest and ingest.failure_details:
+        worker_blockers.append(ingest.failure_details)
+    if ingest and ingest.usage_limit_details:
+        worker_blockers.append(ingest.usage_limit_details)
+    worker_evidence = OperatorConsoleWorkerEvidenceProjection(
+        queue_worker_run_id=run.run_id,
+        worker_run_id=run.selected_worker_run_id,
+        queue_worker_status=run.status,
+        worker_status=worker_run.status if worker_run else None,
+        report_status=evidence.worker_report_status,
+        summary=ingest.summary if ingest else (report.summary if report else ""),
+        work_performed=list(ingest.work_performed if ingest else []),
+        changed_files=changed_files,
+        commands_run=commands_run,
+        risks=list(ingest.risks if ingest else []),
+        blockers=_dedupe(worker_blockers),
+        artifact_path=(ingest.artifact_path or None) if ingest else (worker_run.report_path if worker_run else None),
+        patch_proposal_present=evidence.patch_proposal_present,
+        patch_artifact_path=evidence.patch_artifact_path,
+        diff_preview=diff_preview,
+        diff_truncated=diff_truncated,
+        diff_note=diff_note,
+    )
+
+    review_evidence = None
+    validation_evidence = None
+    if review:
+        review_evidence = OperatorConsoleReviewProjection(
+            status=review.review_status,
+            reviewer=review.reviewer,
+            decision_note=review.decision_note,
+            changed_files_review=list(review.changed_files_review),
+            safety_review=list(review.safety_review),
+            acceptance_criteria_review=list(review.acceptance_criteria_review),
+            follow_up_items=list(review.follow_up_items),
+        )
+        validation = review.validation_evidence
+        validation_evidence = OperatorConsoleValidationProjection(
+            status=validation.validation_status,
+            summary=validation.validation_summary,
+            commands=list(validation.commands_reported),
+            tests=list(validation.tests_reported),
+            warnings=list(validation.warnings),
+            latest_attempt_id=validation.latest_attempt_id,
+            artifact_paths=list(validation.evidence_paths),
+        )
+
+    request = None
+    runner_run = None
+    if run.delivery_request_id:
+        from .delivery import load_delivery_runner_request, resolve_delivery_runner_run_for_request
+
+        request = load_delivery_runner_request(project_name, run.delivery_request_id, workspace_root=workspace_root)
+        runner_run = resolve_delivery_runner_run_for_request(
+            project_name,
+            run.delivery_request_id,
+            workspace_root=workspace_root,
+        )
+    delivery_evidence = OperatorConsoleDeliveryProjection(
+        state=delivery_state,
+        request_id=run.delivery_request_id,
+        request_status=request.status if request else run.delivery_request_status,
+        runner_run_id=runner_run.run_id if runner_run else None,
+        runner_status=runner_run.status if runner_run else None,
+        commit_hash=runner_run.commit_hash if runner_run else None,
+        pushed=bool(runner_run and runner_run.pushed),
+        expected_changed_files=list(request.expected_changed_files if request else []),
+        validation_summary=request.validation_summary if request else None,
+        test_summary=request.test_summary if request else None,
+        blockers=_dedupe([*(request.blockers if request else []), *(runner_run.blockers if runner_run else [])]),
+        warnings=_dedupe([*(request.warnings if request else []), *(runner_run.warnings if runner_run else [])]),
+        next_action=runner_run.next_action if runner_run else (request.next_action if request else ""),
+    )
+    return worker_evidence, review_evidence, validation_evidence, delivery_evidence
+
+
+def _operator_console_diff_preview(
+    target_repo_path: Path | None,
+    changed_files: list[str],
+    *,
+    allowed_patterns: list[str],
+    forbidden_patterns: list[str],
+    max_chars: int = 24_000,
+) -> tuple[str, bool, str]:
+    """Return a bounded read-only diff for reported paths inside the approved policy scope."""
+    if not changed_files:
+        return "", False, "No changed files were reported by the current worker."
+    if not target_repo_path or not target_repo_path.exists() or not target_repo_path.is_dir():
+        return "", False, "The worker target repository is unavailable for diff review."
+
+    safe_paths: list[str] = []
+    rejected_paths: list[str] = []
+    for raw_path in changed_files:
+        normalized = raw_path.strip().replace("\\", "/")
+        path = Path(normalized)
+        in_scope = bool(allowed_patterns and _matches_any_scope_pattern(normalized, allowed_patterns))
+        forbidden = bool(forbidden_patterns and _matches_any_scope_pattern(normalized, forbidden_patterns))
+        if (
+            not normalized
+            or "\x00" in normalized
+            or path.is_absolute()
+            or ".." in path.parts
+            or not in_scope
+            or forbidden
+        ):
+            rejected_paths.append(raw_path)
+            continue
+        safe_paths.append(normalized)
+    safe_paths = _dedupe(safe_paths)
+    if not safe_paths:
+        return "", False, "No worker-reported path was eligible for an in-scope diff preview."
+
+    diff_command = [
+        "git",
+        "--literal-pathspecs",
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "HEAD",
+        "--",
+        *safe_paths,
+    ]
+    git_env = os.environ.copy()
+    git_env["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        result = subprocess.run(
+            diff_command,
+            cwd=target_repo_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+            env=git_env,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", False, f"Diff preview is unavailable: {exc}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return "", False, f"Diff preview is unavailable: {detail or 'git diff failed'}."
+
+    preview_parts = [result.stdout] if result.stdout else []
+    try:
+        status_result = subprocess.run(
+            [
+                "git",
+                "--literal-pathspecs",
+                "-c",
+                "core.quotepath=false",
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--",
+                *safe_paths,
+            ],
+            cwd=target_repo_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+            env=git_env,
+        )
+        if status_result.returncode == 0:
+            untracked = {
+                line[3:].strip().replace("\\", "/")
+                for line in status_result.stdout.splitlines()
+                if line.startswith("?? ")
+            }
+            for path in safe_paths:
+                if path not in untracked:
+                    continue
+                untracked_diff = subprocess.run(
+                    [
+                        "git",
+                        "-c",
+                        "core.quotepath=false",
+                        "diff",
+                        "--no-index",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--no-color",
+                        "--",
+                        os.devnull,
+                        path,
+                    ],
+                    cwd=target_repo_path,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10,
+                    check=False,
+                    env=git_env,
+                )
+                if untracked_diff.returncode in {0, 1} and untracked_diff.stdout:
+                    preview_parts.append(untracked_diff.stdout)
+    except (OSError, subprocess.SubprocessError):
+        # The tracked diff remains useful if the optional untracked preview fails.
+        pass
+
+    preview = "\n".join(part.rstrip() for part in preview_parts if part).strip()
+    truncated = len(preview) > max_chars
+    if truncated:
+        preview = preview[:max_chars].rstrip() + "\n\n[diff preview truncated]"
+    notes: list[str] = []
+    if rejected_paths:
+        notes.append(f"Omitted {len(rejected_paths)} path(s) outside the approved diff scope.")
+    if preview:
+        notes.append("Read-only preview of changes for policy-authorized worker-reported paths.")
+    else:
+        notes.append("No staged, unstaged, or untracked diff is present for the worker-reported paths.")
+    if truncated:
+        notes.append(f"Preview is limited to {max_chars} characters.")
+    return preview, truncated, " ".join(notes)
+
+
+def _operator_console_stage_timeline(
+    *,
+    current_stage: str,
+    bundle_status: str,
+    worker_evidence: OperatorConsoleWorkerEvidenceProjection | None,
+    review_evidence: OperatorConsoleReviewProjection | None,
+    validation_evidence: OperatorConsoleValidationProjection | None,
+    delivery_evidence: OperatorConsoleDeliveryProjection | None,
+) -> list[OperatorConsoleStageProjection]:
+    worker_report_status = worker_evidence.report_status if worker_evidence else None
+    review_status = review_evidence.status if review_evidence else "not_recorded"
+    validation_status = validation_evidence.status if validation_evidence else "not_provided"
+    delivery_state = delivery_evidence.state if delivery_evidence else "not_requested"
+
+    def stage_status(stage_ids: set[str], *, completed: bool, attention: bool = False) -> str:
+        if completed:
+            return "completed"
+        if attention:
+            return "attention_required"
+        if current_stage in stage_ids:
+            return "current"
+        return "pending"
+
+    return [
+        OperatorConsoleStageProjection(
+            stage_id="plan",
+            label="Plan approval",
+            status=stage_status({"plan_approval"}, completed=bundle_status == "approved"),
+            detail=f"Approval bundle is {bundle_status}.",
+        ),
+        OperatorConsoleStageProjection(
+            stage_id="worker",
+            label="Worker execution",
+            status=stage_status(
+                {"worker_handoff", "worker_execution", "supervision"},
+                completed=worker_report_status == "completed",
+                attention=bool(worker_report_status and worker_report_status != "completed"),
+            ),
+            detail=f"Worker result is {worker_report_status}." if worker_report_status else "No worker result is recorded.",
+        ),
+        OperatorConsoleStageProjection(
+            stage_id="semantic_review",
+            label="Semantic review",
+            status=stage_status(
+                {"semantic_review", "semantic_review_complete"},
+                completed=review_status == "reviewed_passed",
+                attention=review_status in {"reviewed_needs_changes", "rejected", "blocked"},
+            ),
+            detail=f"Review is {review_status}.",
+        ),
+        OperatorConsoleStageProjection(
+            stage_id="validation",
+            label="Validation",
+            status=stage_status(
+                {"validation"},
+                completed=validation_status == "passed",
+                attention=validation_status not in {"not_provided", "passed"},
+            ),
+            detail=f"Validation is {validation_status}.",
+        ),
+        OperatorConsoleStageProjection(
+            stage_id="delivery",
+            label="Trusted delivery",
+            status=stage_status(
+                {"delivery_request", "trusted_delivery"},
+                completed=delivery_state in {"complete", "completed"},
+                attention=delivery_state in {"failed", "ambiguous"},
+            ),
+            detail=f"Delivery is {delivery_state}.",
+        ),
+    ]
 
 
 def _operator_console_recent_completion(

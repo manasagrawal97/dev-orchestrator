@@ -806,6 +806,15 @@ Ship a guarded local workflow.
     console = client.get("/api/projects/sample/operator-console")
     assert console.status_code == 200
     assert console.json()["active_goal"]["bundle_status"] == "approved"
+    assert [stage["stage_id"] for stage in console.json()["active_goal"]["stage_timeline"]] == [
+        "plan",
+        "worker",
+        "semantic_review",
+        "validation",
+        "delivery",
+    ]
+    assert console.json()["active_goal"]["worker_evidence"] is None
+    assert console.json()["active_goal"]["delivery_evidence"]["state"] == "not_requested"
 
 
 def test_operator_console_run_calls_existing_supervisor_only_for_supported_current_goal(

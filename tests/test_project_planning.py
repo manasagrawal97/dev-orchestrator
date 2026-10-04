@@ -2031,6 +2031,18 @@ def test_goal_status_and_operator_console_use_approved_bundle_over_stale_prepara
     assert projection.active_goal.completed_child_count == 0
     assert projection.active_goal.children[0].task_id == "T055"
     assert projection.active_goal.children[0].is_current is True
+    assert [stage.stage_id for stage in projection.active_goal.stage_timeline] == [
+        "plan",
+        "worker",
+        "semantic_review",
+        "validation",
+        "delivery",
+    ]
+    assert projection.active_goal.stage_timeline[0].status == "completed"
+    assert projection.active_goal.stage_timeline[1].status == "pending"
+    assert projection.active_goal.worker_evidence is None
+    assert projection.active_goal.delivery_evidence is not None
+    assert projection.active_goal.delivery_evidence.state == "not_requested"
     assert [action.action_id for action in projection.supported_actions] == ["start_goal"]
     assert projection.attention_required is False
     assert projection.recent_completion is None
@@ -2807,6 +2819,24 @@ def test_goal_workflow_medium_risk_worker_stops_at_human_semantic_review(
     projection = build_operator_console_projection("sample", workspace_root=workspace)
     assert projection.active_goal is not None
     assert projection.active_goal.current_stage == "semantic_review"
+    assert projection.active_goal.worker_evidence is not None
+    assert projection.active_goal.worker_evidence.report_status == "completed"
+    assert projection.active_goal.worker_evidence.summary == "fake worker completed one goal-scoped change"
+    assert projection.active_goal.worker_evidence.changed_files == ["src/devo/main.py"]
+    assert "goal-scoped-medium" in projection.active_goal.worker_evidence.diff_preview
+    assert projection.active_goal.worker_evidence.diff_truncated is False
+    stages = {stage.stage_id: stage.status for stage in projection.active_goal.stage_timeline}
+    assert stages == {
+        "plan": "completed",
+        "worker": "completed",
+        "semantic_review": "current",
+        "validation": "pending",
+        "delivery": "pending",
+    }
+    assert projection.active_goal.review_evidence is None
+    assert projection.active_goal.validation_evidence is None
+    assert projection.active_goal.delivery_evidence is not None
+    assert projection.active_goal.delivery_evidence.state == "not_requested"
     assert len(projection.supported_actions) == 1
     review_action = projection.supported_actions[0]
     assert review_action.action_id == "review_worker"
@@ -2814,6 +2844,195 @@ def test_goal_workflow_medium_risk_worker_stops_at_human_semantic_review(
     assert "--run QWR-0001" in review_action.command
     assert '--status "<passed|needs_changes|rejected|blocked>"' in review_action.command
     assert "goal-run" not in review_action.command
+
+
+def test_operator_console_diff_preview_is_bounded_to_policy_authorized_reported_paths(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# Test\n", encoding="utf-8")
+    _init_git_repo(repo)
+    allowed = repo / "src" / "feature.py"
+    forbidden = repo / ".env"
+    allowed.parent.mkdir(parents=True)
+    allowed.write_text("print('review me')\n", encoding="utf-8")
+    forbidden.write_text("SECRET=do-not-render\n", encoding="utf-8")
+
+    preview, truncated, note = project_planning_module._operator_console_diff_preview(
+        repo,
+        ["src/feature.py", ".env", "../outside.txt", str((repo / "outside.py").resolve())],
+        allowed_patterns=["src/**"],
+        forbidden_patterns=[".env"],
+    )
+
+    assert "review me" in preview
+    assert "do-not-render" not in preview
+    assert truncated is False
+    assert "Omitted 3 path(s)" in note
+
+
+def test_operator_console_diff_preview_uses_literal_paths_for_wildcards_and_untracked_discovery(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# Test\n", encoding="utf-8")
+    tracked = repo / "src" / "tracked.py"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("print('baseline')\n", encoding="utf-8")
+    _init_git_repo(repo)
+    tracked.write_text("print('must stay hidden')\n", encoding="utf-8")
+    untracked = repo / "src" / "untracked.py"
+    untracked.write_text("print('also hidden')\n", encoding="utf-8")
+
+    preview, truncated, note = project_planning_module._operator_console_diff_preview(
+        repo,
+        ["src/*.py"],
+        allowed_patterns=["src/**"],
+        forbidden_patterns=[],
+    )
+
+    assert preview == ""
+    assert truncated is False
+    assert "must stay hidden" not in preview
+    assert "also hidden" not in preview
+    assert "No staged, unstaged, or untracked diff" in note
+
+
+def test_operator_console_diff_preview_uses_literal_paths_for_git_pathspec_magic(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# Test\n", encoding="utf-8")
+    tracked = repo / "src" / "tracked.py"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("print('baseline')\n", encoding="utf-8")
+    _init_git_repo(repo)
+    tracked.write_text("print('pathspec expansion leaked this')\n", encoding="utf-8")
+
+    preview, truncated, note = project_planning_module._operator_console_diff_preview(
+        repo,
+        [":(glob)src/*.py"],
+        allowed_patterns=["*"],
+        forbidden_patterns=[],
+    )
+
+    assert preview == ""
+    assert truncated is False
+    assert "pathspec expansion leaked this" not in preview
+    assert "No staged, unstaged, or untracked diff" in note
+
+
+def test_operator_console_diff_preview_truncates_and_never_runs_for_unapproved_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    calls: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="123456789", stderr="")
+
+    monkeypatch.setattr(project_planning_module.subprocess, "run", fake_run)
+    preview, truncated, note = project_planning_module._operator_console_diff_preview(
+        repo,
+        ["src/feature.py", ".env"],
+        allowed_patterns=["src/**"],
+        forbidden_patterns=[".env"],
+        max_chars=5,
+    )
+
+    assert preview == "12345\n\n[diff preview truncated]"
+    assert truncated is True
+    assert "Omitted 1 path(s)" in note
+    assert "limited to 5 characters" in note
+    assert calls
+    assert all(".env" not in call for call in calls)
+    assert calls[0][-1] == "src/feature.py"
+    assert "--literal-pathspecs" in calls[0]
+    assert "--no-textconv" in calls[0]
+    assert "status" in calls[1]
+    assert "--literal-pathspecs" in calls[1]
+
+
+def test_operator_console_projects_review_validation_and_pending_delivery_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _setup_approved_prepared_goal(
+        tmp_path,
+        monkeypatch,
+        medium_task_id="T055",
+    )
+    _init_git_repo(project_path)
+    _set_fake_codex_worker_config(tmp_path, "completed_with_goal_change")
+    _preparation, result = supervise_prepared_goal(
+        "sample",
+        "INTAKE-0001",
+        dry_run=False,
+        workspace_root=workspace,
+    )
+    assert result.stop_reason == "waiting_human_review"
+
+    project_planning_module.record_queue_worker_review(
+        "sample",
+        "QWR-0001",
+        status="passed",
+        summary="Reviewed the bounded worker diff.",
+        files_changed="src/devo/main.py",
+        recorded_by="Manas",
+        workspace_root=workspace,
+    )
+    project_planning_module.step_queue_worker_run(
+        "sample",
+        "POL-0002",
+        run_id="QWR-0001",
+        workspace_root=workspace,
+    )
+    project_planning_module.record_queue_worker_validation(
+        "sample",
+        "QWR-0001",
+        status="passed",
+        summary="Focused validation passed.",
+        commands_run="python -m pytest -q",
+        recorded_by="Manas",
+        workspace_root=workspace,
+    )
+    project_planning_module.step_queue_worker_run(
+        "sample",
+        "POL-0002",
+        run_id="QWR-0001",
+        workspace_root=workspace,
+    )
+    request_queue_worker_delivery(
+        "sample",
+        "QWR-0001",
+        message="feat: bounded operator console evidence",
+        workspace_root=workspace,
+    )
+
+    projection = build_operator_console_projection("sample", workspace_root=workspace)
+
+    assert projection.active_goal is not None
+    assert projection.active_goal.current_stage == "trusted_delivery"
+    assert projection.active_goal.review_evidence is not None
+    assert projection.active_goal.review_evidence.status == "reviewed_passed"
+    assert projection.active_goal.review_evidence.reviewer == "Manas"
+    assert projection.active_goal.validation_evidence is not None
+    assert projection.active_goal.validation_evidence.status == "passed"
+    assert projection.active_goal.validation_evidence.commands == ["fake command", "python -m pytest -q"]
+    assert projection.active_goal.delivery_evidence is not None
+    assert projection.active_goal.delivery_evidence.state == "pending"
+    assert projection.active_goal.delivery_evidence.request_id == "REQ-0001"
+    assert projection.active_goal.delivery_evidence.request_status == "requested"
+    assert projection.active_goal.delivery_evidence.expected_changed_files == ["src/devo/main.py"]
+    assert {stage.stage_id: stage.status for stage in projection.active_goal.stage_timeline} == {
+        "plan": "completed",
+        "worker": "completed",
+        "semantic_review": "completed",
+        "validation": "completed",
+        "delivery": "current",
+    }
 
 
 def test_goal_workflow_run_delegates_confirmed_execution_to_existing_durable_supervisor(
