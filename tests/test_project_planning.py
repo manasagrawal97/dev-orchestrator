@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import devo.delivery as delivery_module
 import devo.project_planning as project_planning_module
 from devo.delivery import (
     DeliveryRunnerRequest,
@@ -7188,6 +7189,17 @@ def test_queue_worker_request_delivery_creates_runner_request_without_commit_or_
     _create_ready_queue_worker_run(tmp_path)
     (project_path / "src").mkdir()
     (project_path / "src" / "feature.py").write_text("print('safe')\n", encoding="utf-8")
+    request_writes: list[DeliveryRunnerRequest] = []
+    original_write = delivery_module.write_delivery_runner_request
+
+    def track_request_write(
+        request: DeliveryRunnerRequest,
+        workspace_root: Path | None = None,
+    ) -> tuple[DeliveryRunnerRequest, Path, Path]:
+        request_writes.append(request.model_copy(deep=True))
+        return original_write(request, workspace_root=workspace_root)
+
+    monkeypatch.setattr(delivery_module, "write_delivery_runner_request", track_request_write)
 
     result = runner.invoke(
         app,
@@ -7218,6 +7230,9 @@ def test_queue_worker_request_delivery_creates_runner_request_without_commit_or_
     assert run.delivery_request_id == "REQ-0001"
     assert run.delivery_request_status == "requested"
     assert request.status == "requested"
+    assert len(request_writes) == 1
+    assert request.requested_from_context == "devo delivery runner-request"
+    assert request.note == "Queue worker run QWR-0001 delivery request. TASK-DEVO-131 test request."
     assert request.intended_commit_message == "feat: complete queue worker task"
     assert request.expected_changed_files == ["src/feature.py"]
     assert _git(project_path, "status", "--short", capture=True).stdout == "?? src/\n"
@@ -11076,6 +11091,446 @@ def test_child_supersede_rejects_mismatched_and_unsafe_authority_without_mutatio
     assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
 
 
+@pytest.mark.parametrize("review_status", ["needs_changes", "rejected", "blocked"])
+def test_child_supersede_allows_exact_waiting_review_child_with_negative_review(
+    tmp_path: Path,
+    monkeypatch,
+    review_status: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status=review_status)
+    run_json, _run_markdown = queue_worker_run_artifact_paths(
+        "sample", "QWR-0001", workspace_root=workspace
+    )
+    review_json, _review_markdown = project_planning_module.worker_review_artifact_paths(
+        "sample", "WR001", workspace_root=workspace
+    )
+    evidence_before = (run_json.read_bytes(), review_json.read_bytes())
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert backlog is not None
+    assert queue is not None
+    assert next(task for task in backlog.tasks if task.id == "T001").status == "superseded"
+    assert next(item for item in queue.items if item.item_id == "QI001").status == "superseded"
+    assert (run_json.read_bytes(), review_json.read_bytes()) == evidence_before
+    records = list(
+        (planning_artifact_paths("sample", workspace_root=workspace).planning_dir / "child-supersessions").glob(
+            "child-supersession-*.json"
+        )
+    )
+    assert len(records) == 1
+    record = json.loads(records[0].read_text(encoding="utf-8"))
+    assert record["queue_worker_run_id"] == "QWR-0001"
+    assert record["negative_review_status_at_supersession"] == {
+        "needs_changes": "reviewed_needs_changes",
+        "rejected": "rejected",
+        "blocked": "blocked",
+    }[review_status]
+    assert record["negative_review_reviewer"] == "Manas"
+    assert record["negative_review_artifact_path"] == str(review_json)
+    legacy_record = dict(record)
+    legacy_record.pop("negative_review_status_at_supersession")
+    legacy_record.pop("negative_review_reviewer")
+    legacy_record.pop("negative_review_artifact_path")
+    legacy = project_planning_module.ChildSupersessionResult.model_validate(legacy_record)
+    assert legacy.negative_review_status_at_supersession is None
+    assert legacy.negative_review_reviewer is None
+    assert legacy.negative_review_artifact_path is None
+
+
+@pytest.mark.parametrize("review_status", [None, "passed"])
+def test_child_supersede_rejects_waiting_review_without_negative_review(
+    tmp_path: Path,
+    monkeypatch,
+    review_status: str | None,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status=review_status)
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before = (paths.backlog_json.read_bytes(), queue_json.read_bytes())
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Negative-review child supersession" in result.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+
+def test_child_supersede_rejects_negative_review_after_formal_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    validation = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-validation",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            "failed",
+            "--summary",
+            "Formal validation failed.",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    assert validation.exit_code == 0, validation.output
+    paths = planning_artifact_paths("sample", workspace_root=workspace)
+    queue_json, _queue_markdown = queue_artifact_paths("sample", "Q001", workspace_root=workspace)
+    before = (paths.backlog_json.read_bytes(), queue_json.read_bytes())
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "formal validation authority" in result.output
+    assert (paths.backlog_json.read_bytes(), queue_json.read_bytes()) == before
+
+
+def test_child_supersede_allows_exact_worker_reported_validation_without_formal_authority(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(
+        tmp_path,
+        review_status="needs_changes",
+        worker_validation_attempted=True,
+    )
+    run_json, _run_markdown = queue_worker_run_artifact_paths(
+        "sample", "QWR-0001", workspace_root=workspace
+    )
+    review_json, _review_markdown = project_planning_module.worker_review_artifact_paths(
+        "sample", "WR001", workspace_root=workspace
+    )
+    before = (run_json.read_bytes(), review_json.read_bytes())
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert (run_json.read_bytes(), review_json.read_bytes()) == before
+
+
+def test_child_supersede_allows_legacy_not_provided_worker_report_path_without_rewrite(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    report_json, _report_markdown = worker_report_artifact_paths("sample", "WR001", workspace_root=workspace)
+    review, review_json, _review_markdown = project_planning_module._write_worker_review(
+        "sample",
+        review.model_copy(
+            update={
+                "validation_evidence": review.validation_evidence.model_copy(
+                    update={"evidence_paths": [str(report_json)]}
+                ),
+            }
+        ),
+        workspace_root=workspace,
+    )
+    run_json, _run_markdown = queue_worker_run_artifact_paths(
+        "sample", "QWR-0001", workspace_root=workspace
+    )
+    before = (run_json.read_bytes(), review_json.read_bytes())
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+    assert review.validation_evidence.validation_status == "not_provided"
+    assert (run_json.read_bytes(), review_json.read_bytes()) == before
+
+
+def test_child_supersede_rejects_not_provided_with_unexpected_evidence_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    project_planning_module._write_worker_review(
+        "sample",
+        review.model_copy(
+            update={
+                "validation_evidence": review.validation_evidence.model_copy(
+                    update={"evidence_paths": ["workspace/reports/unexpected.md"]}
+                ),
+            }
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "inconsistent pre-formal validation snapshot" in result.output
+
+
+@pytest.mark.parametrize(
+    ("validation_update", "expected_marker"),
+    [
+        ({"commands_reported": ["python -m pytest tampered.py"]}, "does not match the exact linked worker report"),
+        ({"tests_reported": ["pytest tampered.py"]}, "does not match the exact linked worker report"),
+        ({"validation_summary": "Tampered summary."}, "does not match the exact linked worker report"),
+        ({"evidence_paths": ["workspace/reports/unexpected.md"]}, "does not match the exact linked worker report"),
+        (
+            {"warnings": ["Worker-reported validation must be independently reviewed.", "Unexpected warning."]},
+            "does not match the exact linked worker report",
+        ),
+        (
+            {"warnings": ["Validation evidence was recorded manually; Devo did not run validation automatically."]},
+            "formal validation authority",
+        ),
+    ],
+)
+def test_child_supersede_rejects_negative_review_with_residual_validation_authority(
+    tmp_path: Path,
+    monkeypatch,
+    validation_update: dict[str, list[str]],
+    expected_marker: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(
+        tmp_path,
+        review_status="needs_changes",
+        worker_validation_attempted=True,
+    )
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    project_planning_module._write_worker_review(
+        "sample",
+        review.model_copy(
+            update={
+                "validation_evidence": review.validation_evidence.model_copy(update=validation_update),
+            }
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    if expected_marker == "formal validation authority":
+        assert expected_marker in result.output
+
+
+@pytest.mark.parametrize("formal_field", ["evidence_record", "attempts", "latest_attempt_id"])
+def test_child_supersede_rejects_negative_review_with_formal_validation_lineage(
+    tmp_path: Path,
+    monkeypatch,
+    formal_field: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    evidence_record = project_planning_module.QueueWorkerEvidenceRecord(
+        evidence_id="qwr-0001-validation",
+        project="sample",
+        queue_worker_run_id="QWR-0001",
+        queue_item_id="QI001",
+        task_id="T001",
+        evidence_type="validation",
+        status="failed",
+        summary="Formal validation failed.",
+        recorded_by="Validator",
+    )
+    attempt = project_planning_module.ValidationAttempt(
+        attempt_id="qwr-0001-validation-0001",
+        status="failed",
+        summary="Formal validation failed.",
+        recorded_by="Validator",
+        evidence_record=evidence_record,
+    )
+    updates: dict[str, object] = {
+        "evidence_record": evidence_record,
+        "attempts": [attempt],
+        "latest_attempt_id": attempt.attempt_id,
+    }
+    project_planning_module._write_worker_review(
+        "sample",
+        review.model_copy(
+            update={
+                "validation_evidence": review.validation_evidence.model_copy(
+                    update={formal_field: updates[formal_field]}
+                ),
+            }
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "formal validation authority" in result.output
+
+
+@pytest.mark.parametrize("validation_status", ["passed", "failed", "partial", "future_state"])
+def test_child_supersede_rejects_formal_or_unknown_validation_status(
+    tmp_path: Path,
+    monkeypatch,
+    validation_status: str,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    review = load_codex_worker_review("sample", "WR001", workspace_root=workspace)
+    assert review is not None
+    updated_review = review.model_copy(
+        update={
+            "validation_evidence": review.validation_evidence.model_copy(
+                update={"validation_status": validation_status}
+            ),
+        }
+    )
+    if validation_status == "future_state":
+        review_json, _review_markdown = project_planning_module.worker_review_artifact_paths(
+            "sample", "WR001", workspace_root=workspace
+        )
+        review_json.write_text(updated_review.model_dump_json(indent=2), encoding="utf-8")
+    else:
+        project_planning_module._write_worker_review(
+            "sample",
+            updated_review,
+            workspace_root=workspace,
+        )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "forbidden for validation status" in result.output
+
+
+def test_child_supersede_rejects_negative_review_with_durable_delivery_authority(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert run is not None
+    assert run.delivery_request_id is None
+    assert run.delivery_request_status is None
+    write_delivery_runner_request(
+        DeliveryRunnerRequest(
+            project="sample",
+            request_id="REQ-0001",
+            requested_by="test",
+            requested_from_context="devo delivery runner-request",
+            target_repo_path=str(project_path),
+            intended_commit_message="test: stale queue-worker delivery linkage",
+            note="Queue worker run QWR-0001 delivery request. Preserve operator note.",
+            status="completed",
+            next_action="Delivered.",
+        ),
+        workspace_root=workspace,
+    )
+    write_delivery_runner_run(
+        DeliveryRunnerRun(
+            project="sample",
+            request_id="REQ-0001",
+            run_id="RUN-0001",
+            runner_context="test",
+            commit_hash="abc123",
+            pushed=True,
+            status="completed",
+            next_action="Delivered.",
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "durable delivery authority" in result.output
+    assert "REQ-0001=completed/runner:RUN-0001=completed" in result.output
+
+
+def test_child_supersede_delivery_note_marker_does_not_match_longer_run_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="needs_changes")
+    write_delivery_runner_request(
+        DeliveryRunnerRequest(
+            project="sample",
+            request_id="REQ-0001",
+            requested_by="test",
+            requested_from_context="devo delivery runner-request",
+            target_repo_path=str(project_path),
+            intended_commit_message="test: unrelated queue-worker delivery linkage",
+            note="Queue worker run QWR-00010 delivery request. Similar but different run.",
+            status="requested",
+            next_action="Await delivery.",
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code == 0, result.output
+
+
+def test_child_supersede_rejects_negative_review_with_newer_authoritative_descendant(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="rejected")
+    parent = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert parent is not None
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        parent.model_copy(
+            update={
+                "run_id": "QWR-0002",
+                "status": "failed",
+                "retry_of": parent.run_id,
+                "selected_handoff_id": None,
+                "selected_worker_run_id": None,
+            }
+        ),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "newer authoritative retry descendant" in result.output
+
+
+def test_child_supersede_rejects_negative_review_with_conflicting_worker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace, _project_path = _workspace(tmp_path, monkeypatch)
+    _prepare_waiting_review_child(tmp_path, review_status="blocked")
+    worker = load_codex_worker_run("sample", "WR001", workspace_root=workspace)
+    assert worker is not None
+    project_planning_module._write_worker_run(
+        "sample",
+        worker.model_copy(update={"worker_run_id": "WR999"}),
+        workspace_root=workspace,
+    )
+
+    result = runner.invoke(app, _child_supersede_args(), terminal_width=240)
+
+    assert result.exit_code != 0
+    assert "Conflicting workers" in result.output
+
+
 def test_child_supersede_rejects_live_worker_and_rerun(tmp_path: Path, monkeypatch) -> None:
     workspace, _project_path = _workspace(tmp_path, monkeypatch)
     _create_queue_worker_run(tmp_path)
@@ -12450,6 +12905,66 @@ def _create_queue_worker_run(tmp_path: Path, *, validation_commands: list[str] |
     assert result.exit_code == 0, result.output
 
 
+def _prepare_waiting_review_child(
+    tmp_path: Path,
+    *,
+    review_status: str | None,
+    worker_validation_attempted: bool = False,
+) -> None:
+    _create_queue_worker_run(tmp_path)
+    _import_worker_report(tmp_path, validation_attempted=worker_validation_attempted)
+    _continue_queue_worker_run()
+    run = load_queue_worker_run("sample", "QWR-0001")
+    assert run is not None
+    assert run.status == "waiting_review"
+    if review_status is None:
+        return
+    result = runner.invoke(
+        app,
+        [
+            "project",
+            "queue-worker-record-review",
+            "--project",
+            "sample",
+            "--run",
+            "QWR-0001",
+            "--status",
+            review_status,
+            "--summary",
+            f"Human review recorded {review_status}.",
+            "--recorded-by",
+            "Manas",
+            "--confirm-record",
+        ],
+        terminal_width=240,
+    )
+    assert result.exit_code == 0, result.output
+
+
+def _child_supersede_args() -> list[str]:
+    return [
+        "project",
+        "child-supersede",
+        "--project",
+        "sample",
+        "--task",
+        "T001",
+        "--batch",
+        "B001",
+        "--queue",
+        "Q001",
+        "--item",
+        "QI001",
+        "--run",
+        "QWR-0001",
+        "--operator",
+        "Manas",
+        "--reason",
+        "Retire the exact child after negative semantic review.",
+        "--confirm-supersede",
+    ]
+
+
 def _record_failed_subprocess_attempt(workspace: Path, run_id: str) -> Path:
     run = load_queue_worker_run("sample", run_id, workspace_root=workspace)
     assert run is not None
@@ -12697,7 +13212,13 @@ def _create_reviewed_queue_worker_run(tmp_path: Path, *, validation_commands: li
     _continue_queue_worker_run()
 
 
-def _import_worker_report(tmp_path: Path, *, status: str = "completed") -> None:
+def _import_worker_report(
+    tmp_path: Path,
+    *,
+    status: str = "completed",
+    validation_attempted: bool | None = None,
+) -> None:
+    attempted_validation = status == "completed" if validation_attempted is None else validation_attempted
     report = CodexWorkerReport(
         project="sample",
         worker_run_id="WR001",
@@ -12708,10 +13229,10 @@ def _import_worker_report(tmp_path: Path, *, status: str = "completed") -> None:
         status_reported_by_worker=status,
         summary="Worker completed the small task." if status == "completed" else "Worker could not complete the task.",
         changed_files=["src/feature.py"] if status == "completed" else [],
-        validation_attempted=status == "completed",
-        validation_results=["Focused validation passed."] if status == "completed" else [],
-        tests_run=["pytest tests/test_sample.py"] if status == "completed" else [],
-        commands_run=["pytest tests/test_sample.py"] if status == "completed" else [],
+        validation_attempted=attempted_validation,
+        validation_results=["Focused validation passed."] if attempted_validation else [],
+        tests_run=["pytest tests/test_sample.py"] if attempted_validation else [],
+        commands_run=["pytest tests/test_sample.py"] if attempted_validation else [],
     )
     report_file = tmp_path / f"worker-report-{status}.json"
     report_file.write_text(report.model_dump_json(indent=2), encoding="utf-8")

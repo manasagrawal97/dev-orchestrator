@@ -576,6 +576,9 @@ class ChildSupersessionResult(BaseModel):
     queue_id: str
     queue_item_id: str
     queue_worker_run_id: str | None = None
+    negative_review_status_at_supersession: str | None = None
+    negative_review_reviewer: str | None = None
+    negative_review_artifact_path: str | None = None
     operator: str
     reason: str
     prior_task_status: str
@@ -8228,7 +8231,9 @@ def request_queue_worker_delivery(
     if not policy.auto_delivery_allowed:
         warnings.append("Policy auto_delivery is false; explicit queue-worker-request-delivery confirmation is being used.")
     commit_message = message.strip() or _default_queue_worker_commit_message(project_name, run, root)
-    request_note = note.strip() or f"Queue worker run {run.run_id} delivery request."
+    request_marker = f"Queue worker run {run.run_id} delivery request."
+    operator_note = note.strip()
+    request_note = f"{request_marker} {operator_note}".strip()
     from .delivery import create_delivery_runner_request
 
     request, request_json, request_markdown = create_delivery_runner_request(
@@ -9970,7 +9975,17 @@ def supersede_workflow_child(
             "completed",
         }
     ]
-    if advanced_related_runs:
+    negative_review_exception = bool(
+        normalized_run
+        and len(related_runs) == 1
+        and len(advanced_related_runs) == 1
+        and advanced_related_runs[0].run_id == normalized_run
+        and advanced_related_runs[0].status == "waiting_review"
+        and not advanced_related_runs[0].delivery_request_id
+        and not advanced_related_runs[0].delivery_request_status
+        and not advanced_related_runs[0].delivery_requested_at
+    )
+    if advanced_related_runs and not negative_review_exception:
         raise ValueError(
             "Authoritative queue-worker evidence has already advanced beyond safe supersession: "
             + ", ".join(f"{run.run_id}={run.status}" for run in advanced_related_runs)
@@ -9990,8 +10005,14 @@ def supersede_workflow_child(
             + "."
         )
     bound_run: QueueWorkerRun | None = None
+    negative_review_basis: tuple[str, str | None, str] | None = None
     if normalized_run:
         bound_run = _require_queue_worker_run(project_name, normalized_run, root)
+        if all(run.run_id != normalized_run for run in all_authoritative_runs):
+            raise ValueError(
+                f"Queue-worker run {normalized_run} has a newer authoritative retry descendant; "
+                "superseding from historical authority is unsafe."
+            )
         linkage = {
             "batch": (bound_run.batch_id, normalized_batch),
             "queue": (bound_run.queue_id, normalized_queue),
@@ -10023,6 +10044,16 @@ def supersede_workflow_child(
         live_attempts = [attempt.codex_worker_run_id for attempt in attempts if attempt.codex_launched and attempt.completed_at is None]
         if live_attempts:
             raise ValueError("Active Codex subprocess execution prevents supersession: " + ", ".join(live_attempts) + ".")
+        if negative_review_exception:
+            negative_review_basis = _require_negative_review_child_supersession_authority(
+                project_name,
+                bound_run,
+                task_id=normalized_task,
+                batch_id=normalized_batch,
+                queue_id=normalized_queue,
+                queue_item_id=normalized_item,
+                workspace_root=root,
+            )
         if bound_run.status == "waiting_worker":
             if not attempts:
                 raise ValueError(
@@ -10085,7 +10116,13 @@ def supersede_workflow_child(
         f"{now.isoformat()}: child supersession {supersession_id}; operator={cleaned_operator}; "
         f"reason={cleaned_reason}; task={normalized_task} {task.status}->superseded; "
         f"queue_item={normalized_queue}/{normalized_item} {item.status}->superseded; "
-        f"queue_worker_run={normalized_run or 'none'}; replacement={replacement_summary}."
+        f"queue_worker_run={normalized_run or 'none'}; replacement={replacement_summary}"
+        + (
+            f"; negative_review={negative_review_basis[0]}; reviewer={negative_review_basis[1] or 'none'}"
+            if negative_review_basis
+            else ""
+        )
+        + "."
     )
     updated_task = task.model_copy(
         update={"status": "superseded", "notes": [*task.notes, audit_note], "updated_at": now}
@@ -10123,6 +10160,9 @@ def supersede_workflow_child(
         queue_id=normalized_queue,
         queue_item_id=normalized_item,
         queue_worker_run_id=normalized_run,
+        negative_review_status_at_supersession=negative_review_basis[0] if negative_review_basis else None,
+        negative_review_reviewer=negative_review_basis[1] if negative_review_basis else None,
+        negative_review_artifact_path=negative_review_basis[2] if negative_review_basis else None,
         operator=cleaned_operator,
         reason=cleaned_reason,
         prior_task_status=task.status,
@@ -10181,6 +10221,268 @@ def supersede_workflow_child(
     return result
 
 
+def _require_negative_review_child_supersession_authority(
+    project_name: str,
+    run: QueueWorkerRun,
+    *,
+    task_id: str,
+    batch_id: str,
+    queue_id: str,
+    queue_item_id: str,
+    workspace_root: Path,
+) -> tuple[str, str | None, str]:
+    """Allow one reviewed-negative child to retire without granting validation or delivery authority."""
+    if run.status != "waiting_review":
+        raise ValueError(
+            f"Negative-review child supersession requires waiting_review; {run.run_id} is {run.status}."
+        )
+    if run.delivery_request_id or run.delivery_request_status or run.delivery_requested_at:
+        raise ValueError(f"Queue-worker run {run.run_id} already contains delivery authority.")
+    _require_no_durable_delivery_authority(project_name, run, workspace_root)
+    if not run.selected_worker_run_id:
+        raise ValueError(f"Queue-worker run {run.run_id} has no exact linked worker result to review.")
+
+    worker_run = _require_queue_worker_linked_worker(project_name, run, workspace_root)
+    expected_worker_authority = {
+        "source_queue_id": queue_id,
+        "source_queue_item_id": queue_item_id,
+        "source_batch_id": batch_id,
+        "source_task_id": task_id,
+        "source_handoff_id": run.selected_handoff_id,
+    }
+    drifted_worker = [
+        field
+        for field, expected in expected_worker_authority.items()
+        if not expected or getattr(worker_run, field) != expected
+    ]
+    if worker_run.source_policy_id and worker_run.source_policy_id != run.policy_id:
+        drifted_worker.append("source_policy_id")
+    if worker_run.source_queue_worker_run_id and worker_run.source_queue_worker_run_id != run.run_id:
+        drifted_worker.append("source_queue_worker_run_id")
+    if drifted_worker:
+        raise ValueError(
+            f"Linked worker {worker_run.worker_run_id} does not match the exact child authority for: "
+            + ", ".join(_dedupe(drifted_worker))
+            + "."
+        )
+
+    conflicting_workers = [
+        candidate.worker_run_id
+        for candidate in list_codex_worker_runs(project_name, workspace_root=workspace_root)
+        if candidate.worker_run_id != worker_run.worker_run_id
+        and (
+            candidate.source_queue_worker_run_id == run.run_id
+            or (
+                run.selected_handoff_id
+                and candidate.source_handoff_id == run.selected_handoff_id
+                and candidate.source_queue_id == queue_id
+                and candidate.source_queue_item_id == queue_item_id
+                and candidate.source_task_id == task_id
+            )
+        )
+    ]
+    if conflicting_workers:
+        raise ValueError(
+            "Conflicting workers claim the bound queue-worker child authority: "
+            + ", ".join(conflicting_workers)
+            + "."
+        )
+
+    report = load_codex_worker_report(project_name, worker_run.worker_run_id, workspace_root=workspace_root)
+    if not report:
+        raise ValueError(f"Linked worker result is missing for {worker_run.worker_run_id}.")
+    expected_result_authority = {
+        "project": project_name,
+        "worker_run_id": worker_run.worker_run_id,
+        "source_handoff_id": worker_run.source_handoff_id,
+        "source_queue_id": queue_id,
+        "source_queue_item_id": queue_item_id,
+        "source_task_id": task_id,
+    }
+    drifted_result = [
+        field for field, expected in expected_result_authority.items() if getattr(report, field) != expected
+    ]
+    if drifted_result:
+        raise ValueError(
+            f"Linked worker result does not match the exact child authority for: {', '.join(drifted_result)}."
+        )
+    if report.status_reported_by_worker != "completed":
+        raise ValueError(
+            f"Linked worker result must be completed before negative-review supersession; "
+            f"current status is {report.status_reported_by_worker}."
+        )
+    if report.evidence_record:
+        result_evidence = report.evidence_record
+        if (
+            result_evidence.project != project_name
+            or result_evidence.queue_worker_run_id != run.run_id
+            or result_evidence.queue_item_id != queue_item_id
+            or result_evidence.task_id != task_id
+            or result_evidence.evidence_type != "worker_result"
+            or result_evidence.status != "completed"
+        ):
+            raise ValueError("Linked worker-result evidence does not match the exact bound child authority.")
+
+    review = load_codex_worker_review(project_name, worker_run.worker_run_id, workspace_root=workspace_root)
+    matching_reviews = [
+        candidate
+        for candidate in list_codex_worker_reviews(project_name, workspace_root=workspace_root)
+        if candidate.worker_run_id == worker_run.worker_run_id
+    ]
+    if not review or len(matching_reviews) != 1:
+        raise ValueError(
+            f"Negative-review child supersession requires exactly one durable review for {worker_run.worker_run_id}; "
+            f"found {len(matching_reviews)}."
+        )
+    negative_statuses = {"reviewed_needs_changes", "rejected", "blocked"}
+    if review.review_status not in negative_statuses:
+        raise ValueError(
+            "Negative-review child supersession requires reviewed_needs_changes, rejected, or blocked review evidence; "
+            f"current status is {review.review_status}."
+        )
+    expected_review_authority = {
+        "project": project_name,
+        "worker_run_id": worker_run.worker_run_id,
+        "source_handoff_id": worker_run.source_handoff_id,
+        "source_queue_id": queue_id,
+        "source_queue_item_id": queue_item_id,
+        "source_task_id": task_id,
+    }
+    drifted_review = [
+        field for field, expected in expected_review_authority.items() if getattr(review, field) != expected
+    ]
+    report_json, _report_markdown = worker_report_artifact_paths(
+        project_name, worker_run.worker_run_id, workspace_root=workspace_root
+    )
+    if not review.source_report_path or Path(review.source_report_path) != report_json:
+        drifted_review.append("source_report_path")
+    if report.reported_at and review.updated_at < report.reported_at:
+        drifted_review.append("updated_at")
+    if drifted_review:
+        raise ValueError(
+            f"Negative review does not match the exact linked worker result for: {', '.join(_dedupe(drifted_review))}."
+        )
+    if review.evidence_record:
+        review_evidence = review.evidence_record
+        expected_review_status = {
+            "reviewed_needs_changes": "needs_changes",
+            "rejected": "rejected",
+            "blocked": "blocked",
+        }[review.review_status]
+        if (
+            review_evidence.project != project_name
+            or review_evidence.queue_worker_run_id != run.run_id
+            or review_evidence.queue_item_id != queue_item_id
+            or review_evidence.task_id != task_id
+            or review_evidence.evidence_type != "review"
+            or review_evidence.status != expected_review_status
+        ):
+            raise ValueError("Negative review evidence does not match the exact bound child authority.")
+
+    review_json, _review_markdown = worker_review_artifact_paths(
+        project_name, worker_run.worker_run_id, workspace_root=workspace_root
+    )
+    _require_preformal_validation_snapshot(
+        review.validation_evidence,
+        report,
+        report_json=report_json,
+        queue_worker_run_id=run.run_id,
+    )
+    return review.review_status, review.reviewer, str(review_json)
+
+
+def _require_preformal_validation_snapshot(
+    validation: ValidationEvidence,
+    report: CodexWorkerReport,
+    *,
+    report_json: Path,
+    queue_worker_run_id: str,
+) -> None:
+    manual_evidence_marker = any(
+        "evidence was recorded manually" in warning.lower() for warning in validation.warnings
+    )
+    if validation.evidence_record or validation.attempts or validation.latest_attempt_id or manual_evidence_marker:
+        raise ValueError(
+            f"Negative-review child supersession is forbidden after formal validation authority exists for "
+            f"{queue_worker_run_id}."
+        )
+
+    expected_report_paths = [str(report_json)] if report_json.exists() else []
+    if validation.validation_status == "not_provided":
+        legacy_report_path_only = validation.evidence_paths == expected_report_paths
+        current_empty_snapshot = not validation.evidence_paths
+        if (
+            validation.commands_reported
+            or validation.tests_reported
+            or validation.validation_summary.strip()
+            or validation.warnings
+            or not (current_empty_snapshot or legacy_report_path_only)
+        ):
+            raise ValueError(
+                f"Negative-review child supersession found an inconsistent pre-formal validation snapshot for "
+                f"{queue_worker_run_id}."
+            )
+        return
+
+    if validation.validation_status == "provided":
+        report_contains_validation = bool(
+            report.validation_results or report.tests_run or report.commands_run
+        )
+        expected_summary = "; ".join(report.validation_results)
+        expected_warnings = ["Worker-reported validation must be independently reviewed."]
+        if (
+            not report_contains_validation
+            or validation.commands_reported != report.commands_run
+            or validation.tests_reported != report.tests_run
+            or validation.validation_summary != expected_summary
+            or validation.evidence_paths != expected_report_paths
+            or validation.warnings != expected_warnings
+        ):
+            raise ValueError(
+                f"Negative-review child supersession found worker-reported validation that does not match the exact "
+                f"linked worker report for {queue_worker_run_id}."
+            )
+        return
+
+    raise ValueError(
+        f"Negative-review child supersession is forbidden for validation status "
+        f"{validation.validation_status or 'missing'} on {queue_worker_run_id}."
+    )
+
+
+def _require_no_durable_delivery_authority(
+    project_name: str,
+    run: QueueWorkerRun,
+    workspace_root: Path,
+) -> None:
+    from .delivery import list_delivery_runner_requests, resolve_delivery_runner_run_for_request
+
+    expected_note_marker = f"Queue worker run {run.run_id} delivery request."
+    linked_requests = [
+        request
+        for request in list_delivery_runner_requests(project_name, workspace_root=workspace_root)
+        if request.requested_from_context.strip() == run.run_id
+        or request.note.strip() == expected_note_marker
+        or request.note.strip().startswith(f"{expected_note_marker} ")
+    ]
+    if not linked_requests:
+        return
+    details: list[str] = []
+    for request in linked_requests:
+        runner_run = resolve_delivery_runner_run_for_request(
+            project_name, request.request_id, workspace_root=workspace_root
+        )
+        detail = f"{request.request_id}={request.status}"
+        if runner_run:
+            detail += f"/runner:{runner_run.run_id}={runner_run.status}"
+        details.append(detail)
+    raise ValueError(
+        f"Negative-review child supersession is forbidden after durable delivery authority exists for {run.run_id}: "
+        + ", ".join(details)
+        + "."
+    )
+
+
 def _commit_child_supersession_artifacts(
     artifacts: dict[Path, str],
     *,
@@ -10229,6 +10531,9 @@ def _render_child_supersession_markdown(result: ChildSupersessionResult) -> str:
             f"- Queue item: `{result.queue_id}/{result.queue_item_id}` "
             f"(`{result.prior_queue_item_status}` -> `{result.queue_item_status}`)",
             f"- Queue-worker run: `{result.queue_worker_run_id or 'none'}`",
+            f"- Negative-review disposition: `{result.negative_review_status_at_supersession or 'none'}`",
+            f"- Negative-review reviewer: `{result.negative_review_reviewer or 'none'}`",
+            f"- Negative-review artifact: `{result.negative_review_artifact_path or 'none'}`",
             f"- Replacement: `{replacement}`",
             f"- Operator: `{result.operator}`",
             f"- Recorded: `{result.recorded_at.isoformat()}`",
@@ -14371,13 +14676,14 @@ def create_codex_worker_review_template(
     report = load_codex_worker_report(project_name, worker_run.worker_run_id, workspace_root=root)
     queue_item = _linked_queue_item(project_name, worker_run, workspace_root=root)
     report_json, _report_md = worker_report_artifact_paths(project_name, worker_run.worker_run_id, workspace_root=root)
+    reported_validation = bool(report and (report.validation_results or report.tests_run or report.commands_run))
     evidence = ValidationEvidence(
-        validation_status="provided" if report and (report.validation_results or report.tests_run or report.commands_run) else "not_provided",
+        validation_status="provided" if reported_validation else "not_provided",
         commands_reported=report.commands_run if report else [],
         tests_reported=report.tests_run if report else [],
         validation_summary="; ".join(report.validation_results) if report and report.validation_results else "",
-        evidence_paths=[str(report_json)] if report and report_json.exists() else [],
-        warnings=["Worker-reported validation must be independently reviewed."] if report and (report.commands_run or report.tests_run) else [],
+        evidence_paths=[str(report_json)] if reported_validation and report_json.exists() else [],
+        warnings=["Worker-reported validation must be independently reviewed."] if reported_validation else [],
     )
     review = WorkerReview(
         project=project_name,
@@ -17833,7 +18139,7 @@ def _worker_review_next_action(project_name: str, worker_run: WorkerRun, review_
                 f"--queue {worker_run.source_queue_id} --item {worker_run.source_queue_item_id} --note \"<needed changes>\" or prepare a follow-up worker run."
             )
         return "Review needs changes. Prepare a follow-up handoff or worker run after clarifying scope."
-    if review.review_status == "blocked":
+    if review_status == "blocked":
         if worker_run.source_queue_id and worker_run.source_queue_item_id:
             return (
                 f"Review is blocked. Keep the queue item incomplete and resolve the stated blocker before an explicit retry: "
