@@ -11675,6 +11675,135 @@ def test_child_supersede_makes_prepared_goal_advance_to_next_child(tmp_path: Pat
     assert preview.selected_queue_item_id == "QI003"
 
 
+@pytest.mark.parametrize("historical_run_status", ["waiting_worker", "waiting_review"])
+def test_child_supersede_ignores_durably_superseded_same_queue_sibling(
+    tmp_path: Path,
+    monkeypatch,
+    historical_run_status: str,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    _supersede_prepared_goal_child(workspace)
+    historical_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    assert historical_run is not None
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        historical_run.model_copy(update={"status": historical_run_status}),
+        workspace_root=workspace,
+    )
+
+    result = _attempt_second_prepared_goal_child_supersession(workspace)
+
+    assert result.exit_code == 0, result.output
+    preserved_run = load_queue_worker_run("sample", "QWR-0001", workspace_root=workspace)
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert preserved_run is not None
+    assert preserved_run.status == historical_run_status
+    assert backlog is not None
+    assert queue is not None
+    assert next(task for task in backlog.tasks if task.id == "T056").status == "superseded"
+    assert next(item for item in queue.items if item.item_id == "QI003").status == "superseded"
+
+
+@pytest.mark.parametrize(
+    "supersession_evidence",
+    [
+        "active_unsuperseded",
+        "raw_status_only",
+        "missing",
+        "malformed",
+        "wrong_qwr",
+        "wrong_task",
+        "wrong_queue",
+        "wrong_item",
+        "wrong_batch",
+        "duplicate",
+    ],
+)
+def test_child_supersede_same_queue_sibling_filter_fails_closed_without_exact_durable_evidence(
+    tmp_path: Path,
+    monkeypatch,
+    supersession_evidence: str,
+) -> None:
+    workspace, _project_path = _setup_approved_prepared_goal(tmp_path, monkeypatch)
+    if supersession_evidence in {"active_unsuperseded", "raw_status_only"}:
+        project_planning_module._write_queue_worker_run(
+            "sample",
+            QueueWorkerRun(
+                project="sample",
+                run_id="QWR-0001",
+                policy_id="POL-0002",
+                batch_id="B001",
+                queue_id="Q001",
+                selected_queue_item_id="QI002",
+                selected_task_id="T055",
+                status="waiting_worker",
+            ),
+            workspace_root=workspace,
+        )
+        _record_failed_subprocess_attempt(workspace, "QWR-0001")
+        if supersession_evidence == "raw_status_only":
+            _set_prepared_goal_child_statuses(workspace, task_status="superseded", item_status="superseded")
+    else:
+        _supersede_prepared_goal_child(workspace)
+        record_dir = planning_artifact_paths(
+            "sample", workspace_root=workspace
+        ).planning_dir / "child-supersessions"
+        record_path = next(record_dir.glob("child-supersession-*.json"))
+        if supersession_evidence == "missing":
+            record_path.unlink()
+        elif supersession_evidence == "malformed":
+            record_path.write_text("{not-valid-json", encoding="utf-8")
+        elif supersession_evidence.startswith("wrong_"):
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            field, value = {
+                "wrong_qwr": ("queue_worker_run_id", "QWR-9999"),
+                "wrong_task": ("task_id", "T999"),
+                "wrong_queue": ("queue_id", "Q999"),
+                "wrong_item": ("queue_item_id", "QI999"),
+                "wrong_batch": ("batch_id", "B999"),
+            }[supersession_evidence]
+            record[field] = value
+            record_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+        else:
+            (record_dir / "child-supersession-duplicate.json").write_bytes(record_path.read_bytes())
+
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0002",
+            policy_id="POL-0003",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI003",
+            selected_task_id="T056",
+            status="waiting_worker",
+        ),
+        workspace_root=workspace,
+    )
+    _record_failed_subprocess_attempt(workspace, "QWR-0002")
+    with pytest.raises(ValueError, match="Another authoritative child is active in the same queue: QWR-0001"):
+        project_planning_module.supersede_workflow_child(
+            "sample",
+            task_id="T056",
+            batch_id="B001",
+            queue_id="Q001",
+            queue_item_id="QI003",
+            queue_worker_run_id="QWR-0002",
+            operator="Manas",
+            reason="Retire the next child without reviving its unresolved sibling.",
+            confirm_supersede=True,
+            workspace_root=workspace,
+        )
+    backlog = load_project_backlog("sample", workspace_root=workspace)
+    queue = load_execution_queue("sample", "Q001", workspace_root=workspace)
+    assert backlog is not None
+    assert queue is not None
+    assert next(task for task in backlog.tasks if task.id == "T056").status != "superseded"
+    assert next(item for item in queue.items if item.item_id == "QI003").status != "superseded"
+
+
 def test_prepared_goal_raw_superseded_status_without_audit_does_not_advance(
     tmp_path: Path,
     monkeypatch,
@@ -13081,6 +13210,49 @@ def _supersede_prepared_goal_child(workspace: Path) -> None:
         terminal_width=240,
     )
     assert result.exit_code == 0, result.output
+
+
+def _attempt_second_prepared_goal_child_supersession(workspace: Path):
+    project_planning_module._write_queue_worker_run(
+        "sample",
+        QueueWorkerRun(
+            project="sample",
+            run_id="QWR-0002",
+            policy_id="POL-0003",
+            batch_id="B001",
+            queue_id="Q001",
+            selected_queue_item_id="QI003",
+            selected_task_id="T056",
+            status="waiting_worker",
+        ),
+        workspace_root=workspace,
+    )
+    _record_failed_subprocess_attempt(workspace, "QWR-0002")
+    return runner.invoke(
+        app,
+        [
+            "project",
+            "child-supersede",
+            "--project",
+            "sample",
+            "--task",
+            "T056",
+            "--batch",
+            "B001",
+            "--queue",
+            "Q001",
+            "--item",
+            "QI003",
+            "--run",
+            "QWR-0002",
+            "--operator",
+            "Manas",
+            "--reason",
+            "Retire the next child without reviving its durable sibling.",
+            "--confirm-supersede",
+        ],
+        terminal_width=240,
+    )
 
 
 def _create_handoff_ready_linked_retry(

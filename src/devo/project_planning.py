@@ -9997,6 +9997,14 @@ def supersede_workflow_child(
         if run.queue_id == normalized_queue
         and run.selected_queue_item_id != normalized_item
         and run.status not in {"completed", "cancelled", "failed"}
+        and not _is_durably_superseded_child(
+            project_name,
+            task_id=run.selected_task_id,
+            queue_id=run.queue_id,
+            queue_item_id=run.selected_queue_item_id,
+            queue_worker_run_id=run.run_id,
+            workspace_root=root,
+        )
     ]
     if conflicting_children:
         raise ValueError(
